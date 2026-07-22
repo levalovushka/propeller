@@ -1,0 +1,50 @@
+# macOS / Xcode / SPM
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+xcuserdata/
+DerivedData/
+.build/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# Propeller build / install leftovers
+*.app/
+meeting-recorder/swift/.build/
+
+# gigastt binary + CoreML models (~GBs) — obtain separately
+tools/gigastt/gigastt
+tools/gigastt/models*/
+tools/gigastt/**/*.mlmodelc/
+tools/gigastt/**/*.mlpackage/
+tools/gigastt/**/*.onnx
+tools/gigastt/**/*.bin
+tools/gigastt/**/*.safetensors
+
+# Phase 0 validation: personal meeting audio & full transcript dumps (keep STATUS.md)
+phase0/*.wav
+phase0/*.json
+phase0/*_readable.md
+phase0/server_*.log
+phase0/FluidDiarize/.build/
+phase0/FluidDiarize/.swiftpm/
+
+# Local debug / user data (should never live in the repo)
+**/.meeting-recorder/
+**/debug.log
+.env
+.env.*
+*.pem
+credentials.json
+
+# Archives
+*.dmg
+*.zip
+*.tar.gz
+
+# Phase logs / smoke leftovers
+phase2/server.log
+phase2/verify_smoke.json
+tools/gigastt/*.log
