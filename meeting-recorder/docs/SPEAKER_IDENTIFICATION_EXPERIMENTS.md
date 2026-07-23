@@ -1,5 +1,7 @@
 # Speaker Identification Experiments
 
+> 🗄 **Historical.** Documents the voice-matching / People-library subsystem that was **removed** in plan-v2 Job 3 (see [SPEC.md](SPEC.md) → «Спикеры» and [`../../product-ideas.md`](../../product-ideas.md) → Убито). Kept as an engineering record of why per-person matching was hard; not describing current behaviour.
+
 ## Current Hypothesis
 
 Most bad speaker-identification cases are likely caused by one or more of:

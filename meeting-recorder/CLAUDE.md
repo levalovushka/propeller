@@ -4,9 +4,9 @@ Guidance for agents working in this repository (Propeller fork of meeting-record
 
 ## Project Overview
 
-**Propeller** is a native macOS menu bar + window app (SwiftUI, macOS 14+, arm64) that records meetings (mic + system audio), transcribes Russian speech locally via **GigaAM-v3 / gigastt**, diarizes with **FluidAudio**, matches speakers against a local People library, saves markdown (Simple default / Obsidian optional), and optionally generates an LLM recap (Ollama / OpenAI / Claude).
+**Propeller** is a native macOS menu bar + window app (SwiftUI, macOS 14+, arm64) that records meetings (mic + system audio), transcribes Russian speech locally via **GigaAM-v3 / gigastt**, diarizes with **FluidAudio** into consistent `Speaker N` (no voice library — the mic-dominant speaker is labeled with the owner's name), saves markdown (Simple default / Obsidian optional), and optionally generates an LLM summary (Ollama / OpenAI / Claude) with auto title/topics/tags.
 
-Canonical architecture decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Product backlog: [`../../product-ideas.md`](../../product-ideas.md). Phase plan: [`../../plan-v1.md`](../../plan-v1.md). UI: [`../../design/propeller-ui.md`](../../design/propeller-ui.md).
+Canonical architecture decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Product behaviour: [docs/SPEC.md](docs/SPEC.md). Active plan + decisions: [`../../plan-v2.md`](../../plan-v2.md). Engineering optimization: [`../../plan-optimization.md`](../../plan-optimization.md). UI: [`../../design/propeller-ui.md`](../../design/propeller-ui.md). Historical (phases, brief): [`../../archive/`](../../archive/).
 
 ## Build & Run
 
@@ -31,27 +31,28 @@ Swift Package Manager (`Package.swift`). First ASR use may download ~225 MB Giga
 AudioRecorder (16 kHz mono mix + mic/sys stems)
   → TranscriptionService
       → gigastt (ASRSegment[])
-      → FluidAudio diarization
-      → PeopleStore matching
-  → MarkdownWriter → RecapService
+      → checkpoint (transcribed_raw)
+      → FluidAudio diarization → Speaker N + owner-by-mic
+  → MarkdownWriter → RecapService → metadata (title/topics/tags)
 ```
 
 ### Key components
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full table. Coordinator is `AppState`; Zoom auto-record defaults to **Auto** with a system notification action **«Не записывать»** (`NotificationManager`) that discards the in-progress recording. Transcripts are **always** saved once speakers are resolved (no auto-save toggle).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full table. Coordinator is `AppState`; Zoom auto-record defaults to **Auto** with a system notification action **«Не записывать»** (`NotificationManager`) that discards the in-progress recording. Transcripts are **always** saved right after diarization (no speaker-confirmation gate, no auto-save toggle).
 
 ### UI
 
-- `MainView` — sidebar sections (Meetings / People / Search / Settings) + list + detail
-- `RecordingDetailView` / `RecordingInProgressView` / `SpeakerConfirmationView`
+- `MainView` — sidebar sections (Meetings / Summaries / Search / Settings) + list + detail. Upcoming (calendar) via `CalendarService`.
+- `RecordingDetailView` / `RecordingInProgressView` — tabs Transcript / Notes / Summary
+- `NoteOverlayController` — ⌃⌥N quick-note overlay during recording
 - `MenuBarPanelView` — record/stop, recent, quit
-- Native `Settings` scene (`SettingsSheet.swift`)
+- Native `Settings` scene (`SettingsSheet.swift`): General / Audio / Transcription / Recap / Export
 
 ### Data storage
 
 ```
-~/.meeting-recorder/{recordings,people,meetings}
-~/Library/Application Support/Meeting Recorder/gigastt-models/
+~/.meeting-recorder/{recordings,meetings}   # people/ is legacy: no longer read/written
+~/Library/Application Support/Meeting Recorder/{gigastt-models/,hotwords.txt}
 ```
 
 ## Development practices

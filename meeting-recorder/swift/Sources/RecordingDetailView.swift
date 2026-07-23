@@ -1,5 +1,41 @@
 import SwiftUI
 
+// MARK: - Avatar
+
+struct AvatarCircle: View {
+    let name: String
+    let size: CGFloat
+
+    var body: some View {
+        ZStack {
+            Circle().fill(color)
+            Text(initials)
+                .font(.system(size: size * 0.38, weight: .semibold))
+                .foregroundStyle(.white)
+        }
+        .frame(width: size, height: size)
+    }
+
+    private var initials: String {
+        let parts = name.split(separator: " ")
+        if let first = parts.first, let last = parts.dropFirst().first {
+            return String(first.prefix(1) + last.prefix(1)).uppercased()
+        }
+        return String(name.prefix(1)).uppercased()
+    }
+
+    private var color: Color {
+        // Deterministic hue from name
+        var h: UInt32 = 2166136261
+        for byte in name.utf8 {
+            h ^= UInt32(byte)
+            h &*= 16777619
+        }
+        let hue = Double(h % 360) / 360.0
+        return Color(hue: hue, saturation: 0.55, brightness: 0.75)
+    }
+}
+
 struct RecordingDetailView: View {
     @ObservedObject var state: AppState
     let entry: RecordingEntry
@@ -19,14 +55,14 @@ struct RecordingDetailView: View {
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .transcript: return "Transcript"
+            case .transcript: return "Transcription"
             case .notes: return "Notes"
             case .recap: return "Summary"
             }
         }
     }
 
-    @State private var tab: DetailTab = .transcript
+    @State private var tab: DetailTab = .recap   // Summary is the default view
     @State private var showParticipants = true
     @State private var recapText: String?
 
@@ -37,12 +73,17 @@ struct RecordingDetailView: View {
     @State private var copiedRecap = false
     @State private var editingTitle = false
     @State private var editedTitle = ""
+    @State private var titleHovered = false
+    @FocusState private var titleFieldFocused: Bool
     @State private var editedNotes = ""
     @State private var isEditingTranscript = false
     @State private var editedTranscriptText = ""
+    @State private var isEditingRecap = false
+    @State private var editedRecapText = ""
+    @State private var speakerFilter: Set<String> = []
     @State private var selectedSegmentIndices: Set<Int> = []
-    @State private var showNewPersonSheet = false
-    @State private var newPersonName = ""
+    @State private var showRenameSheet = false
+    @State private var renameSpeakerName = ""
 
     private static var pendingNotesSave: DispatchWorkItem?
     /// Captures the most recent unsaved notes payload so `flushPendingNotesSave`
@@ -88,37 +129,16 @@ struct RecordingDetailView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                detailHeader
+        VStack(spacing: 0) {
+            detailHeader
 
-                if presentation == .meeting, audioURL != nil {
-                    WaveformScrubber(player: state.player, audioURL: audioURL)
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 10)
-                }
-
-                Divider()
-
-                if presentation == .meeting, !state.pendingSpeakers.isEmpty {
-                    SpeakerConfirmationView(state: state)
-                }
-
-                if presentation == .meeting {
-                    tabBar
-                    Divider()
-                    tabContent
-                        .frame(maxHeight: .infinity)
-                } else {
-                    summaryFocusContent
-                        .frame(maxHeight: .infinity)
-                }
-            }
-
-            if presentation == .meeting, showParticipants {
-                Divider()
-                participantsPanel
-                    .frame(width: 220)
+            if presentation == .meeting {
+                tabBar
+                tabContent
+                    .frame(maxHeight: .infinity)
+            } else {
+                summaryFocusContent
+                    .frame(maxHeight: .infinity)
             }
         }
         .alert("Delete Audio?", isPresented: $showingDeleteConfirm) {
@@ -149,8 +169,8 @@ struct RecordingDetailView: View {
             editedNotes = entry.notes ?? ""
             recapText = nil
         }
-        .sheet(isPresented: $showNewPersonSheet) {
-            newPersonSheet
+        .sheet(isPresented: $showRenameSheet) {
+            renameSpeakerSheet
         }
         .onAppear {
             editedNotes = entry.notes ?? ""
@@ -271,311 +291,220 @@ struct RecordingDetailView: View {
     // MARK: - Header
 
     private var detailHeader: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                if editingTitle {
-                    TextField("Title", text: $editedTitle)
-                        .textFieldStyle(.plain)
-                        .font(.title2.weight(.semibold))
-                        .onSubmit {
-                            state.renameRecording(entry, to: editedTitle)
-                            editingTitle = false
-                        }
-                        .onExitCommand { editingTitle = false }
-                } else {
-                    HStack(spacing: 6) {
-                        Group {
-                            if entry.title.isEmpty {
-                                Text("Untitled")
-                                    .italic()
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Text(entry.title)
-                            }
-                        }
-                        .font(.title2.weight(.semibold))
-
-                        Button {
-                            editedTitle = entry.title
-                            editingTitle = true
-                        } label: {
-                            Image(systemName: "pencil")
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Edit title")
-                    }
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 2) {
-                        editedTitle = entry.title
-                        editingTitle = true
-                    }
+        VStack(alignment: .leading, spacing: 10) {
+            // Meta line: date · participant count, with the … menu trailing.
+            HStack(spacing: 14) {
+                Text(entry.dateFormatted)
+                let count = state.distinctSpeakerNames(for: entry).count
+                if count > 0 {
+                    Text("\(count) participant\(count == 1 ? "" : "s")")
                 }
-
-                HStack(spacing: 8) {
-                    Text(entry.dateFormatted)
-                    if entry.duration > 0 {
-                        Text("·"); Text(entry.durationFormatted)
-                    }
-                    if state.micOnlyRecording {
-                        Text("Mic only")
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.orange.opacity(0.12), in: Capsule())
-                    }
+                if state.micOnlyRecording {
+                    Text("Mic only").foregroundStyle(.orange)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Spacer()
+                if let running = runningStatusText {
+                    Text(running)
+                }
+                headerMenu
             }
+            .font(.callout)
+            .foregroundStyle(.secondary)
 
-            Spacer()
-
-            if !state.skippedSpeakers.isEmpty {
-                Button {
-                    state.repromptSkippedSpeakers()
-                } label: {
-                    Label("\(state.skippedSpeakers.count) skipped — re-prompt", systemImage: "arrow.uturn.backward")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Re-prompt \(state.skippedSpeakers.count) skipped speaker(s)")
-            } else if state.pendingSpeakers.isEmpty {
-                let unresolvedCount = state.unresolvedSpeakerCount(for: entry)
-                if unresolvedCount > 0 {
-                    Button {
-                        state.reopenSpeakerTagging()
-                    } label: {
-                        Label("Tag \(unresolvedCount) speaker\(unresolvedCount == 1 ? "" : "s")", systemImage: "person.badge.clock")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help("Re-open speaker confirmation for this recording")
-                }
-            }
-
-            HStack(spacing: 6) {
-                statusPill("Transcribed", step: state.transcribeStep)
-                statusPill("Saved", step: state.saveStep)
-                statusPill("Summary", step: state.recapStep)
-            }
-
-            Button {
-                showParticipants.toggle()
-            } label: {
-                Image(systemName: "sidebar.right")
-                    .foregroundStyle(showParticipants ? Color.accentColor : Color.secondary)
-            }
-            .buttonStyle(.plain)
-            .help(showParticipants ? "Hide participants" : "Show participants")
-
-            Menu {
-                Picker("Language", selection: Binding(
-                    get: { entry.language ?? "" },
-                    set: { newValue in
-                        state.setLanguage(entry, to: newValue.isEmpty ? nil : newValue)
-                    }
-                )) {
-                    Text("Auto").tag("")
-                    Text("Danish").tag("da")
-                    Text("English").tag("en")
-                }
-                Divider()
-                Button("Reveal audio in Finder") {
-                    if let url = audioURL {
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
-                    }
-                }
-                .disabled(!entry.audioFileExists)
-                Button("Reveal markdown in Finder") {
-                    if let url = markdownURL {
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
-                    }
-                }
-                .disabled(markdownURL == nil)
-                Button("Reveal summary in Finder") {
-                    if let url = recapURL {
-                        NSWorkspace.shared.activateFileViewerSelecting([url])
-                    }
-                }
-                .disabled(recapURL == nil)
-                Divider()
-                Button("Delete audio file") { showingDeleteConfirm = true }
-                Divider()
-                Button("Remove entirely", role: .destructive) { showingRemoveConfirm = true }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .foregroundStyle(.secondary)
-            }
-            .menuStyle(.borderlessButton)
-            .frame(width: 24)
+            titleField
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.top, 18)
+        .padding(.bottom, 10)
     }
 
-    private func statusPill(_ label: String, step: PipelineStep) -> some View {
-        HStack(spacing: 4) {
-            Group {
-                switch step {
-                case .done:
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                case .running:
-                    ProgressView().controlSize(.mini)
-                case .failed:
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
-                case .pending:
-                    Image(systemName: "circle").foregroundStyle(.quaternary)
+    /// Large serif meeting title, editable on hover → click (Enter / click-away commits).
+    @ViewBuilder
+    private var titleField: some View {
+        let titleFont = Font.system(size: 34, weight: .medium, design: .serif)
+        if editingTitle {
+            TextField("Title", text: $editedTitle)
+                .textFieldStyle(.plain)
+                .font(titleFont)
+                .focused($titleFieldFocused)
+                .onSubmit { commitTitleEdit() }
+                .onChange(of: titleFieldFocused) { _, focused in
+                    if !focused { commitTitleEdit() }
                 }
+                .onExitCommand { editingTitle = false }
+        } else {
+            HStack(spacing: 10) {
+                Group {
+                    if entry.title.isEmpty {
+                        Text("Untitled").italic().foregroundStyle(.secondary)
+                    } else {
+                        Text(entry.title)
+                    }
+                }
+                .font(titleFont)
+
+                Image(systemName: "pencil")
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+                    .opacity(titleHovered ? 1 : 0)
             }
-            .symbolRenderingMode(.hierarchical)
-            Text(label)
-                .foregroundStyle(step == .done ? .primary : .secondary)
+            .contentShape(Rectangle())
+            .onHover { titleHovered = $0 }
+            .onTapGesture {
+                editedTitle = entry.title
+                editingTitle = true
+                titleFieldFocused = true
+            }
         }
-        .font(.caption2.weight(.medium))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(.ultraThinMaterial, in: Capsule())
+    }
+
+    private var headerMenu: some View {
+        Menu {
+            Button("Reveal audio in Finder") {
+                if let url = audioURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            }
+            .disabled(!entry.audioFileExists)
+            Button("Reveal summary in Finder") {
+                if let url = recapURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            }
+            .disabled(recapURL == nil)
+            Divider()
+            Button("Delete audio file") { showingDeleteConfirm = true }
+            Button("Remove entirely", role: .destructive) { showingRemoveConfirm = true }
+        } label: {
+            Image(systemName: "ellipsis")
+                .foregroundStyle(.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 20)
+    }
+
+    /// A short label for whatever pipeline step is currently running, or nil when idle.
+    private var runningStatusText: String? {
+        if state.transcribeStep == .running { return "Transcribing…" }
+        if state.saveStep == .running { return "Saving…" }
+        if state.recapStep == .running { return "Summarizing…" }
+        return nil
+    }
+
+    private func commitTitleEdit() {
+        guard editingTitle else { return }   // avoid double-commit on focus loss
+        editingTitle = false
+        let trimmed = editedTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != entry.title else { return }
+        state.renameRecording(entry, to: trimmed)
     }
 
     // MARK: - Tab Bar
 
     private var tabBar: some View {
-        HStack(spacing: 10) {
-            Picker("", selection: $tab) {
-                ForEach(DetailTab.allCases) { t in
-                    Text(t.title).tag(t)
-                }
+        HStack(alignment: .bottom, spacing: 0) {
+            ForEach(DetailTab.allCases) { t in
+                tabButton(t)
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-
-            if !state.statusMessage.isEmpty {
-                Text(state.statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
             Spacer()
-
-            actionButtons
+            tabActionIcons
+                .padding(.bottom, 8)
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 8)
+        .padding(.top, 4)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(height: 1)
+        }
+    }
+
+    private func tabButton(_ t: DetailTab) -> some View {
+        let selected = tab == t
+        return Button { tab = t } label: {
+            Text(t.title)
+                .font(.system(size: 15, weight: .medium))   // constant weight — no jump on select
+                .foregroundStyle(selected ? .primary : .secondary)
+                .padding(.vertical, 9)
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(selected ? Color.primary : Color.clear)
+                        .frame(height: 2)
+                }
+        }
+        .buttonStyle(.plain)
+        .padding(.trailing, 22)
+    }
+
+    /// Right-aligned icons whose set depends on the active tab.
+    @ViewBuilder
+    private var tabActionIcons: some View {
+        switch tab {
+        case .transcript:
+            if !state.transcript.isEmpty {
+                speakerFilterMenu
+                tabIcon(copiedForChat ? "checkmark" : "doc.on.doc",
+                        help: "Copy transcript",
+                        tint: copiedForChat ? .green : .secondary) { copyForChat() }
+            }
+        case .notes:
+            EmptyView()
+        case .recap:
+            if let text = recapText, !text.isEmpty {
+                if isEditingRecap {
+                    tabIcon("checkmark.circle", help: "Done editing") { commitRecapEdit() }
+                } else {
+                    tabIcon("arrow.clockwise", help: "Re-generate summary") {
+                        Task { await state.regenerateRecap() }
+                    }
+                    tabIcon(copiedRecap ? "checkmark" : "doc.on.doc",
+                            help: "Copy summary",
+                            tint: copiedRecap ? .green : .secondary) { copyRecapForChat() }
+                }
+            }
+        }
+    }
+
+    private func tabIcon(_ system: String, help: String, tint: Color = .secondary, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: system).font(.system(size: 15))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(tint)
+        .padding(.leading, 14)
+        .help(help)
+    }
+
+    private var speakerFilterMenu: some View {
+        let speakers = state.distinctSpeakerNames(for: entry)
+        return Menu {
+            Button {
+                speakerFilter = []
+            } label: {
+                Label("All speakers", systemImage: speakerFilter.isEmpty ? "checkmark" : "circle")
+            }
+            Divider()
+            ForEach(speakers, id: \.self) { s in
+                Button {
+                    if speakerFilter.contains(s) { speakerFilter.remove(s) } else { speakerFilter.insert(s) }
+                } label: {
+                    Label(s, systemImage: speakerFilter.contains(s) ? "checkmark" : "circle")
+                }
+            }
+        } label: {
+            Image(systemName: "line.3.horizontal.decrease")
+                .font(.system(size: 15))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .foregroundStyle(speakerFilter.isEmpty ? Color.secondary : Color.accentColor)
+        .help("Show only selected speakers")
     }
 
     @ViewBuilder
-    private var actionButtons: some View {
-        if !state.transcript.isEmpty {
-            Button {
-                copyForChat()
-            } label: {
-                Label(
-                    copiedForChat ? "Copied" : "Copy for chat",
-                    systemImage: copiedForChat ? "checkmark" : "bubble.left.and.bubble.right"
-                )
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .tint(copiedForChat ? .green : nil)
-            .help("Copy readable transcript for pasting into chat")
-        }
-
-        if tab == .recap, recapURL != nil {
-            Button {
-                copyRecapForChat()
-            } label: {
-                Label(
-                    copiedRecap ? "Copied" : "Copy summary",
-                    systemImage: copiedRecap ? "checkmark" : "doc.text"
-                )
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .tint(copiedRecap ? .green : nil)
-            .help("Copy summary markdown for pasting into chat")
-        }
-
-        if entry.status == "transcribed_raw" && entry.audioFileExists {
-            Button {
-                Task { await state.completeDiarization() }
-            } label: {
-                if state.transcribeStep == .running {
-                    HStack(spacing: 4) {
-                        ProgressView().controlSize(.mini)
-                        Text("Identifying speakers...")
-                    }
-                } else {
-                    Label("Complete Transcription", systemImage: "person.wave.2")
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .disabled(state.transcribeStep == .running)
-        }
-
-        Button {
-            Task { await state.runTranscribe() }
-        } label: {
-            if state.transcribeStep == .running && entry.status != "transcribed_raw" {
-                HStack(spacing: 4) {
-                    ProgressView().controlSize(.mini)
-                    Text("Transcribing...")
-                }
-            } else {
-                Label(
-                    (state.transcribeStep == .done || entry.status == "transcribed_raw") ? "Re-transcribe" : "Transcribe",
-                    systemImage: "waveform.badge.mic"
-                )
-            }
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .disabled(state.transcribeStep == .running || !entry.audioFileExists)
-
-        Button {
-            // Flush any pending debounced notes save so the markdown gets the freshest notes.
-            if isEditingTranscript { commitTranscriptEdit() }
-            Self.flushPendingNotesSave()
-            Task { await state.runSave() }
-        } label: {
-            if state.saveStep == .running {
-                HStack(spacing: 4) {
-                    ProgressView().controlSize(.mini)
-                    Text("Saving...")
-                }
-            } else if state.recapStep == .running {
-                HStack(spacing: 4) {
-                    ProgressView().controlSize(.mini)
-                    Text("Summary...")
-                }
-            } else if state.saveStep == .done {
-                Label("Saved", systemImage: "checkmark.circle.fill")
-            } else {
-                Label("Save", systemImage: "square.and.arrow.down")
-            }
-        }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.small)
-        .tint(state.saveStep == .done && state.recapStep != .failed ? .green : nil)
-        .disabled(state.transcript.isEmpty || state.saveStep == .running || state.recapStep == .running)
-
-        if state.saveStep == .done {
-            Button {
-                Task { await state.regenerateRecap() }
-            } label: {
-                Label(
-                    state.recapStep == .done ? "Re-summarize" : "Summarize",
-                    systemImage: "sparkles"
-                )
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(state.recapStep == .running)
-        }
+    /// Merged speaker blocks, optionally narrowed to the speaker filter selection.
+    private var displayedTranscriptSegments: [TranscriptSegment] {
+        let merged = parsedSegments
+        guard !speakerFilter.isEmpty else { return merged }
+        return merged.filter { speakerFilter.contains($0.speaker) }
     }
 
     // MARK: - Tab Content
@@ -627,6 +556,13 @@ struct RecordingDetailView: View {
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if isEditingRecap {
+            TextEditor(text: $editedRecapText)
+                .font(.body)
+                .monospaced(false)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let text = recapText, !text.isEmpty {
             ScrollView {
                 recapRendered(text)
@@ -634,6 +570,9 @@ struct RecordingDetailView: View {
                     .padding(.horizontal, 20)
                     .padding(.vertical, 16)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    // Click anywhere in the summary to edit it (no pencil button).
+                    .onTapGesture { editedRecapText = text; isEditingRecap = true }
             }
         } else {
             VStack(spacing: 10) {
@@ -644,26 +583,11 @@ struct RecordingDetailView: View {
                 Text("No summary yet")
                     .font(.callout)
                     .foregroundStyle(.tertiary)
-                if let hint = state.recapSkipHint {
-                    Text(hint)
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 380)
-                }
-                if state.saveStep == .done {
-                    Button {
-                        Task { await state.regenerateRecap() }
-                    } label: {
-                        Label("Generate summary", systemImage: "sparkles")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                } else {
-                    Text("Save the transcript first — summary is generated after saving.")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
+                Text(state.recapSkipHint ?? "The summary is written automatically after a call.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 380)
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -714,23 +638,39 @@ struct RecordingDetailView: View {
         return Text(line)
     }
 
-    private func loadRecapText() {
-        if let url = recapURL {
-            recapText = try? String(contentsOf: url, encoding: .utf8)
-            return
-        }
-        // Fallback: title may have changed after the file was written.
+    /// Resolve the recap markdown file on disk, tolerating a title change since
+    /// it was written (the filename embeds the title slug).
+    private func resolvedRecapURL() -> URL? {
+        if let url = recapURL { return url }
         let dir = URL(fileURLWithPath: Preferences.shared.meetingsPath)
         let prefix = entry.id + "-"
-        if let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil),
-           let match = files.first(where: {
-               $0.pathExtension == "md"
-                   && $0.lastPathComponent.hasPrefix(prefix)
-                   && $0.lastPathComponent.hasSuffix("-recap.md")
-           }) {
-            recapText = try? String(contentsOf: match, encoding: .utf8)
+        return (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil))?
+            .first {
+                $0.pathExtension == "md"
+                    && $0.lastPathComponent.hasPrefix(prefix)
+                    && $0.lastPathComponent.hasSuffix("-recap.md")
+            }
+    }
+
+    private func loadRecapText() {
+        if let url = resolvedRecapURL() {
+            recapText = try? String(contentsOf: url, encoding: .utf8)
         } else {
             recapText = nil
+        }
+    }
+
+    /// Persist an in-app edit of the summary back to its markdown file.
+    private func commitRecapEdit() {
+        isEditingRecap = false
+        let trimmed = editedRecapText
+        guard trimmed != (recapText ?? "") else { return }
+        guard let url = resolvedRecapURL() else { return }
+        do {
+            try trimmed.write(to: url, atomically: true, encoding: .utf8)
+            recapText = trimmed
+        } catch {
+            NSLog("[RecordingDetailView] failed to save summary edit: \(error)")
         }
     }
 
@@ -738,7 +678,6 @@ struct RecordingDetailView: View {
 
     private struct Participant: Identifiable {
         let name: String
-        let personID: UUID?
         let talkTime: Double
         let segmentIndices: [Int]
         var id: String { name }
@@ -747,21 +686,20 @@ struct RecordingDetailView: View {
     private var participants: [Participant] {
         if let segments = state.loadPersistedSegments(for: entry), !segments.isEmpty {
             var order: [String] = []
-            var byName: [String: (UUID?, Double, [Int])] = [:]
+            var byName: [String: (Double, [Int])] = [:]
             for seg in segments {
                 if byName[seg.speaker] == nil {
                     order.append(seg.speaker)
-                    byName[seg.speaker] = (seg.personID, 0, [])
+                    byName[seg.speaker] = (0, [])
                 }
                 var acc = byName[seg.speaker]!
-                acc.1 += max(0, seg.endTime - seg.startTime)
-                acc.2.append(seg.index)
-                if acc.0 == nil { acc.0 = seg.personID }
+                acc.0 += max(0, seg.endTime - seg.startTime)
+                acc.1.append(seg.index)
                 byName[seg.speaker] = acc
             }
             return order.map { name in
                 let acc = byName[name]!
-                return Participant(name: name, personID: acc.0, talkTime: acc.1, segmentIndices: acc.2)
+                return Participant(name: name, talkTime: acc.0, segmentIndices: acc.1)
             }
         }
         // Fallback: names parsed out of the transcript text (no timing data).
@@ -770,7 +708,7 @@ struct RecordingDetailView: View {
         for seg in parsedSegments where !seg.speaker.isEmpty {
             if !seen.contains(seg.speaker) {
                 seen.insert(seg.speaker)
-                result.append(Participant(name: seg.speaker, personID: nil, talkTime: 0, segmentIndices: []))
+                result.append(Participant(name: seg.speaker, talkTime: 0, segmentIndices: []))
             }
         }
         return result
@@ -801,24 +739,16 @@ struct RecordingDetailView: View {
                 }
             }
         }
-        .background(.background.secondary)
+        .scrollContentBackground(.hidden)
     }
 
     private func participantRow(_ p: Participant) -> some View {
         HStack(spacing: 8) {
             AvatarCircle(name: p.name, size: 26)
             VStack(alignment: .leading, spacing: 1) {
-                HStack(spacing: 4) {
-                    Text(p.name)
-                        .font(.callout)
-                        .lineLimit(1)
-                    if p.personID != nil {
-                        Image(systemName: "person.crop.circle.badge.checkmark")
-                            .font(.caption2)
-                            .foregroundStyle(.green)
-                            .help("Linked to a saved person")
-                    }
-                }
+                Text(p.name)
+                    .font(.callout)
+                    .lineLimit(1)
                 if p.talkTime > 0 {
                     Text(compactTalkTime(p.talkTime))
                         .font(.caption2)
@@ -927,24 +857,13 @@ struct RecordingDetailView: View {
                         .scrollContentBackground(.hidden)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
-                } else if let segments = state.loadPersistedSegments(for: entry), !segments.isEmpty {
-                    if !selectedSegmentIndices.isEmpty {
-                        reassignToolbar(selected: selectedSegmentIndices.count)
-                        Divider()
-                    }
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 2) {
-                            ForEach(segments) { seg in
-                                reassignableRow(seg)
-                            }
-                        }
-                        .padding(.vertical, 12)
-                        .padding(.bottom, 8)
-                    }
                 } else {
+                    // One block per speaker turn: consecutive same-speaker segments
+                    // are merged (pauses become blank lines). Speaker renaming lives
+                    // in the participants panel, so per-segment rows aren't needed here.
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 2) {
-                            ForEach(Array(parsedSegments.enumerated()), id: \.offset) { _, seg in
+                            ForEach(Array(displayedTranscriptSegments.enumerated()), id: \.offset) { _, seg in
                                 transcriptRow(seg)
                             }
                         }
@@ -1011,6 +930,29 @@ struct RecordingDetailView: View {
     }
 
     private var parsedSegments: [TranscriptSegment] {
+        mergeConsecutiveSpeakers(rawParsedSegments)
+    }
+
+    /// Fold consecutive segments from the same speaker into one block. Pauses
+    /// (the gaps that kept them as separate blocks) become blank lines within
+    /// the block, so one speaker reads as one turn, not a stutter of avatars.
+    private func mergeConsecutiveSpeakers(_ segs: [TranscriptSegment]) -> [TranscriptSegment] {
+        var out: [TranscriptSegment] = []
+        for seg in segs {
+            if let last = out.last, last.speaker == seg.speaker, !seg.speaker.isEmpty {
+                out[out.count - 1] = TranscriptSegment(
+                    timestamp: last.timestamp,          // keep the block's start time
+                    speaker: last.speaker,
+                    text: last.text + "\n\n" + seg.text // blank line marks the pause
+                )
+            } else {
+                out.append(seg)
+            }
+        }
+        return out
+    }
+
+    private var rawParsedSegments: [TranscriptSegment] {
         // Format: [Speaker Name] [MM:SS]\nText\n\n[Speaker Name] [MM:SS]\nText
         let blocks = state.transcript.components(separatedBy: "\n\n")
 
@@ -1194,84 +1136,72 @@ struct RecordingDetailView: View {
 
     @ViewBuilder
     private func reassignMenuContent(for indices: Set<Int>) -> some View {
-        let people = state.peopleStore.people
         let speakers = state.distinctSpeakerNames(for: entry)
-
-        if !people.isEmpty {
-            Section("Existing person") {
-                ForEach(people) { person in
-                    Button(person.name) {
-                        applyReassignment(.existingPerson(person), indices: indices)
-                    }
-                }
-            }
-        }
 
         if !speakers.isEmpty {
             Section("Existing speaker label") {
                 ForEach(speakers, id: \.self) { name in
                     Button(name) {
-                        applyReassignment(.existingSpeakerName(name), indices: indices)
+                        applyReassignment(name, indices: indices)
                     }
                 }
             }
+            Divider()
         }
 
-        Divider()
-
         Button {
-            newPersonName = ""
+            renameSpeakerName = ""
             // Stash the selection so the sheet's Save commits to the right
             // segments even after the user clicks elsewhere.
             selectedSegmentIndices = indices
-            showNewPersonSheet = true
+            showRenameSheet = true
         } label: {
-            Label("New person…", systemImage: "person.badge.plus")
+            Label("New name…", systemImage: "person.badge.plus")
         }
     }
 
-    private func applyReassignment(_ target: AppState.SegmentReassignTarget, indices: Set<Int>) {
+    private func applyReassignment(_ name: String, indices: Set<Int>) {
         Task {
-            await state.reassignSegments(indices, to: target)
+            await state.reassignSegments(indices, toName: name)
             selectedSegmentIndices = []
         }
     }
 
-    private var newPersonSheet: some View {
+    private var renameSpeakerSheet: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Create new person")
+            Text("Rename speaker")
                 .font(.headline)
-            Text("A voice sample from the selected segment\(selectedSegmentIndices.count == 1 ? "" : "s") will be added to their profile.")
+            Text("Renames the selected segment\(selectedSegmentIndices.count == 1 ? "" : "s") — just a text label, no voice profile involved.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
-            TextField("Name", text: $newPersonName)
+            TextField("Name", text: $renameSpeakerName)
                 .textFieldStyle(.roundedBorder)
-                .onSubmit { submitNewPerson() }
+                .onSubmit { submitRename() }
 
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) {
-                    showNewPersonSheet = false
-                    newPersonName = ""
+                    showRenameSheet = false
+                    renameSpeakerName = ""
                 }
-                Button("Create") { submitNewPerson() }
+                Button("Save") { submitRename() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(newPersonName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(renameSpeakerName.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
         .padding(20)
         .frame(width: 360)
     }
 
-    private func submitNewPerson() {
-        let name = newPersonName.trimmingCharacters(in: .whitespaces)
+    private func submitRename() {
+        let name = renameSpeakerName.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
         let indices = selectedSegmentIndices
-        showNewPersonSheet = false
-        newPersonName = ""
+        showRenameSheet = false
+        renameSpeakerName = ""
         Task {
-            await state.reassignSegments(indices, to: .newPerson(name: name))
+            await state.reassignSegments(indices, toName: name)
             selectedSegmentIndices = []
         }
     }

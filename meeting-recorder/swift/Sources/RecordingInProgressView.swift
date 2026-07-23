@@ -12,6 +12,8 @@ struct RecordingInProgressView: View {
     private static var pendingNotesSave: DispatchWorkItem?
     private static var pendingNotesCommit: (() -> Void)?
 
+    @State private var showingDiscardConfirm = false
+
     var body: some View {
         VStack(spacing: 16) {
             Spacer(minLength: 12)
@@ -92,16 +94,60 @@ struct RecordingInProgressView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
             }
 
-            Button {
-                flushNotes()
-                state.stopRecording()
-            } label: {
-                Label("Stop Recording", systemImage: "stop.circle.fill")
+            HStack(spacing: 12) {
+                Button {
+                    flushNotes()
+                    state.stopRecording()
+                } label: {
+                    Label("Stop Recording", systemImage: "stop.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .controlSize(.large)
+                .keyboardShortcut(".", modifiers: .command)
+
+                Button {
+                    showingDiscardConfirm = true
+                } label: {
+                    Label("Stop & Discard", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
-            .controlSize(.large)
-            .keyboardShortcut(".", modifiers: .command)
+            .confirmationDialog(
+                "Discard this recording?",
+                isPresented: $showingDiscardConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Stop & Discard", role: .destructive) {
+                    flushNotes()
+                    state.cancelRecording()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("The recording will be deleted immediately. No transcript or summary will be created.")
+            }
+
+            if let micWarning = state.recorder.micCaptureWarning {
+                VStack(spacing: 6) {
+                    Label("Microphone not recording", systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.red)
+                    Text(micWarning)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button("Open Microphone Settings") {
+                        state.openMicrophoneSettings()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                .padding(12)
+                .frame(maxWidth: 360)
+                .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Color.red.opacity(0.3), lineWidth: 0.5))
+            }
 
             if state.recorder.systemAudioWarning != nil && Preferences.shared.captureSystemAudio {
                 VStack(spacing: 6) {

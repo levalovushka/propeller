@@ -3,6 +3,8 @@ import SwiftUI
 struct MenuBarPanelView: View {
     @ObservedObject var state: AppState
 
+    @State private var showingDiscardConfirm = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Record / Status section
@@ -18,32 +20,12 @@ struct MenuBarPanelView: View {
 
             Divider()
 
-            // Quick info row
-            infoBar
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-
-            Divider()
-
             // Actions
             VStack(spacing: 2) {
                 Button {
                     Self.showMainWindow()
                 } label: {
                     Label("Open Propeller", systemImage: "macwindow")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-
-                Button {
-                    Self.showMainWindow()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        state.showPeople = true
-                    }
-                } label: {
-                    Label("People & Voices", systemImage: "person.wave.2")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.plain)
@@ -63,16 +45,6 @@ struct MenuBarPanelView: View {
             .padding(.vertical, 4)
 
             Divider()
-
-            // Hotkey hint + Quit
-            HStack {
-                Text("Ctrl+Opt+R to record from anywhere")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 6)
 
             Button("Quit Propeller") {
                 if state.isRecording {
@@ -111,15 +83,38 @@ struct MenuBarPanelView: View {
                         .foregroundStyle(.red)
                 }
 
-                Button {
-                    state.stopRecording()
-                } label: {
-                    Label("Stop Recording", systemImage: "stop.circle.fill")
-                        .frame(maxWidth: .infinity)
+                HStack(spacing: 8) {
+                    Button {
+                        state.stopRecording()
+                    } label: {
+                        Label("Stop", systemImage: "stop.circle.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .controlSize(.regular)
+
+                    Button {
+                        showingDiscardConfirm = true
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .help("Stop & discard this recording")
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .controlSize(.regular)
+                .confirmationDialog(
+                    "Discard this recording?",
+                    isPresented: $showingDiscardConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("Stop & Discard", role: .destructive) {
+                        state.cancelRecording()
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("The recording will be deleted immediately. No transcript or summary will be created.")
+                }
             }
         } else if state.zoomMeetingDetected && !state.isRecording {
             HStack(spacing: 6) {
@@ -140,19 +135,16 @@ struct MenuBarPanelView: View {
                 .controlSize(.small)
             }
         } else if state.transcribeStep == .running || state.saveStep == .running {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Processing...").font(.headline)
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Processing…").font(.headline)
+                    Text(state.statusMessage.isEmpty ? "Working…" : state.statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
-                Text(state.statusMessage.isEmpty ? "Working..." : state.statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                HStack(spacing: 12) {
-                    stepIndicator("Transcribe", step: state.transcribeStep)
-                    stepIndicator("Save", step: state.saveStep)
-                }
+                Spacer()
             }
         } else {
             HStack {
@@ -248,50 +240,6 @@ struct MenuBarPanelView: View {
         }
     }
 
-    // MARK: - Info Bar
-
-    private var infoBar: some View {
-        HStack(spacing: 16) {
-            HStack(spacing: 4) {
-                Image(systemName: "person.wave.2")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Text("\(state.peopleStore.people.count)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                Text(state.peopleStore.people.count == 1 ? "voice" : "voices")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-
-            if Preferences.shared.captureSystemAudio {
-                HStack(spacing: 4) {
-                    Image(systemName: "speaker.wave.2")
-                        .font(.caption2)
-                        .foregroundStyle(.green)
-                    Text("System audio on")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            } else {
-                HStack(spacing: 4) {
-                    Image(systemName: "speaker.slash")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                    Text("Mic only")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-
-            Spacer()
-
-            Text("\(state.recordingStore.recordings.count) recordings")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-        }
-    }
-
     // MARK: - Window Management
 
     static func showMainWindow() {
@@ -304,22 +252,4 @@ struct MenuBarPanelView: View {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    // MARK: - Helpers
-
-    private func stepIndicator(_ label: String, step: PipelineStep) -> some View {
-        HStack(spacing: 4) {
-            ZStack {
-                Circle().fill(step.color.opacity(0.2)).frame(width: 20, height: 20)
-                switch step {
-                case .pending: Circle().fill(.quaternary).frame(width: 6, height: 6)
-                case .running: ProgressView().controlSize(.mini)
-                case .done: Image(systemName: "checkmark").font(.caption2).foregroundStyle(.green)
-                case .failed: Image(systemName: "xmark").font(.caption2).foregroundStyle(.red)
-                }
-            }
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
-    }
 }

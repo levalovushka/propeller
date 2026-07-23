@@ -5,7 +5,6 @@ import SpeakerMatchingCore
 
 struct MeetingTranscriptionResult {
     var transcript: String
-    var detectedSpeakers: [DetectedSpeaker]
     /// Per-segment view of the transcript with resolved speaker names.
     /// Persisted on RecordingEntry to power per-segment reassignment.
     var mergedSegments: [PersistedSegment]
@@ -22,8 +21,7 @@ class TranscriptionService {
     private(set) var diarizer: OfflineDiarizerManager?
     private var gigasttReady = false
 
-    /// Ensure the diarizer is loaded (without touching ASR). Used by
-    /// PeopleStore's re-embed flow when we only need embeddings.
+    /// Ensure the diarizer is loaded (without touching ASR).
     func prepareDiarizer() async throws -> OfflineDiarizerManager {
         if let existing = diarizer { return existing }
         let diaConfig = OfflineDiarizerConfig()
@@ -67,10 +65,9 @@ class TranscriptionService {
 
     // MARK: - Transcribe
 
-    /// Full pipeline: ASR → diarization → speaker matching → formatted transcript.
+    /// Full pipeline: ASR → diarization → formatted transcript.
     func transcribe(
         audioURL: URL,
-        peopleStore: PeopleStore,
         languageOverride: String? = nil,
         progressCallback: ((String) -> Void)? = nil,
         downloadProgress: ((Double) -> Void)? = nil
@@ -81,10 +78,9 @@ class TranscriptionService {
             progressCallback: progressCallback,
             downloadProgress: downloadProgress
         )
-        return try await diarizeAndMatch(
+        return try await diarize(
             audioURL: audioURL,
             asrSegments: raw.segments,
-            peopleStore: peopleStore,
             progressCallback: progressCallback
         )
     }
@@ -130,12 +126,17 @@ class TranscriptionService {
 
     // MARK: - Phase 2: Diarization + Speaker Matching
 
-    /// Run diarization, merge with ASR segments, match speakers, format transcript.
+    /// Run diarization, merge with ASR segments, and label speakers.
     /// Can be called independently to resume after a crash between phases.
-    func diarizeAndMatch(
+    ///
+    /// No voice-matching library: every diarized cluster is "Speaker N" by
+    /// default. The one exception is the recording owner — the cluster most
+    /// dominantly captured on the microphone stem (vs. the system stem) is
+    /// labeled with the user's name from onboarding, since that's a reliable,
+    /// zero-configuration signal (see plan-v2 3.3).
+    func diarize(
         audioURL: URL,
         asrSegments: [ASRSegment],
-        peopleStore: PeopleStore,
         progressCallback: ((String) -> Void)? = nil
     ) async throws -> MeetingTranscriptionResult {
         if diarizer == nil {
@@ -145,7 +146,6 @@ class TranscriptionService {
 
         progressCallback?("Identifying speakers...")
         var diarizedSegments: [DiarizedSegment] = []
-        var speakerDB: [String: [Float]] = [:]
 
         if let diarizer = diarizer {
             do {
@@ -159,134 +159,21 @@ class TranscriptionService {
                         qualityScore: seg.qualityScore
                     )
                 }
-                speakerDB = diaResult.speakerDatabase ?? [:]
             } catch {
                 print("Diarization failed: \(error). Continuing without speaker labels.")
             }
         }
 
-        progressCallback?("Matching speakers...")
         let mergedSegments = mergeTranscriptionWithDiarization(
             asrSegments: asrSegments,
             diarization: diarizedSegments
         )
 
-        var speakerNameMap: [String: String] = [:]
-        var detectedSpeakers: [DetectedSpeaker] = []
-
-        struct SpeakerCandidate {
-            let label: String
-            let embedding: [Float]
-            let sampleStart: Double
-            let sampleEnd: Double
-            let qualityScore: Float?
-            let captureSource: AudioCaptureSource
-        }
-
-        let uniqueSpeakers = Set(mergedSegments.map(\.speakerLabel))
-        var candidates: [SpeakerCandidate] = []
-        for label in uniqueSpeakers {
-            let spkId = label.replacingOccurrences(of: "Speaker ", with: "")
-            let speakerSegs = diarizedSegments.filter { $0.speakerId == spkId }
-
-            let embedding: [Float]
-            if let db = speakerDB[spkId], !db.isEmpty {
-                embedding = db
-            } else if let segEmb = speakerSegs.first(where: { !$0.embedding.isEmpty })?.embedding {
-                embedding = segEmb
-            } else {
-                speakerNameMap[label] = label
-                continue
-            }
-
-            let window = Self.pickSampleWindow(for: spkId, allSegments: diarizedSegments)
-            let quality = speakerSegs.map(\.qualityScore).max()
-            let sourceReport = AudioSourceEnergyClassifier.analyze(
-                finalAudioURL: audioURL,
-                windows: speakerSegs.map { Double($0.startTime)...Double($0.endTime) }
-            )
-            candidates.append(SpeakerCandidate(
-                label: label,
-                embedding: embedding,
-                sampleStart: window.start,
-                sampleEnd: window.end,
-                qualityScore: quality,
-                captureSource: sourceReport.source
-            ))
-        }
-
-        struct MatchTriple {
-            let speakerLabel: String
-            let person: Person
-            let score: Float
-        }
-
-        let autoThreshold: Float = Preferences.shared.autoMatchThreshold
-        var allTriples: [MatchTriple] = []
-        let allPeople = await MainActor.run { peopleStore.people }
-        for candidate in candidates {
-            for person in allPeople {
-                let score = await MainActor.run {
-                    peopleStore.bestSimilarity(
-                        embedding: candidate.embedding,
-                        source: candidate.captureSource,
-                        to: person
-                    )
-                }
-                if score >= autoThreshold {
-                    allTriples.append(MatchTriple(speakerLabel: candidate.label, person: person, score: score))
-                }
-            }
-        }
-
-        allTriples.sort { $0.score > $1.score }
-        var assignedPersonIDs = Set<UUID>()
-        var assignedSpeakers = Set<String>()
-        var speakerToMatch: [String: (person: Person, score: Float)] = [:]
-
-        for triple in allTriples {
-            if assignedPersonIDs.contains(triple.person.id) { continue }
-            if assignedSpeakers.contains(triple.speakerLabel) { continue }
-            speakerToMatch[triple.speakerLabel] = (triple.person, triple.score)
-            assignedPersonIDs.insert(triple.person.id)
-            assignedSpeakers.insert(triple.speakerLabel)
-        }
-
-        for candidate in candidates {
-            let matchResult = await MainActor.run {
-                peopleStore.matchWithRecommendations(
-                    embedding: candidate.embedding,
-                    source: candidate.captureSource,
-                    autoThreshold: autoThreshold,
-                    recommendThreshold: Preferences.shared.recommendThreshold
-                )
-            }
-
-            let autoMatch = speakerToMatch[candidate.label]
-            let name = autoMatch?.person.name ?? candidate.label
-            speakerNameMap[candidate.label] = name
-
-            let filteredRecs = matchResult.recommendations.filter { rec in
-                if rec.person.id == autoMatch?.person.id { return false }
-                if assignedPersonIDs.contains(rec.person.id) && autoMatch?.person.id != rec.person.id {
-                    return false
-                }
-                return true
-            }
-
-            detectedSpeakers.append(DetectedSpeaker(
-                label: candidate.label,
-                embedding: candidate.embedding,
-                matchedPerson: autoMatch?.person,
-                matchScore: autoMatch?.score,
-                assignedName: name,
-                sampleStartTime: candidate.sampleStart,
-                sampleEndTime: candidate.sampleEnd,
-                sampleQuality: candidate.qualityScore,
-                captureSource: candidate.captureSource,
-                recommendations: filteredRecs
-            ))
-        }
+        let speakerNameMap = Self.resolveOwnerName(
+            mergedSegments: mergedSegments,
+            diarizedSegments: diarizedSegments,
+            audioURL: audioURL
+        )
 
         let unmerged = mergedSegments.filter { !$0.text.isEmpty }
         let persisted: [PersistedSegment] = unmerged.enumerated().map { idx, seg in
@@ -295,8 +182,7 @@ class TranscriptionService {
                 startTime: Double(seg.startTime),
                 endTime: Double(seg.endTime),
                 text: seg.text,
-                speaker: speakerNameMap[seg.speakerLabel] ?? seg.speakerLabel,
-                personID: nil
+                speaker: speakerNameMap[seg.speakerLabel] ?? seg.speakerLabel
             )
         }
 
@@ -304,9 +190,45 @@ class TranscriptionService {
 
         return MeetingTranscriptionResult(
             transcript: transcript,
-            detectedSpeakers: detectedSpeakers,
             mergedSegments: persisted
         )
+    }
+
+    /// Among the diarized speaker clusters, find the one most dominantly
+    /// captured via the microphone stem (vs. the system stem) — that's the
+    /// recording owner. If several clusters classify as mic-dominant (e.g. a
+    /// mic-only recording with no system stem to compare against), the one
+    /// with the most total talk time wins. Returns a `["Speaker N": name]`
+    /// map with at most one entry; empty if the user's name isn't set or no
+    /// cluster qualifies.
+    private static func resolveOwnerName(
+        mergedSegments: [MergedSegment],
+        diarizedSegments: [DiarizedSegment],
+        audioURL: URL
+    ) -> [String: String] {
+        let ownerName = Preferences.shared.userName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !ownerName.isEmpty else { return [:] }
+
+        var best: (label: String, talkTime: Float)?
+        for label in Set(mergedSegments.map(\.speakerLabel)) {
+            let spkId = label.replacingOccurrences(of: "Speaker ", with: "")
+            let speakerSegs = diarizedSegments.filter { $0.speakerId == spkId }
+            guard !speakerSegs.isEmpty else { continue }
+
+            let report = AudioSourceEnergyClassifier.analyze(
+                finalAudioURL: audioURL,
+                windows: speakerSegs.map { Double($0.startTime)...Double($0.endTime) }
+            )
+            guard report.source == .microphone else { continue }
+
+            let talkTime = speakerSegs.reduce(Float(0)) { $0 + ($1.endTime - $1.startTime) }
+            if talkTime > (best?.talkTime ?? -1) {
+                best = (label, talkTime)
+            }
+        }
+
+        guard let best else { return [:] }
+        return [best.label: ownerName]
     }
 
     /// Re-render the transcript text from a `[PersistedSegment]` snapshot.
@@ -337,8 +259,7 @@ class TranscriptionService {
                     startTime: last.startTime,
                     endTime: seg.endTime,
                     text: last.text + " " + trimmed,
-                    speaker: last.speaker,
-                    personID: last.personID
+                    speaker: last.speaker
                 ))
             } else {
                 out.append(PersistedSegment(
@@ -346,8 +267,7 @@ class TranscriptionService {
                     startTime: seg.startTime,
                     endTime: seg.endTime,
                     text: trimmed,
-                    speaker: seg.speaker,
-                    personID: seg.personID
+                    speaker: seg.speaker
                 ))
             }
         }
@@ -369,49 +289,6 @@ class TranscriptionService {
         let endTime: Float
         let embedding: [Float]
         let qualityScore: Float
-    }
-
-    private static func pickSampleWindow(
-        for speakerId: String,
-        allSegments: [DiarizedSegment]
-    ) -> (start: Double, end: Double) {
-        let own = allSegments.filter { $0.speakerId == speakerId }
-        let others = allSegments.filter { $0.speakerId != speakerId }
-
-        func cleanDuration(_ seg: DiarizedSegment) -> Float {
-            let segDur = seg.endTime - seg.startTime
-            guard segDur > 0 else { return 0 }
-            var overlapped: Float = 0
-            for o in others {
-                let overlapStart = max(seg.startTime, o.startTime)
-                let overlapEnd = min(seg.endTime, o.endTime)
-                if overlapEnd > overlapStart {
-                    overlapped += (overlapEnd - overlapStart)
-                }
-            }
-            return max(0, segDur - overlapped)
-        }
-
-        let ranked = own
-            .map { ($0, cleanDuration($0)) }
-            .sorted { $0.1 > $1.1 }
-
-        let minTarget: Float = 3
-        let maxTarget: Float = 15
-
-        for (seg, clean) in ranked where clean >= minTarget {
-            let headroom: Float = (seg.endTime - seg.startTime) > (minTarget + 1) ? 0.5 : 0
-            let start = seg.startTime + headroom
-            let end = min(start + maxTarget, seg.endTime)
-            return (Double(start), Double(end))
-        }
-
-        if let first = own.first {
-            let end = min(first.startTime + 10, first.endTime)
-            return (Double(first.startTime), Double(end))
-        }
-
-        return (0, 10)
     }
 
     private func mergeTranscriptionWithDiarization(

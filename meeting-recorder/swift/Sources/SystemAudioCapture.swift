@@ -10,6 +10,10 @@ import ScreenCaptureKit
 /// recording is done by `AudioRecorder` on stop.
 @available(macOS 14.0, *)
 final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
+    /// Meeting apps we scope capture to by default, so we tap only the call's
+    /// audio instead of the whole system mix (music, other calls, notifications).
+    static let meetingAppBundleIDs = ["us.zoom.xos"]
+
     private var stream: SCStream?
     private var audioFile: AVAudioFile?
     private let sampleQueue = DispatchQueue(label: "com.simplyai.meeting-recorder.sck-audio")
@@ -22,6 +26,12 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var audibleBufferCount = 0
     private var maxRMSLevel: Float = 0
     private var maxPeakLevel: Float = 0
+
+    /// True while the active stream is scoped to specific meeting apps rather
+    /// than the whole display.
+    private(set) var isAppScoped = false
+    /// Guards against a fallback restart loop — only try display-wide once.
+    private var didFallBackToDisplayWide = false
 
     /// Called on the sample queue with the current RMS level (0.0–1.0) each time a buffer arrives.
     var levelCallback: ((Float) -> Void)?
@@ -64,8 +74,11 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
-    /// Start capturing system audio into `url`. Throws if permissions are missing or setup fails.
-    func start(outputURL url: URL) async throws {
+    /// Start capturing system audio into `url`, scoped to `targetBundleIdentifiers`
+    /// when any of those apps is running (default: known meeting apps). Falls
+    /// back to whole-display capture if none of them are running, or — via the
+    /// watchdog — if the app-scoped stream produces no audio at all.
+    func start(outputURL url: URL, targetBundleIdentifiers: [String] = SystemAudioCapture.meetingAppBundleIDs) async throws {
         guard !isRunning else { throw CaptureError.alreadyRunning }
 
         // Pre-flight: check Screen Recording permission (TCC).
@@ -78,6 +91,14 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             debugLog("[SystemAudioCapture] Screen Recording permission confirmed")
         }
 
+        outputURL = url
+        try await startStream(targetBundleIdentifiers: targetBundleIdentifiers)
+    }
+
+    /// Builds the content filter (app-scoped if possible), starts the SCStream,
+    /// and arms the watchdog. Shared by the initial start and the display-wide
+    /// fallback restart, both of which use the same `outputURL`.
+    private func startStream(targetBundleIdentifiers: [String]) async throws {
         debugLog("[SystemAudioCapture] Starting — requesting shareable content...")
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         debugLog("[SystemAudioCapture] Got content: \(content.displays.count) displays, \(content.applications.count) apps")
@@ -85,7 +106,18 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             throw CaptureError.noDisplays
         }
         debugLog("[SystemAudioCapture] Selected display \(display.displayID) for capture filter")
-        let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+
+        let targetApps = content.applications.filter { targetBundleIdentifiers.contains($0.bundleIdentifier) }
+        let filter: SCContentFilter
+        if !targetApps.isEmpty {
+            filter = SCContentFilter(display: display, including: targetApps, exceptingWindows: [])
+            isAppScoped = true
+            debugLog("[SystemAudioCapture] App-scoped filter: \(targetApps.map(\.bundleIdentifier))")
+        } else {
+            filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
+            isAppScoped = false
+            debugLog("[SystemAudioCapture] No target meeting app running — using display-wide filter")
+        }
 
         let config = SCStreamConfiguration()
         config.capturesAudio = true
@@ -102,19 +134,30 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: sampleQueue)
         self.stream = stream
-        self.outputURL = url
 
         debugLog("[SystemAudioCapture] Starting capture stream...")
         try await stream.startCapture()
         debugLog("[SystemAudioCapture] Capture started successfully")
         isRunning = true
 
-        // Watchdog: if no audio samples arrive within 4 seconds, the stream is
-        // silently failing (common with stale TCC grants from ad-hoc re-signing).
+        armWatchdog()
+    }
+
+    /// If no audio samples arrive within 4 seconds, the stream is silently
+    /// failing (common with stale TCC grants, or an app-scoped filter whose
+    /// app isn't actually emitting audio yet). App-scoped failures get one
+    /// automatic retry against the whole display before surfacing a warning.
+    private func armWatchdog() {
         sampleWatchdog = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             guard let self, self.isRunning else { return }
             if self.callbackCount == 0 {
+                if self.isAppScoped, !self.didFallBackToDisplayWide {
+                    self.didFallBackToDisplayWide = true
+                    debugLog("[SystemAudioCapture] App-scoped capture produced no audio after 4s — falling back to display-wide")
+                    await self.fallBackToDisplayWide()
+                    return
+                }
                 let message = "System audio stream started but no audio buffers arrived after 4 seconds"
                 debugLog("[SystemAudioCapture] WARNING: \(message)")
                 self.onCaptureIssueDetected?(message)
@@ -122,7 +165,41 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
                 let message = "System audio buffers arrived but PCM conversion is failing"
                 debugLog("[SystemAudioCapture] WARNING: \(message)")
                 self.onCaptureIssueDetected?(message)
+            } else if self.audibleBufferCount == 0 {
+                // Buffers are arriving but every one is silent — an app-scoped
+                // filter can do this if the target app isn't actually the
+                // source of the audio. Same fallback as the zero-callback case.
+                if self.isAppScoped, !self.didFallBackToDisplayWide {
+                    self.didFallBackToDisplayWide = true
+                    debugLog("[SystemAudioCapture] App-scoped capture is silent after 4s — falling back to display-wide")
+                    await self.fallBackToDisplayWide()
+                    return
+                }
+                let message = "System audio stream captured only silence in the first 4 seconds — the remote side may not be recorded"
+                debugLog("[SystemAudioCapture] WARNING: \(message)")
+                self.onCaptureIssueDetected?(message)
             }
+        }
+    }
+
+    /// Restart the stream with a whole-display filter after an app-scoped
+    /// stream produced zero audio. Best-effort: if this also fails, surface
+    /// the same "no audio" warning callers would have gotten anyway.
+    private func fallBackToDisplayWide() async {
+        if let stream {
+            do { try await stream.stopCapture() } catch {
+                debugLog("[SystemAudioCapture] fallback stopCapture error: \(error)")
+            }
+        }
+        stream = nil
+        isRunning = false
+
+        do {
+            try await startStream(targetBundleIdentifiers: [])
+        } catch {
+            let message = "System audio fallback to display-wide capture failed: \(error.localizedDescription)"
+            debugLog("[SystemAudioCapture] \(message)")
+            onCaptureIssueDetected?(message)
         }
     }
 

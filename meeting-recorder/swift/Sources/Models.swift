@@ -1,5 +1,4 @@
 import Foundation
-import SpeakerMatchingCore
 import SwiftUI
 
 // MARK: - Pipeline Step
@@ -34,11 +33,6 @@ struct RecordingEntry: Identifiable, Codable {
     /// completes. Allows diarization to resume after a crash without re-running ASR.
     /// Backward-compatible: old recordings without this field decode as nil.
     var rawSegmentsJSON: String?
-    /// JSON-serialized [PersistedSpeaker] for any detected speakers the user has not
-    /// yet confirmed (still pending or skipped). Lets the user re-open the speaker
-    /// confirmation UI from the detail view after navigating away.
-    /// Backward-compatible: old recordings without this field decode as nil.
-    var unresolvedSpeakersJSON: String?
     /// JSON-serialized [PersistedSegment] saved after diarization completes.
     /// Powers per-segment speaker reassignment in the detail view (the
     /// transcript text alone is lossy — once you rename a speaker globally
@@ -47,6 +41,18 @@ struct RecordingEntry: Identifiable, Codable {
     /// segment timestamps and labels can no longer be trusted to match.
     /// Backward-compatible: old recordings without this field decode as nil.
     var mergedSegmentsJSON: String?
+    /// Short list of discussed topics, LLM-derived from the finished summary.
+    /// Rendered as the meeting's subtitle in the Meetings list. nil for old records.
+    var topics: [String]?
+    /// Meeting-type tags, LLM-classified from the approved `MeetingTags.vocabulary`.
+    /// Values outside the vocabulary are discarded before storing. nil for old records.
+    var tags: [String]?
+    /// True once the user manually renamed the meeting. Blocks LLM/calendar
+    /// auto-title from overwriting a human-chosen title. nil/false = eligible.
+    var titleManuallySet: Bool?
+
+    /// Topics joined for subtitle display ("Ретро, ресурсы команды, планирование").
+    var subtitleText: String { (topics ?? []).joined(separator: ", ") }
 
     var dateFormatted: String {
         let f = DateFormatter()
@@ -84,18 +90,28 @@ struct RecordingEntry: Identifiable, Codable {
     }
 }
 
+// MARK: - Meeting tag vocabulary
+
+/// Approved meeting-type tag vocabulary (v1, 2026-07-22). The LLM classifies each
+/// meeting into 0..N of these; any value outside the set is discarded on parse.
+/// Multi-label by design (a call can be both "клиентская" and "защита решения").
+enum MeetingTags {
+    static let vocabulary: [String] = [
+        "1:1", "стендап", "ретро", "планирование", "дизайн-синк", "дискавери",
+        "брейншторм", "стратегия", "клиентская", "защита решения", "найм",
+        "админ", "внутренняя",
+    ]
+}
+
 // MARK: - Persisted Segment (codable, stored on RecordingEntry.mergedSegmentsJSON)
 
 /// A single transcribed line with its speaker attribution and timing.
 /// Stored on RecordingEntry so the user can reassign individual segments
-/// to different speakers (or to known People) after the fact, including
-/// the case where diarization merged two real participants into one
-/// "Speaker N" cluster.
+/// to a different speaker label after the fact, including the case where
+/// diarization merged two real participants into one "Speaker N" cluster.
 ///
-/// `speaker` is the displayed name in the transcript ("Speaker 0", "Bas", …).
-/// When it matches a Person's name, `personID` is set so the markdown
-/// wikilink resolves and so we know which Person to teach the matcher
-/// about when the segment is reassigned.
+/// `speaker` is the displayed name in the transcript ("Speaker 0", the
+/// recording owner's name, or a manually typed name).
 struct PersistedSegment: Codable, Identifiable {
     var id: Int { index }
     /// Stable index used as identity in the segment list.
@@ -104,122 +120,4 @@ struct PersistedSegment: Codable, Identifiable {
     var endTime: Double
     var text: String
     var speaker: String
-    var personID: UUID?
-}
-
-// MARK: - Person (persisted to ~/.meeting-recorder/people/)
-
-struct Person: Identifiable, Codable {
-    let id: UUID
-    var name: String
-    var samples: [VoiceSample]
-    var createdAt: Date
-    var updatedAt: Date
-    var notes: String?
-
-    var sampleCount: Int { samples.count }
-
-    /// Total seconds of voice across all samples.
-    var totalDuration: Double { samples.reduce(0) { $0 + $1.duration } }
-
-    /// Most recent sample timestamp (or updatedAt as fallback).
-    var lastSampleDate: Date { samples.map(\.createdAt).max() ?? updatedAt }
-
-    /// Ignore the legacy `aggregateEmbedding` field in old people.json files.
-    enum CodingKeys: String, CodingKey {
-        case id, name, samples, createdAt, updatedAt, notes
-    }
-}
-
-struct VoiceSample: Identifiable, Codable {
-    let id: UUID
-    var embedding: [Float]            // 256-dim WeSpeaker vector
-    let duration: Double              // seconds
-    let sourceRecordingID: String?    // which recording this was extracted from
-    let createdAt: Date
-    /// Embedding model marker used at extraction time. Used to detect stale
-    /// embeddings after a model upgrade and offer re-embedding.
-    var modelVersion: String?
-    /// Optional quality score from the diarizer (higher = cleaner).
-    var qualityScore: Float?
-    /// Acoustic channel the sample came from. Used as a light matching hint
-    /// because mic and system audio can embed differently for the same person.
-    var captureSource: AudioCaptureSource?
-
-    var filename: String { "\(id.uuidString).caf" }
-}
-
-// MARK: - Detected Speaker (transient, for post-transcription UI)
-
-struct DetectedSpeaker: Identifiable {
-    let id = UUID()
-    let label: String                 // "Speaker 0", "Speaker 1"
-    let embedding: [Float]            // extracted embedding
-    var matchedPerson: Person?        // if auto-matched above threshold
-    var matchScore: Float?            // cosine similarity of auto-match (nil = no match)
-    var assignedName: String          // final name (from match or user input)
-    let sampleStartTime: Double       // start of representative segment
-    let sampleEndTime: Double         // end of representative segment
-    var sampleQuality: Float?         // diarizer quality hint for the chosen window
-    var captureSource: AudioCaptureSource  // inferred from mic/system stems
-    var recommendations: [SpeakerRecommendation]  // top matches below auto-match threshold
-
-    var isHighConfidence: Bool { matchedPerson != nil && (matchScore ?? 0) >= 0.62 }
-    var hasRecommendations: Bool { !recommendations.isEmpty }
-
-    var matchPercentage: String? {
-        guard let score = matchScore else { return nil }
-        return "\(Int(score * 100))%"
-    }
-}
-
-// MARK: - Persisted Speaker (codable snapshot stored on RecordingEntry)
-
-/// Minimal codable snapshot of a detected speaker, used to repopulate the
-/// confirmation UI after the user has navigated away. Recommendations and
-/// auto-matches are intentionally not persisted — they are recomputed against
-/// the current PeopleStore when the speakers are re-opened.
-struct PersistedSpeaker: Codable {
-    let label: String
-    let embedding: [Float]
-    let sampleStartTime: Double
-    let sampleEndTime: Double
-    let sampleQuality: Float?
-    let captureSource: AudioCaptureSource
-    /// The name shown in the transcript at the time this snapshot was taken.
-    /// May be the original "Speaker N" label or an auto-matched name.
-    let assignedName: String
-
-    init(from speaker: DetectedSpeaker) {
-        self.label = speaker.label
-        self.embedding = speaker.embedding
-        self.sampleStartTime = speaker.sampleStartTime
-        self.sampleEndTime = speaker.sampleEndTime
-        self.sampleQuality = speaker.sampleQuality
-        self.captureSource = speaker.captureSource
-        self.assignedName = speaker.assignedName
-    }
-}
-
-struct SpeakerRecommendation: Identifiable {
-    let id = UUID()
-    let person: Person
-    let similarity: Float             // cosine similarity score (0-1)
-
-    var percentageString: String {
-        "\(Int(similarity * 100))%"
-    }
-}
-
-// MARK: - Contamination Warning (transient, surfaced when similarity is low)
-
-struct ContaminationWarning: Identifiable {
-    let id = UUID()
-    let speaker: DetectedSpeaker
-    let person: Person
-    let similarity: Float             // max cosine vs. existing samples
-
-    var percentageString: String {
-        "\(Int(similarity * 100))%"
-    }
 }

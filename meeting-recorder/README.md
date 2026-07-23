@@ -1,8 +1,8 @@
 # Propeller
 
-Local-first macOS meeting recorder: Russian on-device transcription (GigaAM / gigastt), speaker diarization (FluidAudio), and markdown + optional LLM recap.
+Local-first macOS meeting recorder: Russian on-device transcription (GigaAM / gigastt), speaker diarization (FluidAudio), and markdown + optional LLM summary.
 
-Fork of [tonton-golio/meeting-recorder](https://github.com/tonton-golio/meeting-recorder). Product context lives in the parent Propeller repo (`plan-v1.md`, `product-ideas.md`).
+Fork of [tonton-golio/meeting-recorder](https://github.com/tonton-golio/meeting-recorder). Product context lives in the parent Propeller repo (`plan-v2.md`, `plan-optimization.md`, `docs/SPEC.md`).
 
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue)
 ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-required-orange)
@@ -12,11 +12,12 @@ Fork of [tonton-golio/meeting-recorder](https://github.com/tonton-golio/meeting-
 
 - **Mic + system audio** — both sides of video calls via ScreenCaptureKit
 - **Russian ASR** — GigaAM-v3 (`e2e_rnnt`) via bundled `gigastt` sidecar
-- **Speaker diarization** — FluidAudio + learnable People voice library
+- **Speaker diarization** — FluidAudio → consistent `Speaker N`; mic-dominant speaker labeled with the owner's name (no voice library)
 - **Zoom auto-record** — starts when a call is detected; notification lets you decline; stops when the call ends
+- **LLM summary** — Ollama / OpenAI / Claude (optional); editable; auto title / topics / tags
+- **Calendar** — read-only Upcoming via EventKit (no OAuth)
 - **Markdown export** — Simple (default) or Obsidian; copy-for-chat
-- **LLM recap** — Ollama / OpenAI / Claude (optional)
-- **Menu bar** — Ctrl+Opt+R global hotkey; always-on processing after stop
+- **Quick notes** — ⌃⌥N overlay during recording (timestamped)
 - **Crash recovery** — ASR checkpoint (`transcribed_raw`) before diarization
 
 ## Requirements
@@ -38,9 +39,9 @@ Installs `/Applications/Propeller.app`, bundles `tools/gigastt/gigastt` and comp
 ## How it works
 
 1. **Record** — mic (+ optional system audio) → 16 kHz mono WAV, stems retained while audio is kept
-2. **Transcribe** — gigastt ASR → timestamped segments
-3. **Diarize / match** — FluidAudio + People library
-4. **Save** — markdown always; recap if a provider is configured
+2. **Transcribe** — gigastt ASR → timestamped segments (checkpointed)
+3. **Diarize** — FluidAudio → `Speaker N`; owner labeled from the mic stem
+4. **Save** — markdown always; LLM summary + title/topics/tags if a provider is configured
 
 Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/SPEC.md](docs/SPEC.md).
 
@@ -49,8 +50,8 @@ Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/SPEC.md](docs/SPEC.
 ```
 ~/.meeting-recorder/
   recordings/   # index + wav + stems
-  people/       # voice library
-  meetings/     # transcripts + recaps
+  meetings/     # transcripts + summaries
+  people/       # legacy: no longer read/written
 ```
 
 ## Acknowledgments

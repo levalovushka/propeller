@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import Darwin
 import Foundation
+import IOKit.pwr_mgt
 
 enum ZoomAutoRecordMode: String, CaseIterable, Identifiable {
     case off
@@ -140,18 +141,23 @@ final class ZoomMeetingDetector {
         let bytes = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids, Int32(MemoryLayout<pid_t>.stride * pids.count))
         guard bytes > 0 else { return false }
         let count = Int(bytes) / MemoryLayout<pid_t>.stride
-        var buf = [CChar](repeating: 0, count: 1024)
         for i in 0..<count {
             let pid = pids[i]
             guard pid > 0 else { continue }
-            let n = proc_name(pid, &buf, UInt32(buf.count))
-            guard n > 0 else { continue }
-            let processName = String(cString: buf)
-            if processName == name || processName.hasPrefix(name) {
+            if let processName = processName(forPID: pid),
+               processName == name || processName.hasPrefix(name) {
                 return true
             }
         }
         return false
+    }
+
+    /// Executable name for a pid, or nil if not resolvable.
+    private static func processName(forPID pid: pid_t) -> String? {
+        var buf = [CChar](repeating: 0, count: 1024)
+        let n = proc_name(pid, &buf, UInt32(buf.count))
+        guard n > 0 else { return nil }
+        return String(cString: buf)
     }
 
     private static let idleWindowTitles: Set<String> = [
@@ -188,32 +194,38 @@ final class ZoomMeetingDetector {
         return false
     }
 
-    /// Video calls typically take PreventUserIdleDisplaySleep named under zoom.us.
+    /// Video calls typically hold a PreventUserIdleDisplaySleep assertion.
+    /// Reads system power assertions straight from IOKit (same data `pmset -g
+    /// assertions` prints) instead of spawning a subprocess every poll.
     static func hasZoomDisplaySleepAssertion() -> Bool {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
-        proc.arguments = ["-g", "assertions"]
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = FileHandle.nullDevice
-        do {
-            try proc.run()
-            proc.waitUntilExit()
-        } catch {
+        var cfAssertionsRef: Unmanaged<CFDictionary>?
+        guard IOPMCopyAssertionsByProcess(&cfAssertionsRef) == kIOReturnSuccess,
+              let cfAssertionsRef else {
             return false
         }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let text = String(data: data, encoding: .utf8) else { return false }
-        // Look for a display-sleep assertion line that mentions zoom.
-        for line in text.split(separator: "\n") {
-            let l = line.lowercased()
-            guard l.contains("zoom") else { continue }
-            if l.contains("preventuseridledisplaysleep")
-                || l.contains("nodisplaysleepassertion")
-                || l.contains("prevent sleep") {
-                return true
+        let assertionsByPid = cfAssertionsRef.takeRetainedValue() as NSDictionary
+        for (key, value) in assertionsByPid {
+            guard let pidNumber = key as? NSNumber,
+                  let assertions = value as? [NSDictionary] else { continue }
+            guard let name = processName(forPID: pid_t(pidNumber.intValue)),
+                  name.lowercased().contains("zoom") else { continue }
+            for assertion in assertions {
+                guard let type = assertion[kIOPMAssertionTypeKey as String] as? String else { continue }
+                if type.contains("PreventUserIdleDisplaySleep") || type.contains("NoDisplaySleepAssertion") {
+                    return true
+                }
             }
         }
         return false
+    }
+
+    // MARK: - Detection health
+
+    /// True when Screen Recording permission is granted. Without it, window
+    /// titles for other apps come back empty, so the `hasMeetingWindow`
+    /// signal silently degrades to always-false. Callers should surface this
+    /// rather than let detection quietly get worse.
+    static func hasScreenRecordingPermission() -> Bool {
+        CGPreflightScreenCaptureAccess()
     }
 }

@@ -1,313 +1,143 @@
-# Propeller — Product Specification
+# Propeller — спецификация продукта
 
-_Architecture decisions: [ARCHITECTURE.md](ARCHITECTURE.md). This SPEC describes product behaviour; keep both in sync when behaviour changes._
+_Описывает **поведение** продукта в текущем состоянии. Архитектурные решения — [ARCHITECTURE.md](ARCHITECTURE.md); активные планы и продуктовые решения — [`../../plan-v2.md`](../../plan-v2.md); инженерная оптимизация — [`../../plan-optimization.md`](../../plan-optimization.md). Держать в синхроне с кодом при изменении поведения._
 
-## What It Is
+> Переписано 2026-07-23 под фактическое состояние после plan-v2: **вырезаны** библиотека голосов / People, voice-matching, пороги, пост-транскрипционный опрос спикеров и вкладка Speakers. Добавлены: календарь (Upcoming), редактируемое саммари, авто-заголовок/темы/теги, оверлей быстрых заметок, владелец-по-микрофону.
 
-A macOS menu bar + window app (**Propeller**) that records meetings (mic + system audio), transcribes Russian speech locally via GigaAM/gigastt, identifies speakers against a People library (FluidAudio), saves markdown (Simple default / Obsidian optional), and optionally generates an LLM recap.
+## Что это
 
-ASR, diarization, and People matching are on-device. Recap may call a local Ollama or a cloud API if the user configures a key.
+Нативное macOS-приложение (**Propeller**, SwiftUI, menu bar + окно, macOS 14+, Apple Silicon): записывает встречи (микрофон + системный звук), локально транскрибирует русскую речь через **GigaAM-v3 / gigastt**, диаризует спикеров через **FluidAudio**, сохраняет markdown (Simple по умолчанию / Obsidian опционально) и по возможности генерирует LLM-саммари.
 
-## Core Concepts
+**ASR и диаризация — на устройстве.** Саммари может обращаться к локальной Ollama или (если пользователь задал ключ) к облачному API. Никакой контент встречи (аудио/транскрипт/саммари) не уходит в облако сам по себе.
 
-### Recordings
-An audio recording with its transcript. Recordings live in a sidebar list. Each recording has:
-- Title (auto-generated from timestamp, editable)
-- Date and time
-- Duration
-- Audio file size (if audio still present)
-- Status: recording / recorded / transcribing / transcribed / saved
-- Transcript (text with speaker labels and timestamps)
-- Notes (free-form text the user can add)
+**Целевой сценарий:** «установил, настроил и забыл». Аудитория — менеджеры; в приложение заходят в основном чтобы забрать готовое саммари.
 
-Audio files can be deleted independently of the transcript to save disk space.
+## Ключевые концепции
 
-### People
-A known person whose voice the system can recognize. Each person has:
-- Name
-- One or more voice samples (short audio clips, ~5-30 seconds each)
-- A voice embedding per sample (256-dim vector, computed automatically)
-- An aggregate embedding (average of all sample embeddings)
+### Запись (Recording)
 
-Multiple samples per person improve recognition accuracy, especially when recordings are made in different environments or with different microphones.
+Аудиозапись со своим транскриптом. Живут списком в sidebar. У каждой:
+- Заголовок (авто из саммари, если саммари включено; иначе «Recording <дата>»; редактируемый — ручное переименование латчится и не перезаписывается авто-заголовком)
+- Дата/время, длительность, размер аудио (если файл ещё на месте)
+- Статус: `recording` / `recorded` / `transcribing` / `transcribed_raw` / `transcribed` / `saved`
+- Транскрипт (текст с лейблами спикеров и таймстемпами)
+- Заметки (свободный текст + быстрые заметки с таймкодами)
+- Производные от саммари: **темы** (сабтайтл через запятую) и **теги** (из утверждённого словаря)
 
-### Voice Matching
-When a recording is transcribed, speakers are diarized (clustered by voice). Each speaker cluster's embedding is compared against every stored sample of every known person, and the **maximum** cosine similarity across that person's samples is used as their match score. This is what makes a single person recognisable in multiple environments (in-person vs Zoom vs headphones): whichever stored sample sounds closest to the new clip wins, rather than all samples being averaged into one muddy vector.
+Аудио можно удалить отдельно от транскрипта, чтобы освободить место.
 
-If the top person's best-sample score exceeds the auto-match threshold (default 0.62), the speaker is labeled with that person's name. Otherwise they get a generic label ("Speaker 1", "Speaker 2") and the user is prompted to identify them.
+### Спикеры
 
-Thresholds are tunable in Settings → Speaker Matching, and the same panel can analyze the current People library (intra-person vs inter-person cosine distributions) to suggest an equal-error-rate threshold.
+**Никакой библиотеки голосов и voice-matching.** Диаризация FluidAudio даёт **консистентные `Speaker 1/2/3` в пределах звонка** — «тупо и надёжно» (plan-v2 Job 3). Поверх этого пола — два дешёвых сигнала именования:
 
-### Source-aware matching
+- **Владелец = микрофонный стем.** Кластер, доминирующий в mic-стеме (относительно системного), детерминированно подписывается именем пользователя из онбординга (`TranscriptionService.resolveOwnerName`). Даёт самое ценное имя — своё — бесплатно.
+- **(план 4.7) Имена из текста на этапе саммари** — LLM сопоставляет `Speaker N` ↔ имя по обращениям/представлениям + ростер из календаря, только при уверенности. _Отложено вместе с Джобой 4._
 
-For recordings that capture both microphone and system audio, the app keeps the raw side-channel stems next to the final mixed WAV while the audio is retained. During diarization, each speaker cluster is compared against the mic and system stems to infer whether that speaker came mostly from the local microphone, system audio, a mix of both, or an unknown source.
+**Ручное переименование** — на уровне спикера: из панели участников имя применяется сразу ко всем репликам этого `Speaker N` одним действием (`AppState.reassignSegments`); точечная правка отдельной реплики — через контекстное меню сегмента. Правка чисто текстовая: без профилей и обучения.
 
-Voice samples store this capture source. Matching remains max-over-samples cosine matching, but uses source as a light tie-breaker: same-source samples get a small boost, mic-vs-system mismatches get a small penalty, and unknown-source samples are left unchanged.
+### Календарь (Upcoming)
 
-### System-audio reliability
+Read-only чтение системного Календаря macOS через **EventKit** (Google/Exchange-аккаунты подхватываются, если заведены в «Учётные записи»). **Без OAuth и без облака** — только разрешение, как на микрофон. Секция **Upcoming** в списке встреч показывает ближайшие события (7 дней), с пер-строчными действиями. Используется для заголовка/участников и (план 1.4) предложения записи не-Zoom встреч.
 
-System audio capture prefers the display containing the mouse, then the main display, to avoid accidentally binding ScreenCaptureKit to the wrong display in multi-monitor setups. Each capture logs a diagnostic report with audio-buffer counts, conversion failures, peak/RMS levels, and output file size. When a system stem is audible but quieter than the microphone, the offline mix applies bounded automatic gain to make remote speakers easier for transcription to hear.
-
-### Sample selection
-When a voice sample is created from a recording, the app picks the longest segment where only that speaker was active (no cross-talk), clamped to 3–15 seconds, trimming the first 0.5s to skip utterance onsets. The embedding stored with the sample is the diarizer's session centroid for that speaker when available — more stable than any single window.
-
-### Recommendations
-After transcription, for each unidentified speaker the system shows:
-- The top matching people (with similarity scores), so the user can confirm
-- An option to create a new person
-- An option to add the voice clip to an existing person (improving future recognition)
-
-### Contamination guard
-When the user assigns a clip to an existing person whose samples are very dissimilar (max cosine < 0.30), a confirmation alert appears before the clip is persisted — a guard against mis-attribution poisoning a known voice profile.
-
-### Re-embedding on model upgrade
-Every sample records the embedding model version used to compute it. If a future FluidAudio/WeSpeaker upgrade bumps that version, the People sheet surfaces a "stale" badge per sample and exposes a **Re-compute** action that re-extracts embeddings from the stored `.caf` audio using the current model.
-
-### Disk-space pre-flight
-Before recording, the app checks if less than 500 MB is free on the recordings disk. Before model download (transcription), it checks if less than 4 GB is free. If low, an alert warns the user with "Continue Anyway" / "Cancel" options. The operation is not blocked — only a warning.
-
-## Pages / Views
-
-### 1. Sidebar (always visible)
-
-The left panel. Contains:
-
-**Record Button**
-- Prominent button at top: "Record" / "Stop (MM:SS)"
-- Starts/stops audio recording
-- While recording, shows elapsed time
-- Keyboard shortcut: Cmd+R toggles recording (start if idle, stop if running). Window-level only, not a global hotkey.
-- On first press, checks microphone permission. If not determined, requests access. If denied/restricted, shows an alert with "Open System Settings" button linking to Privacy > Microphone.
-
-**Recordings List**
-- All recordings, newest first, grouped by date (Today, Yesterday, This Week, Older)
-- Each row shows:
-  - Status indicator (dot: recording=red, recorded=gray, transcribing=spinner, transcribed=blue, saved=green)
-  - Title (editable)
-  - Timestamp (e.g. "Apr 10, 22:27")
-  - Duration (e.g. "1m 57s")
-  - Audio file size if file exists (e.g. "3 MB"), or nothing if deleted
-- Right-click context menu on each row:
-  - Rename
-  - Reveal in Finder (opens audio file location, or markdown if no audio)
-  - Delete audio file (keeps transcript and notes)
-  - Delete recording entirely
-- Clicking a row selects it and shows it in the main view
-- Search bar at top to filter by title, date, and transcript content (full-text search)
-  - When a search match is in the transcript only, a small magnifying glass icon appears on the row
-
-**Footer**
-- Settings button (opens settings sheet)
-- People button (opens people management sheet)
-
-### 2. Main View — Recording Detail (right panel)
-
-Shown when a recording is selected from the sidebar. Contains:
-
-**Header**
-- Recording title (double-click to edit)
-- Date, duration, file size
-- Status pills (Transcribed, Saved). The "Saved" pill reverts to pending when the transcript is edited, notes change, speakers are confirmed post-save, or the recording is renamed.
-- "Re-prompt skipped" button (visible only when speakers were skipped during confirmation). Moves skipped speakers back into the confirmation queue.
-- "Notes" toggle button — shows/hides the notes panel
-- "..." menu with:
-  - Reveal audio in Finder (disabled if no audio file)
-  - Reveal markdown in Finder (disabled if not yet saved)
-  - Delete audio file
-  - Remove entirely
-
-**Transcript Area**
-- Scrollable transcript with speaker labels
-- Each segment shows:
-  - Speaker avatar (colored circle with initial)
-  - Speaker name
-  - Timestamp
-  - Transcribed text
-- "Edit" button in the transcript header toggles an editing mode: the formatted transcript is replaced by a single TextEditor where the user can fix transcription errors. Clicking "Done" commits changes back to the recording.
-- If not yet transcribed: "No transcript yet" with a Transcribe button
-
-**Audio Player**
-- Play/pause button, seek bar, current time / total time
-- Only visible when audio file exists
-
-**Notes**
-- Toggleable panel between header and transcript, activated by the "Notes" button in the header
-- Free-form TextEditor, auto-saves after 800ms typing pause via debounced persistence
-- Notes are persisted to `recordings.json` via `RecordingEntry.notes`
-- Emitted as a "## Notes" section in saved markdown (before "## Transcript"), when non-empty
-
-**Action Bar (floating at bottom)**
-- Transcribe / Re-transcribe button (disabled when audio file has been deleted)
-- Save to markdown button
-
-**New Speaker Prompt (shown after transcription)**
-- For each unidentified speaker, shows:
-  - Generic label ("Speaker 1")
-  - Top person matches with similarity scores as suggestions
-  - Text field to name them
-  - "Add to [Person Name]" button (if recommendations exist)
-  - "Create New Person" button
-  - "Skip" to leave generic label (skipped speakers can be re-prompted via the header button)
-
-### 3. Main View — Recording In Progress
-
-Shown while recording is active (instead of recording detail):
-- Large timer display
-- Pulsing recording indicator
-- Stop button
-
-### 4. Main View — Empty State
-
-Shown when no recording is selected:
-- Icon and text: "Select a recording or press Record"
-
-### 5. People Sheet
-
-A sheet/modal for managing known people. Larger resizable window (≈860×620).
-
-**People List (left pane)**
-- All known people, sorted alphabetically
-- Each row shows a coloured avatar, name, sample count, and total voice duration
-
-**Person Detail (right pane)**
-- Large avatar and name header (inline editable)
-- Stat badges: Samples · Voice duration · Consistency (mean intra-sample cosine, green/orange/red) · Stale count (if any samples predate the current embedding model)
-- Action bar:
-  - **Record Sample** — live 10s recording with an in-app mic view; embedding is extracted immediately and the clip is added to this person (used for seeding/topping up coverage outside of meetings)
-  - **Re-compute** — re-embeds every sample from its stored `.caf` using the current model (needed after a model upgrade)
-  - **Merge…** — picks another person whose samples should be moved into this one; the other person is deleted
-  - **Split…** — selects a subset of samples and moves them into a brand-new person
-  - **Delete Person**
-- Sample cards (one per sample):
-  - Play/stop button
-  - Waveform thumbnail drawn from the stored audio
-  - Duration, quality score from the diarizer, stale badge when embedding is outdated
-  - Created date and source recording ID
-  - Delete button
-
-### 6. Settings (native Settings window)
-
-Tabs: General, Audio, Transcription, Speakers, Recap, Export.
-
-**General**
-- Auto-transcribe after recording (toggle). Transcripts are always saved once speakers are resolved.
-- Zoom: Off / Auto-record (default Auto). Auto starts recording without a confirm dialog; a system notification offers «Не записывать» (discard). Recording stops when the call ends.
-
-**Audio**
-- Capture system audio (Screen Recording permission)
-- Voice-processing / echo cancellation for speakerphone meetings
-
-**Transcription**
-- Engine: gigastt / GigaAM (Russian only)
-- Domain terms (hotwords — wired later)
-
-**Speakers**
-- Auto-match / recommend thresholds + library calibration
-
-**Recap**
-- Provider Auto / Ollama / OpenAI / Claude / Off; models; prompt; API keys in Keychain
-
-**Export**
-- Markdown format Simple / Obsidian
-- Paths for recordings, notes, optional people pages (Obsidian wikilinks)
-- Retention: 7–90 days, audio-only or everything
-
-## Data Flow
+## Пайплайн и поток данных
 
 ```
-Record (AudioRecorder → mix WAV + stems)
-  ↓
-Transcribe (gigastt → ASRSegment[])
-  ↓
-Checkpoint (status transcribed_raw)
-  ↓
-Diarize (FluidAudio) + Match (PeopleStore)
-  ↓
-Prompt (identify unresolved speakers)
-  ↓
-Save (MarkdownWriter) → Recap (optional)
+ZoomMeetingDetector (Auto) / menu bar / ⌘R / кнопка
+  → AudioRecorder            mic (.mic.wav) + ScreenCaptureKit system (.sys.wav) → офлайн-микс {id}.wav
+  → TranscriptionService
+      → gigastt ASR (ASRSegment[])
+      → checkpoint status=transcribed_raw     (чтобы краш на диаризации не потерял дорогой ASR)
+      → FluidAudio диаризация → Speaker N + владелец-по-микрофону
+  → MarkdownWriter (simple | obsidian)         → save (транскрипт всегда сохраняется)
+  → RecapService (если провайдер доступен)     → recap.md
+      → generateMetadata → заголовок / темы / теги
 ```
 
-### Crash Recovery
+Транскрипт **всегда** сохраняется сразу после диаризации — без ручного шага подтверждения спикеров.
 
-On startup:
-- `"recording"` + existing audio → `"recorded"` (duration from WAV)
-- `"transcribing"` with transcript/segments → `"transcribed_raw"` (resume diarization); otherwise → `"recorded"`
+### Крэш-рекавери (при старте)
 
-## Technology
+- `recording` + существующее аудио → `recorded` (длительность из WAV-заголовка)
+- `transcribing` с транскриптом → `transcribed_raw` (возобновить только диаризацию, не гоняя ASR заново); иначе → `recorded`
 
-- **SwiftUI** macOS 14+, menu bar + window
-- **Swift Package Manager** (+ bundled `gigastt` binary)
-- **gigastt / GigaAM-v3** — Russian ASR (HTTP sidecar)
-- **FluidAudio** — diarization and embeddings
-- **AVFoundation** / ScreenCaptureKit — capture and playback
-- **UserNotifications** — auto-record decline action + status banners
-- Recap may use localhost Ollama or cloud APIs when configured
+## Саммари (рекап)
 
-## Data Storage
+Слой поверх сохранённого транскрипта. Провайдер: **Auto** (Ollama → OpenAI → Claude) / конкретный / **Off**. Локальная модель по умолчанию — `qwen2.5:7b` (сильный русский, влезает в 8 ГБ). Ключи — в Keychain. Ollama выгружается из RAM через `keep_alive: 10s`.
 
-All data lives under `~/.meeting-recorder/`:
+- **Промпт** структурный (Кратко / Решения / Action items / Открытые вопросы), с запретом выдумывать и с **заметками-якорями** (как Granola). Настраивается.
+- **Редактируемое саммари** — Edit/Done прямо в приложении, правка пишется в `recap.md`.
+- **Метадата из саммари** (отдельный structured-JSON вызов): заголовок (3–7 слов, если не задан вручную), темы (2–5), теги из словаря.
+- **Словарь тегов v1 (13):** `1:1`, `стендап`, `ретро`, `планирование`, `дизайн-синк`, `дискавери`, `брейншторм`, `стратегия`, `клиентская`, `защита решения`, `найм`, `админ`, `внутренняя`. Значения вне словаря отбрасываются.
+- **Backfill:** саммари для записей без него догенерируются молча в фоне, когда провайдер доступен — без кнопки; не запускается во время звонка/записи/транскрипции.
+- Если провайдера нет — саммари тихо пропускается с подсказкой в UI; встреча всё равно открывается (транскрипт + заметки видны).
+
+## Заметки
+
+- **Во время записи (окно):** нотпад в `RecordingInProgressView`, авто-сохранение в `recordings.json`.
+- **Оверлей по хоткею ⌃⌥N** (только во время записи): полупрозрачный floating-инпут внизу экрана; Enter сохраняет заметку **с таймкодом**, Esc отменяет. Глобальный хоткей требует Accessibility/Input Monitoring.
+- В саммари заметки кладутся **дословно** отдельным блоком «Заметки» — LLM их не переписывает.
+
+## Поиск (⌘K)
+
+Полнотекст по транскриптам + заметкам (план 6.2 — добавить в индекс саммари). Фильтр-чипы. Теги в поиск не входят (для них — фильтр в списке, план 6.3).
+
+## Страницы / вью
+
+### Sidebar
+Секция «Библиотека»: **Встречи** (дефолт) · **Summaries** · **Поиск**. Секция «Приложение»: **Настройки**. _Раздела People нет._ Внутри «Встречи» — вторая колонка со списком (группировка Сегодня/Вчера/Неделя) + секция **Upcoming** сверху.
+
+- **Summaries** — встречи, у которых есть файл саммари и/или заметки; деталь показывает только Summary + Notes.
+
+### Деталь встречи
+Шапка (дата-capsule, редактируемый заголовок, статус-pills Transcribed/Saved/Recap) + плеер с волновой формой (когда есть аудио) + табы **Transcript / Notes / Summary**.
+
+### Запись в процессе
+Крупный таймер, пульсирующий индикатор, живой нотпад, **Стоп** и **Остановить и удалить** (для чувствительного кейса — сброс без сохранения).
+
+### Menu bar
+Упрощён до быстрых действий: primary (запись/стоп + таймер при записи), Recent, Open/Settings/Quit. Без информеров.
+
+## Настройки (нативный TabView)
+
+Вкладки: **General · Audio · Transcription · Recap · Export** _(вкладки Speakers нет)_.
+
+- **General** — авто-транскрипция после записи; Zoom **Off / Auto-record** (дефолт Auto, старт без диалога, отмена системным уведомлением «Не записывать»); календарь (тумблер); запуск при логине (`SMAppService`); About + версия/проверка обновлений (wire к Sparkle — план 5.3).
+- **Audio** — захват системного звука; voice-processing/AEC для спикерфон-встреч.
+- **Transcription** — движок GigaAM (ru only); **Domain terms** — словарь hotwords, реально прокинут в gigastt (`--hotwords-file` + `--hotwords-default`, рестарт sidecar по изменению).
+- **Recap** — провайдер / модели / промпт / API-ключи (Keychain).
+- **Export** — формат Simple / Obsidian; пути; retention _(переезжает на size-nudge — plan-v2 6.1)_.
+
+## Хранилище
 
 ```
 ~/.meeting-recorder/
-  recordings/
-    recordings.json          # index of all recordings
-    20260410_154636.wav      # audio files
-    20260410_154636.mic.wav  # local microphone stem, when retained
-    20260410_154636.sys.wav  # system-audio stem, when retained
-    20260411_130000.wav
-  people/
-    people.json              # index of all people, including each sample's
-                             # embedding, modelVersion, qualityScore
-    {uuid}/                  # per-person subdirectory
-      {sample-uuid}.caf      # voice samples (kept so embeddings can be
-                             # re-extracted after a model upgrade)
-  meetings/                  # saved markdown transcripts
-    20260410_154636-interview.md   # {recordingID}-{slug}.md
+  recordings/   recordings.json, {id}.wav, {id}.mic.wav, {id}.sys.wav  (стемы — пока хранится аудио)
+  meetings/     {id}-{slug}.md, {id}-{slug}-recap.md
+  people/       # ЛЕГАСИ: больше не читается и не пишется (данные на диске не трогаются)
+
+~/Library/Application Support/Meeting Recorder/
+  gigastt-models/   # ~225 МБ GigaAM, автозагрузка на первом запуске (имя папки — наследие TCC)
+  hotwords.txt      # словарь Domain terms для gigastt
 ```
 
-## Saved Markdown Format
+## Форматы вывода
 
-```yaml
----
-date: 2026-04-10
-title: "Interview with Leonardo"
-duration: "56 min"
-speakers: ["[[anton-golio|Anton]]", "Leonardo"]
-audio_file: "20260410_154636.wav"
-tags: [meeting]
----
+- **Simple** (дефолт) — читаемый `.md`: заголовок, дата/длительность/участники, тело, блок «Заметки». Без YAML/wikilinks — для коллег без Obsidian.
+- **Obsidian** — YAML frontmatter + `tags: [meeting, recap]`.
+- **Copy for chat** — саммари/транскрипт в буфер обмена (основной канал шеринга v2).
 
-## Transcript
+## Ключевые принципы
 
-[[anton-golio|Anton]] [00:00]
-Foundation that is very easy for the data scientists...
+1. **Локальность.** ASR и диаризация на устройстве; облако — только опциональный recap-API и read-only календарь.
+2. **Install & forget.** Zoom auto-record → авто-транскрипт → всегда save → авто-саммари; отмена — уведомлением.
+3. **Тупо и надёжно про спикеров.** Консистентные `Speaker N` — надёжный пол; имя владельца бесплатно с микрофона; никакой хрупкой voice-library.
+4. **Транскрипт — сырьё, саммари — продукт.** Инвестиции в редактирование саммари, а не транскрипта.
+5. **Русские встречи.** GigaAM — только ru.
 
-[Leonardo] [01:48]
-Okay, so first of all, I'm impressed about what you have done...
+## Надёжность и энергоэффективность
 
-## Notes
+Инженерный слой (ленивый ASR-sidecar, timer coalescing, поллинг Zoom, Core Audio taps, тесты) вынесен в отдельный трек — см. [`../../plan-optimization.md`](../../plan-optimization.md).
 
-User's free-form notes here.
-```
+## Технологии
 
-**Speaker names and wikilinks**: All entries in the `speakers:` YAML list are quoted. When a `peoplePagesPath` is configured and a matching people page file exists for a speaker, the name is emitted as an Obsidian wikilink `[[slug|Display Name]]` in both the YAML frontmatter and the transcript body. Speakers without a matching page appear as plain quoted strings.
-
-**Speaker auto-match dedup**: When multiple diarized speakers match the same known person, only the highest-scoring match is auto-assigned; lower-scoring speakers fall back to manual recommendations.
-
-## Menu Bar
-
-The app lives in the macOS menu bar. The menu bar panel shows:
-- Recording status (if recording: red dot + elapsed time)
-- Processing status (if transcribing: spinner)
-- Quick record/stop button
-- Open main window button
-- Quit button
-
-## Key Design Principles
-
-1. **Local first** — ASR and diarization on-device; cloud only if the user opts into recap APIs
-2. **Record and forget** — Zoom auto-record + auto-transcribe + always-save; decline via notification if needed
-3. **Learn over time** — People library improves as speakers are identified
-4. **Non-destructive** — audio can be deleted separately from transcripts
-5. **Russian meetings** — GigaAM-only; no multilingual scope in v1
+SwiftUI (macOS 14+) · Swift Package Manager · **gigastt / GigaAM-v3** (HTTP sidecar) · **FluidAudio** (диаризация) · AVFoundation / ScreenCaptureKit · EventKit (календарь) · UNUserNotifications · Ollama / OpenAI / Claude (опц. recap).

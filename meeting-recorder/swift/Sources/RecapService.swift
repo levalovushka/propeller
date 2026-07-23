@@ -85,7 +85,7 @@ actor RecapService {
     func probeOllama(baseURL: URL = URL(string: "http://127.0.0.1:11434")!) async -> Bool {
         let url = baseURL.appendingPathComponent("api/tags")
         var req = URLRequest(url: url)
-        req.timeoutInterval = 2
+        req.timeoutInterval = 5   // Ollama can be slow to answer the first request after wake/launch
         do {
             let (_, response) = try await session.data(for: req)
             return (response as? HTTPURLResponse)?.statusCode == 200
@@ -182,6 +182,90 @@ actor RecapService {
         )
 
         return .success(RecapResult(path: path, provider: backend, body: body))
+    }
+
+    // MARK: - Meeting metadata (title / topics / tags) from the finished summary
+
+    struct RecapMetadata {
+        /// nil when the title should not change (manual title, or model returned null).
+        let title: String?
+        let topics: [String]
+        let tags: [String]
+    }
+
+    /// Derive a short title, subtitle topics, and vocabulary tags from the finished
+    /// summary. Runs on the small summary (not the full transcript) as a separate
+    /// structured JSON call, so the readable recap stays untouched and parsing stays
+    /// robust. Best-effort: returns nil on any provider/parse failure (feature degrades).
+    func generateMetadata(
+        summaryMarkdown: String,
+        needTitle: Bool,
+        prefs: RecapPreferences
+    ) async -> RecapMetadata? {
+        let trimmed = summaryMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let backend: String
+        switch await resolveBackend(kind: prefs.provider, openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey) {
+        case .failure: return nil
+        case .success(let name): backend = name
+        }
+
+        let system = Self.metadataPrompt(needTitle: needTitle)
+        let user = "Саммари встречи:\n\n\(trimmed)"
+
+        let raw: String
+        do {
+            switch backend {
+            case "ollama": raw = try await callOllama(model: prefs.ollamaModel, system: system, user: user)
+            case "openai": raw = try await callOpenAI(apiKey: prefs.openAIKey ?? "", model: prefs.openAIModel, system: system, user: user)
+            case "claude": raw = try await callClaude(apiKey: prefs.claudeKey ?? "", model: prefs.claudeModel, system: system, user: user)
+            default: return nil
+            }
+        } catch {
+            NSLog("[RecapService] metadata generation failed: \(error)")
+            return nil
+        }
+
+        return Self.parseMetadata(stripCodeFences(raw))
+    }
+
+    private static func metadataPrompt(needTitle: Bool) -> String {
+        let vocab = MeetingTags.vocabulary.joined(separator: ", ")
+        return """
+        Ты анализируешь готовое саммари рабочей встречи и возвращаешь СТРОГО один JSON-объект без пояснений и без markdown-ограждений.
+        Формат: {"title": <строка или null>, "topics": [<строка>, ...], "tags": [<строка>, ...]}
+        Правила:
+        - title: суть встречи одной ёмкой фразой на русском, 3–7 слов.\(needTitle ? "" : " Заголовок уже задан пользователем — верни null.")
+        - topics: 2–5 ключевых обсуждённых тем короткими фразами (пойдут в сабтайтл). Только то, что реально есть в саммари, не выдумывай.
+        - tags: 0..N значений СТРОГО из списка: [\(vocab)]. Значения вне списка запрещены. Если ничего не подходит — пустой массив [].
+        - Верни только JSON, никакого текста вокруг.
+        """
+    }
+
+    private static func parseMetadata(_ text: String) -> RecapMetadata? {
+        // Defensive: pull the first {...} block in case the model added stray text.
+        guard let start = text.firstIndex(of: "{"),
+              let end = text.lastIndex(of: "}"),
+              start < end else { return nil }
+        let jsonStr = String(text[start...end])
+        guard let data = jsonStr.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+
+        let rawTitle = (obj["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title: String? = {
+            guard let t = rawTitle, !t.isEmpty, t.lowercased() != "null" else { return nil }
+            return t
+        }()
+        let topics = (obj["topics"] as? [Any])?
+            .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty } ?? []
+        let allowed = Set(MeetingTags.vocabulary)
+        let tags = (obj["tags"] as? [Any])?
+            .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { allowed.contains($0) } ?? []
+
+        return RecapMetadata(title: title, topics: topics, tags: tags)
     }
 
     // MARK: - Prompt assembly
@@ -303,6 +387,9 @@ actor RecapService {
         let payload: [String: Any] = [
             "model": model,
             "stream": false,
+            // Unload the model shortly after generating so it doesn't sit in RAM
+            // (~4–5 GB) between meetings and starve Zoom/Figma.
+            "keep_alive": "10s",
             "messages": [
                 ["role": "system", "content": system],
                 ["role": "user", "content": user],

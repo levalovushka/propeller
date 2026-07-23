@@ -20,14 +20,15 @@ open -a Propeller
 | Path | What |
 |---|---|
 | `meeting-recorder/` | App source (Swift package + `build.sh`) |
-| `plan-v1.md` | Phase plan |
-| `product-ideas.md` | Product backlog |
-| `giga-transcriber-brief.md` | Migration brief |
+| `plan-v2.md` | Active plan + product decisions (by job) |
+| `plan-optimization.md` | Engineering optimization (energy · stability · reliability) |
+| `product-ideas.md` | Idea / decision ledger (killed / deferred with reasons) |
 | `design/` | UI spec |
-| `phase0`–`phase6/` | Phase status notes (artifacts/models not in git) |
+| `archive/` | Historical: `plan-v1.md`, migration brief, phase status notes |
+| `phase0`–`phase6/` | Phase validation artifacts (models/WAVs not in git) |
 | `propellericon.icon` | App icon (Icon Composer) |
 
-Architecture: [`meeting-recorder/docs/ARCHITECTURE.md`](meeting-recorder/docs/ARCHITECTURE.md).
+Docs of record: [`plan-v2.md`](plan-v2.md) · [`plan-optimization.md`](plan-optimization.md) · [architecture](meeting-recorder/docs/ARCHITECTURE.md) · [product spec](meeting-recorder/docs/SPEC.md).
 
 ## Not in this repo
 

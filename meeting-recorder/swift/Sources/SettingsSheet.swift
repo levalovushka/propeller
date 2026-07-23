@@ -1,4 +1,5 @@
 import SwiftUI
+import ServiceManagement
 
 /// Native Settings window (⌘,) with talat-style sub-sections, built on the
 /// standard macOS settings TabView.
@@ -13,8 +14,6 @@ struct SettingsView: View {
                 .tabItem { Label("Audio", systemImage: "speaker.wave.2") }
             TranscriptionSettingsPane()
                 .tabItem { Label("Transcription", systemImage: "waveform") }
-            SpeakersSettingsPane()
-                .tabItem { Label("Speakers", systemImage: "person.2") }
             RecapSettingsPane()
                 .tabItem { Label("Recap", systemImage: "sparkles") }
             ExportSettingsPane()
@@ -31,9 +30,50 @@ private struct GeneralSettingsPane: View {
     @AppStorage("autoTranscribe") private var autoTranscribe = true
     @AppStorage("zoomAutoRecordMode") private var zoomAutoRecordMode = ZoomAutoRecordMode.auto.rawValue
     @State private var zoomSnap = ZoomMeetingDetector.shared.snapshot
+    @State private var hasScreenRecordingPermission = true
+    @State private var launchAtLogin = LoginItem.isEnabled
+    @State private var launchAtLoginError: String?
+    @AppStorage("calendarEnabled") private var calendarEnabled = false
 
     var body: some View {
         Form {
+            Section("Startup") {
+                Toggle("Launch Propeller at login", isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { _, want in
+                        do {
+                            try LoginItem.setEnabled(want)
+                            launchAtLoginError = nil
+                        } catch {
+                            // Revert the toggle to the real state and surface the reason.
+                            launchAtLogin = LoginItem.isEnabled
+                            launchAtLoginError = error.localizedDescription
+                        }
+                    }
+                Text("Propeller starts automatically when you log in, so it's always ready to catch a meeting. macOS manages this under Login Items in System Settings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let launchAtLoginError {
+                    Text(launchAtLoginError)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            Section("Calendar") {
+                Toggle("Show upcoming meetings from Calendar", isOn: $calendarEnabled)
+                    .onChange(of: calendarEnabled) { _, on in
+                        Preferences.shared.calendarEnabled = on
+                        if on {
+                            Task { await CalendarService.shared.enableAndLoad() }
+                        } else {
+                            CalendarService.shared.upcoming = []
+                        }
+                    }
+                Text("Reads your macOS Calendar (including Google/Exchange accounts added in System Settings → Internet Accounts). Nothing leaves your Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Pipeline") {
                 Toggle("Auto-transcribe after recording", isOn: $autoTranscribe)
                     .onChange(of: autoTranscribe) { _, val in Preferences.shared.autoTranscribe = val }
@@ -68,10 +108,40 @@ private struct GeneralSettingsPane: View {
                         .controlSize(.small)
                     }
                 }
+
+                if !hasScreenRecordingPermission {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.caption)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Detection degraded — Screen Recording permission isn't granted, so Propeller can't read Zoom's window title. It falls back to process-only signals, which are slower to catch a call.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button("Open Screen Recording Settings") {
+                                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                            .controlSize(.small)
+                        }
+                    }
+                }
+            }
+
+            Section("About") {
+                LabeledContent("Version", value: LoginItem.appVersionString)
+                Text("Update checks arrive with the next release channel.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .onAppear { zoomSnap = ZoomMeetingDetector.shared.probe() }
+        .onAppear {
+            zoomSnap = ZoomMeetingDetector.shared.probe()
+            hasScreenRecordingPermission = ZoomMeetingDetector.hasScreenRecordingPermission()
+            launchAtLogin = LoginItem.isEnabled
+        }
     }
 
     private var zoomModeHelp: String {
@@ -123,6 +193,8 @@ private struct AudioSettingsPane: View {
 
 private struct TranscriptionSettingsPane: View {
     @AppStorage("domainTerms") private var domainTerms = ""
+    @State private var restartStatus: String?
+    @State private var pendingRestart: DispatchWorkItem?
 
     var body: some View {
         Form {
@@ -135,119 +207,41 @@ private struct TranscriptionSettingsPane: View {
 
             Section("Vocabulary") {
                 TextField("Domain terms", text: $domainTerms, prompt: Text("e.g. Газпромнефть, спринт"))
-                    .onChange(of: domainTerms) { _, val in Preferences.shared.domainTerms = val }
-                Text("Comma-separated vocabulary hints (wired to gigastt hotwords later).")
+                    .onChange(of: domainTerms) { _, val in
+                        Preferences.shared.domainTerms = val
+                        scheduleRestart()
+                    }
+                Text("Comma-separated vocabulary hints — boosted during recognition (brands, names, jargon). Applies to the next transcription; the recognizer restarts a couple seconds after you stop typing.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-    }
-}
-
-// MARK: - Speakers
-
-private struct SpeakersSettingsPane: View {
-    @EnvironmentObject private var appState: AppState
-    @AppStorage("autoMatchThreshold") private var autoMatchThreshold: Double = 0.55
-    @AppStorage("recommendThreshold") private var recommendThreshold: Double = 0.30
-    @State private var calibration: PeopleStore.CalibrationStats?
-
-    var body: some View {
-        Form {
-            Section("Matching thresholds") {
-                LabeledContent("Auto-match") {
-                    HStack {
-                        Slider(value: $autoMatchThreshold, in: 0.3...0.9, step: 0.01)
-                            .onChange(of: autoMatchThreshold) { _, val in
-                                Preferences.shared.autoMatchThreshold = Float(val)
-                            }
-                        Text(String(format: "%.2f", autoMatchThreshold))
-                            .font(.caption.monospaced())
-                            .frame(width: 40, alignment: .trailing)
-                    }
-                }
-                Text("Cosine similarity required before a diarized voice is auto-labeled with a known person.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                LabeledContent("Recommend") {
-                    HStack {
-                        Slider(value: $recommendThreshold, in: 0.1...0.6, step: 0.01)
-                            .onChange(of: recommendThreshold) { _, val in
-                                Preferences.shared.recommendThreshold = Float(val)
-                            }
-                        Text(String(format: "%.2f", recommendThreshold))
-                            .font(.caption.monospaced())
-                            .frame(width: 40, alignment: .trailing)
-                    }
-                }
-                Text("Below auto-match: cutoff for suggesting a person as a manual match.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Calibration") {
-                if let c = calibration {
-                    calibrationReport(c)
-                } else {
-                    Button("Analyze library") {
-                        calibration = appState.peopleStore.calibrationStats()
-                    }
-                    Text("Runs cosine similarities over your current People library to suggest a threshold.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                if let restartStatus {
+                    Text(restartStatus)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
             }
         }
         .formStyle(.grouped)
     }
 
-    @ViewBuilder
-    private func calibrationReport(_ c: PeopleStore.CalibrationStats) -> some View {
-        HStack(spacing: 12) {
-            distributionStat(label: "Same person", values: c.intra, tint: .green)
-            distributionStat(label: "Different people", values: c.inter, tint: .red)
-        }
-        if let suggestion = c.suggestedThreshold {
-            HStack(spacing: 8) {
-                Text("Suggested threshold:")
-                Text(String(format: "%.2f", suggestion))
-                    .font(.body.weight(.semibold).monospaced())
-                Button("Apply") {
-                    autoMatchThreshold = Double(suggestion)
-                    Preferences.shared.autoMatchThreshold = suggestion
+    /// Hotwords are a server-launch argument for gigastt, not per-request, so
+    /// picking up an edited term list means restarting the sidecar. Debounced
+    /// so a whole typed phrase triggers one restart, not one per keystroke.
+    private func scheduleRestart() {
+        pendingRestart?.cancel()
+        let work = DispatchWorkItem {
+            restartStatus = "Restarting recognizer to apply vocabulary…"
+            Task {
+                do {
+                    try await GigasttSidecar.shared.restart()
+                    await MainActor.run { restartStatus = nil }
+                } catch {
+                    await MainActor.run { restartStatus = "Recognizer restart failed: \(error.localizedDescription)" }
                 }
-                .controlSize(.small)
-            }
-        } else {
-            Text("Need at least one person with ≥2 samples and another person to calibrate.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        Button("Re-analyze") {
-            calibration = appState.peopleStore.calibrationStats()
-        }
-        .controlSize(.small)
-    }
-
-    private func distributionStat(label: String, values: [Float], tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(tint)
-            if values.isEmpty {
-                Text("n/a").font(.caption2).foregroundStyle(.tertiary)
-            } else {
-                let mean = values.reduce(0, +) / Float(values.count)
-                let sorted = values.sorted()
-                let minV = sorted.first ?? 0
-                let maxV = sorted.last ?? 0
-                Text("n=\(values.count)  μ=\(String(format: "%.2f", mean))  [\(String(format: "%.2f", minV))..\(String(format: "%.2f", maxV))]")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
             }
         }
+        pendingRestart = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
     }
 }
 
@@ -255,7 +249,7 @@ private struct SpeakersSettingsPane: View {
 
 private struct RecapSettingsPane: View {
     @AppStorage("recapProvider") private var recapProvider = RecapProviderKind.auto.rawValue
-    @AppStorage("recapOllamaModel") private var recapOllamaModel = "llama3.2"
+    @AppStorage("recapOllamaModel") private var recapOllamaModel = "qwen2.5:7b"
     @AppStorage("recapOpenAIModel") private var recapOpenAIModel = "gpt-4o-mini"
     @AppStorage("recapClaudeModel") private var recapClaudeModel = "claude-sonnet-4-5"
     @State private var recapPrompt: String = Preferences.shared.recapPrompt
@@ -293,7 +287,7 @@ private struct RecapSettingsPane: View {
             if recapProvider == RecapProviderKind.ollama.rawValue
                 || recapProvider == RecapProviderKind.auto.rawValue {
                 Section("Ollama") {
-                    TextField("Model", text: $recapOllamaModel, prompt: Text("llama3.2"))
+                    TextField("Model", text: $recapOllamaModel, prompt: Text("qwen2.5:7b"))
                         .onChange(of: recapOllamaModel) { _, val in
                             Preferences.shared.recapOllamaModel = val
                         }
@@ -477,5 +471,34 @@ private struct ExportSettingsPane: View {
                 .controlSize(.small)
             }
         }
+    }
+}
+
+// MARK: - Launch at login (native SMAppService) + version
+
+/// Thin wrapper over `SMAppService.mainApp` so the General pane can offer a
+/// native "Launch at login" toggle. macOS surfaces approval/management under
+/// System Settings → General → Login Items; we never write a LaunchAgent plist.
+enum LoginItem {
+    static var isEnabled: Bool {
+        SMAppService.mainApp.status == .enabled
+    }
+
+    static func setEnabled(_ enabled: Bool) throws {
+        if enabled {
+            try SMAppService.mainApp.register()
+        } else {
+            try SMAppService.mainApp.unregister()
+        }
+    }
+
+    static var appVersionString: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "—"
+        let build = info?["CFBundleVersion"] as? String
+        if let build, !build.isEmpty, build != short {
+            return "\(short) (\(build))"
+        }
+        return short
     }
 }

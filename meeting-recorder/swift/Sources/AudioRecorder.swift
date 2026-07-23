@@ -34,6 +34,10 @@ class AudioRecorder: ObservableObject {
     private var systemAudio: AnyObject?            // SystemAudioCapture (boxed for macOS <14 safety)
     private var systemAudioURL: URL?
     @Published var systemAudioWarning: String?      // non-nil if we couldn't start SCK
+    /// Non-nil if the mic writer isn't actually producing frames shortly after
+    /// start (e.g. input device disappeared). Unlike system audio, the mic is
+    /// the essential source — this is surfaced immediately, not tagged post-hoc.
+    @Published var micCaptureWarning: String?
 
     /// Rolling history of mic audio levels (0–1) for waveform display.
     @Published var micLevelHistory: [Float] = []
@@ -50,6 +54,7 @@ class AudioRecorder: ObservableObject {
     func start() throws {
         guard !isRecording else { throw RecorderError.alreadyRecording }
         systemAudioWarning = nil
+        micCaptureWarning = nil
         debugLog("[AudioRecorder] start() called — captureSystemAudio=\(Preferences.shared.captureSystemAudio) voiceProcessing=\(Preferences.shared.voiceProcessingEnabled)")
 
         let recordingsDir = URL(fileURLWithPath: Preferences.shared.recordingsPath)
@@ -98,6 +103,7 @@ class AudioRecorder: ObservableObject {
         filePath = finalURL
         startTime = Date()
         isRecording = true
+        armMicIntegrityWatchdog()
 
         // Best-effort: set up system-audio capture (the other side of calls).
         // Assign systemAudio BEFORE startMetering() so the level callback wires up.
@@ -183,6 +189,31 @@ class AudioRecorder: ObservableObject {
         }.value
 
         return (id, finalURL, dur)
+    }
+
+    /// Confirms the mic writer is actually producing frames shortly after
+    /// start, rather than silently discovering at stop time that nothing was
+    /// captured (e.g. the input device disappeared right after `record()`
+    /// returned true). Checks recorded-duration progress, not just
+    /// `isRecording`, since a stalled writer can stay "running" with no data.
+    private func armMicIntegrityWatchdog() {
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard let self, self.isRecording else { return }
+            let progressed: TimeInterval
+            if let vp = self.vpCapture {
+                progressed = vp.recordedDuration
+            } else if let rec = self.avRecorder {
+                progressed = rec.currentTime
+            } else {
+                progressed = 0
+            }
+            if progressed < 1.5 {
+                let message = "Microphone isn't recording — no audio was written in the first few seconds. Check your input device."
+                debugLog("[AudioRecorder] WARNING: \(message) (progressed=\(progressed)s)")
+                self.micCaptureWarning = message
+            }
+        }
     }
 
     private static func makeID() -> String {

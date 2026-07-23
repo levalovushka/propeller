@@ -72,6 +72,15 @@ final class GigasttSidecar: @unchecked Sendable {
         NSLog("[GigasttSidecar] stopped")
     }
 
+    /// Restart the server so an updated hotwords file takes effect — hotwords
+    /// are a server-launch argument, not per-request (gigastt CHANGELOG: "deferred").
+    /// Any transcription in flight when this is called will fail; callers should
+    /// only invoke this from Settings, not mid-recording.
+    func restart(statusCallback: ((String) -> Void)? = nil) async throws {
+        stop()
+        try await ensureReady(statusCallback: statusCallback)
+    }
+
     // MARK: - Internals
 
     private func startIfNeeded(
@@ -123,15 +132,24 @@ final class GigasttSidecar: @unchecked Sendable {
         let logHandle = try FileHandle(forWritingTo: logURL)
         _ = try logHandle.seekToEnd()
 
-        let proc = Process()
-        proc.executableURL = binary
-        proc.arguments = [
+        var arguments = [
             "serve",
             "--model-dir", modelDir.path,
             "--model-variant", Self.variant,
             "--port", "\(Self.port)",
             "--pool-size", "1",
+            // Curated Russian brand/acronym lexicon — always-on, free win with
+            // no effect unless a term actually shows up in the audio.
+            "--hotwords-default",
         ]
+        if let hotwordsFile = writeHotwordsFile() {
+            arguments.append("--hotwords-file")
+            arguments.append(hotwordsFile.path)
+        }
+
+        let proc = Process()
+        proc.executableURL = binary
+        proc.arguments = arguments
         proc.standardOutput = logHandle
         proc.standardError = logHandle
         proc.terminationHandler = { [weak self] process in
@@ -324,6 +342,34 @@ final class GigasttSidecar: @unchecked Sendable {
         }
 
         return appSupport
+    }
+
+    /// Writes the user's "Domain terms" (Settings → Transcription → Vocabulary)
+    /// to gigastt's hotwords file, one phrase per line. Returns the file URL,
+    /// or nil (and removes any stale file) when there are no terms configured.
+    private func writeHotwordsFile() -> URL? {
+        let terms = Preferences.shared.domainTermsList
+        let url = Self.hotwordsFileURL
+        guard !terms.isEmpty else {
+            try? FileManager.default.removeItem(at: url)
+            return nil
+        }
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try terms.joined(separator: "\n").write(to: url, atomically: true, encoding: .utf8)
+            return url
+        } catch {
+            NSLog("[GigasttSidecar] failed to write hotwords file: \(error)")
+            return nil
+        }
+    }
+
+    private static var hotwordsFileURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("Meeting Recorder/hotwords.txt")
     }
 
     func modelsPresent(at dir: URL) -> Bool {

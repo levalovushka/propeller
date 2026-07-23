@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 
 class Preferences {
@@ -11,6 +10,14 @@ class Preferences {
     var domainTerms: String {
         get { defaults.string(forKey: "domainTerms") ?? "" }
         set { defaults.set(newValue, forKey: "domainTerms") }
+    }
+
+    /// `domainTerms` parsed into individual phrases for gigastt's hotwords file.
+    var domainTermsList: [String] {
+        domainTerms
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 
     // MARK: - Automation
@@ -48,47 +55,6 @@ class Preferences {
             return ZoomAutoRecordMode(rawValue: raw) ?? .auto
         }
         set { defaults.set(newValue.rawValue, forKey: "zoomAutoRecordMode") }
-    }
-
-    // MARK: - Speaker matching thresholds
-
-    /// Cosine similarity required to auto-match a diarized speaker to a known
-    /// person. Default tuned for max-over-samples matching.
-    var autoMatchThreshold: Float {
-        get {
-            let v = defaults.double(forKey: "autoMatchThreshold")
-            return v > 0 ? Float(v) : Float(PeopleStore.defaultAutoMatchThreshold)
-        }
-        set { defaults.set(Double(newValue), forKey: "autoMatchThreshold") }
-    }
-
-    /// Minimum cosine to show a person as a recommendation (below auto).
-    var recommendThreshold: Float {
-        get {
-            let v = defaults.double(forKey: "recommendThreshold")
-            return v > 0 ? Float(v) : 0.30
-        }
-        set { defaults.set(Double(newValue), forKey: "recommendThreshold") }
-    }
-
-    // MARK: - Global Hotkey
-
-    /// Hardware key code for the global toggle-recording hotkey (default: 15 = 'R').
-    var hotkeyKeyCode: UInt16 {
-        get {
-            let v = defaults.integer(forKey: "hotkeyKeyCode")
-            return v > 0 ? UInt16(v) : 15
-        }
-        set { defaults.set(Int(newValue), forKey: "hotkeyKeyCode") }
-    }
-
-    /// Raw modifier flags for the global hotkey (default: Ctrl + Opt).
-    var hotkeyModifiers: UInt {
-        get {
-            let v = defaults.object(forKey: "hotkeyModifiers") as? UInt
-            return v ?? (NSEvent.ModifierFlags.control.rawValue | NSEvent.ModifierFlags.option.rawValue)
-        }
-        set { defaults.set(newValue, forKey: "hotkeyModifiers") }
     }
 
     // MARK: - Paths
@@ -141,7 +107,7 @@ class Preferences {
     var recapOllamaModel: String {
         get {
             let v = defaults.string(forKey: "recapOllamaModel") ?? ""
-            return v.isEmpty ? "llama3.2" : v
+            return v.isEmpty ? "qwen2.5:7b" : v
         }
         set { defaults.set(newValue, forKey: "recapOllamaModel") }
     }
@@ -208,10 +174,18 @@ class Preferences {
         set { defaults.set(newValue, forKey: "onboardingCompleted") }
     }
 
-    /// The name the user entered during onboarding (used to pre-create their Person).
+    /// The name the user entered during onboarding — used to label the
+    /// mic-dominant diarized speaker with their real name (see plan-v2 3.3).
     var userName: String {
         get { defaults.string(forKey: "userName") ?? "" }
         set { defaults.set(newValue, forKey: "userName") }
+    }
+
+    /// Show upcoming meetings from the system Calendar (EventKit). Off until the
+    /// user opts in, since it triggers a calendar-access permission prompt.
+    var calendarEnabled: Bool {
+        get { defaults.bool(forKey: "calendarEnabled") }
+        set { defaults.set(newValue, forKey: "calendarEnabled") }
     }
 
     // MARK: - Defaults

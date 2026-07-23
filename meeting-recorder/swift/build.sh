@@ -130,6 +130,10 @@ ${ICON_PLIST_KEYS}
     <string>Propeller needs microphone access to record your meetings.</string>
     <key>NSScreenCaptureUsageDescription</key>
     <string>Propeller captures system audio output so both sides of video calls are recorded.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Propeller reads your calendar to show upcoming meetings and pre-fill titles and participants.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Propeller reads your calendar to show upcoming meetings and pre-fill titles and participants.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>
@@ -154,8 +158,11 @@ ENT
 # Sign with entitlements.
 # Prefer a local "MeetingRecorder Dev" certificate for stable signing (TCC permissions
 # survive rebuilds). Falls back to ad-hoc if the cert doesn't exist.
+# NOTE: no `-v` — a self-signed cert is untrusted (CSSMERR_TP_NOT_TRUSTED) and so
+# wouldn't pass the "valid identities" filter, but codesign signs with it fine and
+# the stable signature is what makes TCC (Mic/Screen/Calendar) survive rebuilds.
 SIGN_IDENTITY="MeetingRecorder Dev"
-SIGN_HASH=$(security find-identity -v -p codesigning 2>/dev/null | grep "$SIGN_IDENTITY" | head -1 | awk '{print $2}')
+SIGN_HASH=$(security find-identity -p codesigning 2>/dev/null | grep "$SIGN_IDENTITY" | head -1 | awk '{print $2}')
 if [ -n "$SIGN_HASH" ]; then
     echo "  Signing with '$SIGN_IDENTITY' certificate (stable identity)"
     if [ -x "$APP/Contents/MacOS/gigastt" ]; then

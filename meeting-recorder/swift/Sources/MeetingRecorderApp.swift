@@ -39,7 +39,8 @@ struct MeetingRecorderApp: App {
         WindowGroup("Propeller") {
             MainView(state: state, recordingStore: state.recordingStore)
         }
-        .defaultSize(width: 1080, height: 640)
+        .defaultSize(width: 900, height: 680)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) { }
         }

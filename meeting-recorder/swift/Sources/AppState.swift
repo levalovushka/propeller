@@ -28,15 +28,6 @@ class AppState: ObservableObject {
     /// Survives into the detail view so "Mic only" can be shown in the header.
     @Published var micOnlyRecording = false
 
-    // Post-transcription: all speakers pending confirmation
-    @Published var pendingSpeakers: [DetectedSpeaker] = []
-    @Published var skippedSpeakers: [DetectedSpeaker] = []
-
-    // Surfaced when a speaker is assigned to a person whose existing samples
-    // are very dissimilar — catches mis-attribution before we corrupt the
-    // person's voice profile.
-    @Published var pendingContamination: ContaminationWarning?
-
     // Selection
     @Published var selectedRecordingID: String?
 
@@ -45,7 +36,6 @@ class AppState: ObservableObject {
 
     // Window
     @Published var isWindowOpen = false
-    @Published var showPeople = false
     @Published var showOnboarding = false
     @Published var showMicPermissionAlert = false
     @Published var zoomMeetingDetected = false
@@ -67,7 +57,6 @@ class AppState: ObservableObject {
 
     // Stores & Services
     let recordingStore = RecordingStore()
-    let peopleStore = PeopleStore()
     let transcriptionService = TranscriptionService()
     private let zoomDetector = ZoomMeetingDetector.shared
 
@@ -76,27 +65,42 @@ class AppState: ObservableObject {
         return recordingStore.recording(for: id)
     }
 
-    // Global hotkey
-    private var globalHotkeyMonitor: Any?
-
     // MARK: - Initialization
 
     func bootstrap() {
+        // One-time migration: the legacy hardcoded default was llama3.2 (not bundled
+        // and not our team model). Move it to the new default so recaps actually run.
+        if Preferences.shared.recapOllamaModel == "llama3.2" {
+            Preferences.shared.recapOllamaModel = "qwen2.5:7b"
+        }
+
         recordingStore.load()
         recoveredCount = recordingStore.recoverInterruptedRecordings()
-        peopleStore.loadAll()
         recordingStore.performRetentionCleanup()
         NotificationManager.shared.configure()
         NotificationManager.shared.onCancelRecording = { [weak self] in
             self?.cancelRecording()
         }
-        setupGlobalHotkey()
 
         if !Preferences.shared.onboardingCompleted {
             showOnboarding = true
         }
 
         setupZoomDetector()
+
+        // Quick-note overlay (⌃⌥N during recording).
+        NoteOverlayController.shared.install(state: self)
+
+        // Load upcoming meetings if the user opted into Calendar. Use the
+        // requesting path so access is re-prompted after an ad-hoc rebuild
+        // resets TCC (otherwise the list silently shows nothing).
+        if Preferences.shared.calendarEnabled {
+            Task { await CalendarService.shared.enableAndLoad() }
+        }
+
+        // Fill in summaries for any past recordings that don't have one yet — no
+        // button, no prompt; they just appear once a provider is reachable.
+        startSummaryBackfill()
 
         // Surface sidecar boot / model download in the status line.
         Task {
@@ -123,24 +127,6 @@ class AppState: ObservableObject {
                 await MainActor.run {
                     self.statusMessage = error.localizedDescription
                     self.modelDownloadProgress = nil
-                }
-            }
-        }
-    }
-
-    /// Register Ctrl+Opt+R as a system-wide hotkey to toggle recording from any app.
-    private func setupGlobalHotkey() {
-        let expectedKeyCode = Preferences.shared.hotkeyKeyCode
-        let expectedModifiers = NSEvent.ModifierFlags(rawValue: Preferences.shared.hotkeyModifiers)
-        globalHotkeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            let pressed = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            guard event.keyCode == expectedKeyCode, pressed.contains(expectedModifiers) else { return }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                if self.isRecording {
-                    self.stopRecording()
-                } else {
-                    self.startRecording()
                 }
             }
         }
@@ -306,8 +292,6 @@ class AppState: ObservableObject {
 
     private func beginRecording() {
         transcript = ""
-        pendingSpeakers = []
-        skippedSpeakers = []
         transcribeStep = .pending
         saveStep = .pending
         recapStep = .pending
@@ -477,8 +461,6 @@ class AppState: ObservableObject {
             recapSkipHint = nil
         }
         statusMessage = entry.status == "transcribed_raw" ? "Diarization pending — click Complete Transcription" : ""
-        pendingSpeakers = []
-        skippedSpeakers = []
     }
 
     static func recapURL(for entry: RecordingEntry) -> URL? {
@@ -558,6 +540,132 @@ class AppState: ObservableObject {
         markDirty()
     }
 
+    /// Append a note tagged with the current recording timecode (used by the
+    /// quick-note overlay). No-op unless a recording is in progress.
+    func appendTimestampedNote(_ text: String) {
+        guard isRecording, let id = recorder.recordingID else { return }
+        let line = "[\(AppState.formatElapsed(elapsedSeconds))] \(text)"
+        let existing = recordingStore.recording(for: id)?.notes ?? ""
+        let combined = existing.isEmpty ? line : existing + "\n" + line
+        recordingStore.update(id: id, notes: .some(combined))
+        NotificationManager.shared.post(title: "Propeller", body: "Note saved")
+    }
+
+    // MARK: - Summary backfill (no-button path)
+
+    private var isBackfilling = false
+
+    /// Resolve the transcript markdown file for a recording (the title slug in the
+    /// filename may be stale after a rename), or nil if it hasn't been saved yet.
+    private func transcriptMarkdownURL(for entry: RecordingEntry) -> URL? {
+        let dir = URL(fileURLWithPath: Preferences.shared.meetingsPath)
+        let slug = MarkdownWriter.slugify(entry.title.isEmpty ? entry.id : entry.title)
+        let expected = dir.appendingPathComponent("\(entry.id)-\(slug).md")
+        if FileManager.default.fileExists(atPath: expected.path) { return expected }
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return nil }
+        let prefix = entry.id + "-"
+        return files.first { f in
+            f.pathExtension == "md"
+                && f.lastPathComponent.hasPrefix(prefix)
+                && !f.lastPathComponent.hasSuffix("-recap.md")
+        }
+    }
+
+    /// Silently generate summaries for recordings that have a transcript but no
+    /// summary yet. The user never asks — summaries just appear. Runs sequentially
+    /// in the background, yields to live recording/transcription, and quietly does
+    /// nothing if no LLM provider is available.
+    /// Generate any missing summaries. Returns false when it couldn't run yet
+    /// (busy, or no provider reachable) so the caller can retry later.
+    @discardableResult
+    func backfillMissingSummaries() async -> Bool {
+        // Never run the LLM while the user is in (or detected to be in) a call —
+        // loading the model is ~4–5 GB and would choke Zoom/Figma. Defer to when idle.
+        guard !isBackfilling, !isRecording, !isTranscribing, !zoomMeetingDetected else {
+            debugLog("[backfill] skip: busy (backfilling=\(isBackfilling) recording=\(isRecording) transcribing=\(isTranscribing) zoom=\(zoomMeetingDetected))")
+            return false
+        }
+        let prefs = RecapPreferences.fromShared()
+        let backend = await RecapService.shared.resolveBackend(
+            kind: prefs.provider, openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey
+        )
+        guard case .success(let backendName) = backend else {
+            debugLog("[backfill] skip: no provider (\(backend))")
+            return false
+        }
+        debugLog("[backfill] start via \(backendName), model=\(prefs.ollamaModel), \(recordingStore.recordings.count) recordings")
+
+        isBackfilling = true
+        defer { isBackfilling = false }
+
+        for rec in recordingStore.recordings {
+            if isRecording || isTranscribing { break }           // yield to live work
+            guard let text = rec.transcript, !text.isEmpty else { continue }
+            guard !hasRecap(for: rec) else { debugLog("[backfill] \(rec.id): already has recap"); continue }
+
+            // Ensure a transcript markdown exists (recap is written next to it).
+            let mdPath: String
+            if let existing = transcriptMarkdownURL(for: rec) {
+                mdPath = existing.path
+            } else if let saved = try? MarkdownWriter.save(
+                title: rec.title, transcript: text, recordingID: rec.id,
+                duration: rec.duration,
+                speakers: MarkdownWriter.extractSpeakers(from: text), notes: rec.notes
+            ) {
+                recordingStore.update(id: rec.id, status: "saved")
+                mdPath = saved
+            } else {
+                debugLog("[backfill] \(rec.id): no transcript markdown, skip")
+                continue
+            }
+
+            debugLog("[backfill] \(rec.id): generating summary…")
+            await backfillOne(rec, transcriptPath: mdPath, prefs: prefs)
+        }
+        debugLog("[backfill] done")
+        return true
+    }
+
+    /// Run the summary backfill, retrying every 30s while no provider is reachable
+    /// (Ollama can be slow to wake). Used at launch and after each recording so a
+    /// summary always appears once the model is up — no manual trigger.
+    func startSummaryBackfill(attempt: Int = 0) {
+        Task {
+            let ran = await backfillMissingSummaries()
+            if !ran && attempt < 8 {
+                try? await Task.sleep(nanoseconds: 30_000_000_000)  // 30s
+                startSummaryBackfill(attempt: attempt + 1)
+            }
+        }
+    }
+
+    private func backfillOne(_ rec: RecordingEntry, transcriptPath: String, prefs: RecapPreferences) async {
+        guard let md = try? String(contentsOfFile: transcriptPath, encoding: .utf8) else {
+            debugLog("[backfill] \(rec.id): couldn't read \(transcriptPath)")
+            return
+        }
+        let speakers = MarkdownWriter.extractSpeakers(from: rec.transcript ?? "")
+        do {
+            let result = try await RecapService.shared.generateRecap(
+                title: rec.title, transcriptMarkdown: md, transcriptPath: transcriptPath,
+                notes: rec.notes, speakers: speakers, duration: rec.duration,
+                recordingID: rec.id, prefs: prefs
+            )
+            guard case .success(let recap) = result else {
+                debugLog("[backfill] \(rec.id): skipped (\(result))")
+                return
+            }
+            debugLog("[backfill] \(rec.id): wrote \(recap.path)")
+            await generateMeetingMetadata(recordingID: rec.id, summary: recap.body)
+            if selectedRecordingID == rec.id {
+                lastRecapPath = recap.path
+                recapStep = .done
+            }
+        } catch {
+            debugLog("[backfill] \(rec.id): ERROR \(error.localizedDescription)")
+        }
+    }
+
     /// Set transcription language for a specific recording. Pass nil to clear (use global default).
     func setLanguage(_ entry: RecordingEntry, to code: String?) {
         recordingStore.update(id: entry.id, language: .some(code))
@@ -598,7 +706,6 @@ class AppState: ObservableObject {
         transcribeStep = .running
         statusMessage = "Loading models..."
         modelDownloadProgress = nil
-        skippedSpeakers = []
         recordingStore.update(id: rec.id, status: "transcribing")
 
         do {
@@ -636,18 +743,16 @@ class AppState: ObservableObject {
 
             modelDownloadProgress = nil
 
-            // Phase 2: Diarization + speaker matching
-            let result = try await transcriptionService.diarizeAndMatch(
+            // Phase 2: Diarization
+            let result = try await transcriptionService.diarize(
                 audioURL: audioURL,
                 asrSegments: rawResult.segments,
-                peopleStore: peopleStore,
                 progressCallback: progressCb
             )
 
             transcript = result.transcript
             transcribeStep = .done
             statusMessage = ""
-            pendingSpeakers = result.detectedSpeakers
             let segJSON = encodePersistedSegments(result.mergedSegments)
             recordingStore.update(
                 id: rec.id,
@@ -656,12 +761,9 @@ class AppState: ObservableObject {
                 rawSegmentsJSON: .some(nil),
                 mergedSegmentsJSON: .some(segJSON)
             )
-            persistUnresolvedSpeakers(for: rec.id)
 
-            // Always save once no speakers need confirmation.
-            if pendingSpeakers.isEmpty {
-                await runSave()
-            }
+            // No speaker confirmation gate — save immediately.
+            await runSave()
         } catch {
             transcribeStep = .failed
             statusMessage = error.localizedDescription
@@ -700,10 +802,9 @@ class AppState: ObservableObject {
         recordingStore.update(id: rec.id, status: "transcribing")
 
         do {
-            let result = try await transcriptionService.diarizeAndMatch(
+            let result = try await transcriptionService.diarize(
                 audioURL: audioURL,
                 asrSegments: segments,
-                peopleStore: peopleStore,
                 progressCallback: { [weak self] progress in
                     Task { @MainActor in self?.statusMessage = progress }
                 }
@@ -712,7 +813,6 @@ class AppState: ObservableObject {
             transcript = result.transcript
             transcribeStep = .done
             statusMessage = ""
-            pendingSpeakers = result.detectedSpeakers
             let segJSON = encodePersistedSegments(result.mergedSegments)
             recordingStore.update(
                 id: rec.id,
@@ -721,11 +821,8 @@ class AppState: ObservableObject {
                 rawSegmentsJSON: .some(nil),
                 mergedSegmentsJSON: .some(segJSON)
             )
-            persistUnresolvedSpeakers(for: rec.id)
 
-            if pendingSpeakers.isEmpty {
-                await runSave()
-            }
+            await runSave()
         } catch {
             transcribeStep = .failed
             statusMessage = error.localizedDescription
@@ -825,11 +922,35 @@ class AppState: ObservableObject {
                     body: "Summary ready — notes and summary are in the meeting."
                 )
                 surfaceSummaryUI()
+                // Best-effort: derive title / subtitle topics / tags from the summary.
+                await generateMeetingMetadata(recordingID: recordingID, summary: recap.body)
             }
         } catch {
             recapStep = .failed
             statusMessage = error.localizedDescription
             recapSkipHint = error.localizedDescription
+        }
+
+        // Sweep for any recording still missing a summary (e.g. this one if the
+        // provider was briefly down), retrying until the model is reachable.
+        startSummaryBackfill()
+    }
+
+    /// Derive title / topics / tags from the finished summary and persist them.
+    /// Title is only set when the user hasn't manually renamed the meeting.
+    /// Best-effort: silently no-ops if the model doesn't return usable metadata.
+    private func generateMeetingMetadata(recordingID: String, summary: String) async {
+        guard let rec = recordingStore.recording(for: recordingID) else { return }
+        let titleIsManual = rec.titleManuallySet ?? false
+        let meta = await RecapService.shared.generateMetadata(
+            summaryMarkdown: summary,
+            needTitle: !titleIsManual,
+            prefs: RecapPreferences.fromShared()
+        )
+        guard let meta else { return }
+        recordingStore.update(id: recordingID, topics: meta.topics, tags: meta.tags)
+        if !titleIsManual, let newTitle = meta.title, !newTitle.isEmpty {
+            recordingStore.update(id: recordingID, title: newTitle)
         }
     }
 
@@ -839,236 +960,7 @@ class AppState: ObservableObject {
         await runTranscribe()
     }
 
-    // MARK: - Speaker Confirmation
-
-    /// Confirm a high-confidence match. Always adds a voice sample to improve future recognition.
-    func confirmSpeaker(_ speaker: DetectedSpeaker) {
-        guard let rec = selectedRecording,
-              let person = speaker.matchedPerson else { return }
-        let audioURL = URL(fileURLWithPath: Preferences.shared.recordingsPath)
-            .appendingPathComponent(rec.filename)
-
-        Task {
-            await peopleStore.addSample(
-                to: person,
-                audioURL: audioURL,
-                startTime: speaker.sampleStartTime,
-                endTime: speaker.sampleEndTime,
-                embedding: speaker.embedding,
-                qualityScore: speaker.sampleQuality,
-                captureSource: speaker.captureSource
-            )
-        }
-
-        // Name is already correct in transcript
-        pendingSpeakers.removeAll { $0.id == speaker.id }
-        persistUnresolvedSpeakers(for: rec.id)
-        checkAutoSave()
-    }
-
-    /// Confirm all high-confidence matches in one click.
-    func confirmAllMatched() {
-        let matched = pendingSpeakers.filter { $0.isHighConfidence }
-        for speaker in matched {
-            confirmSpeaker(speaker)
-        }
-    }
-
-    /// Assign speaker to an existing person (correction or low-confidence pick).
-    /// If the clip doesn't sound like this person's existing samples, surfaces
-    /// a contamination warning so the user can confirm before we write it.
-    func addSpeakerToExistingPerson(_ speaker: DetectedSpeaker, person: Person) {
-        if let score = peopleStore.similarityToExistingSamples(embedding: speaker.embedding, person: person),
-           score < PeopleStore.contaminationThreshold {
-            pendingContamination = ContaminationWarning(
-                speaker: speaker,
-                person: person,
-                similarity: score
-            )
-            return
-        }
-        commitSpeakerToPerson(speaker, person: person)
-    }
-
-    /// Called after the user explicitly confirms a low-similarity assignment.
-    func forceAddSpeakerToPerson(_ speaker: DetectedSpeaker, person: Person) {
-        commitSpeakerToPerson(speaker, person: person)
-        pendingContamination = nil
-    }
-
-    private func commitSpeakerToPerson(_ speaker: DetectedSpeaker, person: Person) {
-        guard let rec = selectedRecording else { return }
-        let audioURL = URL(fileURLWithPath: Preferences.shared.recordingsPath)
-            .appendingPathComponent(rec.filename)
-
-        Task {
-            await peopleStore.addSample(
-                to: person,
-                audioURL: audioURL,
-                startTime: speaker.sampleStartTime,
-                endTime: speaker.sampleEndTime,
-                embedding: speaker.embedding,
-                qualityScore: speaker.sampleQuality,
-                captureSource: speaker.captureSource
-            )
-        }
-
-        // Update transcript with the person's name
-        transcript = transcript.replacingOccurrences(
-            of: "[\(speaker.assignedName)]",
-            with: "[\(person.name)]"
-        )
-        if let id = selectedRecordingID {
-            recordingStore.update(id: id, transcript: transcript)
-        }
-        pendingSpeakers.removeAll { $0.id == speaker.id }
-        persistUnresolvedSpeakers(for: rec.id)
-        markDirty()
-        checkAutoSave()
-    }
-
-    /// Create a new person from this speaker. Adds a voice sample.
-    func saveSpeakerAsNewPerson(_ speaker: DetectedSpeaker, name: String) {
-        guard let rec = selectedRecording else { return }
-        let audioURL = URL(fileURLWithPath: Preferences.shared.recordingsPath)
-            .appendingPathComponent(rec.filename)
-
-        Task {
-            let _ = await peopleStore.createPerson(
-                name: name,
-                audioURL: audioURL,
-                startTime: speaker.sampleStartTime,
-                endTime: speaker.sampleEndTime,
-                embedding: speaker.embedding,
-                qualityScore: speaker.sampleQuality,
-                captureSource: speaker.captureSource
-            )
-        }
-
-        // Update transcript with the real name
-        transcript = transcript.replacingOccurrences(
-            of: "[\(speaker.assignedName)]",
-            with: "[\(name)]"
-        )
-        if let id = selectedRecordingID {
-            recordingStore.update(id: id, transcript: transcript)
-        }
-        pendingSpeakers.removeAll { $0.id == speaker.id }
-        persistUnresolvedSpeakers(for: rec.id)
-        markDirty()
-        checkAutoSave()
-    }
-
-    func skipSpeaker(_ speaker: DetectedSpeaker) {
-        pendingSpeakers.removeAll { $0.id == speaker.id }
-        skippedSpeakers.append(speaker)
-        if let id = selectedRecordingID {
-            persistUnresolvedSpeakers(for: id)
-        }
-        checkAutoSave()
-    }
-
-    /// Move all skipped speakers back into pendingSpeakers for re-prompting.
-    func repromptSkippedSpeakers() {
-        pendingSpeakers.append(contentsOf: skippedSpeakers)
-        skippedSpeakers.removeAll()
-    }
-
-    // MARK: - Speaker Persistence (re-open tagging later)
-
-    /// Persist the current pending+skipped speaker list onto the selected
-    /// recording's `unresolvedSpeakersJSON`, so the user can re-open the
-    /// confirmation UI from the detail view after navigating away.
-    /// Resolved speakers (already removed from both lists) are not persisted.
-    private func persistUnresolvedSpeakers(for recordingID: String) {
-        let unresolved = pendingSpeakers + skippedSpeakers
-        let encoded: String? = {
-            guard !unresolved.isEmpty else { return nil }
-            let snapshot = unresolved.map(PersistedSpeaker.init(from:))
-            guard let data = try? JSONEncoder().encode(snapshot) else { return nil }
-            return String(data: data, encoding: .utf8)
-        }()
-        recordingStore.update(id: recordingID, unresolvedSpeakersJSON: .some(encoded))
-    }
-
-    /// Re-open the speaker confirmation UI for the selected recording, using
-    /// the persisted speaker snapshot. Recommendations and auto-matches are
-    /// recomputed against the current PeopleStore so newly added people are
-    /// considered.
-    func reopenSpeakerTagging() {
-        guard let rec = selectedRecording,
-              let json = rec.unresolvedSpeakersJSON,
-              let data = json.data(using: .utf8),
-              let snapshot = try? JSONDecoder().decode([PersistedSpeaker].self, from: data),
-              !snapshot.isEmpty else {
-            return
-        }
-
-        let autoThreshold = Preferences.shared.autoMatchThreshold
-        let recommendThreshold = Preferences.shared.recommendThreshold
-
-        let restored: [DetectedSpeaker] = snapshot.map { persisted in
-            let result = peopleStore.matchWithRecommendations(
-                embedding: persisted.embedding,
-                source: persisted.captureSource,
-                autoThreshold: autoThreshold,
-                recommendThreshold: recommendThreshold
-            )
-            let matchScore: Float? = result.match.map { person in
-                peopleStore.bestSimilarity(
-                    embedding: persisted.embedding,
-                    source: persisted.captureSource,
-                    to: person
-                )
-            }
-            return DetectedSpeaker(
-                label: persisted.label,
-                embedding: persisted.embedding,
-                matchedPerson: result.match,
-                matchScore: matchScore,
-                assignedName: persisted.assignedName,
-                sampleStartTime: persisted.sampleStartTime,
-                sampleEndTime: persisted.sampleEndTime,
-                sampleQuality: persisted.sampleQuality,
-                captureSource: persisted.captureSource,
-                recommendations: result.recommendations
-            )
-        }
-
-        pendingSpeakers = restored
-        skippedSpeakers = []
-    }
-
-    /// Number of unresolved (still-pending or skipped) speakers persisted on
-    /// this recording. Drives whether the "Tag speakers" button is shown.
-    func unresolvedSpeakerCount(for entry: RecordingEntry) -> Int {
-        guard let json = entry.unresolvedSpeakersJSON,
-              let data = json.data(using: .utf8),
-              let snapshot = try? JSONDecoder().decode([PersistedSpeaker].self, from: data) else {
-            return 0
-        }
-        return snapshot.count
-    }
-
-    private func checkAutoSave() {
-        guard selectedRecording != nil else { return }
-        if pendingSpeakers.isEmpty {
-            Task { await runSave() }
-        }
-    }
-
     // MARK: - Per-Segment Reassignment
-
-    /// Where a segment should be reassigned to. Used by `reassignSegments`.
-    enum SegmentReassignTarget {
-        /// Just relabel the segment — no Person attribution, no learning.
-        /// (e.g. the user wants to merge "Speaker 0" into "Speaker 1".)
-        case existingSpeakerName(String)
-        /// Attribute to an existing Person and add a corrected voice sample.
-        case existingPerson(Person)
-        /// Create a new Person from the audio range and attribute the segment.
-        case newPerson(name: String)
-    }
 
     /// Load the persisted merged-segments snapshot for a recording, if any.
     func loadPersistedSegments(for entry: RecordingEntry) -> [PersistedSegment]? {
@@ -1093,77 +985,25 @@ class AppState: ObservableObject {
         return String(data: data, encoding: .utf8)
     }
 
-    /// Reassign one or more segments (by `index`) to a new speaker. Re-renders
-    /// the transcript, re-saves the recording, and — for Person targets —
-    /// extracts an audio sample and adds it to the Person's voice profile so
-    /// the matcher learns from the correction.
-    func reassignSegments(_ indices: Set<Int>, to target: SegmentReassignTarget) async {
+    /// Rename one or more segments (by `index`) to a new speaker label — either
+    /// merging into an existing label already used in this recording, or a
+    /// freshly typed name. Re-renders the transcript and re-saves. Purely
+    /// textual: no voice profile, no learning, since there's no PeopleStore.
+    func reassignSegments(_ indices: Set<Int>, toName rawName: String) async {
         guard let rec = selectedRecording else { return }
         guard var segments = loadPersistedSegments(for: rec), !segments.isEmpty else { return }
+
+        let newName = rawName.trimmingCharacters(in: .whitespaces)
+        guard !newName.isEmpty else { return }
 
         let touched = indices.compactMap { idx -> PersistedSegment? in
             segments.first(where: { $0.index == idx })
         }
         guard !touched.isEmpty else { return }
 
-        let learnStart = touched.map(\.startTime).min() ?? 0
-        let learnEnd = touched.map(\.endTime).max() ?? 0
-        let audioURL = URL(fileURLWithPath: Preferences.shared.recordingsPath)
-            .appendingPathComponent(rec.filename)
-
-        // Resolve the target into (newName, personID, optional learn task).
-        let newName: String
-        var newPersonID: UUID?
-
-        switch target {
-        case .existingSpeakerName(let name):
-            newName = name
-            newPersonID = peopleStore.personWithName(name)?.id
-        case .existingPerson(let person):
-            newName = person.name
-            newPersonID = person.id
-            statusMessage = "Adding voice sample to \(person.name)…"
-            do {
-                let dia = try await transcriptionService.prepareDiarizer()
-                _ = await peopleStore.learnSampleFromAudioRange(
-                    person: person,
-                    audioURL: audioURL,
-                    startTime: learnStart,
-                    endTime: learnEnd,
-                    captureSource: nil,
-                    using: dia
-                )
-            } catch {
-                NSLog("[AppState] reassign learn failed: \(error)")
-            }
-            statusMessage = ""
-        case .newPerson(let name):
-            let trimmed = name.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { return }
-            newName = trimmed
-            statusMessage = "Creating \(trimmed)…"
-            do {
-                let dia = try await transcriptionService.prepareDiarizer()
-                if let created = await peopleStore.learnNewPersonFromAudioRange(
-                    name: trimmed,
-                    audioURL: audioURL,
-                    startTime: learnStart,
-                    endTime: learnEnd,
-                    captureSource: nil,
-                    using: dia
-                ) {
-                    newPersonID = created.id
-                }
-            } catch {
-                NSLog("[AppState] reassign new-person failed: \(error)")
-            }
-            statusMessage = ""
-        }
-
         // Update the segment list in place.
         for i in segments.indices where indices.contains(segments[i].index) {
             segments[i].speaker = newName
-            segments[i].personID = newPersonID
         }
 
         // Re-render transcript text and persist both.
@@ -1176,7 +1016,7 @@ class AppState: ObservableObject {
             mergedSegmentsJSON: .some(segJSON)
         )
         markDirty()
-        checkAutoSave()
+        await runSave()
     }
 
     /// Distinct speaker names currently used in the segment list, in

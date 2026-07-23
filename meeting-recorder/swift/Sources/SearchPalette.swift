@@ -1,11 +1,10 @@
 import SwiftUI
 
 /// Command-palette style search (⌘K), talat-like: query field, filter chips,
-/// recordings / people / transcript matches, and quick actions.
+/// recordings / transcript matches, and quick actions.
 struct SearchPalette: View {
     @ObservedObject var state: AppState
     let onOpenRecording: (RecordingEntry) -> Void
-    let onOpenPerson: (Person) -> Void
     let onClose: () -> Void
 
     @State private var query = ""
@@ -16,7 +15,6 @@ struct SearchPalette: View {
     enum Filter: String, CaseIterable, Identifiable {
         case all = "All"
         case meetings = "Meetings"
-        case people = "People"
         case transcripts = "Transcripts"
         var id: String { rawValue }
     }
@@ -35,13 +33,11 @@ struct SearchPalette: View {
 
     private enum Item: Identifiable {
         case recording(RecordingMatch)
-        case person(Person)
         case startRecording
 
         var id: String {
             switch self {
             case .recording(let m): return "rec-\(m.entry.id)"
-            case .person(let p): return "person-\(p.id.uuidString)"
             case .startRecording: return "action-record"
             }
         }
@@ -240,17 +236,10 @@ struct SearchPalette: View {
         return result
     }
 
-    private var matchedPeople: [Person] {
-        let people = state.peopleStore.people
-        if query.isEmpty { return [] }
-        return people.filter { $0.name.localizedCaseInsensitiveContains(query) }
-    }
-
     private func count(for f: Filter) -> Int {
         switch f {
-        case .all: return matchedRecordings.count + matchedPeople.count
+        case .all: return matchedRecordings.count
         case .meetings: return matchedRecordings.count
-        case .people: return matchedPeople.count
         case .transcripts: return matchedRecordings.filter { $0.inText }.count
         }
     }
@@ -258,13 +247,8 @@ struct SearchPalette: View {
     private var items: [Item] {
         var result: [Item] = []
         switch filter {
-        case .all:
+        case .all, .meetings:
             result += matchedRecordings.map { .recording($0) }
-            result += matchedPeople.map { .person($0) }
-        case .meetings:
-            result += matchedRecordings.map { .recording($0) }
-        case .people:
-            result += matchedPeople.map { .person($0) }
         case .transcripts:
             result += matchedRecordings.filter { $0.inText }.map { .recording($0) }
         }
@@ -277,19 +261,16 @@ struct SearchPalette: View {
     private var groupedItems: [(String, [(Int, Item)])] {
         var sections: [(String, [(Int, Item)])] = []
         var recordings: [(Int, Item)] = []
-        var people: [(Int, Item)] = []
         var actions: [(Int, Item)] = []
         for (i, item) in items.enumerated() {
             switch item {
             case .recording: recordings.append((i, item))
-            case .person: people.append((i, item))
             case .startRecording: actions.append((i, item))
             }
         }
         if !recordings.isEmpty {
             sections.append((query.isEmpty ? "Recent recordings" : "Recordings", recordings))
         }
-        if !people.isEmpty { sections.append(("People", people)) }
         if !actions.isEmpty { sections.append(("Actions", actions)) }
         return sections
     }
@@ -331,14 +312,6 @@ struct SearchPalette: View {
                             .lineLimit(2)
                     }
                 }
-            case .person(let person):
-                AvatarCircle(name: person.name, size: 20)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(person.name).lineLimit(1)
-                    Text("\(person.sampleCount) sample\(person.sampleCount == 1 ? "" : "s")")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
             case .startRecording:
                 Image(systemName: "record.circle")
                     .foregroundStyle(.red)
@@ -378,8 +351,6 @@ struct SearchPalette: View {
         switch items[index] {
         case .recording(let match):
             onOpenRecording(match.entry)
-        case .person(let person):
-            onOpenPerson(person)
         case .startRecording:
             onClose()
             state.startRecording()

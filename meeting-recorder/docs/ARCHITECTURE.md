@@ -1,10 +1,12 @@
 # Propeller — архитектура
 
-_Источник правды по архитектурным решениям форка. Продуктовый бэклог — [`../../product-ideas.md`](../../product-ideas.md), план фаз — [`../../plan-v1.md`](../../plan-v1.md), UI — [`../../design/propeller-ui.md`](../../design/propeller-ui.md)._
+_Источник правды по архитектурным решениям форка. Поведение продукта — [SPEC.md](SPEC.md); активные планы/решения — [`../../plan-v2.md`](../../plan-v2.md); инженерная оптимизация — [`../../plan-optimization.md`](../../plan-optimization.md); UI — [`../../design/propeller-ui.md`](../../design/propeller-ui.md)._
 
 ## Что это
 
-**Propeller** — нативное macOS-приложение (SwiftUI, macOS 14+, Apple Silicon): запись встреч (mic + system audio), локальная транскрипция на русском (GigaAM-v3 через `gigastt`), диаризация (FluidAudio), библиотека голосов, markdown-вывод и LLM-рекап. Живёт в менюбаре + главное окно.
+**Propeller** — нативное macOS-приложение (SwiftUI, macOS 14+, Apple Silicon): запись встреч (mic + system audio), локальная транскрипция на русском (GigaAM-v3 через `gigastt`), диаризация (FluidAudio) → консистентные `Speaker N`, markdown-вывод и LLM-саммари с авто-заголовком/темами/тегами. Живёт в менюбаре + главное окно.
+
+> С plan-v2 Job 3 **вырезаны** библиотека голосов (`PeopleStore`), voice-matching и опрос спикеров. Именование спикеров сведено к консистентным `Speaker N` + владелец-по-микрофону.
 
 Имя бандла / bundle id: `Propeller` / `com.simplyai.meeting-recorder` (id сохранён ради TCC). SPM-таргет бинарника по-прежнему `MeetingRecorder`.
 
@@ -19,7 +21,9 @@ _Источник правды по архитектурным решениям 
 | Вывод markdown | Дефолт **Simple**; Obsidian — опция | Коллеги без Vault |
 | Рекап | Ollama → OpenAI → Claude (Auto), или Off | Локально по умолчанию; ключи в Keychain |
 | Zoom | **Off / Auto-record** (дефолт Auto) | Запись без подтверждения; отмена через системное уведомление «Не записывать» |
-| Сохранение транскрипта | **Всегда** (после resolved speakers) | Тугл auto-save убран |
+| Спикеры | Консистентные `Speaker N` + владелец-по-микрофону | Библиотека голосов/матчинг вырезаны (plan-v2 Job 3); «тупо и надёжно» |
+| Календарь | EventKit, read-only (не Google OAuth) | Читает системный Календарь; без облака, только разрешение |
+| Сохранение транскрипта | **Всегда** (сразу после диаризации) | Опроса спикеров и тугла auto-save нет |
 | Дистрибуция v1 | DMG, без Sparkle; нотаризация опциональна | Малая команда |
 | Иконка | `propellericon.icon` → Assets.car + .icns через `actool` | Liquid Glass + fallback |
 | Саммари / заметки | Встреча: табы Transcript / Notes / Summary; sidebar **Summaries** — только summary+notes; заметки пишутся во время записи и якорят LLM (как Granola) | Talat-табы + Granola notes-as-anchors; авто-рекап после save |
@@ -27,17 +31,18 @@ _Источник правды по архитектурным решениям 
 ## Поток данных
 
 ```
-ZoomMeetingDetector (опц.) / hotkey / UI
+ZoomMeetingDetector (Auto) / menu bar / ⌘R / UI
   → AudioRecorder
       mic (.mic.wav) + ScreenCaptureKit system (.sys.wav)
       → offline mix → {id}.wav (+ stems пока аудио хранится)
   → TranscriptionService
       → GigasttSidecar / GigasttClient  (ASR → ASRSegment[])
       → checkpoint status=transcribed_raw
-      → FluidAudio diarization + PeopleStore match
-      → transcript + DetectedSpeaker[]
-  → MarkdownWriter  (simple | obsidian)
+      → FluidAudio diarization → Speaker N + владелец-по-микрофону
+      → transcript + PersistedSegment[]
+  → MarkdownWriter  (simple | obsidian) → save (транскрипт всегда)
   → RecapService    (если провайдер доступен)
+      → generateMetadata → заголовок / темы / теги
 ```
 
 Статусы записи: `recording → recorded → transcribing → transcribed_raw → transcribed → saved`.
@@ -46,27 +51,31 @@ ZoomMeetingDetector (опц.) / hotkey / UI
 
 | Файл | Роль |
 |---|---|
-| `AppState` | `@MainActor` координатор: запись, пайплайн, Zoom, спикеры |
-| `AudioRecorder` | Mic (AVAudioRecorder или VoiceProcessing AEC) + system audio + mix |
-| `SystemAudioCapture` | ScreenCaptureKit stem |
+| `AppState` | `@MainActor` координатор: запись, пайплайн, Zoom, backfill, переименование спикеров |
+| `AudioRecorder` | Mic (AVAudioRecorder или VoiceProcessing AEC) + system audio + офлайн-микс |
+| `SystemAudioCapture` | ScreenCaptureKit stem (app-scoped фильтр + display-wide fallback) |
 | `ZoomMeetingDetector` | Поллы `aomhost` / meeting-window / display-sleep assertion (`caphost` ≠ встреча) |
-| `NotificationManager` | UNUserNotificationCenter: интерактивная отмена авто-записи + обычные баннеры |
-| `TranscriptionService` | ASR → diarize → match |
+| `CalendarService` | EventKit: секция Upcoming (read-only, без OAuth) |
+| `NoteOverlayController` | Оверлей быстрых заметок ⌃⌥N во время записи |
+| `NotificationManager` | UNUserNotificationCenter: интерактивная отмена авто-записи + баннеры |
+| `TranscriptionService` | ASR → diarize → `Speaker N` + владелец-по-микрофону |
 | `GigasttSidecar` / `GigasttClient` | Жизненный цикл сервера и HTTP |
-| `RecordingStore` / `PeopleStore` | Индексы + CRUD + retention / voice samples |
-| `MarkdownWriter` / `RecapService` | Экспорт и LLM-рекап |
+| `RecordingStore` | Индекс записей + CRUD + retention |
+| `MarkdownWriter` / `RecapService` | Экспорт и LLM-саммари + метадата (заголовок/темы/теги) |
 | `Preferences` | UserDefaults + Keychain для API-ключей |
-| UI | `MainView`, `RecordingDetailView`, `RecordingInProgressView`, `MenuBarPanelView`, `SettingsSheet`, `OnboardingView`, `SpeakerConfirmationView`, `SearchPalette`, … |
+| UI | `MainView`, `RecordingDetailView`, `RecordingInProgressView`, `MenuBarPanelView`, `SettingsSheet`, `OnboardingView`, `SearchPalette`, … |
 
 ## Хранилище
 
 ```
 ~/.meeting-recorder/
   recordings/   recordings.json, *.wav, *.mic.wav, *.sys.wav
-  people/       people.json, {uuid}/*.caf
   meetings/     {id}-{slug}.md, {id}-{slug}-recap.md
+  people/       # ЛЕГАСИ: больше не читается/не пишется (данные на диске не трогаем)
 
-~/Library/Application Support/Meeting Recorder/gigastt-models/   # имя папки наследие TCC/эпохи форка
+~/Library/Application Support/Meeting Recorder/
+  gigastt-models/   # ~225 МБ GigaAM (имя папки — наследие TCC/эпохи форка)
+  hotwords.txt      # словарь Domain terms для gigastt
 ```
 
 ## Сборка и запуск
@@ -83,4 +92,4 @@ open -a Propeller
 
 - Bundle id и путь Application Support «Meeting Recorder» — смена сбрасывает TCC / модели.
 - Имя SPM-executable `MeetingRecorder` — косметика, не блокер.
-- FluidAudio embeddings — смена диаризатора ломает People library (см. бэклог).
+- Легаси-данные `~/.meeting-recorder/people/` — не читаем, но и не удаляем без явной миграции.
