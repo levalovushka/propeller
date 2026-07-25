@@ -1,0 +1,35 @@
+{
+  "audio_duration_s": 27.4394375,
+  "commit": "40ae070",
+  "fixture": "ru-short-2spk",
+  "machine": "MacBook Pro",
+  "metrics": {
+    "asr.rtf": {
+      "median": 0.031593689929520385,
+      "p90": 0.031593689929520385,
+      "tolerance": "+15%"
+    },
+    "batch.peak_rss_mb": {
+      "median": 112.03125,
+      "p90": 112.03125,
+      "tolerance": "+10%"
+    },
+    "batch.rss_after_release_mb": {
+      "median": 83.375,
+      "p90": 83.375,
+      "tolerance": "+15%"
+    },
+    "diarize.rtf": {
+      "median": 0.017847925411881863,
+      "p90": 0.017847925411881863,
+      "tolerance": "+15%"
+    },
+    "sidecar.spawn_ms": {
+      "median": 3112.9199266433716,
+      "p90": 3112.9199266433716,
+      "tolerance": "+20%"
+    }
+  },
+  "os": "Version 26.4.1 (Build 25E253)",
+  "runs": 1
+}

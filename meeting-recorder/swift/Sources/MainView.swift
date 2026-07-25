@@ -1,23 +1,62 @@
 import SwiftUI
+import AppKit
+import PropellerUI
 
+/// Meetings home — Figma 640:1859.
 struct MainView: View {
     @ObservedObject var state: AppState
     @ObservedObject var recordingStore: RecordingStore
     @State private var showSearchPalette = false
     @State private var hoveredRowID: String?
+    /// nil = all; otherwise owner name or "Speaker N".
+    @State private var speakerFilter: String?
     @ObservedObject private var calendar = CalendarService.shared
 
+    /// Browser-style history: `nil` = meetings list, otherwise a recording id.
+    /// Figma 640:1859 — chevron.left / chevron.right next to traffic lights.
+    @State private var navStack: [String?] = [nil]
+    @State private var navIndex: Int = 0
+    @State private var suppressNavRecord = false
+
+    /// Stub / empty takes shorter than this stay out of the feed (reqs §1).
+    private static let stubDurationThreshold: TimeInterval = 5
+
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    /// Back is available whenever we can leave the meeting detail (or step history).
+    private var canGoBack: Bool {
+        if state.isRecording { return false }
+        return navIndex > 0 || state.selectedRecordingID != nil
+    }
+    private var canGoForward: Bool { navIndex + 1 < navStack.count }
+
     var body: some View {
-        // No sidebar: a custom top bar hosts nav / search / status / settings,
-        // and one centred content column (max 640) below it.
-        VStack(spacing: 0) {
-            topBar
-            mainArea
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 0) {
+                topBar
+                    .zIndex(2)
+                mainArea
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
+            if state.isRecording {
+                recordingEdgeGlow
+                    .allowsHitTesting(false)
+                    .zIndex(1)
+            }
+
+            if state.selectedRecording == nil, !state.isRecording {
+                floatingSearch
+                    .padding(.bottom, 16)
+            }
         }
-        .frame(minWidth: 800, minHeight: 560)
-        // Pull the whole layout up under the (hidden) title bar so the top bar
-        // sits on the same line as the traffic-light buttons.
+        .frame(minWidth: Tokens.Window.contentWidth + Tokens.Window.chromePadding * 2,
+               minHeight: 560)
         .ignoresSafeArea(.container, edges: .top)
         .onAppear {
             state.isWindowOpen = true
@@ -27,12 +66,8 @@ struct MainView: View {
             state.isWindowOpen = false
             NSApp.setActivationPolicy(.accessory)
         }
-        .task {
-            state.bootstrap()
-        }
-        .sheet(isPresented: $state.showOnboarding) {
-            OnboardingView(state: state)
-                .interactiveDismissDisabled()
+        .onChange(of: state.selectedRecordingID) { _, newID in
+            recordNav(to: newID)
         }
         .sheet(isPresented: $showSearchPalette) {
             SearchPalette(
@@ -45,7 +80,6 @@ struct MainView: View {
             )
         }
         .background {
-            // Window-level shortcuts (no visible UI)
             Button("") {
                 if state.isRecording { state.stopRecording() }
                 else { state.startRecording() }
@@ -57,7 +91,6 @@ struct MainView: View {
                 .keyboardShortcut("k", modifiers: .command)
                 .hidden()
         }
-        .background(VisualEffectBackground().ignoresSafeArea())
         .alert("Microphone Access Required", isPresented: $state.showMicPermissionAlert) {
             Button("Open System Settings") { state.openMicrophoneSettings() }
             Button("Cancel", role: .cancel) {}
@@ -80,67 +113,153 @@ struct MainView: View {
         }
     }
 
-
-    // MARK: - Top bar (nav / search / status / settings)
+    // MARK: - Top bar — Figma 640:1861 (slot 76 | back/forward | status+gear)
 
     private var topBar: some View {
-        HStack(spacing: 16) {
-            // Back / forward — navigate between the list and an open meeting.
-            HStack(spacing: 12) {
-                Button { state.selectedRecordingID = nil } label: {
-                    Image(systemName: "chevron.left")
+        HStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Color.clear
+                    .frame(width: Tokens.Window.trafficLightSlotWidth, height: 32)
+
+                HStack(spacing: 0) {
+                    IconButton(
+                        systemName: "chevron.left",
+                        prominence: .minimal,
+                        iconSize: 14,
+                        weight: .medium,
+                        enabled: canGoBack
+                    ) { goBack() }
+                    .help("Back")
+
+                    IconButton(
+                        systemName: "chevron.right",
+                        prominence: .minimal,
+                        iconSize: 14,
+                        weight: .medium,
+                        enabled: canGoForward
+                    ) { goForward() }
+                    .help("Forward")
                 }
-                .disabled(state.selectedRecording == nil)
-                Button {} label: {
-                    Image(systemName: "chevron.right")
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 14) {
+                if let status = topStatusText {
+                    Text(status)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.white.opacity(0.30))
+                        .tracking(0.025)
+                        .lineLimit(1)
+                        .frame(height: 32)
                 }
-                .disabled(true)
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 16, weight: .medium))
-            .foregroundStyle(.secondary)
 
-            Button { showSearchPalette = true } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "magnifyingglass")
-                    Text("Search")
+                SettingsLink {
+                    MinimalIconGlyph(systemName: "gearshape.fill", iconSize: 15)
                 }
-                .foregroundStyle(.secondary)
+                .buttonStyle(.plain)
+                .help("Settings")
             }
-            .buttonStyle(.plain)
-
-            Spacer()
-
-            if let status = topStatusText {
-                Text(status)
-                    .foregroundStyle(.tertiary)
-            }
-
-            SettingsLink {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 15))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
         }
-        .font(.system(size: 15))
-        .padding(.leading, 80)      // clear the macOS traffic-light buttons
-        .padding(.trailing, 20)
-        .frame(height: 44)
+        .frame(height: 32)
+        .padding(Tokens.Window.chromePadding)
+        .frame(height: Tokens.Window.topBarHeight, alignment: .center)
     }
 
-    /// Right-aligned status: model download, else an active pipeline step, else nil.
+    // MARK: - History navigation
+
+    private func goBack() {
+        guard canGoBack else { return }
+        if navIndex > 0 {
+            navIndex -= 1
+            applyNav()
+            return
+        }
+        // Detail open but history empty (e.g. cold open) — still leave to list.
+        suppressNavRecord = true
+        state.player.stop()
+        state.selectedRecordingID = nil
+        navStack = [nil]
+        navIndex = 0
+        suppressNavRecord = false
+    }
+
+    private func goForward() {
+        guard canGoForward else { return }
+        navIndex += 1
+        applyNav()
+    }
+
+    private func applyNav() {
+        suppressNavRecord = true
+        defer { suppressNavRecord = false }
+        let dest = navStack[navIndex]
+        if let id = dest,
+           let entry = recordingStore.recordings.first(where: { $0.id == id }) {
+            state.selectRecording(entry)
+        } else {
+            state.player.stop()
+            state.selectedRecordingID = nil
+        }
+    }
+
+    private func recordNav(to id: String?) {
+        guard !suppressNavRecord else { return }
+        guard navStack.indices.contains(navIndex) else { return }
+        if navStack[navIndex] == id { return }
+        // Keep list under the first recording so Back always has somewhere to go.
+        if id != nil, navStack == [nil], navIndex == 0 {
+            navStack = [nil, id]
+            navIndex = 1
+            return
+        }
+        if navIndex + 1 < navStack.count {
+            navStack = Array(navStack.prefix(navIndex + 1))
+        }
+        navStack.append(id)
+        navIndex = navStack.count - 1
+    }
+
+    /// Mic glow on the leading edge, system on the trailing — live proof both stems work.
+    private var recordingEdgeGlow: some View {
+        let mic = Double(state.recorder.micLevelHistory.last ?? 0)
+        let sys = Double(state.recorder.systemLevelHistory.last ?? 0)
+        return ZStack {
+            HStack(spacing: 0) {
+                LinearGradient(
+                    colors: [Color.red.opacity(0.15 + mic * 0.55), .clear],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: 28)
+                Spacer(minLength: 0)
+                LinearGradient(
+                    colors: [.clear, Color.cyan.opacity(0.12 + sys * 0.50)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: 28)
+            }
+        }
+        .ignoresSafeArea()
+        .animation(.easeOut(duration: 0.08), value: mic)
+        .animation(.easeOut(duration: 0.08), value: sys)
+    }
+
     private var topStatusText: String? {
         if let frac = state.modelDownloadProgress {
             return "Downloading model.. \(Int(frac * 100))%"
         }
-        if state.transcribeStep == .running || state.saveStep == .running || state.recapStep == .running {
+        if state.busyRecordingID != nil
+            || state.transcribeStep == .running
+            || state.saveStep == .running
+            || state.recapStep == .running {
             return state.statusMessage.isEmpty ? "Working…" : state.statusMessage
         }
         return nil
     }
 
-    // MARK: - Main area (one centred column, max 540)
+    // MARK: - Main area
 
     @ViewBuilder
     private var mainArea: some View {
@@ -150,126 +269,182 @@ struct MainView: View {
             } else if let entry = state.selectedRecording {
                 RecordingDetailView(state: state, entry: entry, presentation: .meeting)
             } else {
-                meetingsList.pageHeader("Meetings")
+                meetingsHome
             }
         }
-        .frame(maxWidth: 640, alignment: .leading)
-        .frame(maxWidth: .infinity, alignment: .center)
+        // Figma Frame 87: px-12, then centred 640 column.
+        .padding(.horizontal, Tokens.Window.chromePadding)
+        .frame(maxWidth: .infinity)
     }
 
-    // MARK: - Meetings list
-
-    private var meetingsList: some View {
+    private var meetingsHome: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 2) {
-                let todaysUpcoming = calendar.upcoming
-                    .filter { Calendar.current.isDateInToday($0.start) }
-                    .prefix(3)
-                if !todaysUpcoming.isEmpty {
-                    sectionHeader("Upcoming")
-                    ForEach(Array(todaysUpcoming)) { m in
-                        upcomingRow(m)
+            VStack(alignment: .leading, spacing: Tokens.Window.sectionStackGap) {
+                titleBlock
+                meetingsList
+            }
+            .frame(maxWidth: Tokens.Window.contentWidth, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.bottom, 120)
+        }
+    }
+
+    /// Figma 640:1877 — h=100, items-end, px=12 py=8, title 40/44/−0.8.
+    private var titleBlock: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            Text("Meetings")
+                .font(.system(size: 40, weight: .semibold))
+                .foregroundStyle(Tokens.Ink.primary)
+                .tracking(-0.8)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .bottomLeading)
+
+            Menu {
+                Button("All speakers") { speakerFilter = nil }
+                if !filterSpeakerOptions.isEmpty { Divider() }
+                ForEach(filterSpeakerOptions, id: \.self) { name in
+                    Button {
+                        speakerFilter = name
+                    } label: {
+                        if speakerFilter == name {
+                            Label(name, systemImage: "checkmark")
+                        } else {
+                            Text(name)
+                        }
                     }
                 }
-                ForEach(groupedRecordings, id: \.0) { group, entries in
-                    sectionHeader(group)
+            } label: {
+                MinimalIconGlyph(
+                    systemName: "line.3.horizontal.decrease",
+                    iconSize: 15,
+                    emphasized: speakerFilter != nil
+                )
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .help("Filter by speaker")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(height: Tokens.Window.titleBlockHeight, alignment: .bottom)
+    }
+
+    // MARK: - List
+
+    private var meetingsList: some View {
+        // Frame 86 gap=24 between Upcoming / Today blocks; rows inside a section stack flush.
+        LazyVStack(alignment: .leading, spacing: Tokens.Window.sectionStackGap) {
+            if let next = nextUpcoming {
+                sectionBlock(title: "Upcoming") {
+                    upcomingRow(next)
+                }
+            }
+            ForEach(groupedRecordings, id: \.0) { group, entries in
+                sectionBlock(title: group) {
                     ForEach(entries) { entry in
                         meetingRow(entry)
                     }
                 }
             }
-            .padding(.bottom, 28)
         }
     }
 
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title)
-            .font(.subheadline)
-            .foregroundStyle(.tertiary)
-            .padding(.horizontal, 12)
-            .padding(.top, 22)
-            .padding(.bottom, 4)
+    /// Soonest future calendar event (not the whole day list).
+    private var nextUpcoming: UpcomingMeeting? {
+        let now = Date()
+        return calendar.upcoming
+            .filter { $0.start >= now }
+            .sorted { $0.start < $1.start }
+            .first
     }
 
-    // MARK: - Upcoming (calendar) row
+    /// Speakers seen in the library: owner first, then Speaker N / others.
+    private var filterSpeakerOptions: [String] {
+        var set = Set<String>()
+        for entry in recordingStore.recordings {
+            for name in state.distinctSpeakerNames(for: entry) {
+                let t = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !t.isEmpty { set.insert(t) }
+            }
+        }
+        let owner = Preferences.shared.userName.trimmingCharacters(in: .whitespacesAndNewlines)
+        var list = Array(set).sorted {
+            if $0 == owner { return true }
+            if $1 == owner { return false }
+            return $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+        }
+        if !owner.isEmpty, !list.contains(owner) {
+            list.insert(owner, at: 0)
+        }
+        return list
+    }
+
+    private func sectionBlock<Content: View>(
+        title: String, @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: Tokens.Window.sectionInnerGap) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.30))
+                .padding(.horizontal, 12)
+            VStack(spacing: 0) { content() }
+        }
+    }
+
+    // MARK: - Rows
 
     private func upcomingRow(_ m: UpcomingMeeting) -> some View {
         let key = "evt-" + m.id
         let hovered = hoveredRowID == key
-        return HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(m.title)
-                    .font(.body.weight(.medium))
-                    .lineLimit(1)
-                Text(m.whenLabel)
-                    .font(.callout)
-                    .foregroundStyle(.tertiary)
-            }
-            Spacer(minLength: 8)
-            if hovered {
-                HStack(spacing: 14) {
-                    Button { calendar.dismiss(m) } label: {
-                        Image(systemName: "mic.slash")
-                    }
-                    .help("Don't record this meeting")
-                    Button { calendar.dismiss(m) } label: {
-                        Image(systemName: "trash")
-                    }
-                    .help("Dismiss")
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
+        return rowChrome(hovered: hovered) {
+            timeColumn(start: m.start, end: m.end)
+            // Feed preview = topics; calendar events have none yet → blank subtitle.
+            textColumn(title: m.title, subtitle: "")
+            Spacer(minLength: 0)
+            // Mute is the primary action for the single upcoming row (reqs §4).
+            rowTrailingSlot(hovered: hovered, busy: false) {
+                IconButton(
+                    systemName: "mic.slash",
+                    prominence: .minimal,
+                    iconSize: 14,
+                    weight: .medium
+                ) { calendar.dismiss(m) }
+                .help("Don't record this meeting")
             }
         }
-        .opacity(0.85)
-        .padding(.vertical, 9)
-        .padding(.horizontal, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.primary.opacity(hovered ? 0.06 : 0))
-        )
-        .contentShape(Rectangle())
         .onHover { inside in
             hoveredRowID = inside ? key : (hoveredRowID == key ? nil : hoveredRowID)
         }
     }
 
-    // MARK: - Meetings row
-
     private func meetingRow(_ entry: RecordingEntry) -> some View {
         let hovered = hoveredRowID == entry.id
-        return HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(entry.title.isEmpty ? "Untitled" : entry.title)
-                        .font(.body.weight(.medium))
-                        .lineLimit(1)
-                    Text(rowMeta(entry))
-                        .font(.callout)
-                        .foregroundStyle(.tertiary)
-                        .layoutPriority(-1)
-                }
-                if !entry.subtitleText.isEmpty {
-                    Text(entry.subtitleText)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            Spacer(minLength: 8)
-            if hovered {
-                rowActions(entry)
-            } else {
-                avatarStack(entry)
+        let end = entry.date.addingTimeInterval(entry.duration)
+        let busy = isProcessing(entry)
+        return rowChrome(hovered: hovered) {
+            timeColumn(start: entry.date, end: end)
+            textColumn(
+                title: entry.title.isEmpty ? "Untitled" : entry.title,
+                subtitle: entry.subtitleText
+            )
+            Spacer(minLength: 0)
+            rowTrailingSlot(hovered: hovered, busy: busy) {
+                IconButton(
+                    systemName: "square.and.arrow.down",
+                    prominence: .minimal,
+                    iconSize: 14,
+                    weight: .medium
+                ) { revealInFinder(entry) }
+                .help("Reveal in Finder")
+                IconButton(
+                    systemName: "trash",
+                    prominence: .minimal,
+                    iconSize: 14,
+                    weight: .medium
+                ) { state.removeRecording(entry) }
+                .help("Delete")
             }
         }
-        .padding(.vertical, 9)
-        .padding(.horizontal, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.primary.opacity(hovered ? 0.06 : 0))
-        )
         .contentShape(Rectangle())
         .onTapGesture { state.selectRecording(entry) }
         .onHover { inside in
@@ -284,52 +459,117 @@ struct MainView: View {
         }
     }
 
-    /// "17:08 · 19 min" — time of day plus compact duration.
-    private func rowMeta(_ entry: RecordingEntry) -> String {
-        let f = DateFormatter(); f.dateFormat = "HH:mm"
-        var s = f.string(from: entry.date)
-        if entry.duration > 0 {
-            let mins = Int(entry.duration) / 60
-            s += mins > 0 ? " · \(mins) min" : " · \(Int(entry.duration))s"
-        }
-        return s
-    }
-
-    private func avatarStack(_ entry: RecordingEntry) -> some View {
-        let names = state.distinctSpeakerNames(for: entry)
-        return HStack(spacing: -6) {
-            ForEach(Array(names.prefix(3).enumerated()), id: \.offset) { _, n in
-                AvatarCircle(name: n, size: 24)
+    /// Spinner stays put; on hover, action cluster paints over it.
+    private func rowTrailingSlot<Actions: View>(
+        hovered: Bool,
+        busy: Bool,
+        @ViewBuilder actions: () -> Actions
+    ) -> some View {
+        ZStack(alignment: .trailing) {
+            if busy {
+                processingSpinner
             }
-            if names.count > 3 {
-                ZStack {
-                    Circle().fill(Color.primary.opacity(0.14))
-                    Text("+\(names.count - 3)")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(width: 24, height: 24)
+            if hovered {
+                HStack(spacing: 0, content: actions)
+                    .background {
+                        // Opaque wash so the spinner doesn't bleed through transparent icons.
+                        Capsule()
+                            .fill(Color(nsColor: NSColor(calibratedWhite: Tokens.Glass.fillWhite, alpha: 1)))
+                            .overlay(Capsule().fill(Color.white.opacity(0.05)))
+                    }
             }
         }
+        .frame(minWidth: busy || hovered ? 32 : 0, minHeight: 32)
+        .animation(.easeOut(duration: 0.12), value: hovered)
     }
 
-    private func rowActions(_ entry: RecordingEntry) -> some View {
-        HStack(spacing: 14) {
-            Button { revealInFinder(entry) } label: {
-                Image(systemName: "square.and.arrow.down")
+    /// Figma row: h≈52, gap 10, px 12 / py 8, hover fill white/5, radius 12.
+    private func rowChrome<Content: View>(
+        hovered: Bool, @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(spacing: 10) {
+            content()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(minHeight: 52)
+        .background(
+            RoundedRectangle(cornerRadius: Tokens.Window.rowRadius, style: .continuous)
+                .fill(Color.white.opacity(hovered ? 0.05 : 0))
+        )
+    }
+
+    private func timeColumn(start: Date, end: Date) -> some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            Text(Self.timeFormatter.string(from: start))
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Tokens.Ink.primary)
+                .frame(height: 20)
+            Text(Self.timeFormatter.string(from: end))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.40))
+                .frame(height: 16)
+        }
+        .frame(width: 44, alignment: .trailing)
+    }
+
+    private func textColumn(title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Tokens.Ink.primary)
+                .lineLimit(1)
+                .frame(height: 20, alignment: .leading)
+            Text(subtitle.isEmpty ? " " : subtitle)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color.white.opacity(subtitle.isEmpty ? 0 : 0.40))
+                .lineLimit(1)
+                .frame(height: 16, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var processingSpinner: some View {
+        let icon = Image(systemName: "progress.indicator")
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(Tokens.Ink.secondary)
+            .frame(width: 32, height: 32)
+        if #available(macOS 15.0, *) {
+            icon.symbolEffect(
+                .variableColor.iterative.dimInactiveLayers.nonReversing,
+                options: .repeat(.continuous)
+            )
+        } else {
+            ProgressView().controlSize(.small).frame(width: 32, height: 32)
+        }
+    }
+
+    // MARK: - Floating search
+
+    /// Figma 640:1987 — pill, backdrop-blur 12, fill white/10, gap 4, h=36, px=14.
+    private var floatingSearch: some View {
+        Button { showSearchPalette = true } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass")
+                Text("Search")
+                    .padding(.horizontal, 2)
             }
-            .help("Reveal in Finder")
-            Button { state.removeRecording(entry) } label: {
-                Image(systemName: "trash")
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(Tokens.Ink.primary)
+            .padding(.horizontal, 14)
+            .frame(height: 36)
+            .background {
+                Capsule()
+                    .fill(.ultraThinMaterial)
+                Capsule()
+                    .fill(Color.white.opacity(0.10))
             }
-            .help("Delete recording")
         }
         .buttonStyle(.plain)
-        .font(.system(size: 14))
-        .foregroundStyle(.secondary)
     }
 
-    // MARK: - Reveal in Finder
+    // MARK: - Helpers
 
     private func revealInFinder(_ entry: RecordingEntry) {
         if let audioURL = recordingStore.audioURL(for: entry) {
@@ -347,6 +587,29 @@ struct MainView: View {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
+    private func isProcessing(_ entry: RecordingEntry) -> Bool {
+        // Never key off idle statuses like "recorded" / "transcribed_raw" —
+        // that made every unfinished meeting spin forever.
+        if entry.status == "recording" { return true }
+        return state.busyRecordingID == entry.id
+    }
+
+    private var visibleRecordings: [RecordingEntry] {
+        recordingStore.recordings.filter { entry in
+            // Hide stubs; keep anything still in the pipeline even if short.
+            if entry.duration > 0, entry.duration < Self.stubDurationThreshold, !isProcessing(entry) {
+                return false
+            }
+            if let speakerFilter {
+                let names = state.distinctSpeakerNames(for: entry)
+                if !names.contains(where: { $0.caseInsensitiveCompare(speakerFilter) == .orderedSame }) {
+                    return false
+                }
+            }
+            return true
+        }
+    }
+
     private var groupedRecordings: [(String, [RecordingEntry])] {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
@@ -356,7 +619,7 @@ struct MainView: View {
         var groups: [(String, [RecordingEntry])] = []
         var t: [RecordingEntry] = [], y: [RecordingEntry] = [], w: [RecordingEntry] = [], o: [RecordingEntry] = []
 
-        for rec in recordingStore.recordings {
+        for rec in visibleRecordings {
             let d = cal.startOfDay(for: rec.date)
             if d >= today { t.append(rec) }
             else if d >= yesterday { y.append(rec) }
@@ -372,10 +635,6 @@ struct MainView: View {
     }
 }
 
-// MARK: - Settings window opener
-
-/// Opens the native SwiftUI `Settings` scene programmatically (used from the
-/// menu bar panel and the sidebar, where `SettingsLink` isn't available).
 enum SettingsOpener {
     static func open() {
         NSApp.setActivationPolicy(.regular)

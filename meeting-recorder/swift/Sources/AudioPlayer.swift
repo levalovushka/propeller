@@ -39,10 +39,21 @@ class AudioPlayer: ObservableObject {
         stopTimer()
     }
 
-    func resume() {
-        player?.play()
-        isPlaying = true
-        startTimer()
+    @discardableResult
+    func resume() -> Bool {
+        guard let player else {
+            isPlaying = false
+            return false
+        }
+        let ok = player.play()
+        isPlaying = ok
+        if ok {
+            startTimer()
+        } else {
+            stopTimer()
+            errorMessage = "AVAudioPlayer.play() returned false"
+        }
+        return ok
     }
 
     func stop() {

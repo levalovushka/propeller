@@ -48,3 +48,7 @@ credentials.json
 phase2/server.log
 phase2/verify_smoke.json
 tools/gigastt/*.log
+
+# Batch bench — latest is machine-local; baseline + report are committed
+meeting-recorder/swift/benchmarks/latest.json
+meeting-recorder/tools/gigastt/bench-gigastt-serve.log

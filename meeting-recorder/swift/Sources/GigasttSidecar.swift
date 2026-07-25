@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import PropellerMetrics
 
 /// Owns the local `gigastt serve` child process: find/bundle binary, ensure
 /// e2e_rnnt models, spawn on loopback:9876, restart on crash, kill on quit.
@@ -15,6 +16,11 @@ final class GigasttSidecar: @unchecked Sendable {
     private var intentionalStop = false
     private var ready = false
     private var startTask: Task<Void, Error>?
+    /// Debounced idle-stop so back-to-back transcriptions don't thrash the process.
+    private var idleStopWork: DispatchWorkItem?
+    /// Consecutive unintentional exits — reset on a healthy spawn (S3).
+    private var consecutiveCrashRestarts = 0
+    private static let maxCrashRestarts = 5
 
     private init() {}
 
@@ -23,37 +29,49 @@ final class GigasttSidecar: @unchecked Sendable {
         return ready
     }
 
+    /// Last hard failure surfaced to UI (restart exhausted / foreign port). Cleared on success.
+    private(set) var lastFailureMessage: String?
+
     /// Ensure models exist and the server is healthy. Safe to call repeatedly.
+    /// Cancels any pending idle-stop — calling this means we need the server now.
     func ensureReady(
         statusCallback: ((String) -> Void)? = nil,
         downloadProgress: ((Double) -> Void)? = nil
     ) async throws {
-        // Reuse in-flight start
-        let existing: Task<Void, Error>? = {
-            lock.lock(); defer { lock.unlock() }
-            return startTask
-        }()
-        if let existing {
-            try await existing.value
-            return
-        }
+        cancelIdleStop()
 
-        let task = Task<Void, Error> {
-            try await self.startIfNeeded(
-                statusCallback: statusCallback,
-                downloadProgress: downloadProgress
-            )
-        }
-        lock.lock(); startTask = task; lock.unlock()
+        // Create-or-return in one critical section (plan-optimization C9).
+        // Only the creator clears `startTask` — joiners must not wipe a newer spawn.
+        let (task, isCreator): (Task<Void, Error>, Bool) = {
+            lock.lock()
+            defer { lock.unlock() }
+            if let existing = startTask {
+                return (existing, false)
+            }
+            let created = Task<Void, Error> {
+                try await self.startIfNeeded(
+                    statusCallback: statusCallback,
+                    downloadProgress: downloadProgress
+                )
+            }
+            startTask = created
+            return (created, true)
+        }()
         defer {
-            lock.lock(); startTask = nil; lock.unlock()
+            if isCreator {
+                lock.lock()
+                startTask = nil
+                lock.unlock()
+            }
         }
         try await task.value
     }
 
     func stop() {
+        cancelIdleStop()
         lock.lock()
         intentionalStop = true
+        consecutiveCrashRestarts = 0
         let proc = process
         process = nil
         ready = false
@@ -69,7 +87,27 @@ final class GigasttSidecar: @unchecked Sendable {
                 }
             }
         }
+        Self.clearPIDFile()
         NSLog("[GigasttSidecar] stopped")
+    }
+
+    /// Schedule a graceful stop after `grace` seconds of idle. Cancelled by
+    /// `ensureReady` / `stop`. Lets the ASR model leave RAM between meetings
+    /// without thrashing on rapid back-to-back transcriptions (plan-optimization E1).
+    func stopAfterIdle(_ grace: TimeInterval = 45) {
+        cancelIdleStop()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            NSLog("[GigasttSidecar] idle-stop after \(Int(grace))s")
+            self.stop()
+        }
+        idleStopWork = work
+        DispatchQueue.global().asyncAfter(deadline: .now() + grace, execute: work)
+    }
+
+    private func cancelIdleStop() {
+        idleStopWork?.cancel()
+        idleStopWork = nil
     }
 
     /// Restart the server so an updated hotwords file takes effect — hotwords
@@ -78,6 +116,12 @@ final class GigasttSidecar: @unchecked Sendable {
     /// only invoke this from Settings, not mid-recording.
     func restart(statusCallback: ((String) -> Void)? = nil) async throws {
         stop()
+        // Wait until the dying server stops answering /health — otherwise
+        // ensureReady sees "healthy + no tracked process" → false portOccupied (R1).
+        for _ in 0..<40 {
+            if !(await probeHealth()) { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
         try await ensureReady(statusCallback: statusCallback)
     }
 
@@ -87,12 +131,19 @@ final class GigasttSidecar: @unchecked Sendable {
         statusCallback: ((String) -> Void)?,
         downloadProgress: ((Double) -> Void)?
     ) async throws {
-        // Already healthy (our process or an external serve)?
+        // Healthy AND ours → reuse. Healthy but no tracked child → maybe our orphan (C8).
         if await probeHealth() {
-            lock.lock(); ready = true; lock.unlock()
-            statusCallback?("gigastt ready")
-            downloadProgress?(1.0)
-            return
+            if isProcessAlive() {
+                lock.lock(); ready = true; lastFailureMessage = nil; lock.unlock()
+                statusCallback?("gigastt ready")
+                downloadProgress?(1.0)
+                return
+            }
+            if await reclaimOrphanIfOurs() {
+                // Port freed — fall through to a fresh spawn.
+            } else {
+                throw SidecarError.portOccupied(Self.port)
+            }
         }
 
         let binary = try resolveBinary()
@@ -112,13 +163,52 @@ final class GigasttSidecar: @unchecked Sendable {
         }
 
         statusCallback?("Starting gigastt…")
-        try spawnServer(binary: binary, modelDir: modelDir)
-        try await waitUntilHealthy(timeout: 180, statusCallback: statusCallback)
+        try await PipelineMetrics.interval(PipelineMetrics.sidecar, PipelineMetrics.spawn) {
+            try spawnServer(binary: binary, modelDir: modelDir)
+            try await waitUntilHealthy(timeout: 180, statusCallback: statusCallback)
+        }
 
-        lock.lock(); ready = true; lock.unlock()
+        lock.lock()
+        ready = true
+        consecutiveCrashRestarts = 0
+        lastFailureMessage = nil
+        lock.unlock()
         statusCallback?("gigastt ready")
         downloadProgress?(1.0)
         NSLog("[GigasttSidecar] ready on \(Self.baseURL.absoluteString)")
+    }
+
+    /// Kill a leftover `gigastt` from a previous crash/kill-9 if the PID file matches.
+    private func reclaimOrphanIfOurs() async -> Bool {
+        let url = Self.pidFileURL
+        guard let text = try? String(contentsOf: url, encoding: .utf8),
+              let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              pid > 1 else {
+            return false
+        }
+        var buf = [CChar](repeating: 0, count: 4096)
+        let n = proc_pidpath(pid, &buf, UInt32(buf.count))
+        guard n > 0 else {
+            try? FileManager.default.removeItem(at: url)
+            return false
+        }
+        let path = String(cString: buf)
+        guard (path as NSString).lastPathComponent == "gigastt" else {
+            return false
+        }
+        NSLog("[GigasttSidecar] reclaiming orphan pid=\(pid) path=\(path)")
+        kill(pid, SIGTERM)
+        for _ in 0..<25 {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            if !(await probeHealth()) {
+                try? FileManager.default.removeItem(at: url)
+                return true
+            }
+        }
+        kill(pid, SIGKILL)
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        try? FileManager.default.removeItem(at: url)
+        return !(await probeHealth())
     }
 
     private func spawnServer(binary: URL, modelDir: URL) throws {
@@ -138,6 +228,11 @@ final class GigasttSidecar: @unchecked Sendable {
             "--model-variant", Self.variant,
             "--port", "\(Self.port)",
             "--pool-size", "1",
+            // Headroom for ~25–27 min 16 kHz mono chunks (client still chunks
+            // longer meetings — body-limit alone cannot cover 2h files).
+            "--body-limit-bytes", "67108864",
+            // Long chunks on CPU can exceed the 600s default inference cap.
+            "--inference-timeout-secs", "0",
             // Curated Russian brand/acronym lexicon — always-on, free win with
             // no effect unless a term actually shows up in the audio.
             "--hotwords-default",
@@ -157,11 +252,24 @@ final class GigasttSidecar: @unchecked Sendable {
             self.lock.lock()
             let intentional = self.intentionalStop
             if self.process == process { self.process = nil; self.ready = false }
+            Self.clearPIDFile()
+            var delay: TimeInterval?
+            if !intentional {
+                self.consecutiveCrashRestarts += 1
+                let n = self.consecutiveCrashRestarts
+                if n > Self.maxCrashRestarts {
+                    let msg = "gigastt crashed \(n) times — giving up. Check the model or reinstall."
+                    self.lastFailureMessage = msg
+                    NSLog("[GigasttSidecar] \(msg)")
+                } else {
+                    // 1.5 → 3 → 6 → 12 → 24 s (S3)
+                    delay = min(60.0, 1.5 * pow(2.0, Double(n - 1)))
+                }
+            }
             self.lock.unlock()
             NSLog("[GigasttSidecar] process exited status=\(process.terminationStatus) intentional=\(intentional)")
-            if !intentional {
-                // Auto-restart after brief delay
-                DispatchQueue.global().asyncAfter(deadline: .now() + 1.5) {
+            if let delay {
+                DispatchQueue.global().asyncAfter(deadline: .now() + delay) {
                     Task {
                         do {
                             try await self.ensureReady()
@@ -175,6 +283,7 @@ final class GigasttSidecar: @unchecked Sendable {
 
         try proc.run()
         lock.lock(); process = proc; lock.unlock()
+        Self.writePIDFile(proc.processIdentifier)
         NSLog("[GigasttSidecar] spawned pid=\(proc.processIdentifier) binary=\(binary.path)")
     }
 
@@ -234,49 +343,90 @@ final class GigasttSidecar: @unchecked Sendable {
         proc.standardOutput = out
         proc.standardError = err
 
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            var settled = false
-            let finish: (Result<Void, Error>) -> Void = { result in
-                guard !settled else { return }
-                settled = true
-                cont.resume(with: result)
-            }
+        // Drain stderr continuously so a chatty download can't deadlock on a full pipe (R4).
+        final class DownloadIO: @unchecked Sendable {
+            let lock = NSLock()
+            var errData = Data()
+            var outRemainder = ""
+        }
+        let io = DownloadIO()
 
-            out.fileHandleForReading.readabilityHandler = { handle in
-                let chunk = handle.availableData
-                guard !chunk.isEmpty else { return }
-                // Best-effort: parse complete lines in this chunk
-                if let text = String(data: chunk, encoding: .utf8) {
-                    for line in text.split(whereSeparator: \.isNewline) {
-                        guard let data = line.data(using: .utf8),
-                              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-                        else { continue }
-                        if let frac = Self.progressFraction(from: obj) {
-                            downloadProgress?(min(max(frac, 0), 0.99))
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                    var settled = false
+                    let finish: (Result<Void, Error>) -> Void = { result in
+                        guard !settled else { return }
+                        settled = true
+                        out.fileHandleForReading.readabilityHandler = nil
+                        err.fileHandleForReading.readabilityHandler = nil
+                        cont.resume(with: result)
+                    }
+
+                    err.fileHandleForReading.readabilityHandler = { handle in
+                        let chunk = handle.availableData
+                        guard !chunk.isEmpty else { return }
+                        io.lock.lock(); io.errData.append(chunk); io.lock.unlock()
+                    }
+
+                    out.fileHandleForReading.readabilityHandler = { handle in
+                        let chunk = handle.availableData
+                        guard !chunk.isEmpty, let text = String(data: chunk, encoding: .utf8) else { return }
+                        io.lock.lock()
+                        io.outRemainder += text
+                        var lines: [String] = []
+                        while let nl = io.outRemainder.firstIndex(of: "\n") {
+                            lines.append(String(io.outRemainder[..<nl]))
+                            io.outRemainder = String(io.outRemainder[io.outRemainder.index(after: nl)...])
                         }
-                        if let msg = obj["message"] as? String ?? obj["file"] as? String {
-                            statusCallback?("Downloading: \(msg)")
+                        io.lock.unlock()
+                        for line in lines {
+                            guard let data = line.data(using: .utf8),
+                                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                            else { continue }
+                            if let frac = Self.progressFraction(from: obj) {
+                                downloadProgress?(min(max(frac, 0), 0.99))
+                            }
+                            if let msg = obj["message"] as? String ?? obj["file"] as? String {
+                                statusCallback?("Downloading: \(msg)")
+                            }
                         }
+                    }
+
+                    proc.terminationHandler = { process in
+                        if process.terminationStatus == 0 {
+                            finish(.success(()))
+                        } else {
+                            io.lock.lock()
+                            let snapshot = io.errData
+                            io.lock.unlock()
+                            let msg = String(data: snapshot, encoding: .utf8)
+                                ?? "exit \(process.terminationStatus)"
+                            finish(.failure(SidecarError.downloadFailed(msg)))
+                        }
+                    }
+
+                    do {
+                        try proc.run()
+                    } catch {
+                        finish(.failure(error))
                     }
                 }
             }
-
-            proc.terminationHandler = { process in
-                out.fileHandleForReading.readabilityHandler = nil
-                if process.terminationStatus == 0 {
-                    finish(.success(()))
-                } else {
-                    let errData = err.fileHandleForReading.readDataToEndOfFile()
-                    let msg = String(data: errData, encoding: .utf8) ?? "exit \(process.terminationStatus)"
-                    finish(.failure(SidecarError.downloadFailed(msg)))
+            group.addTask {
+                // ~3 GB model — generous ceiling; prevents infinite hang on stalled network.
+                try await Task.sleep(nanoseconds: 45 * 60 * 1_000_000_000)
+                if proc.isRunning {
+                    proc.terminate()
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    if proc.isRunning { kill(proc.processIdentifier, SIGKILL) }
                 }
+                throw SidecarError.downloadFailed("download timed out after 45 minutes")
             }
 
-            do {
-                try proc.run()
-            } catch {
-                finish(.failure(error))
-            }
+            // First finished wins; cancel the sibling (timeout or already-done download).
+            try await group.next()
+            group.cancelAll()
         }
 
         guard modelsPresent(at: modelDir) else {
@@ -309,16 +459,17 @@ final class GigasttSidecar: @unchecked Sendable {
             return inMacOS
         }
 
-        // Dev fallback: Propeller/tools/gigastt/gigastt
+        // Dev fallback — only in DEBUG builds (plan-optimization H2/H3).
+        #if DEBUG
         let candidates = [
             URL(fileURLWithPath: NSHomeDirectory())
                 .appendingPathComponent("Desktop/Propeller/tools/gigastt/gigastt"),
-            URL(fileURLWithPath: "/Users/levonlobanov/Desktop/Propeller/tools/gigastt/gigastt"),
         ]
         for url in candidates where FileManager.default.isExecutableFile(atPath: url.path) {
             NSLog("[GigasttSidecar] using dev binary \(url.path)")
             return url
         }
+        #endif
 
         if let path = ProcessInfo.processInfo.environment["GIGASTT_BIN"] {
             let url = URL(fileURLWithPath: path)
@@ -333,6 +484,7 @@ final class GigasttSidecar: @unchecked Sendable {
             .appendingPathComponent("Meeting Recorder/gigastt-models", isDirectory: true)
         if modelsPresent(at: appSupport) { return appSupport }
 
+        #if DEBUG
         // Dev: reuse already-downloaded e2e models from Propeller/tools
         let dev = URL(fileURLWithPath: NSHomeDirectory())
             .appendingPathComponent("Desktop/Propeller/tools/gigastt/models-e2e", isDirectory: true)
@@ -340,6 +492,7 @@ final class GigasttSidecar: @unchecked Sendable {
             NSLog("[GigasttSidecar] using dev model dir \(dev.path)")
             return dev
         }
+        #endif
 
         return appSupport
     }
@@ -367,6 +520,24 @@ final class GigasttSidecar: @unchecked Sendable {
         }
     }
 
+    private static var pidFileURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("Meeting Recorder/gigastt.pid")
+    }
+
+    private static func writePIDFile(_ pid: Int32) {
+        let url = pidFileURL
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? "\(pid)".write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private static func clearPIDFile() {
+        try? FileManager.default.removeItem(at: pidFileURL)
+    }
+
     private static var hotwordsFileURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("Meeting Recorder/hotwords.txt")
@@ -387,6 +558,7 @@ final class GigasttSidecar: @unchecked Sendable {
         case healthTimeout
         case exitedEarly
         case downloadFailed(String)
+        case portOccupied(Int)
 
         var errorDescription: String? {
             switch self {
@@ -398,6 +570,8 @@ final class GigasttSidecar: @unchecked Sendable {
                 return "gigastt exited before becoming ready. See Console / Application Support log."
             case .downloadFailed(let detail):
                 return "Failed to download GigaAM model: \(detail.prefix(200))"
+            case .portOccupied(let port):
+                return "Port \(port) is already serving gigastt from another process. Quit it or free the port, then retry."
             }
         }
     }

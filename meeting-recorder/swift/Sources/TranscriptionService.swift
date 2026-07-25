@@ -1,6 +1,8 @@
 import AVFoundation
 import Foundation
 import FluidAudio
+import PropellerMetrics
+import PropellerPure
 import SpeakerMatchingCore
 
 struct MeetingTranscriptionResult {
@@ -19,7 +21,6 @@ struct RawTranscriptionResult {
 
 class TranscriptionService {
     private(set) var diarizer: OfflineDiarizerManager?
-    private var gigasttReady = false
 
     /// Ensure the diarizer is loaded (without touching ASR).
     func prepareDiarizer() async throws -> OfflineDiarizerManager {
@@ -38,21 +39,19 @@ class TranscriptionService {
         downloadProgress: ((Double) -> Void)? = nil,
         statusCallback: ((String) -> Void)? = nil
     ) async throws {
-        if !gigasttReady {
-            statusCallback?("Starting gigastt…")
-            downloadProgress?(0.05)
-            try await GigasttSidecar.shared.ensureReady(
-                statusCallback: statusCallback,
-                downloadProgress: { frac in
-                    // Reserve 0.05–0.85 for model download / server boot
-                    downloadProgress?(0.05 + frac * 0.8)
-                }
-            )
-            let health = try await GigasttClient.health(baseURL: GigasttSidecar.baseURL)
-            gigasttReady = true
-            downloadProgress?(0.9)
-            NSLog("[TranscriptionService] gigastt ready: model=\(health.model ?? "?") variant=\(health.variant ?? "?") version=\(health.version ?? "?")")
-        }
+        // Always ensureReady — cheap when healthy; avoids stale gigasttReady after crash (R5).
+        statusCallback?("Starting gigastt…")
+        downloadProgress?(0.05)
+        try await GigasttSidecar.shared.ensureReady(
+            statusCallback: statusCallback,
+            downloadProgress: { frac in
+                // Reserve 0.05–0.85 for model download / server boot
+                downloadProgress?(0.05 + frac * 0.8)
+            }
+        )
+        let health = try await GigasttClient.health(baseURL: GigasttSidecar.baseURL)
+        downloadProgress?(0.9)
+        NSLog("[TranscriptionService] gigastt ready: model=\(health.model ?? "?") variant=\(health.variant ?? "?") version=\(health.version ?? "?")")
 
         if diarizer == nil {
             statusCallback?("Loading diarizer...")
@@ -61,6 +60,15 @@ class TranscriptionService {
             try await diarizer?.prepareModels()
         }
         downloadProgress?(1.0)
+    }
+
+    /// Drop the diarizer and schedule ASR sidecar idle-stop so idle footprint
+    /// isn't GigaAM + FluidAudio all day (plan-optimization E1/E2).
+    func releaseHeavyResources() {
+        PipelineMetrics.interval(PipelineMetrics.pipeline, PipelineMetrics.release) {
+            diarizer = nil
+            GigasttSidecar.shared.stopAfterIdle(45)
+        }
     }
 
     // MARK: - Transcribe
@@ -106,10 +114,15 @@ class TranscriptionService {
         progressCallback?("Transcribing audio (GigaAM)...")
         NSLog("[TranscriptionService] Starting gigastt transcription for: \(audioURL.lastPathComponent)")
 
-        let (segments, rawText) = try await GigasttClient.transcribe(
-            audioURL: audioURL,
-            baseURL: GigasttSidecar.baseURL
-        )
+        let (segments, rawText) = try await PipelineMetrics.interval(
+            PipelineMetrics.pipeline, PipelineMetrics.asr
+        ) {
+            try await GigasttClient.transcribe(
+                audioURL: audioURL,
+                baseURL: GigasttSidecar.baseURL,
+                progressCallback: progressCallback
+            )
+        }
 
         NSLog("[TranscriptionService] gigastt returned \(segments.count) segment(s)")
         for (i, seg) in segments.prefix(3).enumerated() {
@@ -149,7 +162,11 @@ class TranscriptionService {
 
         if let diarizer = diarizer {
             do {
-                let diaResult = try await diarizer.process(audioURL)
+                let diaResult = try await PipelineMetrics.interval(
+                    PipelineMetrics.pipeline, PipelineMetrics.diarize
+                ) {
+                    try await diarizer.process(audioURL)
+                }
                 diarizedSegments = diaResult.segments.map { seg in
                     DiarizedSegment(
                         speakerId: seg.speakerId,
@@ -306,24 +323,16 @@ class TranscriptionService {
             }
         }
 
+        let windows = diarization.map { (id: $0.speakerId, start: $0.startTime, end: $0.endTime) }
         return asrSegments.map { seg in
-            let midpoint: Float = (seg.start + seg.end) / 2.0
-            let speaker: String
-            if let match = diarization.first(where: { midpoint >= $0.startTime && midpoint <= $0.endTime }) {
-                speaker = "Speaker \(match.speakerId)"
-            } else if let closest = diarization.min(by: {
-                abs(($0.startTime + $0.endTime) / 2 - midpoint) < abs(($1.startTime + $1.endTime) / 2 - midpoint)
-            }) {
-                speaker = "Speaker \(closest.speakerId)"
-            } else {
-                speaker = "Speaker"
-            }
-
-            return MergedSegment(
+            MergedSegment(
                 startTime: seg.start,
                 endTime: seg.end,
                 text: cleanASRText(seg.text),
-                speakerLabel: speaker
+                speakerLabel: DiarizationMerge.speakerLabel(
+                    forMidpoint: (seg.start + seg.end) / 2,
+                    diarization: windows
+                )
             )
         }
     }
@@ -332,46 +341,6 @@ class TranscriptionService {
 
     private func cleanASRText(_ text: String) -> String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func mergeConsecutiveSameSpeaker(_ segments: [MergedSegment], maxGap: Float = 5.0) -> [MergedSegment] {
-        guard !segments.isEmpty else { return segments }
-        var out: [MergedSegment] = []
-        for seg in segments {
-            let text = cleanASRText(seg.text)
-            guard !text.isEmpty else { continue }
-            if let last = out.last,
-               last.speakerLabel == seg.speakerLabel,
-               (seg.startTime - last.endTime) <= maxGap {
-                let combined = MergedSegment(
-                    startTime: last.startTime,
-                    endTime: seg.endTime,
-                    text: last.text + " " + text,
-                    speakerLabel: last.speakerLabel
-                )
-                out.removeLast()
-                out.append(combined)
-            } else {
-                out.append(MergedSegment(
-                    startTime: seg.startTime,
-                    endTime: seg.endTime,
-                    text: text,
-                    speakerLabel: seg.speakerLabel
-                ))
-            }
-        }
-        return out
-    }
-
-    private func formatTranscript(_ segments: [MergedSegment], speakerNames: [String: String]) -> String {
-        let merged = mergeConsecutiveSameSpeaker(segments)
-        return merged.compactMap { seg in
-            let name = speakerNames[seg.speakerLabel] ?? seg.speakerLabel
-            guard !seg.text.isEmpty else { return nil }
-            let m = Int(seg.startTime) / 60
-            let s = Int(seg.startTime) % 60
-            return "[\(name)] [\(String(format: "%02d:%02d", m, s))]\n\(seg.text)"
-        }.joined(separator: "\n\n")
     }
 
     // MARK: - Engine info (Settings UI)

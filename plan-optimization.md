@@ -1,6 +1,6 @@
 # Propeller — план оптимизации (энергия · стабильность · надёжность)
 
-_Компаньон к [plan-v2.md](plan-v2.md). Там — продуктовые джобы; здесь — инженерный слой: сделать Propeller самым «энергоэффективным», стабильным и надёжным приложением для рекапов на рынке. Составлено 2026-07-23 по итогам глубокого ревью кодовой базы + сверки с гайдами Apple по энергоэффективности и современными практиками захвата аудио._
+_Компаньон к [plan-v2.md](plan-v2.md). Там — продуктовые джобы; здесь — инженерный слой: сделать Propeller самым «энергоэффективным», стабильным и надёжным приложением для рекапов на рынке. Раунд 1 (E/S/A, 2026-07-23) — энергия в простое и фундамент sidecar; раунд 2 (C/M/P/R/H, 2026-07-24) — корректность данных, живучесть записи, аудио-качество, UI-стоимость и гигиена._
 
 **Целевая установка (из [plan-v2.md](plan-v2.md)):** аудитория — менеджеры, сценарий «установил, настроил и забыл». Значит приложение **постоянно живёт в фоне** (menu bar), а тяжёлая работа (ASR + диаризация + локальная LLM) — редкий пост-митинговый батч. Отсюда главный принцип оптимизации: **в простое приложение должно быть почти невидимым для системы; всё дорогое — лениво, по требованию, с явным освобождением ресурсов после батча.**
 
@@ -23,7 +23,7 @@ _Компаньон к [plan-v2.md](plan-v2.md). Там — продуктовы
 
 ## Блок E — Энергоэффективность
 
-### ☐ E1. Ленивый ASR-sidecar с idle-stop (главный рычаг)
+### ☑ E1. Ленивый ASR-sidecar с idle-stop (главный рычаг)
 
 **Как сейчас:** `gigastt serve` спаунится **на старте** — дважды: в [MeetingRecorderApp.swift:6](meeting-recorder/swift/Sources/MeetingRecorderApp.swift:6) (`AppDelegate`) и в [AppState.swift:108](meeting-recorder/swift/Sources/AppState.swift:108) (`bootstrap`). Сервер грузит GigaAM-v3 (`--pool-size 1`), становится healthy и живёт до `applicationWillTerminate`.
 
@@ -35,9 +35,9 @@ _Компаньон к [plan-v2.md](plan-v2.md). Там — продуктовы
 - Убрать оба warm-up со старта.
 - Разделить *download* и *serve*: первую загрузку модели оставить в онбординге с прогрессом (plan-v2 4.5b/5.5), но «скачать» ≠ «держать в памяти».
 
-**Шаги:** (1) вынести `ensureReady` из `AppDelegate` и `bootstrap`; (2) добавить `GigasttSidecar.stopAfterIdle(_:)`; (3) дёргать stop в хвосте `runTranscribe`/backfill; (4) первую загрузку модели вынести в явный onboarding-шаг.
+**Сделано (2026-07-23):** warm-up убран из `AppDelegate` и `bootstrap`; добавлен `GigasttSidecar.stopAfterIdle(45)`; `TranscriptionService.releaseHeavyResources()` вызывается в `defer` у `runTranscribe` / `completeDiarization`. Первая загрузка модели по-прежнему ленивая при первом ASR (явный onboarding-шаг — позже, 4.5b/5.5).
 
-### ☐ E2. Освобождать диаризатор после батча
+### ☑ E2. Освобождать диаризатор после батча
 
 **Как сейчас:** `TranscriptionService.diarizer` (FluidAudio `OfflineDiarizerManager`) грузится один раз и **никогда не освобождается** ([TranscriptionService.swift:21](meeting-recorder/swift/Sources/TranscriptionService.swift:21)).
 
@@ -45,7 +45,9 @@ _Компаньон к [plan-v2.md](plan-v2.md). Там — продуктовы
 
 **Решение:** `diarizer = nil` после завершения батча (в связке с idle-grace из E1). Повторная загрузка перед следующим батчем дешева относительно постоянного резидента.
 
-### ☐ E3. Поллинг Zoom: tolerance + гейт по запуску + интервал
+**Сделано (2026-07-23):** `releaseHeavyResources()` обнуляет `diarizer` + `gigasttReady` и планирует idle-stop sidecar.
+
+### ☑ E3. Поллинг Zoom: tolerance + гейт по запуску + интервал
 
 **Как сейчас:** `ZoomMeetingDetector` крутит `Timer` каждые 2.0 с **без `tolerance`** ([ZoomMeetingDetector.swift:47](meeting-recorder/swift/Sources/ZoomMeetingDetector.swift:47),[:55](meeting-recorder/swift/Sources/ZoomMeetingDetector.swift:55)). Когда Zoom запущен (часто держат открытым), каждый тик гоняет три дорогих зонда: `proc_listpids(PROC_ALL_PIDS)` — перебор до 4096 pid'ов с `proc_name()` на каждый ([:139](meeting-recorder/swift/Sources/ZoomMeetingDetector.swift:139)); `CGWindowListCopyWindowInfo` по всем окнам ([:168](meeting-recorder/swift/Sources/ZoomMeetingDetector.swift:168)); `IOPMCopyAssertionsByProcess` + per-pid `proc_name` ([:200](meeting-recorder/swift/Sources/ZoomMeetingDetector.swift:200)).
 
@@ -57,84 +59,76 @@ _Компаньон к [plan-v2.md](plan-v2.md). Там — продуктовы
 - Интервал 5–8 с (`enterThreshold=2` и так добавляет задержку; 2-с точность не нужна).
 - Ранний выход из `captureSnapshot`, если более дешёвый сигнал уже сработал (не гонять `proc_listpids` зря).
 
-### ☐ E4. Core Audio Process Taps вместо ScreenCaptureKit (стратегический; закрывает Job 1.2)
+**Сделано (2026-07-23):** интервал 6 с + tolerance 30 %; таймер только пока Zoom запущен (NSWorkspace); при `aomhost` — ранний return без window/IOKit сканов.
 
-**Как сейчас:** `SystemAudioCapture` использует SCK с фантомным видео-потоком (`width/height = 2`, `minimumFrameInterval = 1s`, `queueDepth = 5`, [SystemAudioCapture.swift:122](meeting-recorder/swift/Sources/SystemAudioCapture.swift:122)) — воркэраунд того, что SCK требует видео даже для аудио.
+### ☑ E4. Core Audio Process Taps вместо ScreenCaptureKit (стратегический; закрывает Job 1.2)
 
-**Риск/трение:** поднимается полный screen-capture-пайплайн, нужен Screen Recording (тяжёлая TCC-поверхность), горит фиолетовый индикатор.
+**Сделано (2026-07-23):** новый `ProcessTapAudioCapture` (macOS 14.2+): `CATapDescription` → aggregate → `AudioDeviceCreateIOProcIDWithBlock`; Zoom-scoped mixdown при живом `us.zoom.xos`, иначе global exclude-self. `AudioRecorder` пробует Process Tap первым, при ошибке — SCK. В Info.plist добавлен `NSAudioCaptureUsageDescription`. `swift build` зелёный. _Живой тест на Zoom-звонке ещё нужен (TCC Audio Capture + audible stem)._
 
-**Решение:** приложение таргетит macOS 14+; **Core Audio Process Taps** (`CATapDescription` + `AudioHardwareCreateProcessTap`) появились в **14.2** — чистый аудио-путь без видео-пайплайна, без Screen Recording ради звука, ниже CPU, с нативным **per-process scoping** (тапнуть именно процесс Zoom). Это ровно цель plan-v2 **Job 1.2** («тянуть только звук встречи»), но надёжнее app-scoped SCK-фильтра. Один переход закрывает энергию и 1.2.
-
-**Нюансы (из практики):** `AVAudioEngine` нельзя перенаправить на CATap-aggregate — нужен `AudioDeviceCreateIOProcIDWithBlock` напрямую; агрегатное устройство требует реальный output как main sub-device + tap с `kAudioAggregateDeviceTapAutoStartKey: true`. Лифт больше остальных — отдельный трек. SCK оставить фолбэком для <14.2 (или поднять минимум до 14.2 — тривиально).
-
-### ☐ E5. Метринг-таймер: только когда waveform видим
+### ☑ E5. Метринг-таймер: только когда waveform видим
 
 **Как сейчас:** `startMetering` тикает каждые 0.08 с ([AudioRecorder.swift:244](meeting-recorder/swift/Sources/AudioRecorder.swift:244)), прыгает на MainActor и аппендит в `@Published micLevelHistory/systemLevelHistory` → инвалидация SwiftUI 12.5 раз/с, **даже когда осциллограмму никто не видит** (окно закрыто, авто-запись Zoom). Часовая встреча ≈ 45 000 MainActor-хопов. Tolerance нет.
 
 **Решение:** гонять метринг только когда `RecordingInProgressView` на экране (пауза при `.accessory` + закрытом окне); снизить до ~10 Гц; добавить tolerance.
 
-### ☐ E6. `os.Logger` вместо `debugLog`
+**Сделано (2026-07-23):** `setMeteringDesired` связан с `isWindowOpen`; интервал 0.1 с + tolerance 30 %.
+
+### ☑ E6. `os.Logger` вместо `debugLog`
 
 **Как сейчас:** `debugLog` ([AudioRecorder.swift:6](meeting-recorder/swift/Sources/AudioRecorder.swift:6)) на каждом из 53 вызовов делает `FileHandle(forWritingAtPath:)` + seek + write + close (3–4 syscall'а), синхронно, **без ротации и лимита**. За месяцы «install & forget» файл растёт неограниченно; работает в релизе.
 
 **Решение:** перейти на `os.Logger` (unified logging) — кольцевой буфер, near-zero-cost когда лог не читают, privacy-aware, без файлового churn и распухания. Многословные логи — за `#if DEBUG`.
 
-### ☐ E7. Глобальный монитор клавиш — только во время записи
+**Сделано (2026-07-23):** `debugLog` → `Logger`; verbose SCK callback-логи за `#if DEBUG`.
+
+### ☑ E7. Глобальный монитор клавиш — только во время записи
 
 **Как сейчас:** `NoteOverlayController.install()` зовётся в `bootstrap()` и регистрирует `addGlobalMonitorForEvents(.keyDown)` на весь жизненный цикл ([NoteOverlayController.swift:40](meeting-recorder/swift/Sources/NoteOverlayController.swift:40)). Замыкание срабатывает на **каждое нажатие во всей системе**, вечно, хотя оверлей нужен только при записи (`toggle()` рано выходит, если `!isRecording`). Держит Input Monitoring/Accessibility включённым постоянно.
 
 **Решение:** ставить глобальный монитор на старте записи, снимать на стопе. Фича сохраняется; per-keystroke-налог и always-on Input Monitoring в простое исчезают (+ приватность).
 
+**Сделано (2026-07-23):** `startMonitoring` / `stopMonitoring` привязаны к begin/stop/cancel записи.
+
 ---
 
 ## Блок S — Стабильность / надёжность
 
-### ☐ S1. ASR-аплоад стримом с диска, а не весь WAV в RAM
+### ☑ S1. ASR-аплоад стримом с диска, а не весь WAV в RAM
 
-**Как сейчас:** `GigasttClient.transcribe` делает `Data(contentsOf:)` и кладёт в `httpBody` ([GigasttClient.swift:94](meeting-recorder/swift/Sources/GigasttClient.swift:94)). 2-часовая встреча ≈ 230 МБ целиком в памяти + копия в теле запроса.
+**Итог:** `GigasttClient.transcribe` → `URLSession.upload(for:fromFile:)` — WAV больше не грузится целиком в RAM.
 
-**Решение:** `URLSession.uploadTask(fromFile:)` — стрим с диска без полной загрузки. Снимает пик памяти и риск тихого фейла под давлением.
+### ☑ S2. Юнит-тесты чистых функций (крупнейший пробел под «самое надёжное»)
 
-### ☐ S2. Юнит-тесты чистых функций (крупнейший пробел под «самое надёжное»)
+**Итог:** модуль `PropellerPure` + `MeetingRecorderTests` (10 тестов): parseMetadata, speakerLabel, mixGain, wavDuration, recovery status. `swift test` зелёный.
 
-**Как сейчас:** нет XCTest/swift-testing, только `SpeakerMatchingCoreChecks` (ручной checks-executable).
+### ☑ S3. Backoff и cap на авто-рестарт sidecar
 
-**Решение:** покрыть чистые функции, где цена ошибки высока: `recoverInterruptedRecordings` (стейт-машина статусов), `mergeTranscriptionWithDiarization` (midpoint-логика), `wavDuration` (парсинг заголовка), `parseMetadata` (битый JSON от LLM), `systemMixGain`/`bufferStats` (границы усиления). Добавить тест-таргет в `Package.swift`.
+**Итог:** экспоненциальный backoff 1.5→24 с, cap 5 рестартов, потом `lastFailureMessage` и стоп петли.
 
-### ☐ S3. Backoff и cap на авто-рестарт sidecar
+### ☑ S4. Проверка владения портом 9876
 
-**Как сейчас:** `terminationHandler` безусловно ре-`ensureReady()` через 1.5 с на любой неинтенциональный выход ([GigasttSidecar.swift:155](meeting-recorder/swift/Sources/GigasttSidecar.swift:155)).
+**Итог:** healthy на :9876 принимается только если это наш child `Process`; иначе `SidecarError.portOccupied`.
 
-**Риск:** если бинарник крашится на старте (битая модель, несовместимость) — бесконечный респаун каждые ~1.5 с + health-timeout, жрущий батарею и заливающий лог, без видимой ошибки.
+### ☑ S5. Единый энергоосознанный планировщик backfill
 
-**Решение:** счётчик рестартов + экспоненциальный backoff + порог сдачи, который поднимает внятную ошибку в UI вместо петли.
+**Итог:** один `NSBackgroundActivityScheduler` (60±30 с, `.utility`); `.deferred` если busy/нет провайдера. `Task.sleep`-цепочки убраны.
 
-### ☐ S4. Проверка владения портом 9876
-
-**Как сейчас:** `startIfNeeded` рано возвращается, если `probeHealth()` прошёл ([GigasttSidecar.swift:91](meeting-recorder/swift/Sources/GigasttSidecar.swift:91)) — если :9876 занят чужим процессом, приложение считает его «своим» и молча транскрибирует через незнакомца.
-
-**Решение:** эфемерный порт, записанный в рантайм-файл, либо верификация, что healthy-сервер — наш child (PID/токен).
-
-### ☐ S5. Единый энергоосознанный планировщик backfill
-
-**Как сейчас:** `startSummaryBackfill` ретраит каждые 30 с до 8 раз на старте **и** после каждого рекапа ([AppState.swift:632](meeting-recorder/swift/Sources/AppState.swift:632),[:936](meeting-recorder/swift/Sources/AppState.swift:936)); каждая проба — HTTP к Ollama :11434. Если Ollama не установлена — повторные фейлы; цепочки ретраев накладываются.
-
-**Решение:** заменить `Task.sleep`-циклы на `NSBackgroundActivityScheduler` (deferrable, thermal/battery-aware — идиоматический дом для отложенной фоновой работы). Одна coalesced-очередь вместо накладывающихся.
-
-### ☐ S6. `.tolerance` всем таймерам
+### ☑ S6. `.tolerance` всем таймерам
 
 **Как сейчас:** ни у одного таймера нет tolerance — displayTimer 1 с ([AppState.swift:411](meeting-recorder/swift/Sources/AppState.swift:411)), meterTimer 0.08 с, zoom-поллинг 2 с.
 
 **Решение:** по гайду Apple это правка №1 для энергии. Часы «прошло MM:SS» — tolerance 0.2–0.5 с; остальные — ≥30 % интервала.
 
+**Сделано (2026-07-23):** displayTimer 0.3 с; meterTimer 30 %; zoom 30 %.
+
 ---
 
 ## Блок A — Архитектура / гигиена (легче, на потом)
 
-- ☐ **A1. Убрать дубль warm-up sidecar** — решается в E1 (два вызова `ensureReady` при старте).
-- ☐ **A2. Вынести стейт-машину пайплайна из `AppState`** (1058 строк: координатор + пайплайн + disk-space + backfill + редактирование сегментов) в `PipelineCoordinator` — станет тестируемой (см. S2). Не срочно.
-- ☐ **A3. `NSBackgroundActivityScheduler` как дом периодики** — retention-nudge (Job 6.1), backfill (S5/4.5b), любая maintenance. Сейчас это launch-time и `Task.sleep`.
-- ☐ **A4. Убрать мёртвый retention-код** — `performRetentionCleanup` (day-based авто-удаление) живёт в bootstrap ([AppState.swift:79](meeting-recorder/swift/Sources/AppState.swift:79)), хотя plan-v2 6.1 решил заменить на size-nudge и «никогда не удалять само». По умолчанию `retentionDays=0` → no-op, но код противоречит решению. Либо доделать 6.1, либо удалить.
+- ☑ **A1. Убрать дубль warm-up sidecar** — решено в E1.
+- ☐ **A2. Вынести стейт-машину пайплайна из `AppState`** в `PipelineCoordinator`. Не срочно.
+- ☑ **A3. `NSBackgroundActivityScheduler` как дом периодики** — backfill на scheduler (S5). Retention-nudge (6.1) — позже.
+- ☑ **A4. Убрать мёртвый retention-код** — вызов из bootstrap убран; метод помечен до 6.1.
 
 ---
 
@@ -159,13 +153,328 @@ _Компаньон к [plan-v2.md](plan-v2.md). Там — продуктовы
 ## Релизная нарезка
 
 **Оптимизация R1 — «незаметен в простое» (быстрый низкорисковый заход, один PR):**
-E1 · E3 · S6 · E7 · E6 · E2 · E5 · A1 · A4. Это малый-эффорт/крупный-эффект пакет; превращает Propeller из «нормального фонового приложения» в «самое энергоэффективное на рынке» без риска для функциональности.
+☑ E1 · ☑ E3 · ☑ S6 · ☑ E7 · ☑ E6 · ☑ E2 · ☑ E5 · ☑ A1 · ☑ A4. Это малый-эффорт/крупный-эффект пакет; превращает Propeller из «нормального фонового приложения» в «самое энергоэффективное на рынке» без риска для функциональности.
 
 **Оптимизация R2 — «крепкий фундамент»:**
-S1 · S3 · S4 · S5 · S2 (тесты) · A2/A3.
+☑ S1 · ☑ S3 · ☑ S4 · ☑ S5 · ☑ S2 · ☑ A3 · ☐ A2 (не срочно).
 
 **Оптимизация R3 — «best on the market по захвату»:**
-E4 (Core Audio Process Taps) — заодно закрывает застрявший plan-v2 Job 1.2.
+☑ E4 (Core Audio Process Taps) — код готов, SCK фолбэк; живой Zoom-тест остаётся.
+
+---
+
+# Раунд 2 — глубокое ревью (2026-07-24)
+
+_Составлено по итогам параллельного ревью четырёх слоёв: аудио-захват, ASR-пайплайн, ядро AppState, UI. Пункты R1–R3 выше не повторяются. Статусы: ☐ не начато · ◐ в работе · ☑ готово._
+
+**Метод:** четыре независимых обхода + сверка критичных находок с кодом (grep/чтение). Фокус — корректность данных, живучесть записи, энергия в простое, SwiftUI-стоимость рендера.
+
+**Инфраструктура измерения уже есть** (MVP из `plan-testing-metrics`): `Bench/`, `PropellerMetrics`, `benchmarks/`, signposts через `PipelineMetrics.interval` в пайплайне — улучшения из 🟠-группы валидировать бенчами, не «на глаз».
+
+### Уточнения верификации (2026-07-24)
+
+| Пункт | Уточнение |
+|-------|-----------|
+| **M2** | В тексте ревью ошибочно «sleep 100 мс» — в коде `Task.sleep(150ms)` (`AudioRecorder.swift:251`). Суть находки верна: sys стартует позже, микс с индекса 0. |
+| **C4** | Реальный хак, **намеренно** оставлен для теста онбординга. Не баг «сейчас» — напоминание откатить перед шипом. |
+| **H4 / A2** | Не баг-находка, а архитектурный план выноса стейт-машины. Проверять нечего — делать по желанию. |
+| **H3** | Захардкоженный `/Users/levonlobanov/...` также в `Bench/Harness.swift:160`, не только в `GigasttSidecar`. |
+
+### Триаж по риску (полный)
+
+| Риск | Пункты | Правило |
+|------|--------|---------|
+| 🟢 ≈0 — брать сразу | C7 · C6 · H2 · H3 · удаление старого `OnboardingView` (часть H1) | Можно без живого Zoom-теста |
+| 🟡 реальные баги — аккуратно + тест | C1 · C2 · C3 · C5 · C8 · C9 · C10 · R1 · R4 · R5 · P5 · P6 | Юнит/ручной сценарий на каждый |
+| 🟠 improvement без замера сомнителен | M4 · R2 · M2/M3 | Сначала бенч / A/B по метрикам |
+| 🔴 риск-кластер — свежий live-путь E4 | C10 · M2 · M3 · M5 · всё `ProcessTapAudioCapture` | Не трогать пачкой; живой Zoom-тест обязателен |
+| ⚠ перед удалением смотреть поштучно | H1 (мёртвый UI: MenuBarPanelView body, participants/reassign, summaryFocus) | Не сносить «оптом» без grep call-sites |
+
+_Примечание:_ C10 уже применён (флаг `didStopWriting`) как защита данных; остаётся в 🔴-кластере по требованию живого теста Process Tap после любых правок захвата.
+
+---
+
+## Блок C — Корректность / потеря данных (делать первым)
+
+### ☑ C1. Пайплайн пишет транскрипт в чужую встречу при смене выбора
+
+**Где:** `AppState.runTranscribe` фиксирует `rec` в начале, но после `await` зовёт `runSave()`, который снова читает `selectedRecording` (`AppState.swift:707–784 → 855–885`).
+
+**Сценарий:** авто-ASR записи A идёт минуты; пользователь кликает B → markdown/статус/рекап/метаданные уезжают в B с текстом A.
+
+**Фикс:** передавать `recordingID` + снапшот транскрипта/длительности параметром по всей цепочке `runTranscribe → runSave → runRecap`; внутри пайплайна не читать `selectedRecording` / `self.transcript` / `self.recordingDuration`. Это же — шаг 0 для A2.
+
+**Сделано (2026-07-24):** `runSave`/`runRecap` принимают `recordingID` + transcript/duration; UI-стейт обновляется только если выбор совпадает.
+
+### ☑ C2. `reprocess` / `completeDiarization` не подключены к UI — тупики статусов
+
+**Где:** определения в `AppState.swift:801, 978`; греп по проекту — только сами определения. UI обещает «Complete Transcription» (`:460`), кнопки нет.
+
+**Фикс:** кнопки Retry/Complete в `RecordingDetailView` для `recorded` / `transcribed_raw`; при `guard isTranscribing` не молчать — `statusMessage`.
+
+**Сделано (2026-07-24):** кнопки в header и empty-state транскрипта; сообщение при concurrent transcribe.
+
+### ☑ C3. ⌘Q / logout во время записи теряет встречу при живом mic-стеме
+
+**Где:** `applicationWillTerminate` только гасит sidecar (`MeetingRecorderApp.swift:9–12`); финальный `.wav` собирается только в `AudioRecorder.stop()`; recovery смотрит только на финальный файл (`RecordingStore.swift:141–147`), orphan-scan пропускает `.mic`/`.sys` (`:217`).
+
+**Фикс:** `applicationShouldTerminate` → `.terminateLater` + `stopRecordingAndWait` + `flush`; в recovery: если нет финала, но есть `<id>.mic.wav` — дособрать микс из стемов.
+
+**Сделано (2026-07-24):** `AppStateRegistry` + `applicationShouldTerminate`; `recoverMissingFinalMixes()` из `.mic`/`.sys`.
+
+### ☐ C4. TEST-хак: онбординг на каждом запуске
+
+_Намеренно оставлен для теста онбординга (верификация 2026-07-24). Перед шипом — откатить._
+
+**Где:** `AppState.swift:99–102` — `showOnboarding = true`, правильная строка закомментирована.
+
+**Фикс перед релизом:** вернуть `showOnboarding = !Preferences.shared.onboardingCompleted`. Тестовый обход — через env/launch arg, не правку кода.
+
+### ☑ C5. Битый `recordings.json` молча перезаписывается пустым индексом
+
+**Где:** `RecordingStore.load` catch → `scanForOrphanRecordings` → `save()` (`:50–53, 238`) уничтожает единственную копию транскриптов/заметок.
+
+**Фикс:** `moveItem` в `recordings.json.corrupt-<ts>` + алерт; подекодный парсинг (`FailableDecodable`); опционально `.bak` перед записью.
+
+**Сделано (2026-07-24):** quarantine corrupt, per-element decode, `.json.bak` перед записью; убран prettyPrinted (P6).
+
+### ☑ C6. Zoom: русские idle-заголовки → ложный авто-старт записи
+
+**Где:** `idleWindowTitles` только EN (`ZoomMeetingDetector.swift:224–227`); fallback «любой title ≥ 4 символов» (`:251–252`) ловит «Настройки»/«Чат»/«Контакты».
+
+**Фикс:** русские (и др.) idle-заголовки; убрать «длинный title» из позитивных сигналов без второго сигнала (`aomhost` / power assertion).
+
+**Сделано (2026-07-24):** RU idle titles; убран слабый fallback «длинный title».
+
+### ☑ C7. `MarkdownWriter.save` удаляет recap при пересохранении транскрипта
+
+**Где:** чистка по prefix `recordingID-` без исключения `-recap.md` (`MarkdownWriter.swift:38–46`). Зеркальная чистка в `RecapService` уже фильтрует recap.
+
+**Фикс:** одна строка — `&& !file.lastPathComponent.hasSuffix("-recap.md")`.
+
+**Сделано (2026-07-24).**
+
+### ☑ C8. Осиротевший `gigastt` после crash/kill блокирует ASR навсегда (S4 ловит своего сироту)
+
+**Где:** `GigasttSidecar.startIfNeeded` (`:123–131`): health OK + `process == nil` → `portOccupied`. Bench тоже оставляет процесс (`Bench/Harness.swift`).
+
+**Фикс:** PID-файл рядом с моделями; на старте свой сирота → kill/adopt; в конце Bench — `terminate`+`waitUntilExit`. Желательно привязка child к parent (stdin EOF).
+
+**Сделано (2026-07-24):** `gigastt.pid` + `reclaimOrphanIfOurs()`; Bench `defer` terminate.
+
+### ☑ C9. Check-then-act гонка в `ensureReady` → двойной spawn
+
+**Где:** чтение и запись `startTask` в разных критических секциях (`GigasttSidecar.swift:43–59`).
+
+**Фикс:** create-or-return в одном `lock`, либо переписать sidecar в `actor` (закроет и C10).
+
+**Сделано (2026-07-24):** атомарный create-or-return; clear только у creator.
+
+### ☑ C10. Straggler-буфер после `stop()` может затереть весь system-stem
+
+**Где:** `ProcessTapAudioCapture` / `SystemAudioCapture`: `audioFile = nil`, но `outputURL` жив; запоздалый IOProc/`appendPCM` делает `AVAudioFile(forWriting:)` → truncate файла.
+
+**Фикс:** флаг `isStopped` / обнуление `outputURL` на очереди записи; запрет пересоздания файла после stop.
+
+**Сделано (2026-07-24):** `didStopWriting` + `outputURL = nil` на write/sample queue.
+
+---
+
+## Блок M — Память / аудио-качество
+
+### ☐ M1. Офлайн-микс грузит оба стема целиком (~2 ГБ пика на час)
+
+**Где:** `AudioRecorder.readAndResample` (`:477–515`) + `mix` (`:395–445`). При OOM — молчаливый mic-only фолбэк (`:388–392`).
+
+**Фикс:** стриминговый микс чанками (как `WaveformScrubber.loadPeaksChunked`); gain — первым проходом или из `AudioEnergySummary`.
+
+### ☐ M2. Mic/sys стемы суммируются без выравнивания старта и дрейфа
+
+**Где:** sys стартует асинхронно позже mic (`AudioRecorder.swift:125–129`); перед миксом — `Task.sleep(150ms)` (`:251`, не 100 мс); микс с индекса 0 (`:437–440`); host-time / PTS игнорируются. 🟠 без замера + 🔴 live E4.
+
+**Фикс:** зафиксировать host-time старта mic и первого sys-буфера; pad тишиной в начало sys; на длинных записях — drift по длительностям стемов. Валидировать бенчем / живым Zoom, не править «вслепую».
+
+### ☐ M3. Смена/пропажа output-устройства → тихая потеря sys-звука
+
+**Где:** агрегат ProcessTap прибит к UID на старте; нет listener на `kAudioHardwarePropertyDefaultOutputDevice`; watchdog отменяется навсегда после первого audible буфера; SCK `didStopWithError` только логирует.
+
+**Фикс:** listener → пересборка агрегата; `onCaptureIssueDetected` / рестарт стрима; редкий пульс «буферы ещё идут» (30–60 с).
+
+### ☐ M4. Hard-clip суммы mic+sys (комментарий обещает soft clamp)
+
+**Где:** `AudioRecorder.swift:440–442`. Одновременная речь → клиппинг в самых важных для ASR местах.
+
+**Фикс:** soft limiter (`tanh` / knee) или второй проход с нормализацией пика суммы.
+
+### ☐ M5. VoiceProcessed mic: диск-I/O под `NSLock` в аудио-колбэке; `.endOfStream` на каждый буфер
+
+**Где:** `AudioRecorder.swift:618–652`, `:633–643`.
+
+**Фикс:** узкий лок на скаляры; запись на serial queue; в стриме — `.noDataNow`, `.endOfStream` только на stop.
+
+---
+
+## Блок P — Производительность UI / энергия (после C)
+
+### ☐ P1. SearchPalette: полнотекстовый поиск ≥6 раз на кейстрок
+
+**Где:** `matchedRecordings` — computed, дергается из chips/items/footer/onKeyPress (`SearchPalette.swift:164–190`).
+
+**Фикс:** `@State` + `.onChange(of: query)` / `.task(id:)` с debounce; один проход.
+
+### ☐ P2. RecordingDetailView: regex-парсинг транскрипта в body на каждый рендер
+
+**Где:** `displayedTranscriptSegments` → компиляция `NSRegularExpression` на каждый блок (`:965+`); view наблюдает весь `AppState` (~25 `@Published`).
+
+**Фикс:** `static let` паттерны; кэш парса в `@State` на `.onChange(of: transcript)`; сузить наблюдения (см. P4).
+
+### ☐ P3. Живая волна ~1 Гц вместо 10: вложенный `AudioRecorder` не наблюдается
+
+**Где:** `RecordingInProgressView` смотрит только `state`, читает `state.recorder.micLevelHistory`; `@Published recorder` публикует только замену ссылки.
+
+**Фикс:** `@ObservedObject var recorder: AudioRecorder` (передать `state.recorder`). То же для `player` / `recordingStore` где нужно.
+
+### ☐ P4. Целый `AppState` в каждой view → секундные пересборки дерева
+
+**Фикс:** `@Observable` (macOS 14+) или под-объекты (`RecordingClock`, `PipelineStatus`); view читают только нужное.
+
+### ☐ P5. Backfill: ежеминутный сетевой probe даже когда бэкфиллить нечего
+
+**Где:** `resolveBackend` до проверки кандидатов (`AppState.swift:587–595`); `interval = 60`.
+
+**Фикс:** сначала дешёвый подсчёт кандидатов; при нуле — `.finished` без сети; интервал 15–30 мин.
+
+### ☐ P6. `RecordingStore.save`: весь архив (транскрипты + JSON-в-JSON) на MainActor + prettyPrinted
+
+**Фикс:** убрать `.prettyPrinted`; write в background; стратегически — сайдкары `<id>.transcript.json` (смягчает C5).
+
+### ☐ P7. `distinctSpeakerNames` / `loadPersistedSegments` декодируют JSON в body на каждый рендер
+
+**Фикс:** кэш по `entry.id`, инвалидация при reassign.
+
+### ☐ P8. N-кратное перечитывание mic/sys стемов в `resolveOwnerName`
+
+**Где:** `TranscriptionService.swift:233–247` — `analyze` в цикле по спикерам; внутри — аллокации буферов по 4096 кадров.
+
+**Фикс:** один проход по каждому стему на все окна; один буфер на файл; vDSP для RMS.
+
+---
+
+## Блок R — Надёжность sidecar / LLM
+
+### ☐ R1. `restart()` гоняется со `stop()` → ложный `portOccupied`
+
+**Фикс:** дождаться реального exit в `stop()` / поллить порт до освобождения перед S4.
+
+### ☐ R2. Ollama: таймауты 180/300 с + нет `num_ctx` → молчаливое усечение транскрипта
+
+**Фикс:** выше таймауты или `stream: true`; `options.num_ctx`; бюджет сегментов в промпте с пометкой усечения.
+
+### ☐ R3. ASR HTTP timeout 600 с не масштабируется на длинные встречи
+
+**Фикс:** `max(600, wavDuration * 0.5)`.
+
+### ☐ R4. `downloadModels`: возможен deadlock на stderr-pipe, нет таймаута
+
+**Фикс:** `readabilityHandler` на stderr; таймаут; буфер хвоста строк между чанками.
+
+### ☐ R5. `TranscriptionService.gigasttReady` — устаревший кэш; класс без изоляции
+
+**Фикс:** всегда `ensureReady()`; `actor` / `@MainActor`.
+
+### ☐ R6. Нет обработки сна Mac / смены input-устройства во время записи
+
+**Фикс:** `willSleep`/`didWake`; listener на default input; перезапуск watchdog целостности.
+
+### ☐ R7. `stopRecordingAndWait` не идемпотентен; `ignoredZoomMeeting` сбрасывается при флапе детектора
+
+**Фикс:** `guard isRecording`; гистерезис ignore (по сессии Zoom / N минут после ended).
+
+---
+
+## Блок H — Гигиена / мёртвый код
+
+### ☐ H1. Удалить мёртвый UI (⚠ поштучно)
+
+Не сносить «оптом» — перед каждым файлом/кластером grep call-sites:
+
+- 🟢 `OnboardingView.swift` целиком (живой путь — `PropellerUI/OnboardingFlowView`) — безопасно
+- ⚠ тело `MenuBarPanelView` (оставить/`перенести` `showMainWindow` в `AppWindowRegistry`)
+- ⚠ в `RecordingDetailView`: `summaryFocus*`, кластер participants/reassign, `AvatarCircle`, неиспользуемый `markdownURL`
+
+### ☐ H2. Мёртвый код пайплайна / prefs 🟢
+
+- `mergeConsecutiveSameSpeaker` / `formatTranscript(_:speakerNames:)` в `TranscriptionService`
+- `summaryLibraryEntries()`, `performRetentionCleanup` + retention prefs (когда 6.1)
+- дубли `stripCodeFences`, `todayISO` → оставить Pure + POSIX locale
+- 🟢 dev-пути `/Users/levonlobanov/...` в `GigasttSidecar` **и** `Bench/Harness.swift:160` → `#if DEBUG` / env only
+
+### ☐ H3. Мелкие UI/модель
+
+- `DateFormatter` → `static` (`MainView`, `Models.dateFormatted`)
+- debounce notes/rename/Keychain (не на каждый кейстрок)
+- `markDirty` при программном присвоении notes в `onAppear`
+- `ForEach(..., id: \.offset)` → стабильный id сегмента
+- версия в `MenuBarPopover` из `LoginItem.appVersionString`
+- accessibility: строки как `Button`, `accessibilityLabel` на иконках
+
+### ☐ H4 / A2 — вынос стейт-машины (план, не баг)
+
+Архитектурный рефакторинг, не defect-finding. Делать после стабилизации 🟡:
+
+1. Шаг 0 = C1 (параметры по ID) — уже сделан.
+2. `RecordingStatus` enum вместо строк.
+3. `PipelineCoordinator` — per-recording pipeline state + очередь.
+4. `ZoomAutoRecordController` — флаги ignore/link + гистерезис R7.
+5. `SummaryBackfillService` — scheduler + порядок проверок P5.
+
+После шагов 3–5 `AppState` ≈ selection/window/disk-gate (~400 строк вместо ~1080).
+
+---
+
+## Приоритеты раунда 2 (impact × усилие)
+
+| # | Правка | Эффект | Усилие |
+|---|--------|--------|--------|
+| **C4** | Убрать TEST-онбординг | 🔴 блокер релиза | Тривиальный |
+| **C7** | Не удалять recap в MarkdownWriter | 🔴 потеря саммари | Тривиальный |
+| **C1** | Пайплайн по recordingID | 🔴 порча данных | Малый |
+| **C2** | Кнопки Retry/Complete | 🔴 невосстановимые встречи | Малый |
+| **C8** | PID-файл / adopt сироты gigastt | 🔴 ASR мёртв после crash | Малый |
+| **C9** | Атомарный ensureReady / actor | 🔴 утечка процесса | Малый |
+| **C10** | Stop без truncate стема | 🔴 потеря sys-дорожки | Малый |
+| **C3** | terminate + recovery из .mic | 🔴 потеря записи | Средний |
+| **C5** | Corrupt-safe recordings.json | 🔴 потеря архива | Средний |
+| **C6** | Zoom RU idle titles | 🔴 ложные записи | Малый |
+| **P3** | ObservedObject на recorder | 🟠 волна 10 Гц | Тривиальный |
+| **P1+P2** | Кэш поиска и парса транскрипта | 🟠 UI-фризы | Малый |
+| **M1** | Стриминговый микс | 🟠 RAM / длинные встречи | Средний |
+| **M2+M3** | Sync стемов + смена устройства | 🟠 качество ASR / живучесть | Средний |
+| **H1** | Удалить мёртвый UI | 🔵 гигиена | Малый |
+| **R2** | Ollama num_ctx / таймауты | 🟠 качество рекапов | Малый |
+| **P5+P6** | Backfill + save индекса | 🟠 энергия / UI | Малый |
+| **A2/H4** | PipelineCoordinator | 🔵 архитектура | Большой |
+
+---
+
+## Релизная нарезка раунда 2 (с учётом триажа)
+
+**R4 — 🟢 + закрытые 🟡 «не теряем данные»:**  
+☑ C7 · ☑ C6 · ☑ C1 · ☑ C2 · ☑ C8 · ☑ C9 · ☑ C10* · ☐ C4 (намеренный TEST до шипа) · ☑ H2 · ☑ H3-dev-paths · ☑ OnboardingView delete · ☑ MainView static DateFormatter
+
+\*C10 в 🔴-кластере ProcessTap — нужен живой Zoom-тест после правки.
+
+**R5 — 🟡 живучесть (осторожно):**  
+☑ C3 · ☑ C5 · ☑ R1 · ☑ R4 · ☑ R5 · ☑ P5 · ◐ P6 · ◐ R7
+
+**R6 — 🟠/🔴 только с замером + live E4:**  
+☐ M1 · ☐ M2 · ☐ M3 · ☐ M4 · ☐ M5 · ☐ R2 · ☐ R3 · ☐ P8
+
+**R7 — UI (P) и ⚠ H1 поштучно:**  
+☐ P1 · ☐ P2 · ☐ P3 · ☐ P4 · ☐ P7 · ☐ H1 (MenuBarPanelView / participants — ещё нет) · ☐ H3-UI debounce/a11y
+
+**R8 — архитектура (не баг):**  
+☐ H4/A2
 
 ---
 

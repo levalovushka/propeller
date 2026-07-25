@@ -232,7 +232,13 @@ struct MenuBarPanelView: View {
         case "transcribed_raw":
             Circle().fill(.yellow).frame(width: 7, height: 7)
         case "transcribing":
-            ProgressView().controlSize(.mini).frame(width: 10, height: 10)
+            // Stuck "transcribing" after a crash must not spin forever — only
+            // the recording AppState is actually working on.
+            if state.busyRecordingID == entry.id {
+                ProgressView().controlSize(.mini).frame(width: 10, height: 10)
+            } else {
+                Circle().fill(.orange).frame(width: 7, height: 7)
+            }
         case "recording":
             Circle().fill(.red).frame(width: 7, height: 7)
         default:
@@ -243,13 +249,7 @@ struct MenuBarPanelView: View {
     // MARK: - Window Management
 
     static func showMainWindow() {
-        NSApp.setActivationPolicy(.regular)
-        for window in NSApp.windows where window.frame.width > 400 {
-            window.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            return
-        }
-        NSApp.activate(ignoringOtherApps: true)
+        AppWindowRegistry.showMain()
     }
 
 }

@@ -28,8 +28,14 @@ final class NoteOverlayController {
     /// Ctrl+Opt+N — keyCode 45 is "n".
     private let noteKeyCode: UInt16 = 45
 
+    /// Keep a reference to AppState; key monitors are installed only while
+    /// recording (plan-optimization E7) so idle keystrokes aren't taxed.
     func install(state: AppState) {
         self.state = state
+    }
+
+    func startMonitoring() {
+        guard globalMonitor == nil, localMonitor == nil else { return }
         let handler: (NSEvent) -> Void = { [weak self] event in
             guard let self else { return }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
@@ -42,6 +48,18 @@ final class NoteOverlayController {
             handler(event)
             return event
         }
+    }
+
+    func stopMonitoring() {
+        if let g = globalMonitor {
+            NSEvent.removeMonitor(g)
+            globalMonitor = nil
+        }
+        if let l = localMonitor {
+            NSEvent.removeMonitor(l)
+            localMonitor = nil
+        }
+        hide()
     }
 
     private func toggle() {

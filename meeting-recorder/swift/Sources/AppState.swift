@@ -17,6 +17,9 @@ class AppState: ObservableObject {
     @Published var transcribeStep: PipelineStep = .pending
     @Published var saveStep: PipelineStep = .pending
     @Published var recapStep: PipelineStep = .pending
+    /// Recording currently in ASR / save / recap — drives per-row spinners even
+    /// when the user has navigated back to the meetings list.
+    @Published private(set) var busyRecordingID: String?
     @Published var statusMessage = ""
     /// Hint when recap was skipped (no Ollama / no API key). Cleared on next successful recap.
     @Published var recapSkipHint: String? = nil
@@ -35,8 +38,19 @@ class AppState: ObservableObject {
     @Published var recoveredCount = 0
 
     // Window
-    @Published var isWindowOpen = false
-    @Published var showOnboarding = false
+    @Published var isWindowOpen = false {
+        didSet {
+            // Live waveforms only matter when the window is visible (E5).
+            if isRecording {
+                recorder.setMeteringDesired(isWindowOpen)
+            }
+        }
+    }
+    /// Must be decided before the first window paint — RootWindow swaps
+    /// onboarding card vs main UI from this flag alone.
+    /// TEST: always true on launch (keep in sync with bootstrap gate below).
+    @Published var showOnboarding = true
+    private var didBootstrap = false
     @Published var showMicPermissionAlert = false
     @Published var zoomMeetingDetected = false
     @Published var diskSpaceWarning: String?
@@ -68,6 +82,9 @@ class AppState: ObservableObject {
     // MARK: - Initialization
 
     func bootstrap() {
+        guard !didBootstrap else { return }
+        didBootstrap = true
+
         // One-time migration: the legacy hardcoded default was llama3.2 (not bundled
         // and not our team model). Move it to the new default so recaps actually run.
         if Preferences.shared.recapOllamaModel == "llama3.2" {
@@ -76,19 +93,22 @@ class AppState: ObservableObject {
 
         recordingStore.load()
         recoveredCount = recordingStore.recoverInterruptedRecordings()
-        recordingStore.performRetentionCleanup()
+        Task { _ = await recordingStore.recoverMissingFinalMixes() }
+        // Retention auto-delete disabled (plan-v2 6.1 → size-nudge; plan-optimization A4).
         NotificationManager.shared.configure()
         NotificationManager.shared.onCancelRecording = { [weak self] in
             self?.cancelRecording()
         }
 
-        if !Preferences.shared.onboardingCompleted {
-            showOnboarding = true
-        }
+        // TEST: always show onboarding on launch. Revert to the guarded version
+        // below before shipping.
+        showOnboarding = true
+        // showOnboarding = !Preferences.shared.onboardingCompleted
 
         setupZoomDetector()
 
-        // Quick-note overlay (⌃⌥N during recording).
+        // Quick-note overlay: register the state; key monitors install only
+        // while a recording is active (plan-optimization E7).
         NoteOverlayController.shared.install(state: self)
 
         // Load upcoming meetings if the user opted into Calendar. Use the
@@ -101,35 +121,11 @@ class AppState: ObservableObject {
         // Fill in summaries for any past recordings that don't have one yet — no
         // button, no prompt; they just appear once a provider is reachable.
         startSummaryBackfill()
+        // Rename leftover "Recording …" titles once a recap already exists
+        // (titleManuallySet was falsely latched by the live title field).
+        Task { await backfillAutoTitlesFromRecaps() }
 
-        // Surface sidecar boot / model download in the status line.
-        Task {
-            do {
-                try await GigasttSidecar.shared.ensureReady(
-                    statusCallback: { [weak self] msg in
-                        Task { @MainActor in
-                            self?.statusMessage = msg
-                        }
-                    },
-                    downloadProgress: { [weak self] frac in
-                        Task { @MainActor in
-                            self?.modelDownloadProgress = frac >= 1.0 ? nil : frac
-                        }
-                    }
-                )
-                await MainActor.run {
-                    if self.statusMessage.hasPrefix("gigastt") || self.statusMessage.hasPrefix("Starting") || self.statusMessage.hasPrefix("Downloading") || self.statusMessage.hasPrefix("Loading gigastt") {
-                        self.statusMessage = ""
-                    }
-                    self.modelDownloadProgress = nil
-                }
-            } catch {
-                await MainActor.run {
-                    self.statusMessage = error.localizedDescription
-                    self.modelDownloadProgress = nil
-                }
-            }
-        }
+        // ASR sidecar starts lazily on first transcription (plan-optimization E1).
     }
 
     // MARK: - Zoom auto-detect
@@ -310,12 +306,20 @@ class AppState: ObservableObject {
             elapsedString = "00:00"
             elapsedSeconds = 0
             startDisplayTimer()
+            recorder.setMeteringDesired(isWindowOpen)
+            NoteOverlayController.shared.startMonitoring()
 
-            let title = "Recording \(DateFormatter.localizedString(from: Date(), dateStyle: .short, timeStyle: .short))"
+            let now = Date()
+            // Calendar title wins over the placeholder (and later over LLM rename).
+            if Preferences.shared.calendarEnabled {
+                CalendarService.shared.load()
+            }
+            let placeholder = "Recording \(DateFormatter.localizedString(from: now, dateStyle: .short, timeStyle: .short))"
+            let title = CalendarService.shared.suggestedRecordingTitle(at: now) ?? placeholder
             let entry = RecordingEntry(
                 id: recorder.recordingID ?? "",
                 filename: (recorder.recordingID ?? "") + ".wav",
-                date: Date(),
+                date: now,
                 duration: 0,
                 title: title,
                 status: "recording",
@@ -323,6 +327,9 @@ class AppState: ObservableObject {
             )
             recordingStore.add(entry)
             selectedRecordingID = entry.id
+            if title != placeholder {
+                NSLog("[AppState] Recording titled from calendar: \(title)")
+            }
 
             // Auto-started from a detected meeting: notify so the user can decline.
             if autoStartedFromMeeting {
@@ -346,6 +353,8 @@ class AppState: ObservableObject {
 
     private func cancelRecordingAndDiscard() async {
         stopDisplayTimer()
+        NoteOverlayController.shared.stopMonitoring()
+        recorder.setMeteringDesired(false)
         isRecording = false
         recordingLinkedToZoom = false
         let id = recorder.recordingID
@@ -375,7 +384,10 @@ class AppState: ObservableObject {
     /// Stop recording and await final WAV write. Safe to call from quit handlers.
     /// When `autoTranscribe` is false, the transcribe chain is skipped (used on app quit).
     func stopRecordingAndWait(autoTranscribe: Bool = false) async {
+        guard isRecording else { return }
         stopDisplayTimer()
+        NoteOverlayController.shared.stopMonitoring()
+        recorder.setMeteringDesired(false)
         isRecording = false
         let wasZoomLinked = recordingLinkedToZoom
         recordingLinkedToZoom = false
@@ -387,10 +399,8 @@ class AppState: ObservableObject {
             recordingStore.update(id: result.id, status: "recorded", duration: result.duration)
             selectedRecordingID = result.id
 
-            // Latch mic-only flag so RecordingDetailView can show "Mic only" tag
-            if recorder.systemAudioWarning != nil && Preferences.shared.captureSystemAudio {
-                micOnlyRecording = true
-            }
+            // Ground truth from the .sys stem after stop — not mid-session banners.
+            micOnlyRecording = recorder.lastStopWasMicOnly
 
             if autoTranscribe {
                 let body = wasZoomLinked
@@ -416,6 +426,8 @@ class AppState: ObservableObject {
                 self.elapsedString = Self.formatElapsed(secs)
             }
         }
+        // Clock display can coalesce wakeups — 0.3s is invisible to the user (S6).
+        timer.tolerance = 0.3
         RunLoop.main.add(timer, forMode: .common)
         displayTimer = timer
     }
@@ -460,7 +472,9 @@ class AppState: ObservableObject {
             lastRecapPath = nil
             recapSkipHint = nil
         }
-        statusMessage = entry.status == "transcribed_raw" ? "Diarization pending — click Complete Transcription" : ""
+        statusMessage = entry.status == "transcribed_raw"
+            ? "Diarization pending — tap Complete Transcription"
+            : ""
     }
 
     static func recapURL(for entry: RecordingEntry) -> URL? {
@@ -484,14 +498,6 @@ class AppState: ObservableObject {
             file.pathExtension == "md"
                 && file.lastPathComponent.hasPrefix(prefix)
                 && file.lastPathComponent.hasSuffix("-recap.md")
-        }
-    }
-
-    /// Meetings that belong in the Summaries library (have a summary file and/or notes).
-    func summaryLibraryEntries() -> [RecordingEntry] {
-        recordingStore.recordings.filter { entry in
-            hasRecap(for: entry)
-                || !(entry.notes?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
         }
     }
 
@@ -521,9 +527,14 @@ class AppState: ObservableObject {
         let slug = MarkdownWriter.slugify(rec.title.isEmpty ? rec.id : rec.title)
         let transcriptPath = URL(fileURLWithPath: Preferences.shared.meetingsPath)
             .appendingPathComponent("\(rec.id)-\(slug).md").path
+        let duration = rec.duration > 0 ? rec.duration : recordingDuration
         if !FileManager.default.fileExists(atPath: transcriptPath) {
             // Save first so recap has a companion transcript file.
-            await runSave()
+            await runSave(
+                recordingID: rec.id,
+                transcriptText: transcript,
+                duration: duration
+            )
             return
         }
         await runRecap(
@@ -531,7 +542,8 @@ class AppState: ObservableObject {
             transcriptPath: transcriptPath,
             speakers: speakers,
             notes: rec.notes,
-            recordingID: rec.id
+            recordingID: rec.id,
+            duration: duration
         )
     }
 
@@ -554,6 +566,8 @@ class AppState: ObservableObject {
     // MARK: - Summary backfill (no-button path)
 
     private var isBackfilling = false
+    /// Single coalesced, thermal/battery-aware backfill schedule (S5/A3).
+    private var backfillScheduler: NSBackgroundActivityScheduler?
 
     /// Resolve the transcript markdown file for a recording (the title slug in the
     /// filename may be stale after a rename), or nil if it hasn't been saved yet.
@@ -585,6 +599,17 @@ class AppState: ObservableObject {
             debugLog("[backfill] skip: busy (backfilling=\(isBackfilling) recording=\(isRecording) transcribing=\(isTranscribing) zoom=\(zoomMeetingDetected))")
             return false
         }
+
+        // Cheap candidate scan BEFORE any network probe (plan-optimization P5).
+        let candidates = recordingStore.recordings.filter { rec in
+            guard let text = rec.transcript, !text.isEmpty else { return false }
+            return !hasRecap(for: rec)
+        }
+        guard !candidates.isEmpty else {
+            debugLog("[backfill] skip: nothing to backfill")
+            return true
+        }
+
         let prefs = RecapPreferences.fromShared()
         let backend = await RecapService.shared.resolveBackend(
             kind: prefs.provider, openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey
@@ -593,15 +618,16 @@ class AppState: ObservableObject {
             debugLog("[backfill] skip: no provider (\(backend))")
             return false
         }
-        debugLog("[backfill] start via \(backendName), model=\(prefs.ollamaModel), \(recordingStore.recordings.count) recordings")
+        debugLog("[backfill] start via \(backendName), model=\(prefs.ollamaModel), \(candidates.count) candidates")
 
         isBackfilling = true
         defer { isBackfilling = false }
 
-        for rec in recordingStore.recordings {
+        for rec in candidates {
             if isRecording || isTranscribing { break }           // yield to live work
             guard let text = rec.transcript, !text.isEmpty else { continue }
-            guard !hasRecap(for: rec) else { debugLog("[backfill] \(rec.id): already has recap"); continue }
+            // Re-check in case a concurrent save wrote the recap.
+            guard !hasRecap(for: rec) else { continue }
 
             // Ensure a transcript markdown exists (recap is written next to it).
             let mdPath: String
@@ -626,17 +652,33 @@ class AppState: ObservableObject {
         return true
     }
 
-    /// Run the summary backfill, retrying every 30s while no provider is reachable
-    /// (Ollama can be slow to wake). Used at launch and after each recording so a
-    /// summary always appears once the model is up — no manual trigger.
-    func startSummaryBackfill(attempt: Int = 0) {
-        Task {
-            let ran = await backfillMissingSummaries()
-            if !ran && attempt < 8 {
-                try? await Task.sleep(nanoseconds: 30_000_000_000)  // 30s
-                startSummaryBackfill(attempt: attempt + 1)
+    /// Kick (or coalesce into) the background summary backfill. Safe to call
+    /// repeatedly — one `NSBackgroundActivityScheduler` owns retries so
+    /// launch + post-recap don't stack Task.sleep loops (plan-optimization S5).
+    func startSummaryBackfill() {
+        ensureBackfillScheduler()
+        Task { _ = await backfillMissingSummaries() }
+    }
+
+    private func ensureBackfillScheduler() {
+        guard backfillScheduler == nil else { return }
+        let scheduler = NSBackgroundActivityScheduler(identifier: "app.propeller.summary-backfill")
+        scheduler.repeats = true
+        scheduler.interval = 60
+        scheduler.tolerance = 30
+        scheduler.qualityOfService = .utility
+        scheduler.schedule { [weak self] completion in
+            Task { @MainActor in
+                guard let self else {
+                    completion(.finished)
+                    return
+                }
+                let ran = await self.backfillMissingSummaries()
+                // Deferred when busy / no provider — system retries when freer.
+                completion(ran ? .finished : .deferred)
             }
         }
+        backfillScheduler = scheduler
     }
 
     private func backfillOne(_ rec: RecordingEntry, transcriptPath: String, prefs: RecapPreferences) async {
@@ -690,8 +732,15 @@ class AppState: ObservableObject {
     private var isTranscribing = false
 
     func runTranscribe() async {
-        guard !isTranscribing else { return }
+        if isTranscribing {
+            statusMessage = "Transcription already in progress"
+            return
+        }
         guard let rec = selectedRecording else { return }
+        // Snapshot identity for the whole pipeline — selection may change mid-run (C1).
+        let recordingID = rec.id
+        let language = rec.language
+        let durationAtStart = rec.duration
         guard let audioURL = recordingStore.audioURL(for: rec) else {
             statusMessage = "Audio file not found"
             return
@@ -701,27 +750,37 @@ class AppState: ObservableObject {
         guard ok else { return }
 
         isTranscribing = true
-        defer { isTranscribing = false }
+        beginPipelineWork(recordingID)
+        defer {
+            isTranscribing = false
+            endPipelineWork(recordingID)
+            transcriptionService.releaseHeavyResources()
+        }
 
         transcribeStep = .running
         statusMessage = "Loading models..."
         modelDownloadProgress = nil
-        recordingStore.update(id: rec.id, status: "transcribing")
+        recordingStore.update(id: recordingID, status: "transcribing")
 
         do {
             let progressCb: (String) -> Void = { [weak self] progress in
-                Task { @MainActor in self?.statusMessage = progress }
+                Task { @MainActor in
+                    guard let self else { return }
+                    // Keep top-bar status alive even if the user left the detail.
+                    self.statusMessage = progress
+                }
             }
             let downloadCb: (Double) -> Void = { [weak self] fraction in
                 Task { @MainActor in
-                    self?.modelDownloadProgress = fraction >= 1.0 ? nil : fraction
+                    guard let self else { return }
+                    self.modelDownloadProgress = fraction >= 1.0 ? nil : fraction
                 }
             }
 
             // Phase 1: gigastt ASR (the expensive step)
             let rawResult = try await transcriptionService.transcribeAudio(
                 audioURL: audioURL,
-                languageOverride: rec.language,
+                languageOverride: language,
                 progressCallback: progressCb,
                 downloadProgress: downloadCb
             )
@@ -735,7 +794,7 @@ class AppState: ObservableObject {
                 return String(data: data, encoding: .utf8)
             }()
             recordingStore.update(
-                id: rec.id,
+                id: recordingID,
                 transcript: rawText,
                 status: "transcribed_raw",
                 rawSegmentsJSON: .some(segmentsJSON)
@@ -750,29 +809,40 @@ class AppState: ObservableObject {
                 progressCallback: progressCb
             )
 
-            transcript = result.transcript
-            transcribeStep = .done
-            statusMessage = ""
             let segJSON = encodePersistedSegments(result.mergedSegments)
             recordingStore.update(
-                id: rec.id,
+                id: recordingID,
                 transcript: result.transcript,
                 status: "transcribed",
                 rawSegmentsJSON: .some(nil),
                 mergedSegmentsJSON: .some(segJSON)
             )
 
-            // No speaker confirmation gate — save immediately.
-            await runSave()
+            // Always clear .running — leaving it latched when the user navigated
+            // away made the UI look forever-busy.
+            transcribeStep = .done
+            if selectedRecordingID == recordingID {
+                transcript = result.transcript
+                statusMessage = ""
+            }
+
+            let duration = recordingStore.recording(for: recordingID)?.duration ?? durationAtStart
+            await runSave(
+                recordingID: recordingID,
+                transcriptText: result.transcript,
+                duration: duration
+            )
         } catch {
             transcribeStep = .failed
-            statusMessage = error.localizedDescription
             modelDownloadProgress = nil
+            if selectedRecordingID == recordingID {
+                statusMessage = error.localizedDescription
+            }
             // If we have a raw transcript (Phase 1 succeeded), keep it as transcribed_raw
-            if let current = recordingStore.recording(for: rec.id), current.status == "transcribed_raw" {
+            if let current = recordingStore.recording(for: recordingID), current.status == "transcribed_raw" {
                 // Don't regress — keep the checkpoint
             } else {
-                recordingStore.update(id: rec.id, status: "recorded")
+                recordingStore.update(id: recordingID, status: "recorded")
             }
             NSLog("[AppState] Transcription FAILED: \(error)")
         }
@@ -781,8 +851,13 @@ class AppState: ObservableObject {
     /// Resume diarization for a recording that completed ASR but crashed before
     /// diarization finished. Deserializes the stored segments and runs only Phase 2.
     func completeDiarization() async {
-        guard !isTranscribing else { return }
+        if isTranscribing {
+            statusMessage = "Transcription already in progress"
+            return
+        }
         guard let rec = selectedRecording else { return }
+        let recordingID = rec.id
+        let durationAtStart = rec.duration
         guard let audioURL = recordingStore.audioURL(for: rec) else {
             statusMessage = "Audio file not found — cannot complete diarization"
             return
@@ -795,71 +870,99 @@ class AppState: ObservableObject {
         }
 
         isTranscribing = true
-        defer { isTranscribing = false }
+        beginPipelineWork(recordingID)
+        defer {
+            isTranscribing = false
+            endPipelineWork(recordingID)
+            transcriptionService.releaseHeavyResources()
+        }
 
         transcribeStep = .running
         statusMessage = "Identifying speakers..."
-        recordingStore.update(id: rec.id, status: "transcribing")
+        recordingStore.update(id: recordingID, status: "transcribing")
 
         do {
             let result = try await transcriptionService.diarize(
                 audioURL: audioURL,
                 asrSegments: segments,
                 progressCallback: { [weak self] progress in
-                    Task { @MainActor in self?.statusMessage = progress }
+                    Task { @MainActor in
+                        self?.statusMessage = progress
+                    }
                 }
             )
 
-            transcript = result.transcript
-            transcribeStep = .done
-            statusMessage = ""
             let segJSON = encodePersistedSegments(result.mergedSegments)
             recordingStore.update(
-                id: rec.id,
+                id: recordingID,
                 transcript: result.transcript,
                 status: "transcribed",
                 rawSegmentsJSON: .some(nil),
                 mergedSegmentsJSON: .some(segJSON)
             )
 
-            await runSave()
+            transcribeStep = .done
+            if selectedRecordingID == recordingID {
+                transcript = result.transcript
+                statusMessage = ""
+            }
+
+            let duration = recordingStore.recording(for: recordingID)?.duration ?? durationAtStart
+            await runSave(
+                recordingID: recordingID,
+                transcriptText: result.transcript,
+                duration: duration
+            )
         } catch {
             transcribeStep = .failed
-            statusMessage = error.localizedDescription
-            recordingStore.update(id: rec.id, status: "transcribed_raw")
+            if selectedRecordingID == recordingID {
+                statusMessage = error.localizedDescription
+            }
+            recordingStore.update(id: recordingID, status: "transcribed_raw")
             NSLog("[AppState] Diarization FAILED: \(error)")
         }
     }
 
-    func runSave() async {
-        guard let rec = selectedRecording else { return }
+    func runSave(
+        recordingID: String,
+        transcriptText: String,
+        duration: TimeInterval
+    ) async {
+        guard let rec = recordingStore.recording(for: recordingID) else { return }
+        beginPipelineWork(recordingID)
+        defer { endPipelineWork(recordingID) }
         saveStep = .running
         recapStep = .pending
-        recapSkipHint = nil
+        if selectedRecordingID == recordingID {
+            recapSkipHint = nil
+        }
 
         do {
-            let speakers = MarkdownWriter.extractSpeakers(from: transcript)
+            let speakers = MarkdownWriter.extractSpeakers(from: transcriptText)
             let path = try MarkdownWriter.save(
                 title: rec.title,
-                transcript: transcript,
-                recordingID: rec.id,
-                duration: recordingDuration,
+                transcript: transcriptText,
+                recordingID: recordingID,
+                duration: duration,
                 speakers: speakers,
                 notes: rec.notes
             )
+            recordingStore.update(id: recordingID, status: "saved")
             saveStep = .done
-            recordingStore.update(id: rec.id, status: "saved")
             NotificationManager.shared.post(title: "Propeller", body: "Saved: \(URL(fileURLWithPath: path).lastPathComponent)")
             await runRecap(
                 title: rec.title,
                 transcriptPath: path,
                 speakers: speakers,
                 notes: rec.notes,
-                recordingID: rec.id
+                recordingID: recordingID,
+                duration: duration
             )
         } catch {
             saveStep = .failed
-            statusMessage = error.localizedDescription
+            if selectedRecordingID == recordingID {
+                statusMessage = error.localizedDescription
+            }
         }
     }
 
@@ -869,18 +972,25 @@ class AppState: ObservableObject {
         transcriptPath: String,
         speakers: [String],
         notes: String?,
-        recordingID: String
+        recordingID: String,
+        duration: TimeInterval
     ) async {
+        beginPipelineWork(recordingID)
+        defer { endPipelineWork(recordingID) }
         recapStep = .running
         statusMessage = "Generating recap…"
-        lastRecapPath = nil
+        if selectedRecordingID == recordingID {
+            lastRecapPath = nil
+        }
 
         let md: String
         do {
             md = try String(contentsOfFile: transcriptPath, encoding: .utf8)
         } catch {
             recapStep = .failed
-            statusMessage = "Could not read transcript for recap"
+            if selectedRecordingID == recordingID {
+                statusMessage = "Could not read transcript for recap"
+            }
             return
         }
 
@@ -891,67 +1001,124 @@ class AppState: ObservableObject {
                 transcriptPath: transcriptPath,
                 notes: notes,
                 speakers: speakers,
-                duration: recordingDuration,
+                duration: duration,
                 recordingID: recordingID,
                 prefs: RecapPreferences.fromShared()
             )
             switch result {
             case .failure(let reason):
                 recapStep = .pending
-                switch reason {
-                case .disabled:
-                    recapSkipHint = nil
-                    statusMessage = ""
+                if selectedRecordingID == recordingID {
+                    switch reason {
+                    case .disabled:
+                        recapSkipHint = nil
+                        statusMessage = ""
+                        surfaceMeetingUI(preferSummaryTab: false)
+                    case .noProvider:
+                        recapSkipHint = "Summary skipped — start Ollama or add an API key in Settings"
+                        statusMessage = recapSkipHint ?? ""
+                    case .emptyTranscript:
+                        recapSkipHint = "Summary skipped — empty transcript"
+                        statusMessage = recapSkipHint ?? ""
+                    }
                     surfaceMeetingUI(preferSummaryTab: false)
-                case .noProvider:
-                    recapSkipHint = "Summary skipped — start Ollama or add an API key in Settings"
-                    statusMessage = recapSkipHint ?? ""
-                case .emptyTranscript:
-                    recapSkipHint = "Summary skipped — empty transcript"
-                    statusMessage = recapSkipHint ?? ""
                 }
-                // Still surface the meeting so notes + transcript are visible.
-                surfaceMeetingUI(preferSummaryTab: false)
             case .success(let recap):
                 recapStep = .done
-                lastRecapPath = recap.path
-                recapSkipHint = nil
-                statusMessage = "Summary via \(recap.provider)"
+                if selectedRecordingID == recordingID {
+                    lastRecapPath = recap.path
+                    recapSkipHint = nil
+                    statusMessage = "Summary via \(recap.provider)"
+                    surfaceSummaryUI()
+                }
                 NotificationManager.shared.post(
                     title: "Propeller",
                     body: "Summary ready — notes and summary are in the meeting."
                 )
-                surfaceSummaryUI()
-                // Best-effort: derive title / subtitle topics / tags from the summary.
                 await generateMeetingMetadata(recordingID: recordingID, summary: recap.body)
             }
         } catch {
             recapStep = .failed
-            statusMessage = error.localizedDescription
-            recapSkipHint = error.localizedDescription
+            if selectedRecordingID == recordingID {
+                statusMessage = error.localizedDescription
+                recapSkipHint = error.localizedDescription
+            }
         }
 
-        // Sweep for any recording still missing a summary (e.g. this one if the
-        // provider was briefly down), retrying until the model is reachable.
         startSummaryBackfill()
     }
 
+    /// Nesting depth for begin/end around transcribe → save → recap.
+    private var pipelineWorkDepth = 0
+
+    private func beginPipelineWork(_ recordingID: String) {
+        pipelineWorkDepth += 1
+        busyRecordingID = recordingID
+    }
+
+    private func endPipelineWork(_ recordingID: String) {
+        pipelineWorkDepth = max(0, pipelineWorkDepth - 1)
+        if pipelineWorkDepth == 0 {
+            busyRecordingID = nil
+        } else if busyRecordingID == nil {
+            busyRecordingID = recordingID
+        }
+    }
+
+    /// Re-run metadata for saved meetings still stuck on the default title.
+    private func backfillAutoTitlesFromRecaps() async {
+        let candidates = recordingStore.recordings.filter { rec in
+            Self.isAutoGeneratedTitle(rec.title) && hasRecap(for: rec)
+        }
+        guard !candidates.isEmpty else { return }
+        for rec in candidates {
+            let preferred = AppState.recapURL(for: rec)
+            let url: URL? = {
+                if let preferred, FileManager.default.fileExists(atPath: preferred.path) {
+                    return preferred
+                }
+                return Self.findRecapURL(for: rec)
+            }()
+            guard let url,
+                  let body = try? String(contentsOf: url, encoding: .utf8),
+                  !body.isEmpty else { continue }
+            await generateMeetingMetadata(recordingID: rec.id, summary: body)
+        }
+    }
+
+    private static func findRecapURL(for entry: RecordingEntry) -> URL? {
+        let dir = URL(fileURLWithPath: Preferences.shared.meetingsPath)
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
+            return nil
+        }
+        let prefix = entry.id + "-"
+        return files.first {
+            $0.lastPathComponent.hasPrefix(prefix) && $0.lastPathComponent.hasSuffix("-recap.md")
+        }
+    }
+
     /// Derive title / topics / tags from the finished summary and persist them.
-    /// Title is only set when the user hasn't manually renamed the meeting.
-    /// Best-effort: silently no-ops if the model doesn't return usable metadata.
+    /// Title is only rewritten for the placeholder "Recording …" — calendar and
+    /// manual names are kept. Best-effort: silently no-ops on provider/parse failure.
     private func generateMeetingMetadata(recordingID: String, summary: String) async {
         guard let rec = recordingStore.recording(for: recordingID) else { return }
-        let titleIsManual = rec.titleManuallySet ?? false
+        // Calendar / user titles must not be overwritten by the LLM.
+        let needTitle = Self.isAutoGeneratedTitle(rec.title)
         let meta = await RecapService.shared.generateMetadata(
             summaryMarkdown: summary,
-            needTitle: !titleIsManual,
+            needTitle: needTitle,
             prefs: RecapPreferences.fromShared()
         )
         guard let meta else { return }
         recordingStore.update(id: recordingID, topics: meta.topics, tags: meta.tags)
-        if !titleIsManual, let newTitle = meta.title, !newTitle.isEmpty {
+        if needTitle, let newTitle = meta.title, !newTitle.isEmpty {
             recordingStore.update(id: recordingID, title: newTitle)
         }
+    }
+
+    /// Placeholder stamped at record start when no calendar event matched.
+    static func isAutoGeneratedTitle(_ title: String) -> Bool {
+        title.hasPrefix("Recording ")
     }
 
     func reprocess() async {
@@ -1016,7 +1183,11 @@ class AppState: ObservableObject {
             mergedSegmentsJSON: .some(segJSON)
         )
         markDirty()
-        await runSave()
+        await runSave(
+            recordingID: rec.id,
+            transcriptText: newTranscript,
+            duration: rec.duration > 0 ? rec.duration : recordingDuration
+        )
     }
 
     /// Distinct speaker names currently used in the segment list, in

@@ -21,6 +21,13 @@ mkdir -p "$APP/Contents/Resources"
 
 cp "$BUILD_DIR/MeetingRecorder" "$APP/Contents/MacOS/MeetingRecorder"
 
+# Menu bar template icon (PDF)
+if [ -f "Resources/MenuBarIcon.pdf" ]; then
+    cp "Resources/MenuBarIcon.pdf" "$APP/Contents/Resources/MenuBarIcon.pdf"
+else
+    echo "  WARNING: Resources/MenuBarIcon.pdf missing — menu bar falls back to SF Symbol"
+fi
+
 # Bundle gigastt sidecar binary (Phase 3)
 GIGASTT_SRC="${GIGASTT_BIN:-}"
 if [ -z "$GIGASTT_SRC" ]; then
@@ -60,7 +67,12 @@ if [ -n "$ICON_SRC" ]; then
     rm -rf "$ICON_OUT"
     mkdir -p "$ICON_OUT"
     echo "  Compiling icon from $ICON_SRC"
-    if xcrun actool "$ICON_SRC" \
+    # Include AccentColor.xcassets when present (Toggle on-tint; SO 79826801).
+    ACTOOL_INPUTS=("$ICON_SRC")
+    if [ -d "Resources/Assets.xcassets" ]; then
+        ACTOOL_INPUTS+=("Resources/Assets.xcassets")
+    fi
+    if xcrun actool "${ACTOOL_INPUTS[@]}" \
         --app-icon "$ICON_NAME" \
         --compile "$ICON_OUT" \
         --output-partial-info-plist "$ICON_OUT/partial.plist" \
@@ -128,8 +140,10 @@ ${ICON_PLIST_KEYS}
          and .accessory (window closed, menu-bar-only). -->
     <key>NSMicrophoneUsageDescription</key>
     <string>Propeller needs microphone access to record your meetings.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Propeller captures meeting audio from Zoom and other apps so both sides of the call are recorded.</string>
     <key>NSScreenCaptureUsageDescription</key>
-    <string>Propeller captures system audio output so both sides of video calls are recorded.</string>
+    <string>Propeller may use screen-audio capture as a fallback so both sides of video calls are recorded.</string>
     <key>NSCalendarsFullAccessUsageDescription</key>
     <string>Propeller reads your calendar to show upcoming meetings and pre-fill titles and participants.</string>
     <key>NSCalendarsUsageDescription</key>

@@ -1,4 +1,6 @@
+import AVFoundation
 import Foundation
+import PropellerPure
 
 /// Codable ASR segment used across checkpointing and diarization merge.
 /// Segment from gigastt ASR (`/v1/transcribe?segments=true`).
@@ -50,6 +52,7 @@ enum GigasttClient {
         case apiError(String)
         case emptyResult
         case readFailed(String)
+        case chunkFailed(String)
 
         var errorDescription: String? {
             switch self {
@@ -63,6 +66,8 @@ enum GigasttClient {
                 return "gigastt returned no segments."
             case .readFailed(let path):
                 return "Could not read audio file: \(path)"
+            case .chunkFailed(let detail):
+                return "Could not split audio for transcription: \(detail)"
             }
         }
     }
@@ -85,18 +90,50 @@ enum GigasttClient {
 
     /// Transcribe a local audio file. Uses e2e_rnnt-friendly query (segments only;
     /// do NOT request punctuation add-on — e2e has it natively).
+    /// Streams the WAV from disk via `upload(fromFile:)` so a long meeting never
+    /// has to sit fully in RAM (plan-optimization S1).
+    ///
+    /// Long files are split client-side: gigastt's default body limit (~50 MiB)
+    /// and ~30 min duration cap otherwise yield HTTP 413 / "too long".
     static func transcribe(
         audioURL: URL,
         baseURL: URL = defaultBaseURL,
-        timeout: TimeInterval = 600
+        timeout: TimeInterval = 600,
+        progressCallback: ((String) -> Void)? = nil
     ) async throws -> (segments: [ASRSegment], rawText: String) {
-        let audioData: Data
-        do {
-            audioData = try Data(contentsOf: audioURL)
-        } catch {
+        guard FileManager.default.fileExists(atPath: audioURL.path) else {
             throw ClientError.readFailed(audioURL.path)
         }
 
+        let fileBytes = (try? FileManager.default.attributesOfItem(atPath: audioURL.path)[.size] as? Int64) ?? 0
+        let duration = WavHeader.duration(url: audioURL)
+
+        if GigasttChunking.needsChunking(fileBytes: fileBytes, durationSeconds: duration) {
+            NSLog(
+                "[GigasttClient] chunking ASR fileBytes=%lld duration=%.1fs (limits bytes=%lld secs=%.0f)",
+                fileBytes, duration, GigasttChunking.maxSingleShotBytes, GigasttChunking.maxSingleShotSeconds
+            )
+            return try await transcribeChunked(
+                audioURL: audioURL,
+                duration: duration,
+                baseURL: baseURL,
+                timeout: timeout,
+                progressCallback: progressCallback
+            )
+        }
+
+        return try await transcribeSingle(
+            audioURL: audioURL,
+            baseURL: baseURL,
+            timeout: timeout
+        )
+    }
+
+    private static func transcribeSingle(
+        audioURL: URL,
+        baseURL: URL,
+        timeout: TimeInterval
+    ) async throws -> (segments: [ASRSegment], rawText: String) {
         var comps = URLComponents(url: baseURL.appendingPathComponent("v1/transcribe"), resolvingAgainstBaseURL: false)!
         comps.queryItems = [
             URLQueryItem(name: "segments", value: "true"),
@@ -105,11 +142,10 @@ enum GigasttClient {
         req.httpMethod = "POST"
         req.timeoutInterval = timeout
         req.setValue(contentType(for: audioURL), forHTTPHeaderField: "Content-Type")
-        req.httpBody = audioData
 
         let (data, response): (Data, URLResponse)
         do {
-            (data, response) = try await URLSession.shared.data(for: req)
+            (data, response) = try await URLSession.shared.upload(for: req, fromFile: audioURL)
         } catch {
             throw ClientError.notReachable(error.localizedDescription)
         }
@@ -118,7 +154,6 @@ enum GigasttClient {
         let status = http?.statusCode ?? -1
         if !(200..<300).contains(status) {
             let body = String(data: data, encoding: .utf8) ?? ""
-            // Try to surface API error envelope
             if let env = try? JSONDecoder().decode(TranscribeResponse.self, from: data),
                let msg = env.error ?? env.code {
                 throw ClientError.apiError(msg)
@@ -126,6 +161,112 @@ enum GigasttClient {
             throw ClientError.badStatus(status, body)
         }
 
+        return try decodeTranscription(data)
+    }
+
+    private static func transcribeChunked(
+        audioURL: URL,
+        duration: Double,
+        baseURL: URL,
+        timeout: TimeInterval,
+        progressCallback: ((String) -> Void)?
+    ) async throws -> (segments: [ASRSegment], rawText: String) {
+        let source: AVAudioFile
+        do {
+            source = try AVAudioFile(forReading: audioURL)
+        } catch {
+            throw ClientError.chunkFailed(error.localizedDescription)
+        }
+
+        let rate = source.processingFormat.sampleRate
+        guard rate > 0, source.length > 0 else {
+            throw ClientError.chunkFailed("empty or invalid audio")
+        }
+
+        let chunkFrames = AVAudioFrameCount(GigasttChunking.chunkSeconds * rate)
+        let totalFrames = AVAudioFramePosition(source.length)
+        let chunkCount = Int(ceil(Double(totalFrames) / Double(chunkFrames)))
+        guard chunkCount > 0 else { throw ClientError.emptyResult }
+
+        let tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("propeller-asr-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+
+        var merged: [(offset: Float, segments: [GigasttChunking.Segment])] = []
+        var texts: [String] = []
+
+        var startFrame: AVAudioFramePosition = 0
+        var index = 0
+        while startFrame < totalFrames {
+            let frames = AVAudioFrameCount(min(AVAudioFramePosition(chunkFrames), totalFrames - startFrame))
+            let offsetSec = Float(Double(startFrame) / rate)
+            let chunkURL = tmpDir.appendingPathComponent(String(format: "chunk-%02d.wav", index))
+
+            progressCallback?("Transcribing chunk \(index + 1)/\(chunkCount)…")
+            do {
+                try writeWAVChunk(from: source, startFrame: startFrame, frameCount: frames, to: chunkURL)
+            } catch {
+                throw ClientError.chunkFailed(error.localizedDescription)
+            }
+
+            // Per-chunk timeout scales with audio length; floor at caller timeout.
+            let chunkDur = Double(frames) / rate
+            let chunkTimeout = max(timeout, chunkDur * 2.0 + 120)
+
+            let (segs, raw) = try await transcribeSingle(
+                audioURL: chunkURL,
+                baseURL: baseURL,
+                timeout: chunkTimeout
+            )
+            merged.append((
+                offset: offsetSec,
+                segments: segs.map { GigasttChunking.Segment(start: $0.start, end: $0.end, text: $0.text) }
+            ))
+            if !raw.isEmpty { texts.append(raw) }
+
+            startFrame += AVAudioFramePosition(frames)
+            index += 1
+        }
+
+        let combined = GigasttChunking.merge(merged)
+        guard !combined.isEmpty else { throw ClientError.emptyResult }
+
+        let segments = combined.map { ASRSegment(start: $0.start, end: $0.end, text: $0.text) }
+        let rawText = texts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        NSLog(
+            "[GigasttClient] chunked ASR done chunks=%d segments=%d durationHint=%.1fs",
+            chunkCount, segments.count, duration
+        )
+        return (segments, rawText.isEmpty ? segments.map(\.text).joined(separator: " ") : rawText)
+    }
+
+    private static func writeWAVChunk(
+        from source: AVAudioFile,
+        startFrame: AVAudioFramePosition,
+        frameCount: AVAudioFrameCount,
+        to url: URL
+    ) throws {
+        try? FileManager.default.removeItem(at: url)
+        let format = source.processingFormat
+        let dest = try AVAudioFile(forWriting: url, settings: format.settings)
+        source.framePosition = startFrame
+
+        var remaining = frameCount
+        let bufSize: AVAudioFrameCount = 16_384
+        while remaining > 0 {
+            let n = min(remaining, bufSize)
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: n) else {
+                throw ClientError.chunkFailed("buffer alloc failed")
+            }
+            try source.read(into: buffer, frameCount: n)
+            guard buffer.frameLength > 0 else { break }
+            try dest.write(from: buffer)
+            remaining -= buffer.frameLength
+        }
+    }
+
+    private static func decodeTranscription(_ data: Data) throws -> (segments: [ASRSegment], rawText: String) {
         let decoded = try JSONDecoder().decode(TranscribeResponse.self, from: data)
         if let err = decoded.error {
             throw ClientError.apiError(err)
@@ -134,10 +275,13 @@ enum GigasttClient {
         let segments: [ASRSegment]
         if let segs = decoded.segments, !segs.isEmpty {
             segments = segs.map {
-                ASRSegment(start: Float($0.start), end: Float($0.end), text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines))
+                ASRSegment(
+                    start: Float($0.start),
+                    end: Float($0.end),
+                    text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
             }.filter { !$0.text.isEmpty }
         } else if let words = decoded.words, !words.isEmpty {
-            // Fallback: one segment from words if server omitted segments
             let text = (decoded.text ?? words.compactMap(\.word).joined(separator: " "))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let start = Float(words.compactMap(\.start).first ?? 0)

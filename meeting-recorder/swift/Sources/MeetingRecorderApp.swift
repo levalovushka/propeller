@@ -1,29 +1,42 @@
 import SwiftUI
+import AppKit
+
+/// Weak hook so AppDelegate can flush recording on ⌘Q / logout (plan-optimization C3).
+enum AppStateRegistry {
+    @MainActor static weak var shared: AppState?
+}
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    private var isTerminatingAfterFlush = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Warm the ASR sidecar in the background so first Transcribe is faster.
-        Task.detached(priority: .utility) {
-            do {
-                try await GigasttSidecar.shared.ensureReady()
-            } catch {
-                NSLog("[AppDelegate] gigastt sidecar warm-up failed: \(error)")
+        // ASR sidecar is started lazily on first transcription (plan-optimization E1).
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if isTerminatingAfterFlush { return .terminateNow }
+        Task { @MainActor in
+            if let state = AppStateRegistry.shared, state.isRecording {
+                await state.stopRecordingAndWait(autoTranscribe: false)
             }
+            AppStateRegistry.shared?.recordingStore.flush()
+            GigasttSidecar.shared.stop()
+            OnboardingPanelController.shared.close()
+            self.isTerminatingAfterFlush = true
+            NSApp.reply(toApplicationShouldTerminate: true)
         }
+        return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         GigasttSidecar.shared.stop()
+        OnboardingPanelController.shared.close()
+        AppStateRegistry.shared?.recordingStore.flush()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
-            // Re-open the main window when the user clicks the dock icon.
-            for window in NSApp.windows where window.frame.width > 400 {
-                window.makeKeyAndOrderFront(nil)
-            }
-            NSApp.setActivationPolicy(.regular)
-            NSApp.activate(ignoringOtherApps: true)
+            AppWindowRegistry.showMain(centered: true)
         }
         return true
     }
@@ -35,11 +48,12 @@ struct MeetingRecorderApp: App {
     @StateObject private var state = AppState()
 
     var body: some Scene {
-        // WindowGroup is the primary scene — auto-opens on launch.
-        WindowGroup("Propeller") {
-            MainView(state: state, recordingStore: state.recordingStore)
+        // Main app only. Onboarding is a separate NSPanel (see
+        // OnboardingPanelController) so we never resize one window into another.
+        WindowGroup("Propeller", id: AppWindowRole.main.rawValue) {
+            RootWindow(state: state)
         }
-        .defaultSize(width: 900, height: 680)
+        .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) { }
@@ -51,29 +65,53 @@ struct MeetingRecorderApp: App {
         }
 
         MenuBarExtra {
-            MenuBarPanelView(state: state)
+            MenuBarContentView(state: state)
         } label: {
-            menuBarLabel
+            Image(nsImage: Self.menuBarIcon)
         }
         .menuBarExtraStyle(.window)
     }
 
-    @ViewBuilder
-    private var menuBarLabel: some View {
-        if state.isRecording {
-            HStack(spacing: 4) {
-                Image(systemName: "record.circle.fill")
-                    .foregroundColor(.red)
-                Text(state.elapsedString)
-                    .monospacedDigit()
+    /// Template PDF — HIG menu-bar extra is 18×18 pt (vector scales; no re-export).
+    private static let menuBarIcon: NSImage = {
+        let image = NSImage(named: "MenuBarIcon")
+            ?? NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Propeller")
+            ?? NSImage()
+        image.isTemplate = true
+        image.size = NSSize(width: 18, height: 18)
+        return image
+    }()
+}
+
+/// Always hosts the main app UI. Onboarding is shown via `OnboardingPanelController`.
+private struct RootWindow: View {
+    @ObservedObject var state: AppState
+
+    var body: some View {
+        MainView(state: state, recordingStore: state.recordingStore)
+            .frame(minWidth: AppWindowRegistry.mainSize.width,
+                   minHeight: AppWindowRegistry.mainSize.height)
+            // Same GlassBackground / Tokens.Glass stack as the onboarding panel.
+            .background(VisualEffectBackground().ignoresSafeArea())
+            .background(SceneWindowChrome(role: .main, startHidden: state.showOnboarding))
+            .onAppear {
+                AppStateRegistry.shared = state
+                state.bootstrap()
+                syncPresentation()
             }
-        } else if state.transcribeStep == .running || state.saveStep == .running {
-            HStack(spacing: 4) {
-                Image(systemName: "mic.fill")
-                Text("...")
+            .onChange(of: state.showOnboarding) { _, _ in
+                syncPresentation()
             }
+    }
+
+    private func syncPresentation() {
+        if state.showOnboarding {
+            // Hide main *before* the panel appears so Meetings never flashes.
+            AppWindowRegistry.hideMain()
+            OnboardingPanelController.shared.show(state: state)
         } else {
-            Image(systemName: "mic.fill")
+            OnboardingPanelController.shared.close()
+            AppWindowRegistry.showMain(centered: true)
         }
     }
 }

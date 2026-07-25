@@ -1,4 +1,6 @@
 import Foundation
+import PropellerMetrics
+import PropellerPure
 
 enum RecapProviderKind: String, CaseIterable, Identifiable {
     case auto
@@ -127,61 +129,64 @@ actor RecapService {
         recordingID: String,
         prefs: RecapPreferences
     ) async throws -> Result<RecapResult, RecapSkipReason> {
-        let trimmed = transcriptMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return .failure(.emptyTranscript) }
+        try await PipelineMetrics.interval(PipelineMetrics.pipeline, PipelineMetrics.recap) {
+            let trimmed = transcriptMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return .failure(.emptyTranscript) }
 
-        let backend: String
-        switch await resolveBackend(kind: prefs.provider, openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey) {
-        case .failure(let reason):
-            return .failure(reason)
-        case .success(let name):
-            backend = name
+            let backend: String
+            switch await resolveBackend(kind: prefs.provider, openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey) {
+            case .failure(let reason):
+                return .failure(reason)
+            case .success(let name):
+                backend = name
+            }
+
+            let prompt = prefs.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? Self.defaultPrompt
+                : prefs.prompt
+
+            let userContent = buildUserMessage(
+                title: title,
+                transcriptMarkdown: trimmed,
+                speakers: speakers,
+                duration: duration,
+                notes: notes
+            )
+
+            let raw: String
+            switch backend {
+            case "ollama":
+                raw = try await callOllama(model: prefs.ollamaModel, system: prompt, user: userContent)
+            case "openai":
+                raw = try await callOpenAI(apiKey: prefs.openAIKey ?? "", model: prefs.openAIModel, system: prompt, user: userContent)
+            case "claude":
+                raw = try await callClaude(apiKey: prefs.claudeKey ?? "", model: prefs.claudeModel, system: prompt, user: userContent)
+            default:
+                return .failure(.noProvider)
+            }
+
+            let cleaned = RecapMetadataParser.stripCodeFences(raw)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleaned.isEmpty else { throw RecapError.emptyResponse }
+
+            let body = wrapRecapDocument(
+                title: title,
+                recapBody: cleaned,
+                notes: notes,
+                speakers: speakers,
+                duration: duration,
+                format: prefs.outputFormat
+            )
+
+            let path = try writeRecapFile(
+                nextToTranscriptPath: transcriptPath,
+                recordingID: recordingID,
+                title: title,
+                content: body
+            )
+
+            return .success(RecapResult(path: path, provider: backend, body: body))
         }
-
-        let prompt = prefs.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? Self.defaultPrompt
-            : prefs.prompt
-
-        let userContent = buildUserMessage(
-            title: title,
-            transcriptMarkdown: trimmed,
-            speakers: speakers,
-            duration: duration,
-            notes: notes
-        )
-
-        let raw: String
-        switch backend {
-        case "ollama":
-            raw = try await callOllama(model: prefs.ollamaModel, system: prompt, user: userContent)
-        case "openai":
-            raw = try await callOpenAI(apiKey: prefs.openAIKey ?? "", model: prefs.openAIModel, system: prompt, user: userContent)
-        case "claude":
-            raw = try await callClaude(apiKey: prefs.claudeKey ?? "", model: prefs.claudeModel, system: prompt, user: userContent)
-        default:
-            return .failure(.noProvider)
-        }
-
-        let cleaned = stripCodeFences(raw).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleaned.isEmpty else { throw RecapError.emptyResponse }
-
-        let body = wrapRecapDocument(
-            title: title,
-            recapBody: cleaned,
-            notes: notes,
-            speakers: speakers,
-            duration: duration,
-            format: prefs.outputFormat
-        )
-
-        let path = try writeRecapFile(
-            nextToTranscriptPath: transcriptPath,
-            recordingID: recordingID,
-            title: title,
-            content: body
-        )
-
-        return .success(RecapResult(path: path, provider: backend, body: body))
     }
 
     // MARK: - Meeting metadata (title / topics / tags) from the finished summary
@@ -227,7 +232,11 @@ actor RecapService {
             return nil
         }
 
-        return Self.parseMetadata(stripCodeFences(raw))
+        guard let parsed = RecapMetadataParser.parse(
+            RecapMetadataParser.stripCodeFences(raw),
+            allowedTags: Set(MeetingTags.vocabulary)
+        ) else { return nil }
+        return RecapMetadata(title: parsed.title, topics: parsed.topics, tags: parsed.tags)
     }
 
     private static func metadataPrompt(needTitle: Bool) -> String {
@@ -241,31 +250,6 @@ actor RecapService {
         - tags: 0..N значений СТРОГО из списка: [\(vocab)]. Значения вне списка запрещены. Если ничего не подходит — пустой массив [].
         - Верни только JSON, никакого текста вокруг.
         """
-    }
-
-    private static func parseMetadata(_ text: String) -> RecapMetadata? {
-        // Defensive: pull the first {...} block in case the model added stray text.
-        guard let start = text.firstIndex(of: "{"),
-              let end = text.lastIndex(of: "}"),
-              start < end else { return nil }
-        let jsonStr = String(text[start...end])
-        guard let data = jsonStr.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-
-        let rawTitle = (obj["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let title: String? = {
-            guard let t = rawTitle, !t.isEmpty, t.lowercased() != "null" else { return nil }
-            return t
-        }()
-        let topics = (obj["topics"] as? [Any])?
-            .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty } ?? []
-        let allowed = Set(MeetingTags.vocabulary)
-        let tags = (obj["tags"] as? [Any])?
-            .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { allowed.contains($0) } ?? []
-
-        return RecapMetadata(title: title, topics: topics, tags: tags)
     }
 
     // MARK: - Prompt assembly
@@ -473,21 +457,10 @@ actor RecapService {
         }
     }
 
-    private func stripCodeFences(_ text: String) -> String {
-        var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if t.hasPrefix("```") {
-            if let firstNL = t.firstIndex(of: "\n") {
-                t = String(t[t.index(after: firstNL)...])
-            }
-            if t.hasSuffix("```") {
-                t = String(t.dropLast(3))
-            }
-        }
-        return t.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     private func todayISO() -> String {
         let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = Calendar(identifier: .gregorian)
         f.dateFormat = "yyyy-MM-dd"
         return f.string(from: Date())
     }

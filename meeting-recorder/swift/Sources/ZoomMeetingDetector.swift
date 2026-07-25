@@ -30,6 +30,10 @@ struct ZoomMeetingSnapshot: Equatable {
 /// - helper process `aomhost` (spawned for calls; `caphost` alone is idle-safe and ignored)
 /// - on-screen Zoom window titles that look like a meeting (needs Screen Recording)
 /// - `PreventUserIdleDisplaySleep` assertion held by zoom.us (video call)
+///
+/// The poll timer runs only while Zoom itself is launched (NSWorkspace
+/// launch/terminate notifications) — idle with Zoom quit costs zero wakeups
+/// (plan-optimization E3).
 final class ZoomMeetingDetector {
     static let shared = ZoomMeetingDetector()
 
@@ -40,35 +44,52 @@ final class ZoomMeetingDetector {
     private(set) var isInMeeting = false
 
     private var timer: Timer?
+    private var launchObserver: NSObjectProtocol?
+    private var terminateObserver: NSObjectProtocol?
     private var positiveStreak = 0
     private var negativeStreak = 0
     private let enterThreshold = 2
     private let exitThreshold = 3
-    private let pollInterval: TimeInterval = 2.0
+    /// 6s is enough: enterThreshold=2 already adds lag; 2s precision isn't needed (E3).
+    private let pollInterval: TimeInterval = 6.0
 
     private init() {}
 
     func start() {
-        guard timer == nil else { return }
-        // Fire immediately, then on interval.
-        poll()
-        let t = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
-            self?.poll()
+        guard launchObserver == nil else { return }
+        let workspace = NSWorkspace.shared.notificationCenter
+        launchObserver = workspace.addObserver(
+            forName: NSWorkspace.didLaunchApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self, Self.isZoomApp(note) else { return }
+            self.startPolling()
         }
-        RunLoop.main.add(t, forMode: .common)
-        timer = t
+        terminateObserver = workspace.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self, Self.isZoomApp(note) else { return }
+            self.stopPolling(endedMeeting: true)
+        }
+
+        if Self.isZoomAppRunning() {
+            startPolling()
+        }
     }
 
     func stop() {
-        timer?.invalidate()
-        timer = nil
-        positiveStreak = 0
-        negativeStreak = 0
-        if isInMeeting {
-            isInMeeting = false
-            onMeetingEnded?()
+        if let o = launchObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(o)
+            launchObserver = nil
         }
-        snapshot = ZoomMeetingSnapshot(zoomRunning: false, inMeeting: false, signals: [])
+        if let o = terminateObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(o)
+            terminateObserver = nil
+        }
+        stopPolling(endedMeeting: true)
     }
 
     /// Force a synchronous probe (tests / Settings “Check now”).
@@ -81,9 +102,38 @@ final class ZoomMeetingDetector {
 
     // MARK: - Poll loop
 
+    private func startPolling() {
+        guard timer == nil else { return }
+        poll()
+        let t = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
+            self?.poll()
+        }
+        t.tolerance = pollInterval * 0.3
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+    }
+
+    private func stopPolling(endedMeeting: Bool) {
+        timer?.invalidate()
+        timer = nil
+        positiveStreak = 0
+        negativeStreak = 0
+        if endedMeeting, isInMeeting {
+            isInMeeting = false
+            onMeetingEnded?()
+        }
+        snapshot = ZoomMeetingSnapshot(zoomRunning: false, inMeeting: false, signals: [])
+    }
+
     private func poll() {
         let snap = Self.captureSnapshot()
         snapshot = snap
+
+        // Zoom quit between workspace notification and this tick — park the timer.
+        if !snap.zoomRunning {
+            stopPolling(endedMeeting: true)
+            return
+        }
 
         if snap.inMeeting {
             positiveStreak += 1
@@ -110,10 +160,12 @@ final class ZoomMeetingDetector {
             return ZoomMeetingSnapshot(zoomRunning: false, inMeeting: false, signals: [])
         }
 
-        var signals: [String] = []
+        // Cheapest reliable signal first — skip window/IOKit scans when it hits (E3).
         if isProcessRunning(named: "aomhost") {
-            signals.append("aomhost")
+            return ZoomMeetingSnapshot(zoomRunning: true, inMeeting: true, signals: ["aomhost"])
         }
+
+        var signals: [String] = []
         if hasMeetingWindow() {
             signals.append("meeting-window")
         }
@@ -129,10 +181,19 @@ final class ZoomMeetingDetector {
     }
 
     static func isZoomAppRunning() -> Bool {
-        NSWorkspace.shared.runningApplications.contains { app in
-            app.bundleIdentifier == "us.zoom.xos"
-                || app.localizedName?.caseInsensitiveCompare("zoom.us") == .orderedSame
+        NSWorkspace.shared.runningApplications.contains { isZoomRunningApp($0) }
+    }
+
+    private static func isZoomApp(_ note: Notification) -> Bool {
+        guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
+            return false
         }
+        return isZoomRunningApp(app)
+    }
+
+    private static func isZoomRunningApp(_ app: NSRunningApplication) -> Bool {
+        app.bundleIdentifier == "us.zoom.xos"
+            || app.localizedName?.caseInsensitiveCompare("zoom.us") == .orderedSame
     }
 
     /// True if a process executable name matches (prefix-safe for truncated names).
@@ -161,8 +222,12 @@ final class ZoomMeetingDetector {
     }
 
     private static let idleWindowTitles: Set<String> = [
+        // EN
         "", "zoom", "zoom.us", "zoom workplace", "zoom - free account",
         "login", "sign in", "settings", "preferences", "chat", "contacts",
+        // RU (product is Russian-first — idle panels must not start recording)
+        "войти", "вход", "настройки", "параметры", "чат", "контакты",
+        "зум", "zoom workplace",
     ]
 
     static func hasMeetingWindow() -> Bool {
@@ -178,16 +243,15 @@ final class ZoomMeetingDetector {
             if title.isEmpty { continue }
             let lower = title.lowercased()
             if idleWindowTitles.contains(lower) { continue }
+            // Strong positive signals only — do not treat "any long title" as a meeting
+            // (RU idle windows like «Настройки» / «Чат» used to false-trigger auto-record).
             if lower.contains("zoom meeting")
                 || lower.contains("webinar")
                 || lower.contains("meeting id")
                 || lower.hasPrefix("zoom meeting")
+                || lower.contains("конференция")
+                || lower.contains("вебинар")
                 || (lower.contains("meeting") && !lower.contains("workplace")) {
-                return true
-            }
-            // Personalized meeting room / topic titles are non-idle and non-empty.
-            // Exclude tiny utility panels by requiring a reasonably long title.
-            if title.count >= 4 && !lower.hasPrefix("zoom ") {
                 return true
             }
         }
@@ -219,12 +283,8 @@ final class ZoomMeetingDetector {
         return false
     }
 
-    // MARK: - Detection health
-
-    /// True when Screen Recording permission is granted. Without it, window
-    /// titles for other apps come back empty, so the `hasMeetingWindow`
-    /// signal silently degrades to always-false. Callers should surface this
-    /// rather than let detection quietly get worse.
+    /// Screen Recording permission is required for reliable meeting-window detection.
+    /// Without it `CGWindowListCopyWindowInfo` returns empty titles and that signal is blind.
     static func hasScreenRecordingPermission() -> Bool {
         CGPreflightScreenCaptureAccess()
     }

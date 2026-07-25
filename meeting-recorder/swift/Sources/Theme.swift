@@ -1,45 +1,26 @@
 import SwiftUI
-import AppKit
+import PropellerUI
 
 /// Visual tokens for the v2 re-skin. See design/propeller-ui.md → «v2 визуальные
-/// принципы». Dark glass + editorial serif headings; hierarchy by space and
-/// typography, not frames (pgcorpus PR-005/006/011).
+/// принципы». Glass darkness is `Tokens.Glass` in PropellerUI — shared with
+/// onboarding.
 
-/// Real behind-window vibrancy: the window becomes translucent and picks up
-/// whatever is behind it (desktop / wallpaper) — colour comes from the content
-/// below, not from a painted tint. Mirrors the draft mockup's glass.
-struct VisualEffectBackground: NSViewRepresentable {
-    var material: NSVisualEffectView.Material = .underWindowBackground
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = material
-        view.blendingMode = .behindWindow
-        view.state = .active
-        return view
-    }
-
-    func updateNSView(_ view: NSVisualEffectView, context: Context) {
-        view.material = material
-        // Make the hosting window transparent so the vibrancy shows the desktop
-        // behind it. Done here (not in make) because the window exists by now.
-        DispatchQueue.main.async {
-            guard let window = view.window else { return }
-            window.isOpaque = false
-            window.backgroundColor = .clear
-        }
+/// Main-window glass. Same path / tint as the onboarding plate.
+struct VisualEffectBackground: View {
+    var body: some View {
+        GlassBackground()
     }
 }
 
 extension Font {
-    /// Editorial serif for page titles (native New York via `design: .serif`).
+    /// System grotesque for page titles (SF Pro Display).
     static func pageTitle(_ size: CGFloat = 30) -> Font {
-        .system(size: size, weight: .medium, design: .serif)
+        .system(size: size, weight: .medium)
     }
 }
 
 extension View {
-    /// A large serif page title, aligned leading, with the standard content inset.
+    /// A large page title, aligned leading, with the standard content inset.
     func pageHeader(_ title: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(title)

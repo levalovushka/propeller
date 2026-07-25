@@ -1,4 +1,5 @@
 import Foundation
+import PropellerMetrics
 
 enum MarkdownOutputFormat: String, CaseIterable, Identifiable {
     case simple
@@ -39,7 +40,8 @@ struct MarkdownWriter {
             let prefix = recordingID + "-"
             for file in contents where file.pathExtension == "md"
                 && file.lastPathComponent.hasPrefix(prefix)
-                && file.lastPathComponent != filename {
+                && file.lastPathComponent != filename
+                && !file.lastPathComponent.hasSuffix("-recap.md") {
                 try? fm.removeItem(at: file)
             }
         }
@@ -67,24 +69,26 @@ struct MarkdownWriter {
         notes: String? = nil,
         format: MarkdownOutputFormat = Preferences.shared.markdownOutputFormat
     ) -> String {
-        switch format {
-        case .simple:
-            return renderSimple(
-                title: title,
-                transcript: transcript,
-                duration: duration,
-                speakers: speakers,
-                notes: notes
-            )
-        case .obsidian:
-            return renderObsidian(
-                title: title,
-                transcript: transcript,
-                recordingID: recordingID,
-                duration: duration,
-                speakers: speakers,
-                notes: notes
-            )
+        PipelineMetrics.interval(PipelineMetrics.pipeline, PipelineMetrics.markdown) {
+            switch format {
+            case .simple:
+                return renderSimple(
+                    title: title,
+                    transcript: transcript,
+                    duration: duration,
+                    speakers: speakers,
+                    notes: notes
+                )
+            case .obsidian:
+                return renderObsidian(
+                    title: title,
+                    transcript: transcript,
+                    recordingID: recordingID,
+                    duration: duration,
+                    speakers: speakers,
+                    notes: notes
+                )
+            }
         }
     }
 
@@ -311,6 +315,8 @@ struct MarkdownWriter {
 
     private static func todayISO() -> String {
         let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = Calendar(identifier: .gregorian)
         f.dateFormat = "yyyy-MM-dd"
         return f.string(from: Date())
     }

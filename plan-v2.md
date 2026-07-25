@@ -42,7 +42,7 @@ _Разбираем продукт по ключевым jobs-to-be-done, по �
 
 - ☑ **1.1 Убрать/спрятать глобальный хоткей.** Снять `addGlobalMonitorForEvents` и обещание «Ctrl+Opt+R» из онбординга/менюбара ([AppState.swift:132](meeting-recorder/swift/Sources/AppState.swift:132), [MenuBarPanelView.swift:69](meeting-recorder/swift/Sources/MenuBarPanelView.swift:69)). Заодно закрывает подтверждённые дефекты (нет local-monitor, нет проверки Accessibility-разрешения — хоткей молча не работал). ⌘R в фокусе окна можно оставить как бесплатный бонус. _Эффект: минус мёртвый путь и минус ложное обещание в UI._
 
-- ◐ **1.2 Захват только звука встречи, а не всего системного звука.** `SystemAudioCapture` переключён на **app-scoped** аудио через `SCContentFilter(display:including:exceptingWindows:)` по `us.zoom.xos` ([SystemAudioCapture.swift](meeting-recorder/swift/Sources/SystemAudioCapture.swift)). Если целевое приложение не запущено — фильтр сразу display-wide (как раньше); если запущено, но за 4с не пришло ни одного аудио-буфера — автоматический fallback-restart на display-wide (один раз, без петли). Браузер (Meet/Телемост) — позже, через `meetingAppBundleIDs`. _Не хватает: проверки на реальном звонке Zoom — статус оставлен «в работе», пока это не подтверждено вживую._
+- ◐ **1.2 Захват только звука встречи, а не всего системного звука.** Основной путь — **Core Audio Process Taps** (`ProcessTapAudioCapture`, macOS 14.2+): Zoom-scoped `stereoMixdownOfProcesses`, иначе global exclude-self; SCK app-scoped остаётся фолбэком ([plan-optimization.md](plan-optimization.md) E4). Браузер (Meet/Телемост) — позже через `meetingAppBundleIDs`. _Статус «в работе», пока нет живого подтверждения на Zoom-звонке._
 
 - ☑ **1.3 «Стоп + удалить» для чувствительного кейса.** Кнопка/пункт «Остановить и удалить» в окне записи и в менюбаре рядом со «Стоп». Логика уже есть (`cancelRecording` → `cancelRecordingAndDiscard`, [AppState.swift:357](meeting-recorder/swift/Sources/AppState.swift:357)) — нужна только точка входа в UI. Обычный «Стоп» (сохранить+обработать) уже есть везде — не трогаем. _Эталон паттерна остановки — Talat (см. решение 3)._
 
@@ -60,7 +60,7 @@ _Разбираем продукт по ключевым jobs-to-be-done, по �
 
 ### Открытые вопросы Джобы 1
 - Совсем убрать хоткей или оставить настраиваемым для редких power-user? (склоняемся к убрать)
-- App-scoped SCK-аудио: подтвердить, что Zoom отдаёт звук в этом режиме (нужен тест на реальной встрече).
+- Process Tap / SCK: подтвердить audible system stem на реальной Zoom-встрече (+ TCC Audio Capture).
 
 ---
 
@@ -263,3 +263,8 @@ _Разбираем продукт по ключевым jobs-to-be-done, по �
 
 ### Menu bar popover — упростить до быстрых действий
 - ☑ **S6 Убрать информеры из поповера.** Вырезать `infoBar` («System audio on / N recordings») и step-индикаторы Transcribe/Save убраны; обработка свёрнута в одну строку. Остались: primary-действие, Recent, Open/Settings/Quit. _Сделано; собирается._
+
+### Menu bar + popover — ЗАКРЫТО (2026-07-23)
+- ☑ **S7 Иконка менюбара.** Template PDF `Resources/MenuBarIcon.pdf`, всегда 18×18 pt, без таймера/смены состояния при записи.
+- ☑ **S8 Поповер.** Быстрые действия (S6) + стабильный chrome.
+- **Больше не трогаем** menu bar label и popover, пока не появится новый продукт-запрос. Полировка UI дальше — онбординг / главное окно / настройки.

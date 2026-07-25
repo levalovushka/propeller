@@ -16,6 +16,8 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
     private var stream: SCStream?
     private var audioFile: AVAudioFile?
+    /// When true, sample callbacks must not recreate the WAV (would truncate — C10).
+    private var didStopWriting = false
     private let sampleQueue = DispatchQueue(label: "com.simplyai.meeting-recorder.sck-audio")
     private(set) var outputURL: URL?
     private(set) var isRunning = false
@@ -55,6 +57,13 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             audibleBufferCount > 0 || maxPeakLevel > 0.0005
         }
 
+        /// True when the stem has real PCM (not a header-only ~4 KB file).
+        /// Silence still counts — remote speakers may simply not have talked.
+        var capturedUsableStem: Bool {
+            if let bytes = outputFileSizeBytes, bytes > 4096 { return true }
+            return framesWritten > 8_000
+        }
+
         var warningMessage: String? {
             if callbackCount == 0 {
                 return "System audio stream started but no audio buffers arrived. Screen Recording permission may be stale — toggle it off and on in System Settings, then restart the app."
@@ -62,8 +71,8 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             if pcmBufferCount == 0, conversionFailureCount > 0 {
                 return "System audio buffers arrived but could not be decoded. The remote side was not recorded."
             }
-            if !capturedAudibleAudio {
-                return "System audio captured silence — the remote side may not have been recorded."
+            if !capturedUsableStem {
+                return "System audio stem is empty — the remote side was not recorded."
             }
             return nil
         }
@@ -92,6 +101,8 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         }
 
         outputURL = url
+        didStopWriting = false
+        audioFile = nil
         try await startStream(targetBundleIdentifiers: targetBundleIdentifiers)
     }
 
@@ -165,20 +176,14 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
                 let message = "System audio buffers arrived but PCM conversion is failing"
                 debugLog("[SystemAudioCapture] WARNING: \(message)")
                 self.onCaptureIssueDetected?(message)
-            } else if self.audibleBufferCount == 0 {
-                // Buffers are arriving but every one is silent — an app-scoped
-                // filter can do this if the target app isn't actually the
-                // source of the audio. Same fallback as the zero-callback case.
-                if self.isAppScoped, !self.didFallBackToDisplayWide {
-                    self.didFallBackToDisplayWide = true
-                    debugLog("[SystemAudioCapture] App-scoped capture is silent after 4s — falling back to display-wide")
-                    await self.fallBackToDisplayWide()
-                    return
-                }
-                let message = "System audio stream captured only silence in the first 4 seconds — the remote side may not be recorded"
-                debugLog("[SystemAudioCapture] WARNING: \(message)")
-                self.onCaptureIssueDetected?(message)
+            } else if self.audibleBufferCount == 0, self.isAppScoped, !self.didFallBackToDisplayWide {
+                // Silent app-scoped stream → try display-wide, but do NOT warn:
+                // meetings often start with no remote audio yet.
+                self.didFallBackToDisplayWide = true
+                debugLog("[SystemAudioCapture] App-scoped capture is silent after 4s — falling back to display-wide")
+                await self.fallBackToDisplayWide()
             }
+            // Digital silence with buffers flowing is healthy — no warning.
         }
     }
 
@@ -206,13 +211,24 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     func stop() async {
         sampleWatchdog?.cancel()
         sampleWatchdog = nil
-        guard let stream = stream else { return }
+        guard let stream = stream else {
+            sampleQueue.sync {
+                didStopWriting = true
+                audioFile = nil
+                outputURL = nil
+            }
+            return
+        }
         do { try await stream.stopCapture() } catch {
             debugLog("[SystemAudioCapture] stopCapture error: \(error)")
         }
         isRunning = false
         self.stream = nil
-        audioFile = nil
+        sampleQueue.sync {
+            didStopWriting = true
+            audioFile = nil
+            outputURL = nil
+        }
     }
 
     /// Returns true if at least one audio sample was seen during the capture.
@@ -243,6 +259,7 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         callbackCount += 1
         // Log first few callbacks to diagnose format issues
+        #if DEBUG
         if callbackCount <= 3 {
             let numSamples = CMSampleBufferGetNumSamples(sampleBuffer)
             let ready = CMSampleBufferDataIsReady(sampleBuffer)
@@ -253,22 +270,27 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
                 debugLog("[SystemAudioCapture]   format: rate=\(asbd.mSampleRate) ch=\(asbd.mChannelsPerFrame) bitsPerCh=\(asbd.mBitsPerChannel) bytesPerFrame=\(asbd.mBytesPerFrame) framesPerPacket=\(asbd.mFramesPerPacket) formatID=\(asbd.mFormatID)")
             }
         }
+        #endif
 
         guard type == .audio, CMSampleBufferDataIsReady(sampleBuffer) else { return }
         guard let outputURL = outputURL else { return }
 
         guard let pcmBuffer = Self.pcmBuffer(from: sampleBuffer) else {
             conversionFailureCount += 1
+            #if DEBUG
             if callbackCount <= 5 {
                 debugLog("[SystemAudioCapture] pcmBuffer conversion FAILED for callback #\(callbackCount)")
             }
+            #endif
             return
         }
         pcmBufferCount += 1
         framesWritten += Int(pcmBuffer.frameLength)
+        #if DEBUG
         if callbackCount <= 3 {
             debugLog("[SystemAudioCapture] pcmBuffer OK: frames=\(pcmBuffer.frameLength) channels=\(pcmBuffer.format.channelCount)")
         }
+        #endif
         let rms = Self.rmsLevel(pcmBuffer)
         let peak = Self.peakLevel(pcmBuffer)
         maxRMSLevel = max(maxRMSLevel, rms)
@@ -276,19 +298,25 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         if Self.hasAudibleContent(pcmBuffer) {
             audibleBufferCount += 1
             didSeeAnySamples = true
+            // Audible audio ends the start-up watchdog. Silence alone must not —
+            // scoped→display-wide fallback still needs to run when Zoom is quiet
+            // but another app is the real output source.
+            sampleWatchdog?.cancel()
+            sampleWatchdog = nil
         }
+        if didStopWriting { return }
         if audioFile == nil {
             do {
                 audioFile = try AVAudioFile(forWriting: outputURL, settings: pcmBuffer.format.settings)
-                sampleWatchdog?.cancel()
-                sampleWatchdog = nil
             } catch {
                 debugLog("[SystemAudioCapture] failed to create AVAudioFile: \(error)")
+                onCaptureIssueDetected?("System audio file could not be created: \(error.localizedDescription)")
                 return
             }
         }
         do { try audioFile?.write(from: pcmBuffer) } catch {
             debugLog("[SystemAudioCapture] write error: \(error)")
+            onCaptureIssueDetected?("System audio write failed: \(error.localizedDescription)")
         }
 
         if let cb = levelCallback {
@@ -301,6 +329,9 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         debugLog("[SystemAudioCapture] stream stopped with error: \(error)")
         isRunning = false
+        onCaptureIssueDetected?(
+            "System audio stream stopped unexpectedly: \(error.localizedDescription)"
+        )
     }
 
     // MARK: - Helpers

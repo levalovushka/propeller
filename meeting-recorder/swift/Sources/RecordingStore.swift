@@ -1,4 +1,5 @@
 import Foundation
+import PropellerPure
 import SpeakerMatchingCore
 
 @MainActor
@@ -44,11 +45,55 @@ class RecordingStore: ObservableObject {
             let data = try Data(contentsOf: indexURL)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            recordings = try decoder.decode([RecordingEntry].self, from: data)
+            // Prefer all-or-nothing; on failure fall through to per-element recovery (C5).
+            do {
+                recordings = try decoder.decode([RecordingEntry].self, from: data)
+            } catch {
+                // One bad element must not wipe the archive — decode element-by-element.
+                if let array = try JSONSerialization.jsonObject(with: data) as? [Any] {
+                    var recovered: [RecordingEntry] = []
+                    for item in array {
+                        guard JSONSerialization.isValidJSONObject(item),
+                              let itemData = try? JSONSerialization.data(withJSONObject: item),
+                              let entry = try? decoder.decode(RecordingEntry.self, from: itemData) else {
+                            continue
+                        }
+                        recovered.append(entry)
+                    }
+                    if recovered.isEmpty { throw error }
+                    recordings = recovered
+                    NSLog("[RecordingStore] Partial index recovery: \(recovered.count)/\(array.count) entries")
+                } else {
+                    throw error
+                }
+            }
+            clearFalseManualTitleFlags()
             scanForOrphanRecordings()
         } catch {
-            print("Failed to load recordings index: \(error)")
+            // Quarantine the corrupt file BEFORE any rewrite so we never destroy the only copy (C5).
+            let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+            let quarantine = indexURL.deletingLastPathComponent()
+                .appendingPathComponent("recordings.json.corrupt-\(stamp)")
+            try? FileManager.default.moveItem(at: indexURL, to: quarantine)
+            NSLog("[RecordingStore] Failed to load recordings index — quarantined to \(quarantine.lastPathComponent): \(error)")
+            recordings = []
             scanForOrphanRecordings()
+        }
+    }
+
+    /// Live title TextField used to call `rename()` on appear, latching every
+    /// default "Recording …" title as manual and blocking LLM rename after recap.
+    private func clearFalseManualTitleFlags() {
+        var changed = false
+        for i in recordings.indices {
+            guard recordings[i].titleManuallySet == true else { continue }
+            guard recordings[i].title.hasPrefix("Recording ") else { continue }
+            recordings[i].titleManuallySet = false
+            changed = true
+        }
+        if changed {
+            NSLog("[RecordingStore] Cleared false titleManuallySet on auto-titled recordings")
+            scheduleSave()
         }
     }
 
@@ -56,11 +101,17 @@ class RecordingStore: ObservableObject {
         do {
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
-            encoder.outputFormatting = .prettyPrinted
+            // No prettyPrinted — multi-MB archives with embedded transcripts (P6).
             let data = try encoder.encode(recordings)
+            // Keep a sidecar backup of the previous good index (C5).
+            if FileManager.default.fileExists(atPath: indexURL.path) {
+                let bak = indexURL.deletingPathExtension().appendingPathExtension("json.bak")
+                try? FileManager.default.removeItem(at: bak)
+                try? FileManager.default.copyItem(at: indexURL, to: bak)
+            }
             try data.write(to: indexURL, options: .atomic)
         } catch {
-            print("Failed to save recordings index: \(error)")
+            NSLog("[RecordingStore] Failed to save recordings index: \(error)")
         }
     }
 
@@ -138,9 +189,19 @@ class RecordingStore: ObservableObject {
         var recoveredCount = 0
         for i in recordings.indices where recordings[i].status == "recording" {
             let url = dir.appendingPathComponent(recordings[i].filename)
-            if FileManager.default.fileExists(atPath: url.path) {
-                recordings[i].duration = Self.wavDuration(url: url)
-                recordings[i].status = "recorded"
+            let stems = AudioSourceStemURLs.expectedSiblings(for: url)
+            let hasFinal = FileManager.default.fileExists(atPath: url.path)
+            let hasMic = FileManager.default.fileExists(atPath: stems.microphoneURL.path)
+            if hasFinal || hasMic {
+                if hasFinal {
+                    recordings[i].duration = Self.wavDuration(url: url)
+                } else if hasMic {
+                    // Final mix pending — duration from mic stem until recoverMissingFinalMixes runs.
+                    recordings[i].duration = Self.wavDuration(url: stems.microphoneURL)
+                }
+                if let next = RecordingRecovery.recoveredStatus(current: "recording", hasTranscript: false) {
+                    recordings[i].status = next
+                }
                 recoveredCount += 1
             }
         }
@@ -149,10 +210,9 @@ class RecordingStore: ObservableObject {
         // so the diarization can resume without re-running the expensive ASR pass.
         // Otherwise reset to "recorded" so user can retry from scratch.
         for i in recordings.indices where recordings[i].status == "transcribing" {
-            if recordings[i].transcript != nil {
-                recordings[i].status = "transcribed_raw"
-            } else {
-                recordings[i].status = "recorded"
+            let hasTranscript = recordings[i].transcript != nil
+            if let next = RecordingRecovery.recoveredStatus(current: "transcribing", hasTranscript: hasTranscript) {
+                recordings[i].status = next
             }
             recoveredCount += 1
         }
@@ -160,8 +220,39 @@ class RecordingStore: ObservableObject {
         return recoveredCount
     }
 
+    /// Rebuild `<id>.wav` from surviving `.mic` / `.sys` stems after a hard quit (C3).
+    @discardableResult
+    func recoverMissingFinalMixes() async -> Int {
+        let dir = URL(fileURLWithPath: Preferences.shared.recordingsPath)
+        var rebuilt = 0
+        for i in recordings.indices {
+            let finalURL = dir.appendingPathComponent(recordings[i].filename)
+            if FileManager.default.fileExists(atPath: finalURL.path) { continue }
+            let stems = AudioSourceStemURLs.expectedSiblings(for: finalURL)
+            guard FileManager.default.fileExists(atPath: stems.microphoneURL.path) else { continue }
+            let sysURL = FileManager.default.fileExists(atPath: stems.systemURL.path)
+                ? stems.systemURL : nil
+            await AudioRecorder.produceFinalMix(
+                micURL: stems.microphoneURL,
+                sysURL: sysURL,
+                finalURL: finalURL
+            )
+            if FileManager.default.fileExists(atPath: finalURL.path) {
+                let dur = Self.wavDuration(url: finalURL)
+                if dur > 0 { recordings[i].duration = dur }
+                rebuilt += 1
+            }
+        }
+        if rebuilt > 0 { save() }
+        return rebuilt
+    }
+
     // MARK: - Retention Cleanup
 
+    /// Day-based auto-delete. **Not called** — plan-v2 6.1 replaces this with a
+    /// size-based nudge that never deletes on its own (plan-optimization A4).
+    /// Kept temporarily so Settings → Export retention prefs still decode;
+    /// remove together with that UI when 6.1 lands.
     func performRetentionCleanup() {
         let days = Preferences.shared.retentionDays
         guard days > 0 else { return }
@@ -236,17 +327,6 @@ class RecordingStore: ObservableObject {
     // MARK: - WAV Duration
 
     static func wavDuration(url: URL) -> Double {
-        guard let fh = try? FileHandle(forReadingFrom: url) else { return 0 }
-        defer { try? fh.close() }
-        guard let header = try? fh.read(upToCount: 44), header.count >= 44 else { return 0 }
-        let sampleRate = header.subdata(in: 24..<28).withUnsafeBytes { $0.load(as: UInt32.self) }
-        let bitsPerSample = header.subdata(in: 34..<36).withUnsafeBytes { $0.load(as: UInt16.self) }
-        let numChannels = header.subdata(in: 22..<24).withUnsafeBytes { $0.load(as: UInt16.self) }
-        guard sampleRate > 0, bitsPerSample > 0, numChannels > 0 else { return 0 }
-        let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
-        let dataSize = max(0, Int(fileSize) - 44)
-        let bytesPerSample = Int(bitsPerSample) / 8 * Int(numChannels)
-        guard bytesPerSample > 0 else { return 0 }
-        return Double(dataSize) / Double(bytesPerSample) / Double(sampleRate)
+        WavHeader.duration(url: url)
     }
 }

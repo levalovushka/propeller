@@ -67,8 +67,11 @@ final class CalendarService: ObservableObject {
         accessGranted = true
 
         let now = Date()
+        // Reach a few hours back so an in-progress meeting (started earlier) is
+        // still available for recording title matching.
+        let rangeStart = Calendar.current.date(byAdding: .hour, value: -4, to: now)!
         let end = Calendar.current.date(byAdding: .day, value: 7, to: now)!
-        let predicate = store.predicateForEvents(withStart: now, end: end, calendars: nil)
+        let predicate = store.predicateForEvents(withStart: rangeStart, end: end, calendars: nil)
         upcoming = store.events(matching: predicate)
             .filter { !$0.isAllDay && $0.endDate > now }
             .sorted { $0.startDate < $1.startDate }
@@ -89,6 +92,38 @@ final class CalendarService: ObservableObject {
     func dismiss(_ meeting: UpcomingMeeting) {
         dismissed.insert(meeting.id)
         upcoming.removeAll { $0.id == meeting.id }
+    }
+
+    /// Best calendar event to name a recording started at `date`.
+    /// Prefers an in-progress meeting (especially with a video link), then one
+    /// starting within the next 15 minutes.
+    func matchingMeeting(at date: Date = Date()) -> UpcomingMeeting? {
+        guard accessGranted else { return nil }
+        let inProgress = upcoming.filter { $0.start <= date && date < $0.end }
+        if let hit = Self.pickBest(inProgress) { return hit }
+        let startingSoon = upcoming.filter {
+            let delta = $0.start.timeIntervalSince(date)
+            return delta >= 0 && delta <= 15 * 60
+        }
+        return Self.pickBest(startingSoon)
+    }
+
+    /// Non-empty calendar title for a new recording, or nil to keep the default.
+    func suggestedRecordingTitle(at date: Date = Date()) -> String? {
+        guard let meeting = matchingMeeting(at: date) else { return nil }
+        let t = meeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, t.lowercased() != "untitled" else { return nil }
+        return t
+    }
+
+    private static func pickBest(_ meetings: [UpcomingMeeting]) -> UpcomingMeeting? {
+        guard !meetings.isEmpty else { return nil }
+        let named = meetings.filter {
+            let t = $0.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !t.isEmpty && t.lowercased() != "untitled"
+        }
+        let pool = named.isEmpty ? meetings : named
+        return pool.first(where: \.hasVideoLink) ?? pool.first
     }
 
     private static func hasVideoLink(_ ev: EKEvent) -> Bool {

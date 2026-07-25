@@ -1,18 +1,14 @@
 import AVFoundation
 import Foundation
+import os
+import PropellerMetrics
+import PropellerPure
 import SpeakerMatchingCore
 
-/// Debug logger that writes to a file (macOS GUI apps swallow stdout/stderr).
+/// Unified logging — near-zero cost when unused, no unbounded file growth
+/// (plan-optimization E6). Kept as a free function so existing call sites stay.
 func debugLog(_ msg: String) {
-    let line = "\(Date()): \(msg)\n"
-    let path = NSHomeDirectory() + "/.meeting-recorder/debug.log"
-    if let fh = FileHandle(forWritingAtPath: path) {
-        fh.seekToEndOfFile()
-        fh.write(line.data(using: .utf8)!)
-        fh.closeFile()
-    } else {
-        FileManager.default.createFile(atPath: path, contents: line.data(using: .utf8))
-    }
+    Logger(subsystem: "app.propeller", category: "debug").debug("\(msg, privacy: .public)")
 }
 
 @MainActor
@@ -30,10 +26,16 @@ class AudioRecorder: ObservableObject {
     private(set) var filePath: URL?
     private(set) var duration: TimeInterval = 0
 
-    // System-audio side channel (captures what would be heard through headphones/speakers)
-    private var systemAudio: AnyObject?            // SystemAudioCapture (boxed for macOS <14 safety)
+    // System-audio side channel via ScreenCaptureKit.
+    // Process Tap was flaky (header-only stems + false "not captured" banners);
+    // onboarding already asks for Screen Recording, so SCK is the single path.
+    private var systemAudio: AnyObject?
     private var systemAudioURL: URL?
-    @Published var systemAudioWarning: String?      // non-nil if we couldn't start SCK
+    /// Hard start failure only (permission / stream won't start). Not used for
+    /// "quiet so far" — live System levels are the truth during recording.
+    @Published var systemAudioWarning: String?
+    /// Set in `stop()` from the actual `.sys.wav` stem (empty / missing).
+    private(set) var lastStopWasMicOnly = false
     /// Non-nil if the mic writer isn't actually producing frames shortly after
     /// start (e.g. input device disappeared). Unlike system audio, the mic is
     /// the essential source — this is surfaced immediately, not tagged post-hoc.
@@ -45,6 +47,8 @@ class AudioRecorder: ObservableObject {
     @Published var systemLevelHistory: [Float] = []
     private var meterTimer: Timer?
     private static let historySize = 50
+    /// When false, metering is paused (window closed / accessory) — recording continues (E5).
+    private var meteringDesired = false
 
     var elapsed: TimeInterval {
         guard let start = startTime, isRecording else { return 0 }
@@ -55,6 +59,7 @@ class AudioRecorder: ObservableObject {
         guard !isRecording else { throw RecorderError.alreadyRecording }
         systemAudioWarning = nil
         micCaptureWarning = nil
+        lastStopWasMicOnly = false
         debugLog("[AudioRecorder] start() called — captureSystemAudio=\(Preferences.shared.captureSystemAudio) voiceProcessing=\(Preferences.shared.voiceProcessingEnabled)")
 
         let recordingsDir = URL(fileURLWithPath: Preferences.shared.recordingsPath)
@@ -105,37 +110,55 @@ class AudioRecorder: ObservableObject {
         isRecording = true
         armMicIntegrityWatchdog()
 
-        // Best-effort: set up system-audio capture (the other side of calls).
-        // Assign systemAudio BEFORE startMetering() so the level callback wires up.
-        if Preferences.shared.captureSystemAudio, #available(macOS 14.0, *) {
-            let capture = SystemAudioCapture()
-            capture.onCaptureIssueDetected = { [weak self] message in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.systemAudioWarning = message
-                    debugLog("[AudioRecorder] System audio issue: \(message)")
-                }
-            }
-            systemAudio = capture
+        // System audio: ScreenCaptureKit only. Live levels = health; no speculative banners.
+        if Preferences.shared.captureSystemAudio {
             systemAudioURL = sysURL
+            if #available(macOS 14.0, *) {
+                let sck = SystemAudioCapture()
+                sck.onCaptureIssueDetected = { message in
+                    // Soft mid-session issues stay in the log — UI banner is reserved
+                    // for start() failure so it can't disagree with a live System meter.
+                    NSLog("[AudioRecorder] System audio note: \(message)")
+                }
+                systemAudio = sck
+            }
         }
 
-        startMetering()
+        // Metering starts only when the UI asks for it (window open) — E5.
+        if meteringDesired {
+            startMetering()
+        }
 
-        // Start the async capture after metering is wired up.
-        if Preferences.shared.captureSystemAudio, #available(macOS 14.0, *),
-           let capture = systemAudio as? SystemAudioCapture {
+        if Preferences.shared.captureSystemAudio {
             Task.detached { [weak self] in
-                do {
-                    try await capture.start(outputURL: sysURL)
-                    debugLog("[AudioRecorder] System audio capture started successfully")
-                } catch {
-                    await MainActor.run {
-                        self?.systemAudioWarning = error.localizedDescription
-                        debugLog("[AudioRecorder] System audio capture FAILED: \(error)")
-                    }
-                }
+                await self?.startSystemAudioCapture(sysURL: sysURL)
             }
+        }
+    }
+
+    private func startSystemAudioCapture(sysURL: URL) async {
+        guard #available(macOS 14.0, *),
+              let sck = await MainActor.run(body: { self.systemAudio as? SystemAudioCapture }) else { return }
+        do {
+            try await sck.start(outputURL: sysURL)
+            NSLog("[AudioRecorder] SCK system audio started")
+            await MainActor.run { self.systemAudioWarning = nil }
+        } catch {
+            await MainActor.run {
+                self.systemAudioWarning = error.localizedDescription
+                NSLog("[AudioRecorder] System audio capture FAILED to start: \(error)")
+            }
+        }
+    }
+
+    /// Enable/pause live level metering. Recording itself is unaffected (E5).
+    func setMeteringDesired(_ desired: Bool) {
+        meteringDesired = desired
+        guard isRecording else { return }
+        if desired {
+            if meterTimer == nil { startMetering() }
+        } else {
+            stopMetering()
         }
     }
 
@@ -166,27 +189,30 @@ class AudioRecorder: ObservableObject {
         filePath = nil
         startTime = nil
 
-        // Stop SCK capture then mix — awaited so the WAV is fully written before returning.
+        // Stop capture then mix — awaited so the WAV is fully written before returning.
         let sysCapture = systemAudio
         systemAudio = nil
         systemAudioURL = nil
 
-        try await Task.detached(priority: .userInitiated) {
+        let micOnly = try await Task.detached(priority: .userInitiated) { () -> Bool in
+            var stemUnusable = sysURL == nil
             if #available(macOS 14.0, *), let capture = sysCapture as? SystemAudioCapture {
                 await capture.stop()
                 let report = capture.report()
-                debugLog("[AudioRecorder] System audio report: \(report.logLine)")
-                if let warning = report.warningMessage {
-                    await MainActor.run {
-                        self.systemAudioWarning = self.systemAudioWarning ?? warning
-                        debugLog("[AudioRecorder] \(warning)")
-                    }
-                }
+                NSLog("[AudioRecorder] SCK report: \(report.logLine)")
+                stemUnusable = !report.capturedUsableStem
+            } else if let sysURL {
+                let size = (try? FileManager.default.attributesOfItem(atPath: sysURL.path)[.size] as? NSNumber)?.intValue ?? 0
+                stemUnusable = size <= 4096
             }
-            // Small settle delay to ensure the SCK file is fully flushed.
             try? await Task.sleep(nanoseconds: 150_000_000)
             await Self.produceFinalMix(micURL: micURL, sysURL: sysURL, finalURL: finalURL)
+            return stemUnusable
         }.value
+
+        lastStopWasMicOnly = Preferences.shared.captureSystemAudio && micOnly
+        // Clear any start-failure banner once recording ends — detail uses mic-only tag.
+        systemAudioWarning = nil
 
         return (id, finalURL, dur)
     }
@@ -228,22 +254,24 @@ class AudioRecorder: ObservableObject {
         micLevelHistory = Array(repeating: 0, count: Self.historySize)
         systemLevelHistory = Array(repeating: 0, count: Self.historySize)
 
-        // Wire up system audio level callback
-        if #available(macOS 14.0, *), let capture = systemAudio as? SystemAudioCapture {
-            capture.levelCallback = { [weak self] level in
-                Task { @MainActor [weak self] in
-                    guard let self, self.isRecording else { return }
-                    self.systemLevelHistory.append(level)
-                    if self.systemLevelHistory.count > Self.historySize {
-                        self.systemLevelHistory.removeFirst(self.systemLevelHistory.count - Self.historySize)
-                    }
+        let onLevel: (Float) -> Void = { [weak self] level in
+            Task { @MainActor [weak self] in
+                guard let self, self.isRecording, self.meteringDesired else { return }
+                self.systemLevelHistory.append(level)
+                if self.systemLevelHistory.count > Self.historySize {
+                    self.systemLevelHistory.removeFirst(self.systemLevelHistory.count - Self.historySize)
                 }
             }
         }
+        if #available(macOS 14.0, *), let capture = systemAudio as? SystemAudioCapture {
+            capture.levelCallback = onLevel
+        }
 
-        let timer = Timer(timeInterval: 0.08, repeats: true) { [weak self] _ in
+        // ~10 Hz (was 12.5) — enough for a smooth waveform, less MainActor churn (E5/S6).
+        let interval: TimeInterval = 0.1
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self, self.isRecording else { return }
+                guard let self, self.isRecording, self.meteringDesired else { return }
                 let normalized: Float
                 if let vp = self.vpCapture {
                     normalized = vp.currentLevel
@@ -267,6 +295,7 @@ class AudioRecorder: ObservableObject {
                 }
             }
         }
+        timer.tolerance = interval * 0.3
         RunLoop.main.add(timer, forMode: .common)
         meterTimer = timer
     }
@@ -285,7 +314,9 @@ class AudioRecorder: ObservableObject {
     /// If the system-audio file is missing or empty, the mic recording is copied verbatim.
     /// Raw stems are retained next to the final file so speaker matching can
     /// infer whether a diarized voice came mostly from mic or system audio.
-    private static func produceFinalMix(micURL: URL, sysURL: URL?, finalURL: URL) async {
+    /// Offline mix of mic (+ optional system) stems into the final 16 kHz mono WAV.
+    /// Also used by crash-recovery when only `.mic.wav` survived (plan-optimization C3).
+    static func produceFinalMix(micURL: URL, sysURL: URL?, finalURL: URL) async {
         let fm = FileManager.default
         let sysSummary: AudioEnergySummary? = {
             guard let u = sysURL else { return nil }
@@ -310,7 +341,9 @@ class AudioRecorder: ObservableObject {
 
         // Mix using AVAudioEngine offline rendering.
         do {
-            try await Self.mix(micURL: micURL, sysURL: sysURL!, finalURL: finalURL)
+            try await PipelineMetrics.interval(PipelineMetrics.pipeline, PipelineMetrics.mix) {
+                try await Self.mix(micURL: micURL, sysURL: sysURL!, finalURL: finalURL)
+            }
         } catch {
             debugLog("[AudioRecorder] offline mix failed, falling back to mic only: \(error)")
             _ = try? fm.removeItem(at: finalURL)
@@ -373,12 +406,10 @@ class AudioRecorder: ObservableObject {
     private static func systemMixGain(mic: AVAudioPCMBuffer, system: AVAudioPCMBuffer) -> Float {
         let micStats = bufferStats(mic)
         let systemStats = bufferStats(system)
-        guard systemStats.rms > 0.0002, systemStats.peak > 0.0005 else { return 1 }
-
-        let targetRMS = max(0.03, min(0.08, micStats.rms * 0.9))
-        let rmsGain = targetRMS / systemStats.rms
-        let peakLimitedGain = 0.90 / max(systemStats.peak, 0.0001)
-        return min(max(1, rmsGain), min(4, peakLimitedGain))
+        return MixGain.systemMixGain(
+            micRMS: micStats.rms, micPeak: micStats.peak,
+            systemRMS: systemStats.rms, systemPeak: systemStats.peak
+        )
     }
 
     private static func bufferStats(_ buffer: AVAudioPCMBuffer) -> (rms: Float, peak: Float) {
