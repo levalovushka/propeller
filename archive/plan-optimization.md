@@ -12,11 +12,11 @@ _Компаньон к [plan-v2.md](plan-v2.md). Там — продуктовы
 
 Осознанные энергорешения, которые НЕ трогаем:
 
-- **`keep_alive: "10s"` для Ollama** ([RecapService.swift:390](meeting-recorder/swift/Sources/RecapService.swift:390)) — LLM выгружается из RAM между встречами.
+- **`keep_alive: "10s"` для Ollama** ([RecapService.swift:390](../meeting-recorder/swift/Sources/RecapService.swift:390)) — LLM выгружается из RAM между встречами.
 - **Двухфазный чекпоинт** (`transcribed_raw` → диаризация) — дорогой ASR не теряется при краше на диаризации.
-- **`.accessory` при закрытии окна** ([MainView.swift:28](meeting-recorder/swift/Sources/MainView.swift:28)) — даёт App Nap усыпить основной процесс.
+- **`.accessory` при закрытии окна** ([MainView.swift:28](../meeting-recorder/swift/Sources/MainView.swift:28)) — даёт App Nap усыпить основной процесс.
 - **IOKit `IOPMCopyAssertionsByProcess` вместо спауна `pmset`** (plan-v2 1.5).
-- **backfill не запускает LLM во время звонка** ([AppState.swift:584](meeting-recorder/swift/Sources/AppState.swift:584)).
+- **backfill не запускает LLM во время звонка** ([AppState.swift:584](../meeting-recorder/swift/Sources/AppState.swift:584)).
 - Дебаунс записи индекса, disk-space preflight, `excludesCurrentProcessAudio`, ephemeral URLSession для LLM.
 
 ---
@@ -25,12 +25,12 @@ _Компаньон к [plan-v2.md](plan-v2.md). Там — продуктовы
 
 ### ☑ E1. Ленивый ASR-sidecar с idle-stop (главный рычаг)
 
-**Как сейчас:** `gigastt serve` спаунится **на старте** — дважды: в [MeetingRecorderApp.swift:6](meeting-recorder/swift/Sources/MeetingRecorderApp.swift:6) (`AppDelegate`) и в [AppState.swift:108](meeting-recorder/swift/Sources/AppState.swift:108) (`bootstrap`). Сервер грузит GigaAM-v3 (`--pool-size 1`), становится healthy и живёт до `applicationWillTerminate`.
+**Как сейчас:** `gigastt serve` спаунится **на старте** — дважды: в [MeetingRecorderApp.swift:6](../meeting-recorder/swift/Sources/MeetingRecorderApp.swift:6) (`AppDelegate`) и в [AppState.swift:108](../meeting-recorder/swift/Sources/AppState.swift:108) (`bootstrap`). Сервер грузит GigaAM-v3 (`--pool-size 1`), становится healthy и живёт до `applicationWillTerminate`.
 
 **Риск/трение:** транскрипция — пост-митинговый батч (`runTranscribe` вызывается только после стопа). Во время звонка gigastt не нужен вообще. Значит отдельный процесс держит ~225 МБ+ модель резидентно в RAM (и тёплой на ANE/GPU) весь день ради задачи на ~30 с несколько раз в сутки. App Nap тут бессилен — это **отдельный дочерний процесс**, OS его не усыпит.
 
 **Решение:**
-- Спаунить sidecar **лениво** прямо перед ASR (`prepare()` → `ensureReady()` в [TranscriptionService.swift:44](meeting-recorder/swift/Sources/TranscriptionService.swift:44) уже это умеет).
+- Спаунить sidecar **лениво** прямо перед ASR (`prepare()` → `ensureReady()` в [TranscriptionService.swift:44](../meeting-recorder/swift/Sources/TranscriptionService.swift:44) уже это умеет).
 - **Останавливать** после завершения батча (транскрипт + диаризация + слив backfill-очереди), с idle-grace 30–60 с.
 - Убрать оба warm-up со старта.
 - Разделить *download* и *serve*: первую загрузку модели оставить в онбординге с прогрессом (plan-v2 4.5b/5.5), но «скачать» ≠ «держать в памяти».
@@ -39,7 +39,7 @@ _Компаньон к [plan-v2.md](plan-v2.md). Там — продуктовы
 
 ### ☑ E2. Освобождать диаризатор после батча
 
-**Как сейчас:** `TranscriptionService.diarizer` (FluidAudio `OfflineDiarizerManager`) грузится один раз и **никогда не освобождается** ([TranscriptionService.swift:21](meeting-recorder/swift/Sources/TranscriptionService.swift:21)).
+**Как сейчас:** `TranscriptionService.diarizer` (FluidAudio `OfflineDiarizerManager`) грузится один раз и **никогда не освобождается** ([TranscriptionService.swift:21](../meeting-recorder/swift/Sources/TranscriptionService.swift:21)).
 
 **Риск:** тот же паттерн, что E1 — idle-footprint = GigaAM + FluidAudio одновременно, круглосуточно.
 
@@ -49,7 +49,7 @@ _Компаньон к [plan-v2.md](plan-v2.md). Там — продуктовы
 
 ### ☑ E3. Поллинг Zoom: tolerance + гейт по запуску + интервал
 
-**Как сейчас:** `ZoomMeetingDetector` крутит `Timer` каждые 2.0 с **без `tolerance`** ([ZoomMeetingDetector.swift:47](meeting-recorder/swift/Sources/ZoomMeetingDetector.swift:47),[:55](meeting-recorder/swift/Sources/ZoomMeetingDetector.swift:55)). Когда Zoom запущен (часто держат открытым), каждый тик гоняет три дорогих зонда: `proc_listpids(PROC_ALL_PIDS)` — перебор до 4096 pid'ов с `proc_name()` на каждый ([:139](meeting-recorder/swift/Sources/ZoomMeetingDetector.swift:139)); `CGWindowListCopyWindowInfo` по всем окнам ([:168](meeting-recorder/swift/Sources/ZoomMeetingDetector.swift:168)); `IOPMCopyAssertionsByProcess` + per-pid `proc_name` ([:200](meeting-recorder/swift/Sources/ZoomMeetingDetector.swift:200)).
+**Как сейчас:** `ZoomMeetingDetector` крутит `Timer` каждые 2.0 с **без `tolerance`** ([ZoomMeetingDetector.swift:47](../meeting-recorder/swift/Sources/ZoomMeetingDetector.swift:47),[:55](../meeting-recorder/swift/Sources/ZoomMeetingDetector.swift:55)). Когда Zoom запущен (часто держат открытым), каждый тик гоняет три дорогих зонда: `proc_listpids(PROC_ALL_PIDS)` — перебор до 4096 pid'ов с `proc_name()` на каждый ([:139](../meeting-recorder/swift/Sources/ZoomMeetingDetector.swift:139)); `CGWindowListCopyWindowInfo` по всем окнам ([:168](../meeting-recorder/swift/Sources/ZoomMeetingDetector.swift:168)); `IOPMCopyAssertionsByProcess` + per-pid `proc_name` ([:200](../meeting-recorder/swift/Sources/ZoomMeetingDetector.swift:200)).
 
 **Риск:** без tolerance таймер полностью ломает timer coalescing (каждый тик = гарантированный wakeup). Полное сканирование таблицы процессов + снапшот окон каждые 2 с, вечно, пока Zoom idle-открыт — ровно анти-паттерн «menu bar utility keeps checking data all day» из гайда Apple.
 
@@ -63,11 +63,11 @@ _Компаньон к [plan-v2.md](plan-v2.md). Там — продуктовы
 
 ### ☑ E4. Core Audio Process Taps вместо ScreenCaptureKit (стратегический; закрывает Job 1.2)
 
-**Сделано (2026-07-23), затем откат hot path (2026-07-24):** код `ProcessTapAudioCapture` жив, но **не вызывается** — канон снова **SCK-primary** ([STATE.md](STATE.md)). На живых Zoom: Process Tap часто писал header-only `.sys.wav`; speculative silence-watchdogs давали ложные баннеры. SCK (Screen Recording уже требуется) — единственный live-путь; mid-recording баннер только если capture не стартовал; mic-only — на stop по реальному стему.
+**Сделано (2026-07-23), затем откат hot path (2026-07-24):** код `ProcessTapAudioCapture` жив, но **не вызывается** — канон снова **SCK-primary** ([STATE.md](../STATE.md)). На живых Zoom: Process Tap часто писал header-only `.sys.wav`; speculative silence-watchdogs давали ложные баннеры. SCK (Screen Recording уже требуется) — единственный live-путь; mid-recording баннер только если capture не стартовал; mic-only — на stop по реальному стему.
 
 ### ☑ E5. Метринг-таймер: только когда waveform видим
 
-**Как сейчас:** `startMetering` тикает каждые 0.08 с ([AudioRecorder.swift:244](meeting-recorder/swift/Sources/AudioRecorder.swift:244)), прыгает на MainActor и аппендит в `@Published micLevelHistory/systemLevelHistory` → инвалидация SwiftUI 12.5 раз/с, **даже когда осциллограмму никто не видит** (окно закрыто, авто-запись Zoom). Часовая встреча ≈ 45 000 MainActor-хопов. Tolerance нет.
+**Как сейчас:** `startMetering` тикает каждые 0.08 с ([AudioRecorder.swift:244](../meeting-recorder/swift/Sources/AudioRecorder.swift:244)), прыгает на MainActor и аппендит в `@Published micLevelHistory/systemLevelHistory` → инвалидация SwiftUI 12.5 раз/с, **даже когда осциллограмму никто не видит** (окно закрыто, авто-запись Zoom). Часовая встреча ≈ 45 000 MainActor-хопов. Tolerance нет.
 
 **Решение:** гонять метринг только когда `RecordingInProgressView` на экране (пауза при `.accessory` + закрытом окне); снизить до ~10 Гц; добавить tolerance.
 
@@ -75,7 +75,7 @@ _Компаньон к [plan-v2.md](plan-v2.md). Там — продуктовы
 
 ### ☑ E6. `os.Logger` вместо `debugLog`
 
-**Как сейчас:** `debugLog` ([AudioRecorder.swift:6](meeting-recorder/swift/Sources/AudioRecorder.swift:6)) на каждом из 53 вызовов делает `FileHandle(forWritingAtPath:)` + seek + write + close (3–4 syscall'а), синхронно, **без ротации и лимита**. За месяцы «install & forget» файл растёт неограниченно; работает в релизе.
+**Как сейчас:** `debugLog` ([AudioRecorder.swift:6](../meeting-recorder/swift/Sources/AudioRecorder.swift:6)) на каждом из 53 вызовов делает `FileHandle(forWritingAtPath:)` + seek + write + close (3–4 syscall'а), синхронно, **без ротации и лимита**. За месяцы «install & forget» файл растёт неограниченно; работает в релизе.
 
 **Решение:** перейти на `os.Logger` (unified logging) — кольцевой буфер, near-zero-cost когда лог не читают, privacy-aware, без файлового churn и распухания. Многословные логи — за `#if DEBUG`.
 
@@ -83,7 +83,7 @@ _Компаньон к [plan-v2.md](plan-v2.md). Там — продуктовы
 
 ### ☑ E7. Глобальный монитор клавиш — только во время записи
 
-**Как сейчас:** `NoteOverlayController.install()` зовётся в `bootstrap()` и регистрирует `addGlobalMonitorForEvents(.keyDown)` на весь жизненный цикл ([NoteOverlayController.swift:40](meeting-recorder/swift/Sources/NoteOverlayController.swift:40)). Замыкание срабатывает на **каждое нажатие во всей системе**, вечно, хотя оверлей нужен только при записи (`toggle()` рано выходит, если `!isRecording`). Держит Input Monitoring/Accessibility включённым постоянно.
+**Как сейчас:** `NoteOverlayController.install()` зовётся в `bootstrap()` и регистрирует `addGlobalMonitorForEvents(.keyDown)` на весь жизненный цикл ([NoteOverlayController.swift:40](../meeting-recorder/swift/Sources/NoteOverlayController.swift:40)). Замыкание срабатывает на **каждое нажатие во всей системе**, вечно, хотя оверлей нужен только при записи (`toggle()` рано выходит, если `!isRecording`). Держит Input Monitoring/Accessibility включённым постоянно.
 
 **Решение:** ставить глобальный монитор на старте записи, снимать на стопе. Фича сохраняется; per-keystroke-налог и always-on Input Monitoring в простое исчезают (+ приватность).
 
@@ -115,7 +115,7 @@ _Компаньон к [plan-v2.md](plan-v2.md). Там — продуктовы
 
 ### ☑ S6. `.tolerance` всем таймерам
 
-**Как сейчас:** ни у одного таймера нет tolerance — displayTimer 1 с ([AppState.swift:411](meeting-recorder/swift/Sources/AppState.swift:411)), meterTimer 0.08 с, zoom-поллинг 2 с.
+**Как сейчас:** ни у одного таймера нет tolerance — displayTimer 1 с ([AppState.swift:411](../meeting-recorder/swift/Sources/AppState.swift:411)), meterTimer 0.08 с, zoom-поллинг 2 с.
 
 **Решение:** по гайду Apple это правка №1 для энергии. Часы «прошло MM:SS» — tolerance 0.2–0.5 с; остальные — ≥30 % интервала.
 
@@ -370,7 +370,7 @@ _Намеренно оставлен для теста онбординга (в�
 
 **Фикс:** дождаться реального exit в `stop()` / поллить порт до освобождения перед S4.
 
-**Сверено 2026-07-25 — НЕ сделано** (нарезка ошибочно помечала ☑): `stop()` вызывает `terminate()` и планирует SIGKILL через 2 с асинхронно, возвращаясь сразу ([GigasttSidecar.swift:80–89](meeting-recorder/swift/Sources/GigasttSidecar.swift:80)). `restart()` → `ensureReady()` может успеть до освобождения порта. PID-файл (C8) эту гонку не закрывает.
+**Сверено 2026-07-25 — НЕ сделано** (нарезка ошибочно помечала ☑): `stop()` вызывает `terminate()` и планирует SIGKILL через 2 с асинхронно, возвращаясь сразу ([GigasttSidecar.swift:80–89](../meeting-recorder/swift/Sources/GigasttSidecar.swift:80)). `restart()` → `ensureReady()` может успеть до освобождения порта. PID-файл (C8) эту гонку не закрывает.
 
 ### ☐ R2. Ollama: таймауты 180/300 с + нет `num_ctx` → молчаливое усечение транскрипта
 
@@ -400,7 +400,7 @@ _Намеренно оставлен для теста онбординга (в�
 
 **Фикс:** `guard isRecording`; гистерезис ignore (по сессии Zoom / N минут после ended).
 
-**Сделано наполовину:** `guard isRecording` на месте ([AppState.swift:375](meeting-recorder/swift/Sources/AppState.swift:375)) — идемпотентность закрыта. **Гистерезиса нет**: `ignoredZoomMeeting = false` стоит и в `handleZoomMeetingStarted`, и в `handleZoomMeetingEnded` → см. раунд 3, G3.
+**Сделано наполовину:** `guard isRecording` на месте ([AppState.swift:375](../meeting-recorder/swift/Sources/AppState.swift:375)) — идемпотентность закрыта. **Гистерезиса нет**: `ignoredZoomMeeting = false` стоит и в `handleZoomMeetingStarted`, и в `handleZoomMeetingEnded` → см. раунд 3, G3.
 
 ---
 
@@ -502,9 +502,9 @@ _Метод: трассировка всех путей от интента до
 
 ### ☐ G1. Нет очереди транскрипций — встреча подряд молча остаётся без саммари 🔴
 
-**Где:** `runTranscribe` рано выходит при занятости ([AppState.swift:723](meeting-recorder/swift/Sources/AppState.swift:723)); очереди отложенных нет (грепом пусто). `isTranscribing` держится **всю** цепочку ASR → диаризация → save → LLM-рекап, то есть минуты.
+**Где:** `runTranscribe` рано выходит при занятости ([AppState.swift:723](../meeting-recorder/swift/Sources/AppState.swift:723)); очереди отложенных нет (грепом пусто). `isTranscribing` держится **всю** цепочку ASR → диаризация → save → LLM-рекап, то есть минуты.
 
-**Сценарий:** встреча A закончилась → пайплайн пошёл; встреча B закончилась в это же окно → `runTranscribe` возвращается с «Transcription already in progress» → B остаётся `recorded` навсегда. Бэкфилл её не подхватит — он требует уже существующий транскрипт ([:592](meeting-recorder/swift/Sources/AppState.swift:592)).
+**Сценарий:** встреча A закончилась → пайплайн пошёл; встреча B закончилась в это же окно → `runTranscribe` возвращается с «Transcription already in progress» → B остаётся `recorded` навсегда. Бэкфилл её не подхватит — он требует уже существующий транскрипт ([:592](../meeting-recorder/swift/Sources/AppState.swift:592)).
 
 **Фикс:** см. G2 — закрывается тем же механизмом.
 
@@ -524,7 +524,7 @@ _Метод: трассировка всех путей от интента до
 
 ### ☐ G3. «Не записывать» отменяется флапом детектора 🟠
 
-**Где:** `ignoredZoomMeeting = false` и в `handleZoomMeetingStarted` ([:155](meeting-recorder/swift/Sources/AppState.swift:155)), и в `handleZoomMeetingEnded` ([:167](meeting-recorder/swift/Sources/AppState.swift:167)). При провале сигнала на `exitThreshold=3 × 6 с ≈ 18 с` детектор решит «встреча кончилась», а следующий вход перезапустит запись **вопреки явному отказу пользователя**.
+**Где:** `ignoredZoomMeeting = false` и в `handleZoomMeetingStarted` ([:155](../meeting-recorder/swift/Sources/AppState.swift:155)), и в `handleZoomMeetingEnded` ([:167](../meeting-recorder/swift/Sources/AppState.swift:167)). При провале сигнала на `exitThreshold=3 × 6 с ≈ 18 с` детектор решит «встреча кончилась», а следующий вход перезапустит запись **вопреки явному отказу пользователя**.
 
 **Фикс:** сделать отказ липким на сессию Zoom — не сбрасывать на ended/started, гасить только при выходе приложения Zoom или по таймауту N минут. Это вторая половина R7.
 
@@ -532,7 +532,7 @@ _Метод: трассировка всех путей от интента до
 
 ### ☐ G4. Заголовок и теги живут только через рекап 🟠
 
-**Где:** `generateMeetingMetadata` вызывается только после успешного рекапа ([:1026](meeting-recorder/swift/Sources/AppState.swift:1026)). Рекап выключен или провайдера нет → встреча навсегда «Recording 24.07.2026, 14:30» без тем и тегов. Если рекап прошёл, а метадата не распарсилась — ретрая нет вообще: бэкфилл смотрит только на наличие `-recap.md` и такую встречу пропустит.
+**Где:** `generateMeetingMetadata` вызывается только после успешного рекапа ([:1026](../meeting-recorder/swift/Sources/AppState.swift:1026)). Рекап выключен или провайдера нет → встреча навсегда «Recording 24.07.2026, 14:30» без тем и тегов. Если рекап прошёл, а метадата не распарсилась — ретрая нет вообще: бэкфилл смотрит только на наличие `-recap.md` и такую встречу пропустит.
 
 **Фикс:** условие «есть рекап, но нет тегов/авто-заголовка» — в тот же реконсилятор (G2).
 
@@ -546,7 +546,7 @@ _Метод: трассировка всех путей от интента до
 
 **Сначала — живые тесты на реальных встречах**, потом остальные фиксы. Причина: раунд 2 закрыл девять 🔴-пунктов, включая правки в путях захвата и терминации; накатывать поверх непроверенного ещё один слой изменений — значит отлаживать всё сразу. Живой прогон нужен и как приёмка E4/C10 (ProcessTap), и как источник первых реальных чисел для baseline из [plan-testing-metrics.md](plan-testing-metrics.md).
 
-**Замечание по E4/ProcessTap:** канон 2026-07-24 — **SCK-primary**; `ProcessTapAudioCapture` dormant (не вызывается). Статус E4 выше переписан. Живые Zoom-тесты и анти-413 чанкинг — в [STATE.md](STATE.md) Часть 0.
+**Замечание по E4/ProcessTap:** канон 2026-07-24 — **SCK-primary**; `ProcessTapAudioCapture` dormant (не вызывается). Статус E4 выше переписан. Живые Zoom-тесты и анти-413 чанкинг — в [STATE.md](../STATE.md) Часть 0.
 
 ---
 

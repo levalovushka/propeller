@@ -1,4 +1,4 @@
-> 🗄 **Архив / историч.** Исходный бриф на миграцию ASR. Описывает состояние **до** вырезания People-библиотеки (plan-v2 Job 3) — часть про «оставляем FluidAudio / библиотека голосов» уже неактуальна. Текущее состояние — [`../plan-v2.md`](../plan-v2.md), [`../meeting-recorder/docs/ARCHITECTURE.md`](../meeting-recorder/docs/ARCHITECTURE.md).
+> 🗄 **Архив / историч.** Исходный бриф на миграцию ASR. Описывает состояние **до** вырезания People-библиотеки (plan-v2 Job 3) — часть про «оставляем FluidAudio / библиотека голосов» уже неактуальна. Текущее состояние — [`../plan-v2.md`](plan-v2.md), [`../meeting-recorder/docs/ARCHITECTURE.md`](../meeting-recorder/docs/ARCHITECTURE.md).
 
 # Бриф: локальный транскрибатор встреч на GigaAM-v3 (macOS)
 

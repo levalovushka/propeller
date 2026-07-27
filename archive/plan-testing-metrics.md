@@ -47,7 +47,7 @@ Idle/энергия (M1), тесты (Блок T), качество WER/DER (Q) 
 - **`PropellerPure`** + `MeetingRecorderTests` (10 тестов): `RecapMetadataParser`, `DiarizationMerge.speakerLabel`, `MixGain`, `WavHeader`, `RecordingRecovery`. `swift test` зелёный.
 - **`SpeakerMatchingCore`** — уже библиотека с чистой математикой: `AudioSourceEnergyClassifier.classify`, `SourceAwareScoring.adjustedSimilarity`, `AudioEnergyAnalyzer`. Тестов пока нет — а логика чистая и хрупкая.
 - **`Experiments` / `Checks`** — прецедент headless-харнесса: `Experiments` уже гоняет диаризацию на `~/.meeting-recorder/test/test-5min.wav`, печатает тайминги и пишет отчёты. Это заготовка бенч-харнесса.
-- **CI** ([build.yml](meeting-recorder/.github/workflows/build.yml)) — `swift build -c release` на `macos-15`. Тесты в CI пока **не гоняются** — первый быстрый пробел.
+- **CI** ([build.yml](../meeting-recorder/.github/workflows/build.yml)) — `swift build -c release` на `macos-15`. Тесты в CI пока **не гоняются** — первый быстрый пробел.
 
 ---
 
@@ -56,9 +56,9 @@ Idle/энергия (M1), тесты (Блок T), качество WER/DER (Q) 
 ### ☑ F1. Разметить пайплайн сигнпостами (`OSSignposter`)
 
 Один `OSSignposter` (subsystem `app.propeller`, категории `pipeline`/`sidecar`/`idle`). Интервалы вокруг ключевых стадий:
-- `sidecar.spawn` (spawn → healthy) в [GigasttSidecar.startIfNeeded](meeting-recorder/swift/Sources/GigasttSidecar.swift:118)
-- `asr` вокруг `GigasttClient.transcribe` в [TranscriptionService.transcribeAudio](meeting-recorder/swift/Sources/TranscriptionService.swift:102)
-- `diarize` вокруг `diarizer.process` в [TranscriptionService.diarize](meeting-recorder/swift/Sources/TranscriptionService.swift:146)
+- `sidecar.spawn` (spawn → healthy) в [GigasttSidecar.startIfNeeded](../meeting-recorder/swift/Sources/GigasttSidecar.swift:118)
+- `asr` вокруг `GigasttClient.transcribe` в [TranscriptionService.transcribeAudio](../meeting-recorder/swift/Sources/TranscriptionService.swift:102)
+- `diarize` вокруг `diarizer.process` в [TranscriptionService.diarize](../meeting-recorder/swift/Sources/TranscriptionService.swift:146)
 - `mix` вокруг офлайн-микса в `AudioRecorder`
 - `markdown` вокруг `MarkdownWriter.render`
 - `recap` вокруг `RecapService.generateRecap`
@@ -83,7 +83,7 @@ Idle/энергия (M1), тесты (Блок T), качество WER/DER (Q) 
 ### ☐ F4. `benchmarks/` + схема baseline + `swift test` в CI
 
 - `benchmarks/baseline.json` — эталонные числа с референс-машины; `benchmarks/latest.json` — последний прогон; `tools/bench-diff` — дифф с порогами, печатает таблицу дельт (🟢/🔴), ненулевой exit при регрессии сверх допуска.
-- В [build.yml](meeting-recorder/.github/workflows/build.yml) добавить шаг `swift test` (корректность) — гейт на каждый PR. Перф-джоб — отдельно, ручной/nightly, на self-hosted или локально.
+- В [build.yml](../meeting-recorder/.github/workflows/build.yml) добавить шаг `swift test` (корректность) — гейт на каждый PR. Перф-джоб — отдельно, ручной/nightly, на self-hosted или локально.
 
 ---
 
@@ -96,7 +96,7 @@ Idle/энергия (M1), тесты (Блок T), качество WER/DER (Q) 
 - ☐ **TranscriptionService merge/format** — `mergeConsecutiveSameSpeaker`, `collapseConsecutiveSameSpeaker`, `formatTranscriptText`, логика `resolveOwnerName` (сейчас `private` в executable).
 - ☐ **RecapService** — `resolveBackend` (выбор провайдера Ollama→OpenAI→Claude/Off), `metadataPrompt`, `buildUserMessage`, `wrapRecapDocument`, `stripCodeFences`, `RecapSkipReason`, `throwIfBadHTTP`.
 - ☐ **SpeakerMatchingCore** — `AudioSourceEnergyClassifier.classify` (грани mic/system/mixed/unknown, `dominanceRatio`), `SourceAwareScoring.adjustedSimilarity`, `MixGain` edge-cases. Логика чистая, тестов нет — быстрый выигрыш.
-- ☐ **GigasttSidecar decisions** — вынести чистые: бэкофф `min(60, 1.5·2^(n-1))` + cap 5 ([GigasttSidecar.swift:209](meeting-recorder/swift/Sources/GigasttSidecar.swift:209)), гейт health по `model != "loading"`, `progressFraction`, `modelsPresent`.
+- ☐ **GigasttSidecar decisions** — вынести чистые: бэкофф `min(60, 1.5·2^(n-1))` + cap 5 ([GigasttSidecar.swift:209](../meeting-recorder/swift/Sources/GigasttSidecar.swift:209)), гейт health по `model != "loading"`, `progressFraction`, `modelsPresent`.
 - ☐ **ZoomMeetingDetector** — вынести дебаунс-редьюсер (`enterThreshold`/`exitThreshold`: сырой сигнал → подтверждённый enter/exit) как чистую функцию состояния.
 - ☐ **RecordingStore/Models** — предикат ретеншена, id-парсинг/дедуп `scanForOrphanRecordings`, Codable round-trip `RecordingEntry` (включая декод легаси-полей).
 

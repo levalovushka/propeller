@@ -1,6 +1,6 @@
 # Propeller — архитектура
 
-_Источник правды по архитектурным решениям форка. Поведение продукта — [SPEC.md](SPEC.md); активные планы/решения — [`../../plan-v2.md`](../../plan-v2.md); инженерная оптимизация — [`../../plan-optimization.md`](../../plan-optimization.md); UI — [`../../design/propeller-ui.md`](../../design/propeller-ui.md)._
+_Источник правды по архитектурным решениям форка. Поведение продукта — [SPEC.md](SPEC.md); активные планы/решения — [`../../plan-v2.md`](../../archive/plan-v2.md); инженерная оптимизация — [`../../plan-optimization.md`](../../archive/plan-optimization.md); UI — [`../../design/propeller-ui.md`](../../design/propeller-ui.md)._
 
 ## Что это
 
@@ -77,7 +77,7 @@ ZoomMeetingDetector (Auto) / menu bar / ⌘R / UI
   people/       # ЛЕГАСИ: больше не читается/не пишется (данные на диске не трогаем)
 
 ~/Library/Application Support/Meeting Recorder/
-  gigastt-models/   # ~225 МБ GigaAM (имя папки — наследие TCC/эпохи форка)
+  gigastt-models/   # ~247 МБ GigaAM INT8, копируются из бандла (имя папки — наследие TCC/эпохи форка)
   hotwords.txt      # словарь Domain terms для gigastt
 ```
 

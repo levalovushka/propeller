@@ -19,20 +19,25 @@ open -a Propeller
 
 | Path | What |
 |---|---|
+| `STATE.md` | **Living status: what works, what's broken, per component.** Start here. |
 | `meeting-recorder/` | App source (Swift package + `build.sh`) |
-| `plan-v2.md` | Active plan + product decisions (by job) |
-| `plan-optimization.md` | Engineering optimization (energy · stability · reliability) |
-| `product-ideas.md` | Idea / decision ledger (killed / deferred with reasons) |
+| `COLLEAGUES.md` | Install + usage guide handed to testers |
+| `vocab/` | Russian meeting jargon → gigastt hotwords (source for the built-in list) |
 | `design/` | UI spec |
+| `product-ideas.md` | Idea / decision ledger (killed / deferred with reasons) |
+| `plan-v2.md`, `plan-optimization.md`, `plan-testing-metrics.md` | Decision history. Superseded by `STATE.md` where they disagree. |
 | `archive/` | Historical: `plan-v1.md`, migration brief, phase status notes |
 | `phase0`–`phase6/` | Phase validation artifacts (models/WAVs not in git) |
 | `propellericon.icon` | App icon (Icon Composer) |
 
-Docs of record: [`plan-v2.md`](plan-v2.md) · [`plan-optimization.md`](plan-optimization.md) · [architecture](meeting-recorder/docs/ARCHITECTURE.md) · [product spec](meeting-recorder/docs/SPEC.md).
+**Source of truth: [`STATE.md`](STATE.md)** — component-by-component status and open defects. When any other document disagrees with it, `STATE.md` wins.
+
+Supporting docs of record: [architecture](meeting-recorder/docs/ARCHITECTURE.md) · [product spec](meeting-recorder/docs/SPEC.md) · [agent guide](meeting-recorder/CLAUDE.md).
 
 ## Not in this repo
 
-- `gigastt` binary and GigaAM model weights (`tools/`)
+- `gigastt` binary and GigaAM model weights (`tools/`) — `build.sh` bundles the INT8 set into the .app, so fetch them once with
+  `tools/gigastt/gigastt download --prequantized --model-variant e2e_rnnt --model-dir tools/gigastt/models-e2e`
 - SPM / Xcode build products
 - Raw Zoom WAVs and personal transcript dumps from validation
 

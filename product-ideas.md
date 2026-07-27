@@ -1,15 +1,15 @@
 # Идеи по развитию транскрибатора
 
-_**Реестр продуктовых решений** (что делаем / отложили / убили — с причинами). Активный план и раскладка по джобам — [plan-v2.md](plan-v2.md); инженерная оптимизация — [plan-optimization.md](plan-optimization.md). Этот файл держит **историю решений**, не дублируя актуальные шаги плана. Статусы: **имплементируем** · **отложено** · **убито**._
+_**Реестр продуктовых решений** (что делаем / отложили / убили — с причинами). Активный план и раскладка по джобам — [plan-v2.md](archive/plan-v2.md); инженерная оптимизация — [plan-optimization.md](archive/plan-optimization.md). Этот файл держит **историю решений**, не дублируя актуальные шаги плана. Статусы: **имплементируем** · **отложено** · **убито**._
 
 ## Инбокс — разобран в plan-v2
 
-_Свежие идеи триажим в [plan-v2.md](plan-v2.md). Последний заход:_
+_Свежие идеи триажим в [plan-v2.md](archive/plan-v2.md). Последний заход:_
 
-- **Google Calendar integration** → **реализовано** через EventKit (read-only, без OAuth). [plan-v2.md](plan-v2.md) C1.
-- **Захват только звука встречи (app-scoped SCK)** → SCK-primary (2026-07-24); Process Tap dormant. [STATE.md](STATE.md); [plan-v2.md](plan-v2.md) 1.2.
-- **Убрать глобальный хоткей записи** → **сделано** (install & forget). [plan-v2.md](plan-v2.md) 1.1.
-- **Доставка саммари в Telegram-бота** → **отложено** (v2 шерит буфером обмена). [plan-v2.md](plan-v2.md) C2.
+- **Google Calendar integration** → **реализовано** через EventKit (read-only, без OAuth). [plan-v2.md](archive/plan-v2.md) C1.
+- **Захват только звука встречи (app-scoped SCK)** → SCK-primary (2026-07-24); Process Tap dormant. [STATE.md](STATE.md); [plan-v2.md](archive/plan-v2.md) 1.2.
+- **Убрать глобальный хоткей записи** → **сделано** (install & forget). [plan-v2.md](archive/plan-v2.md) 1.1.
+- **Доставка саммари в Telegram-бота** → **отложено** (v2 шерит буфером обмена). [plan-v2.md](archive/plan-v2.md) C2.
 
 ## Имплементируем
 
