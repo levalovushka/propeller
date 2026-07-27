@@ -52,8 +52,11 @@ public enum Tokens {
         public static let radius: CGFloat = 16
         public static let maxWidth: CGFloat = 280
         public static let fill = Color.white.opacity(0.07)
-        public static let bottomInset: CGFloat = 8
-        public static let trailingInset: CGFloat = 12
+        /// Equal gap from both window edges, so the toast reads as offset from
+        /// the corner rather than wedged into it. 8/12 was unequal and too tight;
+        /// matching the toast's own corner radius keeps the rounded corner clear
+        /// of the window corner.
+        public static let cornerInset: CGFloat = 16
     }
 
     /// Onboarding plate — Figma 642:2122 is 400×400.

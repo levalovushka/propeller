@@ -52,8 +52,8 @@ struct MainView: View {
 
             if !toastIdentity.isEmpty {
                 activeToastContent
-                    .padding(.trailing, Tokens.Toast.trailingInset)
-                    .padding(.bottom, Tokens.Toast.bottomInset)
+                    .padding(.trailing, Tokens.Toast.cornerInset)
+                    .padding(.bottom, Tokens.Toast.cornerInset)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .zIndex(3)
             }

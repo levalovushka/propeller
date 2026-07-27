@@ -1,22 +1,20 @@
 import SwiftUI
 
-/// Onboarding step: start local Ollama + model download without blocking the funnel.
-/// User can tap Далее immediately — download continues in the status bar; recaps
-/// backfill when the model is ready.
+/// Onboarding step: offer the local summary model, then get out of the way.
+///
+/// Both buttons advance immediately. The screen used to hold the user on a
+/// progress bar after «Скачать», which bought them nothing — there is no
+/// decision left and nothing to react to, so watching 3.4 GB tick up is pure
+/// waiting. The download reports into the status bar instead, and recaps
+/// backfill on their own once the model lands.
 struct OnboardingSummaryModelView: View {
     var onNext: () -> Void
     var onSkip: () -> Void
     var onBack: () -> Void
-    /// Starts download in the background (must not await completion).
+    /// Starts the download in the background (must not await completion).
     var onStartDownload: () -> Void
-    var progress: Double?
-    var statusMessage: String
     var isReady: Bool
     var errorMessage: String? = nil
-
-    @State private var didStartDownload = false
-
-    private var isDownloading: Bool { progress != nil || didStartDownload && !isReady }
 
     var body: some View {
         OnboardingCard {
@@ -29,36 +27,20 @@ struct OnboardingSummaryModelView: View {
                 )
                 .fixedSize(horizontal: false, vertical: true)
 
-                Text("Движок в приложении (~140 МБ). Модель ~5 ГБ скачивается один раз в фоне — можно сразу идти записывать, саммари догонит само.")
+                Text("Локальная модель для саммари и рекапа.\n\nСкачается в фоне, записывать можно без неё.")
                     .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(Tokens.Ink.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
 
-                if isDownloading {
-                    VStack(spacing: 8) {
-                        ProgressView(value: progress ?? 0)
-                            .progressViewStyle(.linear)
-                            .frame(maxWidth: 260)
-                        Text(statusMessage.isEmpty ? "Скачиваем в фоне…" : statusMessage)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(Tokens.Ink.secondary)
-                            .multilineTextAlignment(.center)
-                        if let p = progress {
-                            Text("\(Int(p * 100))%")
-                                .font(.system(size: 12, weight: .medium).monospacedDigit())
-                                .foregroundStyle(Tokens.Ink.tertiary)
-                        }
-                    }
-                    .padding(.top, 8)
-                } else if isReady {
+                if isReady {
                     Label("Модель готова", systemImage: "checkmark.circle.fill")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.green)
                         .padding(.top, 8)
                 }
 
-                if let errorMessage, !errorMessage.isEmpty, !isDownloading {
+                if let errorMessage, !errorMessage.isEmpty {
                     Text(errorMessage)
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.orange)
@@ -69,15 +51,17 @@ struct OnboardingSummaryModelView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         } actions: {
             HStack(spacing: 10) {
-                if !isReady && !didStartDownload {
-                    PillButton(title: "Позже", kind: .secondary, action: onSkip)
-                    PillButton(title: "Скачать", kind: .secondary, action: {
-                        didStartDownload = true
+                if isReady {
+                    PillButton(title: "Далее", kind: .primary, action: onNext)
+                } else {
+                    // Ghost is the tertiary step of the prominence scale: declining
+                    // stays a real choice without competing with the recommended one.
+                    PillButton(title: "Позже", kind: .ghost, action: onSkip)
+                    PillButton(title: "Скачать", kind: .primary, action: {
                         onStartDownload()
+                        onNext()
                     })
                 }
-                // Always allow leaving — download (if started) keeps going in the status bar.
-                PillButton(title: "Далее", kind: .primary, action: onNext)
             }
             .frame(maxWidth: .infinity)
         }
@@ -90,8 +74,6 @@ struct OnboardingSummaryModelView: View {
         onSkip: {},
         onBack: {},
         onStartDownload: {},
-        progress: 0.42,
-        statusMessage: "Скачиваем модель… 42%",
         isReady: false
     )
     .background(GlassBackground())

@@ -317,37 +317,58 @@ struct RecordingDetailView: View {
         } else if let text = recapText, !text.isEmpty {
             recapRendered(text)
         } else {
+            let needsModel = state.needsLocalRecapModel
+            let downloading = state.ollamaSetupProgress != nil
             VStack(alignment: .leading, spacing: 8) {
                 Text("Нет саммари")
                     .font(.callout)
                     .foregroundStyle(.tertiary)
-                if let hint = state.recapSkipHint, state.selectedRecordingID == entry.id {
-                    Text(hint).font(.caption).foregroundStyle(.orange)
-                } else if state.transcript.isEmpty {
+                if state.transcript.isEmpty {
                     Text("Сначала расшифруйте запись (вкладка «Транскрипт»).")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
-                } else {
-                    Text("Нужны Ollama или API-ключ в Настройках.")
+                } else if downloading {
+                    Text(state.ollamaSetupMessage.isEmpty
+                         ? "Загружаем модель саммари…" : state.ollamaSetupMessage)
                         .font(.caption)
                         .foregroundStyle(.tertiary)
+                } else if needsModel {
+                    Text("Для саммари нужно загрузить модель. Это займет около 10 минут — записывать встречи можно и без неё.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                } else if let hint = state.recapSkipHint, state.selectedRecordingID == entry.id {
+                    Text(hint).font(.caption).foregroundStyle(.orange)
                 }
                 HStack(spacing: 8) {
-                    Button {
-                        Task { await state.regenerateRecap() }
-                    } label: {
-                        Label("Сгенерировать", systemImage: "sparkles")
+                    if needsModel && !state.transcript.isEmpty {
+                        Button {
+                            state.startOllamaRuntimeDownload()
+                        } label: {
+                            Label(downloading ? "Загружается…" : "Скачать",
+                                  systemImage: "arrow.down.circle")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(downloading)
+                        SettingsLink {
+                            Text("Настройки")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    } else {
+                        Button {
+                            Task { await state.regenerateRecap() }
+                        } label: {
+                            Label("Сгенерировать", systemImage: "sparkles")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(state.transcript.isEmpty)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    SettingsLink {
-                        Text("Настройки")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                 }
             }
             .padding(.vertical, 8)
+            .onAppear { state.refreshLocalRecapModelState() }
         }
     }
 
@@ -803,41 +824,75 @@ struct RecordingDetailView: View {
                     .onTapGesture { editedRecapText = text; isEditingRecap = true }
             }
         } else {
+            let noTranscript = state.transcript.isEmpty && (entry.transcript?.isEmpty ?? true)
+            let needsModel = state.needsLocalRecapModel
+            let downloading = state.ollamaSetupProgress != nil
+
             VStack(spacing: 12) {
                 emptyTabPlaceholder(
                     title: "Нет саммари",
                     detail: {
-                        if let hint = state.recapSkipHint { return hint }
-                        if state.transcript.isEmpty && (entry.transcript?.isEmpty ?? true) {
+                        if noTranscript {
                             return "Сначала расшифруйте запись на вкладке «Транскрипт»."
                         }
-                        return "Саммари появляется после обработки. Нужны Ollama (локально) или API-ключ в Настройках."
+                        if downloading {
+                            let msg = state.ollamaSetupMessage
+                            return msg.isEmpty ? "Загружаем модель саммари…" : msg
+                        }
+                        if needsModel {
+                            return "Для саммари нужно загрузить модель. Это займет около 10 минут — записывать встречи можно и без неё."
+                        }
+                        if let hint = state.recapSkipHint { return hint }
+                        return "Саммари появляется после обработки."
                     }()
                 )
                 HStack(spacing: 10) {
-                    Button {
-                        Task { await state.regenerateRecap() }
-                    } label: {
-                        Text("Сгенерировать")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Tokens.Ink.primary)
-                            .padding(.horizontal, 14)
-                            .frame(height: 32)
-                            .background(Color.white.opacity(0.10), in: Capsule())
+                    if needsModel && !noTranscript {
+                        // Offering «Сгенерировать» here could only ever produce
+                        // `HTTP 404: model not found` — the honest action is to
+                        // fetch the model.
+                        Button {
+                            state.startOllamaRuntimeDownload()
+                        } label: {
+                            Text(downloading ? "Загружается…" : "Скачать")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Tokens.Ink.primary)
+                                .padding(.horizontal, 14)
+                                .frame(height: 32)
+                                .background(Color.white.opacity(0.10), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(downloading)
+                    } else {
+                        Button {
+                            Task { await state.regenerateRecap() }
+                        } label: {
+                            Text("Сгенерировать")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Tokens.Ink.primary)
+                                .padding(.horizontal, 14)
+                                .frame(height: 32)
+                                .background(Color.white.opacity(0.10), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(noTranscript)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(state.transcript.isEmpty && entry.transcript?.isEmpty != false)
 
-                    SettingsLink {
-                        Text("Открыть настройки")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(Tokens.Ink.secondary)
+                    // Settings only when it can actually change the outcome —
+                    // with the model in place everything is already configured.
+                    if needsModel || state.localRecapModelReady == nil {
+                        SettingsLink {
+                            Text("Открыть настройки")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(Tokens.Ink.secondary)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
                 .padding(.bottom, 40)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear { state.refreshLocalRecapModelState() }
         }
     }
 

@@ -98,8 +98,6 @@ public struct OnboardingFlowView: View {
                     },
                     onBack: { go(.permissions) },
                     onStartDownload: onDownloadSummaryModel,
-                    progress: ollamaProgress,
-                    statusMessage: ollamaStatus,
                     isReady: ollamaReady,
                     errorMessage: ollamaError
                 )
