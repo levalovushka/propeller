@@ -264,7 +264,7 @@ actor RecapService {
         let raw: String
         do {
             switch backend {
-            case "ollama": raw = try await callOllama(model: prefs.ollamaModel, system: system, user: user)
+            case "ollama": raw = try await callOllama(model: prefs.ollamaModel, system: system, user: user, jsonMode: true)
             case "openai": raw = try await callOpenAI(apiKey: prefs.openAIKey ?? "", model: prefs.openAIModel, system: system, user: user)
             case "claude": raw = try await callClaude(apiKey: prefs.claudeKey ?? "", model: prefs.claudeModel, system: system, user: user)
             default: return nil
@@ -277,7 +277,11 @@ actor RecapService {
         guard let parsed = RecapMetadataParser.parse(
             RecapMetadataParser.stripCodeFences(raw),
             allowedTags: Set(MeetingTags.vocabulary)
-        ) else { return nil }
+        ) else {
+            // Silence here used to cost a meeting its topics permanently.
+            NSLog("[RecapService] metadata unparseable, first 300 chars: \(raw.prefix(300))")
+            return nil
+        }
         return RecapMetadata(title: parsed.title, topics: parsed.topics, tags: parsed.tags)
     }
 
@@ -390,7 +394,14 @@ actor RecapService {
 
     // MARK: - Providers
 
-    private func callOllama(model: String, system: String, user: String) async throws -> String {
+    /// `jsonMode` switches Ollama to constrained JSON decoding. Used for the
+    /// metadata pass only — the recap itself is markdown prose.
+    private func callOllama(
+        model: String,
+        system: String,
+        user: String,
+        jsonMode: Bool = false
+    ) async throws -> String {
         let url = URL(string: "http://127.0.0.1:11434/api/chat")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -439,6 +450,12 @@ actor RecapService {
         // accepted by Ollama for a non-thinking model too (qwen2.5:7b → 200);
         // `sendChat` falls back for older builds that reject the field.
         payload["think"] = false
+        if jsonMode {
+            // Without this the model emitted `"tags": [1:1]` — the 1:1 tag from
+            // our own vocabulary, unquoted — which made the whole object
+            // unparseable and silently cost the meeting its topics and tags.
+            payload["format"] = "json"
+        }
 
         do {
             let message = try await sendChat(req: req, payload: payload)

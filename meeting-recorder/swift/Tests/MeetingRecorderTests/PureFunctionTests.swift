@@ -1,7 +1,40 @@
 import XCTest
+import Foundation
 import PropellerPure
 
 final class PureFunctionTests: XCTestCase {
+
+    /// The exact reply that cost meeting 20260727_213023 its topics: the model
+    /// wrote our own `1:1` tag without quotes, JSON parsing failed, and
+    /// `generateMetadata` returned nil silently — leaving topics nil forever.
+    func testParseMetadataRepairsUnquotedVocabularyTag() {
+        let raw = #"{"title": "Тестовая встреча", "topics": ["проверка ИИ"], "tags": [1:1]}"#
+        let meta = RecapMetadataParser.parse(raw, allowedTags: ["1:1", "ретро"])
+        XCTAssertEqual(meta?.title, "Тестовая встреча")
+        XCTAssertEqual(meta?.topics, ["проверка ИИ"])
+        XCTAssertEqual(meta?.tags, ["1:1"])
+    }
+
+    func testRepairLeavesValidJSONAndRealScalarsAlone() {
+        // Well-formed input must survive the repair byte-for-byte in meaning.
+        let good = #"{"title": null, "topics": ["a, b", "c"], "tags": []}"#
+        let meta = RecapMetadataParser.parse(good, allowedTags: [])
+        XCTAssertNil(meta?.title)
+        XCTAssertEqual(meta?.topics, ["a, b", "c"])   // comma inside a string is not a separator
+        // Numbers and literals must stay real scalars, not become "12"/"true".
+        // Compared as parsed JSON: the repair does not preserve whitespace, and
+        // its output is only ever handed to JSONSerialization.
+        let repaired = RecapMetadataParser.quotingBareArrayTokens(#"{"a": [12, true, null]}"#)
+        let object = try? JSONSerialization.jsonObject(with: Data(repaired.utf8))
+        let dict = object as? [String: Any]
+        guard let arr = dict?["a"] as? [Any] else {
+            return XCTFail("repair produced unparseable JSON: \(repaired)")
+        }
+        XCTAssertEqual(arr.count, 3)
+        XCTAssertEqual(arr[0] as? Int, 12)
+        XCTAssertEqual(arr[1] as? Bool, true)
+        XCTAssertTrue(arr[2] is NSNull)
+    }
 
     // MARK: - OllamaRetry
 

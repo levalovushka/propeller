@@ -17,8 +17,9 @@ public enum RecapMetadataParser {
               let end = text.lastIndex(of: "}"),
               start < end else { return nil }
         let jsonStr = String(text[start...end])
-        guard let data = jsonStr.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        guard let obj = decodeObject(jsonStr) ?? decodeObject(quotingBareArrayTokens(jsonStr)) else {
+            return nil
+        }
 
         let rawTitle = (obj["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let title: String? = {
@@ -32,6 +33,60 @@ public enum RecapMetadataParser {
             .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { allowedTags.contains($0) } ?? []
         return Metadata(title: title, topics: topics, tags: tags)
+    }
+
+    private static func decodeObject(_ s: String) -> [String: Any]? {
+        guard let data = s.data(using: .utf8) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    /// Repair the one malformed shape these models actually produce: a bare
+    /// token inside an array, e.g. `"tags": [1:1]` — our own `1:1` vocabulary
+    /// entry emitted without quotes, which invalidates the whole object and
+    /// costs the meeting its topics and tags.
+    ///
+    /// Ollama gets `format: "json"` and cannot hit this; the cloud providers
+    /// have no such switch, so the repair stays as the shared backstop. Only
+    /// array elements are touched, and only when strict parsing already failed.
+    public static func quotingBareArrayTokens(_ json: String) -> String {
+        var out = ""
+        var inString = false, escaped = false, depth = 0
+        var token = ""
+
+        func flush() {
+            let t = token.trimmingCharacters(in: .whitespaces)
+            token = ""
+            guard !t.isEmpty else { return }
+            // Leave things that are already valid JSON scalars alone.
+            let literals: Set<String> = ["true", "false", "null"]
+            if literals.contains(t) || Double(t) != nil {
+                out += t
+            } else {
+                out += "\"\(t)\""
+            }
+        }
+
+        for ch in json {
+            if inString {
+                out.append(ch)
+                if escaped { escaped = false }
+                else if ch == "\\" { escaped = true }
+                else if ch == "\"" { inString = false }
+                continue
+            }
+            switch ch {
+            case "\"": inString = true; out.append(ch)
+            case "[": depth += 1; out.append(ch)
+            case "]":
+                if depth > 0 { flush() }
+                depth = max(0, depth - 1); out.append(ch)
+            case "," where depth > 0:
+                flush(); out.append(ch)
+            default:
+                if depth > 0 { token.append(ch) } else { out.append(ch) }
+            }
+        }
+        return out
     }
 
     public static func stripCodeFences(_ text: String) -> String {
