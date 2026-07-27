@@ -47,6 +47,10 @@ struct MeetingRecorderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var state = AppState()
 
+    init() {
+        Analytics.bootstrap()
+    }
+
     var body: some Scene {
         // Main app only. Onboarding is a separate NSPanel (see
         // OnboardingPanelController) so we never resize one window into another.
@@ -57,6 +61,12 @@ struct MeetingRecorderApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) { }
+            CommandGroup(after: .appInfo) {
+                Button("Проверить обновления…") {
+                    SparkleUpdater.shared.checkForUpdates()
+                }
+                .disabled(!SparkleUpdater.shared.canCheckForUpdates)
+            }
         }
 
         Settings {

@@ -118,7 +118,7 @@ private struct NoteInputView: View {
         HStack(spacing: 10) {
             Image(systemName: "square.and.pencil")
                 .foregroundStyle(.secondary)
-            TextField("Quick note…", text: $text)
+            TextField("Быстрая заметка…", text: $text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 15))
                 .focused($focused)

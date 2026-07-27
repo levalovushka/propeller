@@ -66,13 +66,13 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
         var warningMessage: String? {
             if callbackCount == 0 {
-                return "System audio stream started but no audio buffers arrived. Screen Recording permission may be stale — toggle it off and on in System Settings, then restart the app."
+                return "Поток системного звука запущен, но буферы не приходят. Разрешение «Запись экрана» могло устареть — выключите и включите его в Системных настройках, затем перезапустите приложение."
             }
             if pcmBufferCount == 0, conversionFailureCount > 0 {
-                return "System audio buffers arrived but could not be decoded. The remote side was not recorded."
+                return "Буферы системного звука пришли, но не удалось их декодировать. Удалённая сторона не записана."
             }
             if !capturedUsableStem {
-                return "System audio stem is empty — the remote side was not recorded."
+                return "Стем системного звука пуст — удалённая сторона не записана."
             }
             return nil
         }
@@ -491,11 +491,11 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         case alreadyRunning, noDisplays, screenRecordingDenied
         var errorDescription: String? {
             switch self {
-            case .alreadyRunning: return "System audio capture is already running"
-            case .noDisplays: return "No displays available for ScreenCaptureKit"
+            case .alreadyRunning: return "Захват системного звука уже идёт"
+            case .noDisplays: return "Нет дисплеев для ScreenCaptureKit"
             case .screenRecordingDenied:
-                return "Screen Recording permission not granted. If you recently rebuilt the app, the permission may be stale. Open System Settings > Privacy & Security > Screen Recording, toggle Propeller OFF then ON, and restart the app."
-            }
+                return "Нет разрешения «Запись экрана». Если недавно пересобирали приложение, разрешение могло устареть. Откройте Системные настройки → Конфиденциальность и безопасность → Запись экрана, выключите и включите Propeller, затем перезапустите приложение."
+        }
         }
     }
 }

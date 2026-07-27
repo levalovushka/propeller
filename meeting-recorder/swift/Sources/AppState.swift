@@ -48,13 +48,15 @@ class AppState: ObservableObject {
     }
     /// Must be decided before the first window paint — RootWindow swaps
     /// onboarding card vs main UI from this flag alone.
-    /// TEST: always true on launch (keep in sync with bootstrap gate below).
-    @Published var showOnboarding = true
+    @Published var showOnboarding = !Preferences.shared.onboardingCompleted
     private var didBootstrap = false
     @Published var showMicPermissionAlert = false
     @Published var zoomMeetingDetected = false
     @Published var diskSpaceWarning: String?
     @Published var showDiskSpaceAlert = false
+    /// Library size exceeded the nudge threshold (plan-v2 6.1 / GROW-11). Never auto-deletes.
+    @Published var showStorageNudgeAlert = false
+    @Published var storageLibraryBytes: Int64 = 0
     /// When set, MainView switches to this sidebar section (e.g. after pipeline).
     @Published var preferredSidebarSection: String?
     /// When set, RecordingDetailView selects this tab (`transcript` / `notes` / `recap`).
@@ -63,11 +65,15 @@ class AppState: ObservableObject {
 
     /// True when the current recording was started because of a Zoom meeting.
     private var recordingLinkedToZoom = false
-    /// User cancelled auto-recording for the current Zoom meeting — don't restart it.
+    /// User cancelled auto-recording for the current Zoom meeting — sticky until Zoom.app quits (G3).
     private var ignoredZoomMeeting = false
     /// Set right before an auto-start so `beginRecording` knows to post the
     /// interactive "recording started" notification (manual starts don't).
     private var autoStartedFromMeeting = false
+    /// Mutex so Stop / Discard / Zoom-end can't race two `recorder.stop()` calls.
+    private var isTerminalRecordingAction = false
+    /// Reconciler guard — one drain of pending `recorded` / `transcribed_raw` at a time.
+    private var isReconcilingPipeline = false
 
     // Stores & Services
     let recordingStore = RecordingStore()
@@ -94,16 +100,13 @@ class AppState: ObservableObject {
         recordingStore.load()
         recoveredCount = recordingStore.recoverInterruptedRecordings()
         Task { _ = await recordingStore.recoverMissingFinalMixes() }
-        // Retention auto-delete disabled (plan-v2 6.1 → size-nudge; plan-optimization A4).
+        refreshStorageNudge(presentAlert: true)
         NotificationManager.shared.configure()
         NotificationManager.shared.onCancelRecording = { [weak self] in
             self?.cancelRecording()
         }
 
-        // TEST: always show onboarding on launch. Revert to the guarded version
-        // below before shipping.
-        showOnboarding = true
-        // showOnboarding = !Preferences.shared.onboardingCompleted
+        showOnboarding = !Preferences.shared.onboardingCompleted
 
         setupZoomDetector()
 
@@ -124,6 +127,9 @@ class AppState: ObservableObject {
         // Rename leftover "Recording …" titles once a recap already exists
         // (titleManuallySet was falsely latched by the live title field).
         Task { await backfillAutoTitlesFromRecaps() }
+
+        // Advance recovered / queued recordings (G1/G2 / BUG-PIPE-01+05).
+        Task { await reconcilePendingPipeline() }
 
         // ASR sidecar starts lazily on first transcription (plan-optimization E1).
     }
@@ -155,10 +161,10 @@ class AppState: ObservableObject {
 
     private func handleZoomMeetingStarted() {
         zoomMeetingDetected = true
-        ignoredZoomMeeting = false
+        // Do NOT clear ignoredZoomMeeting here — sticky for this Zoom session (G3).
         guard Preferences.shared.zoomAutoRecordMode != .off else { return }
         guard !isRecording else {
-            // Already recording (manual) — still link so end-of-call can stop it.
+            // Already recording (manual) — still link so end-of-call can stop it (DECIDE-7).
             recordingLinkedToZoom = true
             return
         }
@@ -167,12 +173,15 @@ class AppState: ObservableObject {
 
     private func handleZoomMeetingEnded() {
         zoomMeetingDetected = false
-        ignoredZoomMeeting = false
         if isRecording && recordingLinkedToZoom {
-            statusMessage = "Zoom ended — stopping recording"
+            statusMessage = "Zoom завершён — останавливаем"
             stopRecording()
         }
         recordingLinkedToZoom = false
+        // Sticky ignore clears only when Zoom.app itself is gone (not on brief detector flaps).
+        if !ZoomMeetingDetector.isZoomAppRunning() {
+            ignoredZoomMeeting = false
+        }
     }
 
     /// Start recording a detected Zoom call without asking. A system
@@ -185,10 +194,12 @@ class AppState: ObservableObject {
     private func startRecordingFromZoom() {
         guard !isRecording else { return }
         guard !ignoredZoomMeeting else { return }
+        // Upcoming «Don't record» mutes this calendar session (DECIDE-6).
+        if CalendarService.shared.isMutedForRecording() { return }
         recordingLinkedToZoom = true
         autoStartedFromMeeting = true
         startRecording()
-        statusMessage = "Recording meeting"
+        statusMessage = "Идёт запись"
     }
 
     // MARK: - Disk Space Pre-flight
@@ -206,7 +217,7 @@ class AppState: ObservableObject {
         let path = Preferences.shared.recordingsPath
         if let bytes = availableBytes(at: path), bytes < 500_000_000 {
             let mbFree = bytes / 1_000_000
-            diskSpaceWarning = "Only \(mbFree) MB free on the recordings disk. Recording may fail if disk fills up."
+            diskSpaceWarning = "На диске свободно только \(mbFree) МБ. Запись может прерваться, если место закончится."
             return await presentDiskSpaceAlert()
         }
         return true
@@ -217,7 +228,7 @@ class AppState: ObservableObject {
         let path = NSHomeDirectory()
         if let bytes = availableBytes(at: path), bytes < 4_000_000_000 {
             let gbFree = Double(bytes) / 1_000_000_000
-            diskSpaceWarning = String(format: "Only %.1f GB free. Model download may require up to 3 GB.", gbFree)
+            diskSpaceWarning = String(format: "Свободно только %.1f ГБ. Для загрузки модели может понадобиться до 3 ГБ.", gbFree)
             return await presentDiskSpaceAlert()
         }
         return true
@@ -288,13 +299,22 @@ class AppState: ObservableObject {
 
     private func beginRecording() {
         transcript = ""
-        transcribeStep = .pending
-        saveStep = .pending
-        recapStep = .pending
+        // Don't wipe another meeting's in-flight pipeline lights (BUG-PIPE-03).
+        if busyRecordingID == nil {
+            transcribeStep = .pending
+            saveStep = .pending
+            recapStep = .pending
+        }
         recapSkipHint = nil
         lastRecapPath = nil
         statusMessage = ""
         micOnlyRecording = false
+
+        // Playback of an older meeting must not keep running under a new
+        // recording — it also poisons the next auto-load (release-review rev-7).
+        player.stop()
+
+        let recordingSource = autoStartedFromMeeting ? "zoom" : "manual"
 
         do {
             try recorder.start()
@@ -314,7 +334,7 @@ class AppState: ObservableObject {
             if Preferences.shared.calendarEnabled {
                 CalendarService.shared.load()
             }
-            let placeholder = "Recording \(DateFormatter.localizedString(from: now, dateStyle: .short, timeStyle: .short))"
+            let placeholder = "Запись \(DateFormatter.localizedString(from: now, dateStyle: .short, timeStyle: .short))"
             let title = CalendarService.shared.suggestedRecordingTitle(at: now) ?? placeholder
             let entry = RecordingEntry(
                 id: recorder.recordingID ?? "",
@@ -326,18 +346,30 @@ class AppState: ObservableObject {
                 transcript: nil
             )
             recordingStore.add(entry)
+            refreshStorageNudge(presentAlert: true)
             selectedRecordingID = entry.id
+            Analytics.recordingStarted(source: recordingSource)
             if title != placeholder {
                 NSLog("[AppState] Recording titled from calendar: \(title)")
             }
 
             // Auto-started from a detected meeting: notify so the user can decline.
+            // If notifications are denied, surface the window so Discard is reachable (BUG-REC-05).
             if autoStartedFromMeeting {
-                NotificationManager.shared.notifyRecordingStarted()
+                NotificationManager.shared.notifyRecordingStarted { [weak self] authorized in
+                    Task { @MainActor in
+                        guard let self, !authorized, self.isRecording else { return }
+                        self.surfaceMeetingUI(preferSummaryTab: false)
+                        NSApp.activate(ignoringOtherApps: true)
+                        for window in NSApp.windows where window.frame.width > 400 {
+                            window.makeKeyAndOrderFront(nil)
+                        }
+                    }
+                }
             }
             autoStartedFromMeeting = false
         } catch {
-            statusMessage = "Recording error: \(error.localizedDescription)"
+            statusMessage = "Ошибка записи: \(error.localizedDescription)"
             recordingLinkedToZoom = false
             autoStartedFromMeeting = false
         }
@@ -352,11 +384,16 @@ class AppState: ObservableObject {
     }
 
     private func cancelRecordingAndDiscard() async {
+        guard !isTerminalRecordingAction else { return }
+        isTerminalRecordingAction = true
+        defer { isTerminalRecordingAction = false }
+
         stopDisplayTimer()
         NoteOverlayController.shared.stopMonitoring()
         recorder.setMeteringDesired(false)
         isRecording = false
         recordingLinkedToZoom = false
+        player.stop()
         let id = recorder.recordingID
         do {
             _ = try await recorder.stop()
@@ -368,6 +405,7 @@ class AppState: ObservableObject {
             if selectedRecordingID == id { selectedRecordingID = nil }
         }
         statusMessage = ""
+        Analytics.recordingCancelled()
         NotificationManager.shared.clearRecordingNotification()
     }
 
@@ -385,6 +423,10 @@ class AppState: ObservableObject {
     /// When `autoTranscribe` is false, the transcribe chain is skipped (used on app quit).
     func stopRecordingAndWait(autoTranscribe: Bool = false) async {
         guard isRecording else { return }
+        guard !isTerminalRecordingAction else { return }
+        isTerminalRecordingAction = true
+        defer { isTerminalRecordingAction = false }
+
         stopDisplayTimer()
         NoteOverlayController.shared.stopMonitoring()
         recorder.setMeteringDesired(false)
@@ -392,30 +434,44 @@ class AppState: ObservableObject {
         let wasZoomLinked = recordingLinkedToZoom
         recordingLinkedToZoom = false
         NotificationManager.shared.clearRecordingNotification()
+        player.stop()
 
         do {
             let result = try await recorder.stop()
             recordingDuration = result.duration
-            recordingStore.update(id: result.id, status: "recorded", duration: result.duration)
+            let micOnly = recorder.lastStopWasMicOnly
+            recordingStore.update(
+                id: result.id,
+                status: "recorded",
+                duration: result.duration,
+                micOnlyCaptured: micOnly
+            )
             selectedRecordingID = result.id
 
-            // Ground truth from the .sys stem after stop — not mid-session banners.
-            micOnlyRecording = recorder.lastStopWasMicOnly
+            // Keep for live detail of *this* stop; badge itself reads entry.micOnlyCaptured.
+            micOnlyRecording = micOnly
+            Analytics.recordingFinished(duration: result.duration, micOnly: micOnly)
 
             if autoTranscribe {
                 let body = wasZoomLinked
-                    ? "Zoom recording stopped. Transcribing..."
-                    : "Recording stopped. Transcribing..."
+                    ? "Запись Zoom остановлена. Расшифровка…"
+                    : "Запись остановлена. Расшифровка…"
                 NotificationManager.shared.post(title: "Propeller", body: body)
-                await runTranscribe()
+                await enqueueOrRunTranscribe(recordingID: result.id)
             }
         } catch {
-            statusMessage = "Stop error: \(error.localizedDescription)"
+            statusMessage = "Ошибка остановки: \(error.localizedDescription)"
             NSLog("[AppState] stopRecording error: \(error)")
         }
     }
 
     // MARK: - Display Timer
+
+    /// Hard ceiling for a single recording (decision 2026-07-25). A meeting that
+    /// never gets a detected end (Zoom left open, detector wedged) would
+    /// otherwise record until the disk fills. Stops through the normal path, so
+    /// the recording is kept and the pipeline runs on it.
+    static let maxRecordingSeconds: TimeInterval = 8 * 3600
 
     private func startDisplayTimer() {
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
@@ -424,6 +480,11 @@ class AppState: ObservableObject {
                 let secs = self.recorder.elapsed
                 self.elapsedSeconds = secs
                 self.elapsedString = Self.formatElapsed(secs)
+
+                if secs >= Self.maxRecordingSeconds, self.isRecording {
+                    self.statusMessage = "Запись остановлена — достигнут предел 8 часов"
+                    self.stopRecording()
+                }
             }
         }
         // Clock display can coalesce wakeups — 0.3s is invisible to the user (S6).
@@ -456,24 +517,30 @@ class AppState: ObservableObject {
         selectedRecordingID = entry.id
         transcript = entry.transcript ?? ""
         recordingDuration = entry.duration
-        // transcribed_raw: ASR done but diarization pending — show as "partially done"
-        if entry.status == "transcribed_raw" {
-            transcribeStep = .pending
-        } else {
-            transcribeStep = entry.transcript != nil ? .done : .pending
-        }
-        saveStep = entry.status == "saved" ? .done : .pending
-        if let recapURL = Self.recapURL(for: entry), FileManager.default.fileExists(atPath: recapURL.path) {
-            recapStep = .done
-            lastRecapPath = recapURL.path
-            recapSkipHint = nil
-        } else {
-            recapStep = .pending
-            lastRecapPath = nil
-            recapSkipHint = nil
+        micOnlyRecording = entry.micOnlyCaptured == true
+
+        // While another meeting owns the pipeline, keep global step lights for that
+        // job — per-row UI uses busyRecordingID (BUG-PIPE-02).
+        let pipelineOwnedElsewhere = busyRecordingID != nil && busyRecordingID != entry.id
+        if !pipelineOwnedElsewhere {
+            if entry.status == "transcribed_raw" {
+                transcribeStep = .pending
+            } else {
+                transcribeStep = entry.transcript != nil ? .done : .pending
+            }
+            saveStep = entry.status == "saved" ? .done : .pending
+            if let recapURL = Self.recapURL(for: entry), FileManager.default.fileExists(atPath: recapURL.path) {
+                recapStep = .done
+                lastRecapPath = recapURL.path
+                recapSkipHint = nil
+            } else {
+                recapStep = .pending
+                lastRecapPath = nil
+                recapSkipHint = nil
+            }
         }
         statusMessage = entry.status == "transcribed_raw"
-            ? "Diarization pending — tap Complete Transcription"
+            ? "Диаризация не завершена — нажмите «Завершить»"
             : ""
     }
 
@@ -484,25 +551,56 @@ class AppState: ObservableObject {
             .appendingPathComponent(filename)
     }
 
-    /// True when a recap markdown file exists for this recording.
-    func hasRecap(for entry: RecordingEntry) -> Bool {
-        guard let url = Self.recapURL(for: entry) else { return false }
-        if FileManager.default.fileExists(atPath: url.path) { return true }
-        // Title may have been renamed after the file was written — scan by id prefix.
+    /// Resolve `*-recap.md` on disk (tolerates title rename after write).
+    static func resolvedRecapURL(for entry: RecordingEntry) -> URL? {
+        if let url = recapURL(for: entry), FileManager.default.fileExists(atPath: url.path) {
+            return url
+        }
         let dir = URL(fileURLWithPath: Preferences.shared.meetingsPath)
         guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
-            return false
+            return nil
         }
         let prefix = entry.id + "-"
-        return files.contains { file in
+        return files.first { file in
             file.pathExtension == "md"
                 && file.lastPathComponent.hasPrefix(prefix)
                 && file.lastPathComponent.hasSuffix("-recap.md")
         }
     }
 
+    static func loadRecapText(for entry: RecordingEntry) -> String? {
+        guard let url = resolvedRecapURL(for: entry) else { return nil }
+        return try? String(contentsOf: url, encoding: .utf8)
+    }
+
+    /// True when a recap markdown file exists for this recording.
+    func hasRecap(for entry: RecordingEntry) -> Bool {
+        Self.resolvedRecapURL(for: entry) != nil
+    }
+
+    /// Recompute library audio size; optionally surface the one-shot nudge alert.
+    func refreshStorageNudge(presentAlert: Bool = false) {
+        storageLibraryBytes = recordingStore.totalLibraryBytes()
+        let threshold = Preferences.shared.storageNudgeThresholdBytes
+        guard storageLibraryBytes > threshold else {
+            showStorageNudgeAlert = false
+            return
+        }
+        if presentAlert, !Preferences.shared.storageNudgeSnoozed {
+            showStorageNudgeAlert = true
+        }
+    }
+
+    func snoozeStorageNudge() {
+        Preferences.shared.storageNudgeSnoozed = true
+        showStorageNudgeAlert = false
+    }
+
     /// Bring the main window forward and open the Summary tab after auto-pipeline.
-    private func surfaceSummaryUI() {
+    /// Skipped while another recording is live so we don't steal focus mid-call (BUG-PIPE-04).
+    private func surfaceSummaryUI(for recordingID: String) {
+        guard !isRecording else { return }
+        guard selectedRecordingID == recordingID || selectedRecordingID == nil else { return }
         preferredSidebarSection = "meetings"
         preferredDetailTab = "recap"
         NSApp.setActivationPolicy(.regular)
@@ -560,7 +658,7 @@ class AppState: ObservableObject {
         let existing = recordingStore.recording(for: id)?.notes ?? ""
         let combined = existing.isEmpty ? line : existing + "\n" + line
         recordingStore.update(id: id, notes: .some(combined))
-        NotificationManager.shared.post(title: "Propeller", body: "Note saved")
+        NotificationManager.shared.post(title: "Propeller", body: "Заметка сохранена")
     }
 
     // MARK: - Summary backfill (no-button path)
@@ -724,25 +822,73 @@ class AppState: ObservableObject {
         player.stop()
         recordingStore.remove(entry)
         if selectedRecordingID == entry.id { selectedRecordingID = nil }
+        refreshStorageNudge(presentAlert: false)
+    }
+
+    func deleteAudioKeepingMeeting(_ entry: RecordingEntry) {
+        player.stop()
+        recordingStore.deleteAudioKeepingMeeting(entry)
+        refreshStorageNudge(presentAlert: false)
     }
 
     // MARK: - Pipeline
 
-    /// Guard against concurrent transcriptions if the user taps Re-transcribe mid-run.
+    /// Guard against concurrent ASR/diarization. Cleared before save/recap so a
+    /// second Stop can queue (BUG-PIPE-01 / G1).
     private var isTranscribing = false
 
-    func runTranscribe() async {
+    /// Queue a transcription if one is already running; otherwise start immediately.
+    private func enqueueOrRunTranscribe(recordingID: String) async {
         if isTranscribing {
-            statusMessage = "Transcription already in progress"
+            statusMessage = "В очереди на расшифровку…"
+            debugLog("[pipeline] queued \(recordingID) — ASR busy")
             return
         }
-        guard let rec = selectedRecording else { return }
-        // Snapshot identity for the whole pipeline — selection may change mid-run (C1).
+        await runTranscribe(recordingID: recordingID)
+    }
+
+    /// Advance the oldest `recorded` / `transcribed_raw` meeting one step.
+    /// Called after bootstrap and after each pipeline completion (G2 / BUG-PIPE-05).
+    func reconcilePendingPipeline() async {
+        guard !isReconcilingPipeline else { return }
+        guard !isRecording, !isTranscribing else { return }
+        isReconcilingPipeline = true
+        defer { isReconcilingPipeline = false }
+
+        let pending = recordingStore.recordings
+            .filter { $0.status == "recorded" || $0.status == "transcribed_raw" }
+            .sorted { $0.date < $1.date }
+        guard let next = pending.first else { return }
+
+        debugLog("[pipeline] reconcile → \(next.id) status=\(next.status)")
+        if next.status == "transcribed_raw" {
+            await completeDiarization(recordingID: next.id)
+        } else {
+            await runTranscribe(recordingID: next.id)
+        }
+    }
+
+    func runTranscribe(recordingID explicitID: String? = nil) async {
+        if isTranscribing {
+            if explicitID != nil {
+                statusMessage = "В очереди на расшифровку…"
+            } else {
+                statusMessage = "Расшифровка уже идёт"
+            }
+            return
+        }
+        let rec: RecordingEntry?
+        if let explicitID {
+            rec = recordingStore.recording(for: explicitID)
+        } else {
+            rec = selectedRecording
+        }
+        guard let rec else { return }
         let recordingID = rec.id
         let language = rec.language
         let durationAtStart = rec.duration
         guard let audioURL = recordingStore.audioURL(for: rec) else {
-            statusMessage = "Audio file not found"
+            statusMessage = "Аудио не найдено"
             return
         }
 
@@ -751,22 +897,18 @@ class AppState: ObservableObject {
 
         isTranscribing = true
         beginPipelineWork(recordingID)
-        defer {
-            isTranscribing = false
-            endPipelineWork(recordingID)
-            transcriptionService.releaseHeavyResources()
-        }
 
         transcribeStep = .running
-        statusMessage = "Loading models..."
+        statusMessage = "Загрузка моделей…"
         modelDownloadProgress = nil
         recordingStore.update(id: recordingID, status: "transcribing")
+
+        var saveAfterASR: (transcript: String, duration: TimeInterval)?
 
         do {
             let progressCb: (String) -> Void = { [weak self] progress in
                 Task { @MainActor in
                     guard let self else { return }
-                    // Keep top-bar status alive even if the user left the detail.
                     self.statusMessage = progress
                 }
             }
@@ -777,7 +919,6 @@ class AppState: ObservableObject {
                 }
             }
 
-            // Phase 1: gigastt ASR (the expensive step)
             let rawResult = try await transcriptionService.transcribeAudio(
                 audioURL: audioURL,
                 languageOverride: language,
@@ -785,8 +926,6 @@ class AppState: ObservableObject {
                 downloadProgress: downloadCb
             )
 
-            // Checkpoint: save raw transcript + serialized segments so a crash
-            // during diarization doesn't lose the expensive ASR output.
             let rawText = rawResult.rawText
             let segmentsJSON: String? = {
                 let encoder = JSONEncoder()
@@ -802,7 +941,6 @@ class AppState: ObservableObject {
 
             modelDownloadProgress = nil
 
-            // Phase 2: Diarization
             let result = try await transcriptionService.diarize(
                 audioURL: audioURL,
                 asrSegments: rawResult.segments,
@@ -818,68 +956,81 @@ class AppState: ObservableObject {
                 mergedSegmentsJSON: .some(segJSON)
             )
 
-            // Always clear .running — leaving it latched when the user navigated
-            // away made the UI look forever-busy.
             transcribeStep = .done
             if selectedRecordingID == recordingID {
                 transcript = result.transcript
                 statusMessage = ""
             }
+            Analytics.transcriptionFinished(ok: true)
 
             let duration = recordingStore.recording(for: recordingID)?.duration ?? durationAtStart
-            await runSave(
-                recordingID: recordingID,
-                transcriptText: result.transcript,
-                duration: duration
-            )
+            saveAfterASR = (result.transcript, duration)
         } catch {
             transcribeStep = .failed
             modelDownloadProgress = nil
+            Analytics.transcriptionFinished(ok: false, reason: "error")
             if selectedRecordingID == recordingID {
                 statusMessage = error.localizedDescription
             }
-            // If we have a raw transcript (Phase 1 succeeded), keep it as transcribed_raw
             if let current = recordingStore.recording(for: recordingID), current.status == "transcribed_raw" {
-                // Don't regress — keep the checkpoint
+                // Keep checkpoint
             } else {
                 recordingStore.update(id: recordingID, status: "recorded")
             }
             NSLog("[AppState] Transcription FAILED: \(error)")
         }
+
+        // Release ASR lock before save/recap so a second Stop can start ASR.
+        isTranscribing = false
+        endPipelineWork(recordingID)
+        transcriptionService.releaseHeavyResources()
+
+        if let saveAfterASR {
+            await runSave(
+                recordingID: recordingID,
+                transcriptText: saveAfterASR.transcript,
+                duration: saveAfterASR.duration
+            )
+        } else {
+            await reconcilePendingPipeline()
+        }
     }
 
     /// Resume diarization for a recording that completed ASR but crashed before
     /// diarization finished. Deserializes the stored segments and runs only Phase 2.
-    func completeDiarization() async {
+    func completeDiarization(recordingID explicitID: String? = nil) async {
         if isTranscribing {
-            statusMessage = "Transcription already in progress"
+            statusMessage = "Расшифровка уже идёт"
             return
         }
-        guard let rec = selectedRecording else { return }
+        let rec: RecordingEntry?
+        if let explicitID {
+            rec = recordingStore.recording(for: explicitID)
+        } else {
+            rec = selectedRecording
+        }
+        guard let rec else { return }
         let recordingID = rec.id
         let durationAtStart = rec.duration
         guard let audioURL = recordingStore.audioURL(for: rec) else {
-            statusMessage = "Audio file not found — cannot complete diarization"
+            statusMessage = "Аудио не найдено — нельзя завершить диаризацию"
             return
         }
         guard let json = rec.rawSegmentsJSON,
               let data = json.data(using: .utf8),
               let segments = try? JSONDecoder().decode([ASRSegment].self, from: data) else {
-            statusMessage = "Stored segments not found — re-transcribe instead"
+            statusMessage = "Сегменты не найдены — запустите расшифровку заново"
             return
         }
 
         isTranscribing = true
         beginPipelineWork(recordingID)
-        defer {
-            isTranscribing = false
-            endPipelineWork(recordingID)
-            transcriptionService.releaseHeavyResources()
-        }
 
         transcribeStep = .running
-        statusMessage = "Identifying speakers..."
+        statusMessage = "Определяем спикеров…"
         recordingStore.update(id: recordingID, status: "transcribing")
+
+        var saveAfter: (transcript: String, duration: TimeInterval)?
 
         do {
             let result = try await transcriptionService.diarize(
@@ -906,20 +1057,32 @@ class AppState: ObservableObject {
                 transcript = result.transcript
                 statusMessage = ""
             }
+            Analytics.transcriptionFinished(ok: true, reason: "diarize_resume")
 
             let duration = recordingStore.recording(for: recordingID)?.duration ?? durationAtStart
-            await runSave(
-                recordingID: recordingID,
-                transcriptText: result.transcript,
-                duration: duration
-            )
+            saveAfter = (result.transcript, duration)
         } catch {
             transcribeStep = .failed
+            Analytics.transcriptionFinished(ok: false, reason: "diarize")
             if selectedRecordingID == recordingID {
                 statusMessage = error.localizedDescription
             }
             recordingStore.update(id: recordingID, status: "transcribed_raw")
             NSLog("[AppState] Diarization FAILED: \(error)")
+        }
+
+        isTranscribing = false
+        endPipelineWork(recordingID)
+        transcriptionService.releaseHeavyResources()
+
+        if let saveAfter {
+            await runSave(
+                recordingID: recordingID,
+                transcriptText: saveAfter.transcript,
+                duration: saveAfter.duration
+            )
+        } else {
+            await reconcilePendingPipeline()
         }
     }
 
@@ -949,7 +1112,7 @@ class AppState: ObservableObject {
             )
             recordingStore.update(id: recordingID, status: "saved")
             saveStep = .done
-            NotificationManager.shared.post(title: "Propeller", body: "Saved: \(URL(fileURLWithPath: path).lastPathComponent)")
+            NotificationManager.shared.post(title: "Propeller", body: "Сохранено: \(URL(fileURLWithPath: path).lastPathComponent)")
             await runRecap(
                 title: rec.title,
                 transcriptPath: path,
@@ -978,7 +1141,7 @@ class AppState: ObservableObject {
         beginPipelineWork(recordingID)
         defer { endPipelineWork(recordingID) }
         recapStep = .running
-        statusMessage = "Generating recap…"
+        statusMessage = "Генерируем саммари…"
         if selectedRecordingID == recordingID {
             lastRecapPath = nil
         }
@@ -988,8 +1151,9 @@ class AppState: ObservableObject {
             md = try String(contentsOfFile: transcriptPath, encoding: .utf8)
         } catch {
             recapStep = .failed
+            Analytics.recapFinished(ok: false, skip: "read_error")
             if selectedRecordingID == recordingID {
-                statusMessage = "Could not read transcript for recap"
+                statusMessage = "Не удалось прочитать транскрипт для саммари"
             }
             return
         }
@@ -1008,6 +1172,13 @@ class AppState: ObservableObject {
             switch result {
             case .failure(let reason):
                 recapStep = .pending
+                let skip: String
+                switch reason {
+                case .disabled: skip = "disabled"
+                case .noProvider: skip = "no_provider"
+                case .emptyTranscript: skip = "empty"
+                }
+                Analytics.recapFinished(ok: false, skip: skip)
                 if selectedRecordingID == recordingID {
                     switch reason {
                     case .disabled:
@@ -1015,30 +1186,36 @@ class AppState: ObservableObject {
                         statusMessage = ""
                         surfaceMeetingUI(preferSummaryTab: false)
                     case .noProvider:
-                        recapSkipHint = "Summary skipped — start Ollama or add an API key in Settings"
+                        recapSkipHint = "Нет провайдера саммари — запустите Ollama или добавьте API-ключ в Настройках"
                         statusMessage = recapSkipHint ?? ""
+                        NotificationManager.shared.post(
+                            title: "Propeller",
+                            body: recapSkipHint ?? "Саммари пропущено"
+                        )
                     case .emptyTranscript:
-                        recapSkipHint = "Summary skipped — empty transcript"
+                        recapSkipHint = "Саммари пропущено — пустой транскрипт"
                         statusMessage = recapSkipHint ?? ""
                     }
                     surfaceMeetingUI(preferSummaryTab: false)
                 }
             case .success(let recap):
                 recapStep = .done
+                Analytics.recapFinished(ok: true, backend: recap.provider)
                 if selectedRecordingID == recordingID {
                     lastRecapPath = recap.path
                     recapSkipHint = nil
-                    statusMessage = "Summary via \(recap.provider)"
-                    surfaceSummaryUI()
+                    statusMessage = "Саммари через \(recap.provider)"
                 }
+                surfaceSummaryUI(for: recordingID)
                 NotificationManager.shared.post(
                     title: "Propeller",
-                    body: "Summary ready — notes and summary are in the meeting."
+                    body: "Саммари готово — в карточке встречи."
                 )
                 await generateMeetingMetadata(recordingID: recordingID, summary: recap.body)
             }
         } catch {
             recapStep = .failed
+            Analytics.recapFinished(ok: false)
             if selectedRecordingID == recordingID {
                 statusMessage = error.localizedDescription
                 recapSkipHint = error.localizedDescription
@@ -1046,6 +1223,7 @@ class AppState: ObservableObject {
         }
 
         startSummaryBackfill()
+        await reconcilePendingPipeline()
     }
 
     /// Nesting depth for begin/end around transcribe → save → recap.
@@ -1118,7 +1296,7 @@ class AppState: ObservableObject {
 
     /// Placeholder stamped at record start when no calendar event matched.
     static func isAutoGeneratedTitle(_ title: String) -> Bool {
-        title.hasPrefix("Recording ")
+        title.hasPrefix("Запись ") || title.hasPrefix("Recording ")
     }
 
     func reprocess() async {

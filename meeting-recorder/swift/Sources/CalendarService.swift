@@ -13,12 +13,12 @@ struct UpcomingMeeting: Identifiable, Equatable {
     let attendees: [String]
     let hasVideoLink: Bool
 
-    /// "Today · 16:45", "Tomorrow · 16:45", or "Fri · 16:45".
+    /// "Сегодня · 16:45", "Завтра · 16:45", or "пт · 16:45".
     var whenLabel: String {
         let cal = Calendar.current
         let time = Self.timeFormatter.string(from: start)
-        if cal.isDateInToday(start) { return "Today · \(time)" }
-        if cal.isDateInTomorrow(start) { return "Tomorrow · \(time)" }
+        if cal.isDateInToday(start) { return "Сегодня · \(time)" }
+        if cal.isDateInTomorrow(start) { return "Завтра · \(time)" }
         return "\(Self.weekdayFormatter.string(from: start)) · \(time)"
     }
 
@@ -26,7 +26,10 @@ struct UpcomingMeeting: Identifiable, Equatable {
         let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
     }()
     private static let weekdayFormatter: DateFormatter = {
-        let f = DateFormatter(); f.dateFormat = "EEE"; return f
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "ru_RU")
+        f.dateFormat = "EEE"
+        return f
     }()
 }
 
@@ -37,8 +40,10 @@ final class CalendarService: ObservableObject {
     private let store = EKEventStore()
     @Published var upcoming: [UpcomingMeeting] = []
     @Published var accessGranted = false
-    /// Events the user dismissed from the Upcoming list this session.
-    private var dismissed: Set<String> = []
+    /// Events muted via Upcoming «Don't record» this session (DECIDE-6: mute session).
+    /// Kept even after removal from `upcoming` so Zoom auto-record can still match them.
+    private var mutedEventIDs: Set<String> = []
+    private var mutedMeetings: [String: UpcomingMeeting] = [:]
 
     /// Prompt for calendar access (if needed) and load upcoming events.
     func enableAndLoad() async {
@@ -79,19 +84,38 @@ final class CalendarService: ObservableObject {
             .map { ev in
                 UpcomingMeeting(
                     id: ev.eventIdentifier ?? UUID().uuidString,
-                    title: (ev.title?.isEmpty == false ? ev.title! : "Untitled"),
+                    title: (ev.title?.isEmpty == false ? ev.title! : "Без названия"),
                     start: ev.startDate,
                     end: ev.endDate,
                     attendees: (ev.attendees ?? []).compactMap { $0.name },
                     hasVideoLink: Self.hasVideoLink(ev)
                 )
             }
-            .filter { !dismissed.contains($0.id) }
+            .filter { !mutedEventIDs.contains($0.id) }
     }
 
+    /// Hide from Upcoming and mute Zoom auto-record while this event is in progress
+    /// (or starting within 15 minutes).
     func dismiss(_ meeting: UpcomingMeeting) {
-        dismissed.insert(meeting.id)
+        mutedEventIDs.insert(meeting.id)
+        mutedMeetings[meeting.id] = meeting
         upcoming.removeAll { $0.id == meeting.id }
+    }
+
+    /// True when the user muted the calendar meeting that covers `date`.
+    func isMutedForRecording(at date: Date = Date()) -> Bool {
+        pruneMuted(at: date)
+        for m in mutedMeetings.values {
+            if m.start <= date && date < m.end { return true }
+            let delta = m.start.timeIntervalSince(date)
+            if delta >= 0 && delta <= 15 * 60 { return true }
+        }
+        return false
+    }
+
+    private func pruneMuted(at date: Date) {
+        mutedMeetings = mutedMeetings.filter { $0.value.end > date.addingTimeInterval(-60) }
+        mutedEventIDs = Set(mutedMeetings.keys)
     }
 
     /// Best calendar event to name a recording started at `date`.

@@ -11,6 +11,9 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.12.0"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.8.1"),
+        .package(url: "https://github.com/pointfreeco/swift-snapshot-testing", from: "1.17.0"),
+        .package(url: "https://github.com/TelemetryDeck/SwiftSDK", from: "2.0.0"),
     ],
     targets: [
         .target(
@@ -42,6 +45,8 @@ let package = Package(
                 "PropellerMetrics",
                 "PropellerUI",
                 .product(name: "FluidAudio", package: "FluidAudio"),
+                .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "TelemetryDeck", package: "SwiftSDK"),
             ],
             path: "Sources"
         ),
@@ -71,8 +76,13 @@ let package = Package(
         ),
         .testTarget(
             name: "MeetingRecorderTests",
-            dependencies: ["PropellerPure"],
-            path: "Tests/MeetingRecorderTests"
+            dependencies: [
+                "PropellerPure",
+                "PropellerUI",
+                .product(name: "SnapshotTesting", package: "swift-snapshot-testing"),
+            ],
+            path: "Tests/MeetingRecorderTests",
+            exclude: ["README.md"]
         ),
     ]
 )

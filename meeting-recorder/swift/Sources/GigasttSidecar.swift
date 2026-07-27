@@ -135,7 +135,7 @@ final class GigasttSidecar: @unchecked Sendable {
         if await probeHealth() {
             if isProcessAlive() {
                 lock.lock(); ready = true; lastFailureMessage = nil; lock.unlock()
-                statusCallback?("gigastt ready")
+                statusCallback?("gigastt готов")
                 downloadProgress?(1.0)
                 return
             }
@@ -151,7 +151,7 @@ final class GigasttSidecar: @unchecked Sendable {
         try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
 
         if !modelsPresent(at: modelDir) {
-            statusCallback?("Downloading GigaAM model…")
+            statusCallback?("Загрузка GigaAM…")
             try await downloadModels(
                 binary: binary,
                 modelDir: modelDir,
@@ -162,7 +162,7 @@ final class GigasttSidecar: @unchecked Sendable {
             downloadProgress?(1.0)
         }
 
-        statusCallback?("Starting gigastt…")
+        statusCallback?("Запуск gigastt…")
         try await PipelineMetrics.interval(PipelineMetrics.sidecar, PipelineMetrics.spawn) {
             try spawnServer(binary: binary, modelDir: modelDir)
             try await waitUntilHealthy(timeout: 180, statusCallback: statusCallback)
@@ -173,7 +173,7 @@ final class GigasttSidecar: @unchecked Sendable {
         consecutiveCrashRestarts = 0
         lastFailureMessage = nil
         lock.unlock()
-        statusCallback?("gigastt ready")
+        statusCallback?("gigastt готов")
         downloadProgress?(1.0)
         NSLog("[GigasttSidecar] ready on \(Self.baseURL.absoluteString)")
     }
@@ -297,7 +297,7 @@ final class GigasttSidecar: @unchecked Sendable {
                 throw SidecarError.exitedEarly
             }
             if attempt % 5 == 0 {
-                statusCallback?("Loading gigastt model…")
+                statusCallback?("Загрузка модели gigastt…")
             }
             try await Task.sleep(nanoseconds: 1_000_000_000)
         }
@@ -388,7 +388,7 @@ final class GigasttSidecar: @unchecked Sendable {
                                 downloadProgress?(min(max(frac, 0), 0.99))
                             }
                             if let msg = obj["message"] as? String ?? obj["file"] as? String {
-                                statusCallback?("Downloading: \(msg)")
+                                statusCallback?("Загрузка: \(msg)")
                             }
                         }
                     }
@@ -563,16 +563,16 @@ final class GigasttSidecar: @unchecked Sendable {
         var errorDescription: String? {
             switch self {
             case .binaryNotFound:
-                return "gigastt binary not found in the app bundle."
+                return "Бинарник gigastt не найден в бандле приложения."
             case .healthTimeout:
-                return "gigastt did not become ready in time."
+                return "gigastt не успел стать готовым."
             case .exitedEarly:
-                return "gigastt exited before becoming ready. See Console / Application Support log."
+                return "gigastt завершился до готовности. Смотрите Console / лог Application Support."
             case .downloadFailed(let detail):
-                return "Failed to download GigaAM model: \(detail.prefix(200))"
+                return "Не удалось скачать модель GigaAM: \(detail.prefix(200))"
             case .portOccupied(let port):
-                return "Port \(port) is already serving gigastt from another process. Quit it or free the port, then retry."
-            }
+                return "Порт \(port) уже занят другим процессом gigastt. Закройте его или освободите порт и повторите."
+        }
         }
     }
 }

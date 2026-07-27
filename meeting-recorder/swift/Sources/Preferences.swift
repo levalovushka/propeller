@@ -150,21 +150,30 @@ class Preferences {
         }
     }
 
-    // MARK: - Retention
+    // MARK: - Storage nudge (plan-v2 6.1 — never auto-deletes)
 
-    var retentionEnabled: Bool {
-        get { retentionDays > 0 }
-        set { retentionDays = newValue ? 30 : 0 }
+    /// Soft library-size threshold. Default 5 GB (DECIDE-4).
+    var storageNudgeThresholdBytes: Int64 {
+        get {
+            let v = defaults.object(forKey: "storageNudgeThresholdBytes") as? Int64
+            return v ?? (5 * 1024 * 1024 * 1024)
+        }
+        set { defaults.set(newValue, forKey: "storageNudgeThresholdBytes") }
     }
 
-    var retentionDays: Int {
-        get { defaults.integer(forKey: "retentionDays") }
-        set { defaults.set(newValue, forKey: "retentionDays") }
+    /// User tapped "Later" — don't re-alert until they clear the snooze (Settings) or shrink below threshold.
+    var storageNudgeSnoozed: Bool {
+        get { defaults.bool(forKey: "storageNudgeSnoozed") }
+        set { defaults.set(newValue, forKey: "storageNudgeSnoozed") }
     }
 
-    var retentionMode: String {
-        get { defaults.string(forKey: "retentionMode") ?? "audio" }
-        set { defaults.set(newValue, forKey: "retentionMode") }
+    // MARK: - Analytics (TelemetryDeck)
+
+    /// Product signals for dogfood iteration. Default on; Settings can opt out.
+    /// Never includes transcripts, paths, titles, or free text.
+    var analyticsEnabled: Bool {
+        get { defaults.object(forKey: "analyticsEnabled") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "analyticsEnabled") }
     }
 
     // MARK: - Onboarding

@@ -5,6 +5,9 @@ import PropellerUI
 /// Recording phase — same meeting chrome, tabs hidden (reqs 632:236).
 struct RecordingInProgressView: View {
     @ObservedObject var state: AppState
+    /// Observed directly: `AppState.recorder` only republishes when the whole
+    /// object is replaced, so level meters updated ~1×/s instead of 10 (P3).
+    @ObservedObject var recorder: AudioRecorder
 
     @State private var liveTitle: String = ""
     @State private var liveNotes: String = ""
@@ -28,6 +31,9 @@ struct RecordingInProgressView: View {
             liveTitle = state.selectedRecording?.title ?? ""
             liveNotes = state.selectedRecording?.notes ?? ""
         }
+        .onChange(of: state.selectedRecording?.notes) { _, stored in
+            adoptExternalNotes(stored)
+        }
         .onDisappear { flushNotes() }
     }
 
@@ -36,7 +42,7 @@ struct RecordingInProgressView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
-                TextField("Untitled", text: $liveTitle)
+                TextField("Без названия", text: $liveTitle)
                     .textFieldStyle(.plain)
                     .font(.system(size: 40, weight: .semibold))
                     .tracking(-0.8)
@@ -77,18 +83,18 @@ struct RecordingInProgressView: View {
                     .contentTransition(.numericText())
 
                 levelChip(
-                    label: "Mic",
-                    level: state.recorder.micLevelHistory.last ?? 0,
+                    label: "Мик",
+                    level: recorder.micLevelHistory.last ?? 0,
                     tint: .red,
-                    warning: state.recorder.micCaptureWarning != nil
+                    warning: recorder.micCaptureWarning != nil
                 )
 
                 if Preferences.shared.captureSystemAudio {
                     levelChip(
-                        label: "System",
-                        level: state.recorder.systemLevelHistory.last ?? 0,
+                        label: "Система",
+                        level: recorder.systemLevelHistory.last ?? 0,
                         tint: .cyan,
-                        warning: state.recorder.systemAudioWarning != nil
+                        warning: recorder.systemAudioWarning != nil
                     )
                 }
 
@@ -97,16 +103,16 @@ struct RecordingInProgressView: View {
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(Color.white.opacity(0.40))
 
-            if let micWarning = state.recorder.micCaptureWarning {
-                warningBanner(title: "Microphone not recording", detail: micWarning, tint: .red) {
+            if let micWarning = recorder.micCaptureWarning {
+                warningBanner(title: "Микрофон не пишет", detail: micWarning, tint: .red) {
                     state.openMicrophoneSettings()
                 }
-            } else if state.recorder.systemAudioWarning != nil, Preferences.shared.captureSystemAudio {
+            } else if recorder.systemAudioWarning != nil, Preferences.shared.captureSystemAudio {
                 // Only shown when capture failed to start (permissions / SCK throw).
                 // Quiet Zoom or a live System meter never use this path.
                 warningBanner(
-                    title: "Can’t start system audio",
-                    detail: "Screen Recording permission may be missing or stale. Mic is still recording.",
+                    title: "Не удалось записать систему",
+                    detail: "Нет доступа к записи экрана или он устарел. Мик пишет.",
                     tint: .orange
                 ) {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
@@ -152,7 +158,7 @@ struct RecordingInProgressView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
-            Button("Settings", action: action)
+            Button("Настройки", action: action)
                 .buttonStyle(.plain)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Tokens.Ink.primary)
@@ -168,7 +174,7 @@ struct RecordingInProgressView: View {
 
     private var notepad: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Notes")
+            Text("Заметки")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(Color.white.opacity(0.30))
                 .padding(.horizontal, 12)
@@ -198,14 +204,29 @@ struct RecordingInProgressView: View {
 
     // MARK: - Stop
 
+    @State private var showingDiscardConfirm = false
+
     private var stopBar: some View {
-        HStack {
+        HStack(spacing: 12) {
             Spacer()
+            Button {
+                showingDiscardConfirm = true
+            } label: {
+                Text("Сбросить")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Tokens.Ink.secondary)
+                    .padding(.horizontal, 16)
+                    .frame(height: 36)
+                    .background(Color.white.opacity(0.08), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Стоп и удалить")
+
             Button {
                 flushNotes()
                 state.stopRecording()
             } label: {
-                Text("Stop")
+                Text("Стоп")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Tokens.Ink.primary)
                     .padding(.horizontal, 16)
@@ -214,19 +235,46 @@ struct RecordingInProgressView: View {
             }
             .buttonStyle(.plain)
             .keyboardShortcut(".", modifiers: .command)
-            .help("Stop and process")
+            .help("Стоп и обработать")
             Spacer()
         }
         .padding(.vertical, 16)
+        .confirmationDialog(
+            "Сбросить запись?",
+            isPresented: $showingDiscardConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Стоп и сбросить", role: .destructive) {
+                flushNotes()
+                state.cancelRecording()
+            }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text("Аудио и заметки этой записи удалятся.")
+        }
+    }
+
+    /// The ⌃⌥N overlay appends straight to the store while this editor holds its
+    /// own copy of the text. Without adopting that append, the flush on Stop
+    /// wrote the stale copy back and the overlay note vanished (release-review
+    /// rev-6 — the one confirmed data loss). Only a pure append is adopted, so
+    /// this can never clobber what the user is typing.
+    private func adoptExternalNotes(_ stored: String?) {
+        let stored = stored ?? ""
+        guard stored != liveNotes,
+              stored.count > liveNotes.count,
+              stored.hasPrefix(liveNotes) else { return }
+        liveNotes = stored
     }
 
     private func flushNotes() {
         Self.pendingNotesSave?.cancel()
         Self.pendingNotesSave = nil
-        Self.pendingNotesCommit?()
         Self.pendingNotesCommit = nil
-        if let entry = state.selectedRecording {
-            state.updateNotes(entry, to: liveNotes)
-        }
+        guard let entry = state.selectedRecording else { return }
+        let stored = entry.notes ?? ""
+        // An overlay note landed after the last keystroke — don't overwrite it.
+        if stored.count > liveNotes.count, stored.hasPrefix(liveNotes) { return }
+        state.updateNotes(entry, to: liveNotes)
     }
 }

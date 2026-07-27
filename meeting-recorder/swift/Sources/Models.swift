@@ -50,6 +50,9 @@ struct RecordingEntry: Identifiable, Codable {
     /// True once the user manually renamed the meeting. Blocks LLM/calendar
     /// auto-title from overwriting a human-chosen title. nil/false = eligible.
     var titleManuallySet: Bool?
+    /// True when this recording finished without a usable system-audio stem.
+    /// Per-entry (not a global latch) so the badge doesn't stick on other meetings.
+    var micOnlyCaptured: Bool?
 
     /// Topics joined for subtitle display ("Ретро, ресурсы команды, планирование").
     var subtitleText: String { (topics ?? []).joined(separator: ", ") }

@@ -17,6 +17,7 @@ public struct MenuBarPopover: View {
     var onOpenWindow: () -> Void
     var onStartRecording: () -> Void
     var onStop: () -> Void
+    var onDiscard: (() -> Void)?
     var onSettings: () -> Void
     var onRestart: () -> Void
     var onQuit: () -> Void
@@ -27,6 +28,7 @@ public struct MenuBarPopover: View {
         onOpenWindow: @escaping () -> Void,
         onStartRecording: @escaping () -> Void,
         onStop: @escaping () -> Void,
+        onDiscard: (() -> Void)? = nil,
         onSettings: @escaping () -> Void,
         onRestart: @escaping () -> Void,
         onQuit: @escaping () -> Void
@@ -36,6 +38,7 @@ public struct MenuBarPopover: View {
         self.onOpenWindow = onOpenWindow
         self.onStartRecording = onStartRecording
         self.onStop = onStop
+        self.onDiscard = onDiscard
         self.onSettings = onSettings
         self.onRestart = onRestart
         self.onQuit = onQuit
@@ -47,9 +50,9 @@ public struct MenuBarPopover: View {
             divider
             primary
             divider
-            MenuRow(title: "Settings", action: onSettings)
-            MenuRow(title: "Restart", action: onRestart)
-            MenuRow(title: "Quit", action: onQuit)
+            MenuRow(title: "Настройки", action: onSettings)
+            MenuRow(title: "Перезапуск", action: onRestart)
+            MenuRow(title: "Выйти", action: onQuit)
         }
         .padding(6)
         .frame(width: 260)
@@ -75,16 +78,21 @@ public struct MenuBarPopover: View {
     @ViewBuilder private var primary: some View {
         switch status {
         case .idle:
-            MenuRow(title: "Start recording", action: onStartRecording)
+            MenuRow(title: "Записать", action: onStartRecording)
         case .recording(let title, let elapsed):
-            HStack(spacing: 8) {
-                stopButton
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(title).foregroundStyle(Tokens.Ink.primary).lineLimit(1)
-                    Text(elapsed).foregroundStyle(Tokens.Ink.tertiary).monospacedDigit()
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    stopButton
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(title).foregroundStyle(Tokens.Ink.primary).lineLimit(1)
+                        Text(elapsed).foregroundStyle(Tokens.Ink.tertiary).monospacedDigit()
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    Spacer(minLength: 0)
                 }
-                .font(.system(size: 12, weight: .medium))
-                Spacer(minLength: 0)
+                if onDiscard != nil {
+                    MenuRow(title: "Стоп и сбросить", action: { onDiscard?() })
+                }
             }
             .padding(.horizontal, 2)
             .padding(.vertical, 6)
@@ -146,10 +154,10 @@ private struct MenuRow: View {
     HStack(alignment: .top, spacing: 24) {
         MenuBarPopover(status: .idle, onOpenWindow: {}, onStartRecording: {}, onStop: {},
                        onSettings: {}, onRestart: {}, onQuit: {})
-        MenuBarPopover(status: .recording(title: "New recording 26.08", elapsed: "00:12:04"),
+        MenuBarPopover(status: .recording(title: "Новая запись 26.08", elapsed: "00:12:04"),
                        onOpenWindow: {}, onStartRecording: {}, onStop: {},
                        onSettings: {}, onRestart: {}, onQuit: {})
-        MenuBarPopover(status: .processing("Saving…"), onOpenWindow: {}, onStartRecording: {},
+        MenuBarPopover(status: .processing("Сохранение…"), onOpenWindow: {}, onStartRecording: {},
                        onStop: {}, onSettings: {}, onRestart: {}, onQuit: {})
     }
     .padding(40)

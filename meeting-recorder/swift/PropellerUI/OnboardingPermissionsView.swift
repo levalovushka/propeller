@@ -1,16 +1,27 @@
 import SwiftUI
 
-/// Permissions step — Figma 642:2291. Centred title + cells; Next when ready.
-/// Mic + system audio (Screen Recording) are required; Accessibility / login are optional.
+/// Permissions step — Figma 642:2291. Centred cells; Next unlocks when ready.
+///
+/// Deliberately minimal: only what the first recording actually needs.
+/// Mic + system audio (Screen Recording) are required — mic alone loses every
+/// remote speaker. Notifications are how the user declines an auto-started Zoom
+/// recording («Не записывать»), so they are asked here rather than silently at
+/// launch. Accessibility for the ⌃⌥N notes overlay is **not** asked here: it is
+/// deferred to a just-in-time toast on first recording, to keep the start-up
+/// permission count down (decision 2026-07-25).
+///
+/// Four rows (title 14 medium + subtitle 12 regular, padding 4, divider 16)
+/// ≈ 224pt of the ~276pt available on the 400pt card. Adding a row means
+/// re-checking that budget.
 struct OnboardingPermissionsView: View {
     var onNext: () -> Void
     var onBack: () -> Void
     var microphoneGranted: Bool = false
     var systemAudioGranted: Bool = false
-    var notesGranted: Bool = false
+    var notificationsGranted: Bool = false
     var onGrantMicrophone: () -> Void = {}
     var onGrantSystemAudio: () -> Void = {}
-    var onGrantNotes: () -> Void = {}
+    var onGrantNotifications: () -> Void = {}
     var onSetLaunchAtLogin: (Bool) -> Void = { _ in }
 
     @State private var launchAtLogin = false
@@ -18,30 +29,34 @@ struct OnboardingPermissionsView: View {
     /// Both sides of the call — mic alone is not enough for remote speakers.
     private var canProceed: Bool { microphoneGranted && systemAudioGranted }
 
+    /// Fixed control column so the row doesn't shift when a pill becomes a tick.
+    private let controlWidth: CGFloat = 104
+
     var body: some View {
         OnboardingCard {
             OnboardingBackButton(action: onBack)
         } content: {
             VStack(spacing: 0) {
-                cell("Microphone", "Your side of the call") {
+                cell("Микрофон", "Ваш голос в звонке") {
                     grantControl(granted: microphoneGranted, action: onGrantMicrophone)
                 }
                 divider
-                cell("System audio", "Remote speakers from Zoom and meetings") {
+                cell("Звук системы", "Собеседники в Zoom") {
                     grantControl(granted: systemAudioGranted, action: onGrantSystemAudio)
                 }
                 divider
-                cell("Notes over any app", "So your hotkey notes land over Zoom") {
-                    grantControl(granted: notesGranted, action: onGrantNotes)
+                cell("Уведомления", "Чтобы отказаться от записи") {
+                    grantControl(granted: notificationsGranted, action: onGrantNotifications)
                 }
                 divider
-                cell("Launch at login", "Ready for the meeting without you") {
+                cell("Запуск при входе", "Готов к встрече без вас") {
                     Toggle("", isOn: $launchAtLogin)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.regular)
                         .tint(Color.accentColor)
                         .onChange(of: launchAtLogin) { _, on in onSetLaunchAtLogin(on) }
+                        .frame(width: controlWidth, alignment: .trailing)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -55,9 +70,9 @@ struct OnboardingPermissionsView: View {
 
     @ViewBuilder private var nextButton: some View {
         if canProceed {
-            PillButton(title: "Next", kind: .primary, action: onNext)
+            PillButton(title: "Далее", kind: .primary, action: onNext)
         } else {
-            Text("Next")
+            Text("Далее")
                 .font(.pillLabel)
                 .foregroundStyle(Tokens.Ink.tertiary)
                 .padding(.horizontal, Tokens.Pill.hPadding)
@@ -73,14 +88,18 @@ struct OnboardingPermissionsView: View {
     ) -> some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 0) {
-                Text(title).foregroundStyle(Tokens.Ink.primary)
-                Text(subtitle).foregroundStyle(Tokens.Ink.tertiary)
+                Text(title)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Tokens.Ink.primary)
+                Text(subtitle)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(Tokens.Ink.tertiary)
+                    .lineLimit(1)
             }
-            .font(.system(size: 14, weight: .medium))
             Spacer(minLength: 8)
             control()
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 4)
     }
 
     @ViewBuilder private func grantControl(granted: Bool, action: @escaping () -> Void) -> some View {
@@ -88,9 +107,10 @@ struct OnboardingPermissionsView: View {
             Image(systemName: "checkmark")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Tokens.Ink.secondary)
-                .frame(width: 68, height: Tokens.Pill.height, alignment: .trailing)
+                .frame(width: controlWidth, height: Tokens.Pill.height, alignment: .trailing)
         } else {
-            PillButton(title: "Grant", kind: .secondary, size: .sm, action: action)
+            PillButton(title: "Разрешить", kind: .secondary, size: .sm, action: action)
+                .frame(width: controlWidth, alignment: .trailing)
         }
     }
 

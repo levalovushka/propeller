@@ -13,6 +13,7 @@ struct MenuBarContentView: View {
             onOpenWindow: { MenuBarPanelView.showMainWindow() },
             onStartRecording: { state.startRecording() },
             onStop: { state.stopRecording() },
+            onDiscard: { state.cancelRecording() },
             onSettings: { SettingsOpener.open() },
             onRestart: { Self.relaunch() },
             onQuit: { quit() }
@@ -21,11 +22,14 @@ struct MenuBarContentView: View {
 
     private var status: MenuBarPopover.Status {
         if state.isRecording {
-            return .recording(title: state.selectedRecording?.title ?? "New recording",
+            return .recording(title: state.selectedRecording?.title ?? "Новая запись",
                               elapsed: state.elapsedString)
         }
-        if state.transcribeStep == .running || state.saveStep == .running {
-            return .processing(state.statusMessage.isEmpty ? "Working…" : state.statusMessage)
+        // Recap counts as work — without it the menu bar read "idle" for the
+        // whole summary step (release-review rev-17).
+        if state.transcribeStep == .running || state.saveStep == .running
+            || state.recapStep == .running {
+            return .processing(state.statusMessage.isEmpty ? "Обработка…" : state.statusMessage)
         }
         return .idle
     }

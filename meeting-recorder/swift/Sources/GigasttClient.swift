@@ -203,7 +203,7 @@ enum GigasttClient {
             let offsetSec = Float(Double(startFrame) / rate)
             let chunkURL = tmpDir.appendingPathComponent(String(format: "chunk-%02d.wav", index))
 
-            progressCallback?("Transcribing chunk \(index + 1)/\(chunkCount)…")
+            progressCallback?("Расшифровка \(index + 1)/\(chunkCount)…")
             do {
                 try writeWAVChunk(from: source, startFrame: startFrame, frameCount: frames, to: chunkURL)
             } catch {

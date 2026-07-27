@@ -2,6 +2,11 @@ import SwiftUI
 
 /// Welcome carousel — Figma 642:2122…2180. Centred pager + copy; Next/Skip
 /// sit together in the action row.
+///
+/// Copy is Russian (product decision 2026-07-25: the app ships fully in Russian).
+/// Line breaks are hand-placed. The card is 400 wide with a 24 inset → 352pt of
+/// text width, so a title line must stay under ~20 characters at 28pt and a body
+/// line under ~45 at 14pt. Changing a string means re-checking both limits.
 struct OnboardingWelcomeView: View {
     var onSetUp: () -> Void
     var onSkip: () -> Void
@@ -11,14 +16,15 @@ struct OnboardingWelcomeView: View {
     private struct Slide { let title: String; let body: String }
 
     private let slides = [
-        Slide(title: "Propeller records your\nmeetings for you",
-              body: "A Zoom call starts and recording's already\nrunning. Nothing to forget."),
-        Slide(title: "Transcripts\nand summaries",
-              body: "Runs on your Mac — no subscription,\nand recordings never leave the computer."),
-        Slide(title: "Screenshots and\nnotes on the fly",
-              body: "Catch a thought or grab the screen mid-meeting —\nit lands in the meeting's notes with a timestamp."),
-        Slide(title: "Summary,\nready to go",
-              body: "Copy the finished summary or save it\nas Markdown to pass to your team."),
+        Slide(title: "Propeller запишет\nвстречу за вас",
+              body: "Zoom-звонок начался — запись уже идёт.\nНичего не нужно нажимать."),
+        Slide(title: "Транскрипт\nи саммари",
+              body: "Работает на вашем Маке: без подписки,\nзаписи не покидают компьютер."),
+        // The app has no screenshot capture — the previous copy promised one.
+        Slide(title: "Заметки\nпо ходу встречи",
+              body: "Поймали мысль — ⌃⌥N, и она в заметках\nвстречи с таймкодом."),
+        Slide(title: "Саммари\nготово к отправке",
+              body: "Скопируйте итог встречи или сохраните\nв Markdown — и отправьте команде."),
     ]
 
     private var isLast: Bool { index == slides.count - 1 }
@@ -45,11 +51,13 @@ struct OnboardingWelcomeView: View {
         } actions: {
             HStack(spacing: Tokens.Pill.rowGap) {
                 if isLast {
-                    PillButton(title: "Set up", kind: .primary,
+                    PillButton(title: "Настроить", kind: .primary,
                                trailingSymbol: "arrow.right", action: onSetUp)
                 } else {
-                    PillButton(title: "Next", kind: .secondary) { advance(by: 1) }
-                    PillButton(title: "Skip", kind: .ghost, action: onSkip)
+                    PillButton(title: "Далее", kind: .secondary) { advance(by: 1) }
+                    // Skips the tour, not the setup — the flow routes this
+                    // straight to permissions (which stay mandatory).
+                    PillButton(title: "Пропустить", kind: .ghost, action: onSkip)
                 }
             }
             .frame(maxWidth: .infinity)

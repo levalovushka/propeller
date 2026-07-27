@@ -42,10 +42,15 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// Post the actionable "recording started automatically" notification.
-    func notifyRecordingStarted() {
+    /// `authorized` reports whether notifications can show the decline action.
+    func notifyRecordingStarted(completion: ((Bool) -> Void)? = nil) {
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
-            guard settings.authorizationStatus == .authorized else { return }
+            let ok = settings.authorizationStatus == .authorized
+            guard ok else {
+                DispatchQueue.main.async { completion?(false) }
+                return
+            }
             let content = UNMutableNotificationContent()
             content.title = "Propeller записывает встречу"
             content.body = "Запись началась автоматически. Нажмите «Не записывать», чтобы отменить."
@@ -56,7 +61,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
                 content: content,
                 trigger: nil
             )
-            center.add(request)
+            center.add(request) { _ in
+                DispatchQueue.main.async { completion?(true) }
+            }
         }
     }
 

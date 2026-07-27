@@ -15,3 +15,18 @@ jobs:
       - name: Test
         working-directory: swift
         run: swift test
+      - name: Require gigastt for release packaging
+        # Full ./build.sh needs a local codesign identity + gigastt binary
+        # (not in git). CI only asserts the packaging scripts refuse a broken ship.
+        working-directory: swift
+        run: |
+          set -e
+          grep -q 'exit 1' build.sh
+          grep -q 'gigastt binary not found' build.sh
+          test -f package-dmg.sh
+          chmod +x package-dmg.sh
+          if ./package-dmg.sh; then
+            echo "package-dmg.sh should fail without /Applications/Propeller.app"
+            exit 1
+          fi
+          echo "Ship scripts look sane"

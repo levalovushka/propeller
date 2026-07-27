@@ -13,11 +13,11 @@ enum RecapProviderKind: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .auto: return "Auto"
+        case .auto: return "Авто"
         case .ollama: return "Ollama"
         case .openai: return "OpenAI"
         case .claude: return "Claude"
-        case .off: return "Off"
+        case .off: return "Выкл"
         }
     }
 }
@@ -39,11 +39,11 @@ enum RecapError: LocalizedError {
         case .httpStatus(let code, let body):
             return "LLM HTTP \(code): \(body.prefix(200))"
         case .emptyResponse:
-            return "LLM returned an empty recap"
+            return "LLM вернул пустое саммари"
         case .badJSON:
-            return "Could not parse LLM response"
+            return "Не удалось разобрать ответ LLM"
         case .providerUnavailable(let name):
-            return "\(name) is not available"
+            return "\(name) недоступен"
         }
     }
 }
@@ -59,20 +59,29 @@ actor RecapService {
     static let shared = RecapService()
 
     static let defaultPrompt = """
-    Ты готовишь краткий рекап рабочей встречи на русском языке.
+    Ты готовишь краткий рекап рабочей встречи строго на русском языке.
 
     Правила:
+    - Язык: только русский. Весь текст ответа — кириллица (имена людей и устоявшиеся англ. термины вроде API, Figma, PR допустимы как есть). Запрещены китайский, японский, корейский и любой другой язык; не подмешивай иероглифы и не переводи куски на них.
     - Не выдумывай факты, решения, договорённости и action items, которых нет в транскрипте или заметках пользователя.
     - Если есть заметки пользователя — это приоритетные якоря: раскрывай вокруг них контекст из транскрипта, не игнорируй их.
     - По контексту аккуратно исправляй очевидные ASR-ошибки (искажённые имена и термины, обрывки на границах реплик), не меняя смысл.
     - Не копируй транскрипт целиком — только сжатый рекап.
+    - Не добавляй шапку Date / Duration / Participants (и аналоги) — дата, длительность и список участников уже есть в UI встречи.
     - Структура ответа (пропускай пустые разделы):
       ## Кратко
       ## Решения
       ## Action items
       ## Открытые вопросы
-    - Пиши плотным деловым языком без воды.
+    - Пиши плотным деловым русским без воды.
     - Блок «Заметки» в итоговый файл добавит система отдельно — не дублируй сырые заметки в ответе.
+    """
+
+    /// Always appended so a custom Settings prompt can't drop the language lock
+    /// (Qwen and similar models occasionally leak Chinese otherwise).
+    private static let languageLock = """
+
+    ЯЗЫК ОТВЕТА (жёстко): только русский. Никакого китайского и других языков, кроме имён и устоявшихся латиницей терминов.
     """
 
     private let session: URLSession = {
@@ -141,9 +150,9 @@ actor RecapService {
                 backend = name
             }
 
-            let prompt = prefs.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let prompt = (prefs.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? Self.defaultPrompt
-                : prefs.prompt
+                : prefs.prompt) + Self.languageLock
 
             let userContent = buildUserMessage(
                 title: title,
@@ -246,9 +255,9 @@ actor RecapService {
         Формат: {"title": <строка или null>, "topics": [<строка>, ...], "tags": [<строка>, ...]}
         Правила:
         - title: суть встречи одной ёмкой фразой на русском, 3–7 слов.\(needTitle ? "" : " Заголовок уже задан пользователем — верни null.")
-        - topics: 2–5 ключевых обсуждённых тем короткими фразами (пойдут в сабтайтл). Только то, что реально есть в саммари, не выдумывай.
+        - topics: 2–5 ключевых обсуждённых тем короткими фразами на русском (пойдут в сабтайтл). Только то, что реально есть в саммари, не выдумывай. Без китайского и других языков.
         - tags: 0..N значений СТРОГО из списка: [\(vocab)]. Значения вне списка запрещены. Если ничего не подходит — пустой массив [].
-        - Верни только JSON, никакого текста вокруг.
+        - Верни только JSON, никакого текста вокруг. Все строковые значения — на русском.
         """
     }
 
@@ -261,14 +270,10 @@ actor RecapService {
         duration: TimeInterval,
         notes: String?
     ) -> String {
+        _ = speakers
+        _ = duration
         var parts: [String] = []
         parts.append("Встреча: \(title.isEmpty ? "без названия" : title)")
-        if duration > 0 {
-            parts.append("Длительность: \(Int(duration / 60)) мин")
-        }
-        if !speakers.isEmpty {
-            parts.append("Участники: \(speakers.joined(separator: ", "))")
-        }
         let trimmedNotes = notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !trimmedNotes.isEmpty {
             parts.append("")
@@ -278,6 +283,8 @@ actor RecapService {
         parts.append("")
         parts.append("Транскрипт:")
         parts.append(transcriptMarkdown)
+        parts.append("")
+        parts.append("Ответь строго на русском языке.")
         return parts.joined(separator: "\n")
     }
 
@@ -289,33 +296,20 @@ actor RecapService {
         duration: TimeInterval,
         format: MarkdownOutputFormat
     ) -> String {
+        _ = speakers
+        _ = duration
         let heading = title.isEmpty ? "Meeting recap" : "\(title) — рекап"
-        let durationStr = duration > 0 ? "\(Int(duration / 60)) min" : ""
 
         var lines: [String] = []
         switch format {
         case .simple:
             lines.append("# \(heading)")
             lines.append("")
-            lines.append("**Date:** \(todayISO())")
-            if !durationStr.isEmpty {
-                lines.append("**Duration:** \(durationStr)")
-            }
-            if !speakers.isEmpty {
-                lines.append("**Participants:** \(speakers.joined(separator: ", "))")
-            }
-            lines.append("")
             lines.append(recapBody)
         case .obsidian:
             let safeTitle = heading.replacingOccurrences(of: "\"", with: "'")
             lines.append("---")
-            lines.append("date: \(todayISO())")
             lines.append("title: \"\(safeTitle)\"")
-            lines.append("duration: \"\(durationStr)\"")
-            if !speakers.isEmpty {
-                let quoted = speakers.map { "\"\($0)\"" }.joined(separator: ", ")
-                lines.append("speakers: [\(quoted)]")
-            }
             lines.append("tags: [meeting, recap]")
             lines.append("---")
             lines.append("")
@@ -455,14 +449,6 @@ actor RecapService {
             let body = String(data: data, encoding: .utf8) ?? ""
             throw RecapError.httpStatus(http.statusCode, body)
         }
-    }
-
-    private func todayISO() -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.calendar = Calendar(identifier: .gregorian)
-        f.dateFormat = "yyyy-MM-dd"
-        return f.string(from: Date())
     }
 }
 

@@ -87,7 +87,7 @@ class RecordingStore: ObservableObject {
         var changed = false
         for i in recordings.indices {
             guard recordings[i].titleManuallySet == true else { continue }
-            guard recordings[i].title.hasPrefix("Recording ") else { continue }
+            guard recordings[i].title.hasPrefix("Запись ") || recordings[i].title.hasPrefix("Recording ") else { continue }
             recordings[i].titleManuallySet = false
             changed = true
         }
@@ -122,7 +122,20 @@ class RecordingStore: ObservableObject {
         scheduleSave()
     }
 
-    func update(id: String, transcript: String? = nil, status: String? = nil, duration: Double? = nil, language: String?? = nil, notes: String?? = nil, rawSegmentsJSON: String?? = nil, mergedSegmentsJSON: String?? = nil, title: String? = nil, topics: [String]? = nil, tags: [String]? = nil) {
+    func update(
+        id: String,
+        transcript: String? = nil,
+        status: String? = nil,
+        duration: Double? = nil,
+        language: String?? = nil,
+        notes: String?? = nil,
+        rawSegmentsJSON: String?? = nil,
+        mergedSegmentsJSON: String?? = nil,
+        title: String? = nil,
+        topics: [String]? = nil,
+        tags: [String]? = nil,
+        micOnlyCaptured: Bool? = nil
+    ) {
         guard let idx = recordings.firstIndex(where: { $0.id == id }) else { return }
         if let t = transcript { recordings[idx].transcript = t }
         if let s = status { recordings[idx].status = s }
@@ -135,6 +148,7 @@ class RecordingStore: ObservableObject {
         if let tt = title { recordings[idx].title = tt }
         if let tp = topics { recordings[idx].topics = tp }
         if let tg = tags { recordings[idx].tags = tg }
+        if let mo = micOnlyCaptured { recordings[idx].micOnlyCaptured = mo }
         scheduleSave()
     }
 
@@ -179,6 +193,37 @@ class RecordingStore: ObservableObject {
             .appendingPathComponent(entry.filename)
         let stems = AudioSourceStemURLs.expectedSiblings(for: finalURL)
         return [finalURL, stems.microphoneURL, stems.systemURL]
+    }
+
+    /// Sum of final mix + mic/sys stems on disk (markdown is negligible).
+    func totalLibraryBytes() -> Int64 {
+        recordings.reduce(Int64(0)) { $0 + byteSize(of: $1) }
+    }
+
+    func byteSize(of entry: RecordingEntry) -> Int64 {
+        let fm = FileManager.default
+        return audioFileURLs(for: entry).reduce(Int64(0)) { sum, url in
+            guard let attrs = try? fm.attributesOfItem(atPath: url.path),
+                  let size = attrs[.size] as? Int64 else { return sum }
+            return sum + size
+        }
+    }
+
+    /// Oldest-first candidates when the library is over the size nudge threshold.
+    func storageNudgeCandidates(limit: Int = 12) -> [RecordingEntry] {
+        recordings.sorted { $0.date < $1.date }.prefix(limit).map { $0 }
+    }
+
+    /// Drop audio (and stems) but keep the meeting index + markdown.
+    func deleteAudioKeepingMeeting(_ entry: RecordingEntry) {
+        let fm = FileManager.default
+        for url in audioFileURLs(for: entry) {
+            try? fm.removeItem(at: url)
+        }
+        if let i = recordings.firstIndex(where: { $0.id == entry.id }) {
+            recordings[i].duration = 0
+            save()
+        }
     }
 
     // MARK: - Recovery
@@ -245,43 +290,6 @@ class RecordingStore: ObservableObject {
         }
         if rebuilt > 0 { save() }
         return rebuilt
-    }
-
-    // MARK: - Retention Cleanup
-
-    /// Day-based auto-delete. **Not called** — plan-v2 6.1 replaces this with a
-    /// size-based nudge that never deletes on its own (plan-optimization A4).
-    /// Kept temporarily so Settings → Export retention prefs still decode;
-    /// remove together with that UI when 6.1 lands.
-    func performRetentionCleanup() {
-        let days = Preferences.shared.retentionDays
-        guard days > 0 else { return }
-
-        let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
-        let mode = Preferences.shared.retentionMode
-        let expired = recordings.filter { $0.date < cutoff }
-        guard !expired.isEmpty else { return }
-
-        let fm = FileManager.default
-        for entry in expired {
-            // Always delete audio files, including mic/system stems.
-            for url in audioFileURLs(for: entry) {
-                try? fm.removeItem(at: url)
-            }
-
-            if mode == "all" {
-                // Also delete markdown (keyed by recordingID prefix) and remove from index
-                let meetingsDir = URL(fileURLWithPath: Preferences.shared.meetingsPath)
-                let prefix = entry.id + "-"
-                if let files = try? fm.contentsOfDirectory(at: meetingsDir, includingPropertiesForKeys: nil) {
-                    for file in files where file.pathExtension == "md" && file.lastPathComponent.hasPrefix(prefix) {
-                        try? fm.removeItem(at: file)
-                    }
-                }
-                recordings.removeAll { $0.id == entry.id }
-            }
-        }
-        save()
     }
 
     // MARK: - Orphan Scanning

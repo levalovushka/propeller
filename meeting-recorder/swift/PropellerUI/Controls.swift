@@ -126,6 +126,100 @@ public struct MinimalIconGlyph: View {
     }
 }
 
+/// `Menu` recolors its label with the accent unless `.tint` is locked to the
+/// minimal ramp — use this instead of hand-rolled `Menu { } label: { Image… }`.
+public struct MinimalIconMenu<Content: View>: View {
+    let systemName: String
+    var iconSize: CGFloat = 15
+    var weight: Font.Weight = .medium
+    var emphasized: Bool = false
+    var helpText: String? = nil
+    @ViewBuilder var menuContent: () -> Content
+
+    @State private var hovering = false
+
+    public init(
+        systemName: String,
+        iconSize: CGFloat = 15,
+        weight: Font.Weight = .medium,
+        emphasized: Bool = false,
+        help helpText: String? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.systemName = systemName
+        self.iconSize = iconSize
+        self.weight = weight
+        self.emphasized = emphasized
+        self.helpText = helpText
+        self.menuContent = content
+    }
+
+    public var body: some View {
+        Menu(content: menuContent) {
+            MinimalIconGlyph(
+                systemName: systemName,
+                iconSize: iconSize,
+                weight: weight,
+                emphasized: emphasized || hovering
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .tint(ButtonProminence.minimal.foreground(hovering: hovering || emphasized))
+        .frame(width: DSSize.sm.dim, height: DSSize.sm.dim)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .modifier(OptionalHelp(helpText))
+    }
+}
+
+/// `SettingsLink` has the same accent-tint problem as `Menu`.
+public struct MinimalIconSettingsLink: View {
+    var systemName: String = "gearshape.fill"
+    var iconSize: CGFloat = 15
+    var weight: Font.Weight = .medium
+    var helpText: String? = "Настройки"
+
+    @State private var hovering = false
+
+    public init(
+        systemName: String = "gearshape.fill",
+        iconSize: CGFloat = 15,
+        weight: Font.Weight = .medium,
+        help helpText: String? = "Настройки"
+    ) {
+        self.systemName = systemName
+        self.iconSize = iconSize
+        self.weight = weight
+        self.helpText = helpText
+    }
+
+    public var body: some View {
+        SettingsLink {
+            MinimalIconGlyph(
+                systemName: systemName,
+                iconSize: iconSize,
+                weight: weight,
+                emphasized: hovering
+            )
+        }
+        .buttonStyle(.plain)
+        .tint(ButtonProminence.minimal.foreground(hovering: hovering))
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .modifier(OptionalHelp(helpText))
+    }
+}
+
+private struct OptionalHelp: ViewModifier {
+    let text: String?
+    init(_ text: String?) { self.text = text }
+    func body(content: Content) -> some View {
+        if let text { content.help(text) } else { content }
+    }
+}
+
 /// Shared fill — main window + onboarding. Same stack everywhere:
 /// `.thickMaterial` + `Tokens.Glass.fill`. Menu-bar: `tinted: false`.
 public struct GlassBackground: View {

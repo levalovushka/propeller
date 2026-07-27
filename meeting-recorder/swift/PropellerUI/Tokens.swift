@@ -8,13 +8,12 @@ import AppKit
 public enum Tokens {
 
     /// Shared window fill for main + onboarding. One stack only — change here.
-    /// Figma plate mock ≈ #181818 @ 90%. We use material + this wash so both
-    /// hosts look the same (pure liquid-glass samples the desktop differently
-    /// in a floating panel vs a titled WindowGroup).
+    /// Material + wash so both hosts look the same (pure liquid-glass samples
+    /// the desktop differently in a floating panel vs a titled WindowGroup).
     public enum Glass {
-        /// Figma 640:1859 plate: rgba(24,24,24,0.9) → #181818 @ 90%.
-        public static let fillWhite: CGFloat = 24.0 / 255.0
-        public static let fillAlpha: CGFloat = 0.9
+        /// rgba(10,10,10,0.8) → #0A0A0A @ 80%.
+        public static let fillWhite: CGFloat = 10.0 / 255.0
+        public static let fillAlpha: CGFloat = 0.8
 
         public static var fill: NSColor {
             NSColor(calibratedWhite: fillWhite, alpha: fillAlpha)
@@ -46,6 +45,15 @@ public enum Tokens {
         /// Update pill in top bar (640:1979): h=32, px=10.
         public static let updatePillHeight: CGFloat = 32
         public static let updatePillHPadding: CGFloat = 10
+    }
+
+    /// In-app toast — Figma 640:1987.
+    public enum Toast {
+        public static let radius: CGFloat = 16
+        public static let maxWidth: CGFloat = 280
+        public static let fill = Color.white.opacity(0.07)
+        public static let bottomInset: CGFloat = 8
+        public static let trailingInset: CGFloat = 12
     }
 
     /// Onboarding plate — Figma 642:2122 is 400×400.

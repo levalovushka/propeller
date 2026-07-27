@@ -18,7 +18,7 @@ struct OnboardingNameView: View {
             OnboardingBackButton(action: onBack)
         } content: {
             VStack(spacing: Tokens.Card.contentGap) {
-                OnboardText.title("What should I call\nyou in the records?")
+                OnboardText.title("Как вас подписывать\nв расшифровках?")
                     .fixedSize(horizontal: false, vertical: true)
                 nameField
             }
@@ -46,7 +46,7 @@ struct OnboardingNameView: View {
     }
 
     private var nameField: some View {
-        TextField("Your name", text: $name)
+        TextField("Ваше имя", text: $name)
             .textFieldStyle(.plain)
             .font(.system(size: 14, weight: .semibold))
             .foregroundStyle(Tokens.Ink.primary)
@@ -60,9 +60,9 @@ struct OnboardingNameView: View {
 
     @ViewBuilder private var nextButton: some View {
         if canProceed {
-            PillButton(title: "Next", kind: .primary) { submitIfReady() }
+            PillButton(title: "Далее", kind: .primary) { submitIfReady() }
         } else {
-            Text("Next")
+            Text("Далее")
                 .font(.pillLabel)
                 .foregroundStyle(Tokens.Ink.tertiary)
                 .padding(.horizontal, Tokens.Pill.hPadding)

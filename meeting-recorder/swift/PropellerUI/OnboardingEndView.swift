@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Final onboarding beat — Figma End 642:2474. Logo + two-tone copy + Ok, bye.
+/// Final onboarding beat — Figma End 642:2474. Logo + two-tone copy + finish.
 struct OnboardingEndView: View {
     var onFinish: () -> Void
 
@@ -11,15 +11,15 @@ struct OnboardingEndView: View {
             VStack(spacing: 28) {
                 PropellerMark(size: 48)
                 OnboardText.titleTwoTone(
-                    "You're set. ",
-                    "From here you\ncan forget Propeller —\nit handles the rest."
+                    "Готово. ",
+                    "Дальше можно\nзабыть о Propeller —\nон сам всё сделает."
                 )
                 .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         } actions: {
             HStack {
-                PillButton(title: "Ok, bye", kind: .primary, action: onFinish)
+                PillButton(title: "Хорошо", kind: .primary, action: onFinish)
             }
             .frame(maxWidth: .infinity)
         }

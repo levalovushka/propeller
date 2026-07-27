@@ -1,7 +1,7 @@
 import SwiftUI
+import PropellerUI
 
-/// Command-palette style search (⌘K), talat-like: query field, filter chips,
-/// recordings / transcript matches, and quick actions.
+/// Command-palette search (⌘K) — glass plate matching Figma Meetings chrome.
 struct SearchPalette: View {
     @ObservedObject var state: AppState
     let onOpenRecording: (RecordingEntry) -> Void
@@ -13,21 +13,16 @@ struct SearchPalette: View {
     @FocusState private var fieldFocused: Bool
 
     enum Filter: String, CaseIterable, Identifiable {
-        case all = "All"
-        case meetings = "Meetings"
-        case transcripts = "Transcripts"
+        case all = "Все"
+        case meetings = "Встречи"
+        case transcripts = "Транскрипты"
         var id: String { rawValue }
     }
 
-    /// A recording matched by full-text search, with context around the hit.
     private struct RecordingMatch {
         let entry: RecordingEntry
-        /// Snippet around the first text match (transcript or notes), with the
-        /// query occurrence highlighted. Nil when the match is title/date-only.
         let snippet: AttributedString?
-        /// Number of occurrences across transcript + notes.
         let matchCount: Int
-        /// True when the query was found in the transcript/notes text.
         let inText: Bool
     }
 
@@ -45,64 +40,65 @@ struct SearchPalette: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Query field
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("Search meetings and transcripts…", text: $query)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.40))
+                TextField("Поиск встреч и транскриптов…", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.title3)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(Tokens.Ink.primary)
                     .focused($fieldFocused)
                     .onSubmit { activate(highlightedIndex) }
                 Text("esc")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 4))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.30))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.vertical, 14)
 
-            // Filter chips
             HStack(spacing: 6) {
                 ForEach(Filter.allCases) { f in
                     let count = count(for: f)
+                    let selected = filter == f
                     Button {
                         filter = f
                         highlightedIndex = 0
                     } label: {
                         Text("\(f.rawValue) \(count)")
-                            .font(.caption.weight(filter == f ? .semibold : .regular))
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 4)
+                            .font(.system(size: 12, weight: selected ? .semibold : .medium))
+                            .foregroundStyle(selected ? Tokens.Ink.primary : Color.white.opacity(0.40))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
                             .background(
-                                filter == f ? AnyShapeStyle(Color.accentColor.opacity(0.18)) : AnyShapeStyle(.quaternary.opacity(0.4)),
-                                in: Capsule()
+                                Capsule().fill(Color.white.opacity(selected ? 0.12 : 0.05))
                             )
-                            .foregroundStyle(filter == f ? Color.accentColor : Color.secondary)
                     }
                     .buttonStyle(.plain)
                 }
-                Spacer()
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 10)
+            .padding(.bottom, 12)
 
-            Divider()
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 1)
 
-            // Results
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         let sections = groupedItems
                         ForEach(sections, id: \.0) { title, sectionItems in
                             Text(title)
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(.tertiary)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Color.white.opacity(0.30))
                                 .textCase(.uppercase)
                                 .padding(.horizontal, 16)
-                                .padding(.top, 10)
+                                .padding(.top, 12)
                                 .padding(.bottom, 4)
 
                             ForEach(sectionItems, id: \.0) { flatIndex, item in
@@ -116,11 +112,11 @@ struct SearchPalette: View {
                         }
 
                         if items.isEmpty {
-                            Text("No results")
-                                .font(.callout)
-                                .foregroundStyle(.tertiary)
+                            Text("Ничего не найдено")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(Color.white.opacity(0.30))
                                 .frame(maxWidth: .infinity)
-                                .padding(.vertical, 24)
+                                .padding(.vertical, 28)
                         }
                     }
                     .padding(.bottom, 8)
@@ -131,21 +127,29 @@ struct SearchPalette: View {
             }
             .frame(maxHeight: 380)
 
-            Divider()
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 1)
 
-            // Footer hints
             HStack(spacing: 12) {
-                hint("↑↓", "navigate")
-                hint("↵", "open")
+                hint("↑↓", "навигация")
+                hint("↵", "открыть")
                 Spacer()
-                Text("\(items.count) result\(items.count == 1 ? "" : "s")")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                Text(Self.resultCountLabel(items.count))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.30))
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
         }
         .frame(width: 560)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(nsColor: Tokens.Glass.fill))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onAppear { fieldFocused = true }
         .onChange(of: query) { _, _ in highlightedIndex = 0 }
         .onKeyPress(.downArrow) {
@@ -173,10 +177,13 @@ struct SearchPalette: View {
             let inTitle = rec.title.lowercased().contains(q)
                 || rec.dateFormatted.lowercased().contains(q)
 
-            // Full-text: transcript + notes of every recording.
             var snippet: AttributedString?
             var count = 0
-            for text in [rec.transcript, rec.notes].compactMap({ $0 }) {
+            var texts = [rec.transcript, rec.notes].compactMap { $0 }
+            if let recap = AppState.loadRecapText(for: rec) {
+                texts.append(recap)
+            }
+            for text in texts {
                 let hits = Self.occurrences(of: query, in: text)
                 count += hits
                 if snippet == nil, hits > 0 {
@@ -201,15 +208,12 @@ struct SearchPalette: View {
         return count
     }
 
-    /// Context snippet around the first occurrence: ~50 chars each side,
-    /// newlines collapsed, the match itself bolded.
     private static func snippet(around needle: String, in haystack: String) -> AttributedString? {
         guard let r = haystack.range(of: needle, options: matchOptions) else { return nil }
         let contextChars = 50
 
         var start = haystack.index(r.lowerBound, offsetBy: -contextChars, limitedBy: haystack.startIndex) ?? haystack.startIndex
         var end = haystack.index(r.upperBound, offsetBy: contextChars, limitedBy: haystack.endIndex) ?? haystack.endIndex
-        // Snap to word boundaries so the snippet doesn't cut words in half.
         while start > haystack.startIndex, !haystack[haystack.index(before: start)].isWhitespace {
             start = haystack.index(before: start)
         }
@@ -229,8 +233,8 @@ struct SearchPalette: View {
 
         var result = AttributedString(prefix.isEmpty ? "" : prefix + " ")
         var highlighted = AttributedString(match)
-        highlighted.font = .caption.weight(.bold)
-        highlighted.foregroundColor = .primary
+        highlighted.font = .system(size: 12, weight: .semibold)
+        highlighted.foregroundColor = Tokens.Ink.primary
         result += highlighted
         result += AttributedString(suffix.isEmpty ? "" : " " + suffix)
         return result
@@ -238,9 +242,8 @@ struct SearchPalette: View {
 
     private func count(for f: Filter) -> Int {
         switch f {
-        case .all: return matchedRecordings.count
-        case .meetings: return matchedRecordings.count
-        case .transcripts: return matchedRecordings.filter { $0.inText }.count
+        case .all, .meetings: return matchedRecordings.count
+        case .transcripts: return matchedRecordings.filter(\.inText).count
         }
     }
 
@@ -250,14 +253,12 @@ struct SearchPalette: View {
         case .all, .meetings:
             result += matchedRecordings.map { .recording($0) }
         case .transcripts:
-            result += matchedRecordings.filter { $0.inText }.map { .recording($0) }
+            result += matchedRecordings.filter(\.inText).map { .recording($0) }
         }
         result.append(.startRecording)
         return result
     }
 
-    /// Items grouped into titled sections, each entry carrying its flat index
-    /// so keyboard highlight works across sections.
     private var groupedItems: [(String, [(Int, Item)])] {
         var sections: [(String, [(Int, Item)])] = []
         var recordings: [(Int, Item)] = []
@@ -269,9 +270,9 @@ struct SearchPalette: View {
             }
         }
         if !recordings.isEmpty {
-            sections.append((query.isEmpty ? "Recent recordings" : "Recordings", recordings))
+            sections.append((query.isEmpty ? "Недавние" : "Записи", recordings))
         }
-        if !actions.isEmpty { sections.append(("Actions", actions)) }
+        if !actions.isEmpty { sections.append(("Действия", actions)) }
         return sections
     }
 
@@ -284,64 +285,90 @@ struct SearchPalette: View {
             case .recording(let match):
                 let entry = match.entry
                 Image(systemName: "mic")
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.40))
                     .frame(width: 20)
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text(entry.title.isEmpty ? "Untitled" : entry.title)
+                        Text(entry.title.isEmpty ? "Без названия" : entry.title)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(Tokens.Ink.primary)
                             .lineLimit(1)
                         if match.matchCount > 1 {
-                            Text("\(match.matchCount) matches")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(.quaternary.opacity(0.5), in: Capsule())
+                            Text("\(match.matchCount) совп.")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Color.white.opacity(0.40))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.white.opacity(0.08), in: Capsule())
                         }
                     }
                     HStack(spacing: 4) {
                         Text(entry.dateFormatted)
                         if entry.duration > 0 { Text("·"); Text(entry.durationFormatted) }
                     }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.40))
                     if let snippet = match.snippet {
                         Text(snippet)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundStyle(Color.white.opacity(0.40))
                             .lineLimit(2)
                     }
                 }
             case .startRecording:
                 Image(systemName: "record.circle")
-                    .foregroundStyle(.red)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color.red.opacity(0.9))
                     .frame(width: 20)
-                Text("Start recording")
+                Text("Записать")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Tokens.Ink.primary)
             }
-            Spacer()
+            Spacer(minLength: 0)
             if highlighted {
                 Image(systemName: "return")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.30))
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 6)
-        .background(highlighted ? Color.accentColor.opacity(0.12) : Color.clear)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(highlighted ? 0.08 : 0))
+        )
         .contentShape(Rectangle())
     }
 
     private func hint(_ key: String, _ label: String) -> some View {
         HStack(spacing: 4) {
             Text(key)
-                .font(.caption2)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 1)
-                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 3))
+                .font(.system(size: 11, weight: .medium))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+                .foregroundStyle(Color.white.opacity(0.50))
             Text(label)
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.30))
         }
+    }
+
+    private static func resultCountLabel(_ count: Int) -> String {
+        let mod100 = count % 100
+        let mod10 = count % 10
+        let word: String
+        if (11...14).contains(mod100) {
+            word = "результатов"
+        } else if mod10 == 1 {
+            word = "результат"
+        } else if (2...4).contains(mod10) {
+            word = "результата"
+        } else {
+            word = "результатов"
+        }
+        return "\(count) \(word)"
     }
 
     // MARK: - Activation

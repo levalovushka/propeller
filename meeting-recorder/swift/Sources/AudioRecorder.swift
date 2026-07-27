@@ -235,7 +235,7 @@ class AudioRecorder: ObservableObject {
                 progressed = 0
             }
             if progressed < 1.5 {
-                let message = "Microphone isn't recording — no audio was written in the first few seconds. Check your input device."
+                let message = "Микрофон не пишет — в первые секунды аудио не записалось. Проверьте устройство ввода."
                 debugLog("[AudioRecorder] WARNING: \(message) (progressed=\(progressed)s)")
                 self.micCaptureWarning = message
             }
@@ -477,9 +477,9 @@ class AudioRecorder: ObservableObject {
         case alreadyRecording, failedToStart, failedToMix
         var errorDescription: String? {
             switch self {
-            case .alreadyRecording: return "Already recording"
-            case .failedToStart: return "Failed to start audio recording"
-            case .failedToMix: return "Failed to mix mic and system audio"
+            case .alreadyRecording: return "Уже идёт запись"
+            case .failedToStart: return "Не удалось начать запись"
+            case .failedToMix: return "Не удалось свести микрофон и системный звук"
             }
         }
     }
@@ -567,7 +567,11 @@ final class VoiceProcessedMicCapture: @unchecked Sendable {
 
     func stop() {
         engine.inputNode.removeTap(onBus: 0)
+        // Leave VPIO engaged and other-audio ducking can mute headphones
+        // for the rest of the process lifetime — turn it off explicitly.
+        try? engine.inputNode.setVoiceProcessingEnabled(false)
         engine.stop()
+        engine.reset()
         lock.lock()
         file = nil
         converter = nil

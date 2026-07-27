@@ -25,7 +25,7 @@ struct MenuBarPanelView: View {
                 Button {
                     Self.showMainWindow()
                 } label: {
-                    Label("Open Propeller", systemImage: "macwindow")
+                    Label("Открыть Propeller", systemImage: "macwindow")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.plain)
@@ -35,7 +35,7 @@ struct MenuBarPanelView: View {
                 Button {
                     SettingsOpener.open()
                 } label: {
-                    Label("Settings", systemImage: "gearshape")
+                    Label("Настройки", systemImage: "gearshape")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.plain)
@@ -46,7 +46,7 @@ struct MenuBarPanelView: View {
 
             Divider()
 
-            Button("Quit Propeller") {
+            Button("Выйти из Propeller") {
                 if state.isRecording {
                     Task {
                         await state.stopRecordingAndWait()
@@ -75,7 +75,7 @@ struct MenuBarPanelView: View {
                     Image(systemName: "record.circle.fill")
                         .foregroundStyle(.red)
                         .symbolRenderingMode(.hierarchical)
-                    Text("Recording").font(.headline)
+                    Text("Запись").font(.headline)
                     Spacer()
                     Text(state.elapsedString)
                         .font(.system(.title3, design: .monospaced))
@@ -87,7 +87,7 @@ struct MenuBarPanelView: View {
                     Button {
                         state.stopRecording()
                     } label: {
-                        Label("Stop", systemImage: "stop.circle.fill")
+                        Label("Стоп", systemImage: "stop.circle.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -101,19 +101,19 @@ struct MenuBarPanelView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
-                    .help("Stop & discard this recording")
+                    .help("Стоп и сбросить эту запись")
                 }
                 .confirmationDialog(
-                    "Discard this recording?",
+                    "Сбросить эту запись?",
                     isPresented: $showingDiscardConfirm,
                     titleVisibility: .visible
                 ) {
-                    Button("Stop & Discard", role: .destructive) {
+                    Button("Стоп и сбросить", role: .destructive) {
                         state.cancelRecording()
                     }
-                    Button("Cancel", role: .cancel) {}
+                    Button("Отмена", role: .cancel) {}
                 } message: {
-                    Text("The recording will be deleted immediately. No transcript or summary will be created.")
+                    Text("Запись будет удалена сразу. Расшифровка и саммари не создаются.")
                 }
             }
         } else if state.zoomMeetingDetected && !state.isRecording {
@@ -121,14 +121,14 @@ struct MenuBarPanelView: View {
                 Image(systemName: "video.fill")
                     .foregroundStyle(.cyan)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Zoom call active").font(.headline)
-                    Text("Recording not started").font(.caption).foregroundStyle(.secondary)
+                    Text("Звонок Zoom").font(.headline)
+                    Text("Запись не начата").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button {
                     state.acceptZoomRecordingPrompt()
                 } label: {
-                    Label("Record", systemImage: "record.circle.fill")
+                    Label("Записать", systemImage: "record.circle.fill")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
@@ -138,8 +138,8 @@ struct MenuBarPanelView: View {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Processing…").font(.headline)
-                    Text(state.statusMessage.isEmpty ? "Working…" : state.statusMessage)
+                    Text("Обработка…").font(.headline)
+                    Text(state.statusMessage.isEmpty ? "Обработка…" : state.statusMessage)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -150,13 +150,13 @@ struct MenuBarPanelView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Propeller").font(.headline)
-                    Text("Ready to record").font(.caption).foregroundStyle(.secondary)
+                    Text("Готов к записи").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button {
                     state.startRecording()
                 } label: {
-                    Label("Record", systemImage: "record.circle.fill")
+                    Label("Записать", systemImage: "record.circle.fill")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
@@ -169,7 +169,7 @@ struct MenuBarPanelView: View {
 
     private var recentRecordingsSection: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("Recent")
+            Text("Недавние")
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.tertiary)
                 .textCase(.uppercase)
@@ -177,7 +177,7 @@ struct MenuBarPanelView: View {
                 .padding(.bottom, 2)
 
             if state.recordingStore.recordings.isEmpty {
-                Text("No recordings yet")
+                Text("Пока нет записей")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 12)

@@ -40,7 +40,7 @@ class TranscriptionService {
         statusCallback: ((String) -> Void)? = nil
     ) async throws {
         // Always ensureReady — cheap when healthy; avoids stale gigasttReady after crash (R5).
-        statusCallback?("Starting gigastt…")
+        statusCallback?("Запуск gigastt…")
         downloadProgress?(0.05)
         try await GigasttSidecar.shared.ensureReady(
             statusCallback: statusCallback,
@@ -54,7 +54,7 @@ class TranscriptionService {
         NSLog("[TranscriptionService] gigastt ready: model=\(health.model ?? "?") variant=\(health.variant ?? "?") version=\(health.version ?? "?")")
 
         if diarizer == nil {
-            statusCallback?("Loading diarizer...")
+            statusCallback?("Загрузка диаризатора…")
             let diaConfig = OfflineDiarizerConfig()
             diarizer = OfflineDiarizerManager(config: diaConfig)
             try await diarizer?.prepareModels()
@@ -105,13 +105,13 @@ class TranscriptionService {
         downloadProgress: ((Double) -> Void)? = nil
     ) async throws -> RawTranscriptionResult {
         _ = languageOverride // fixed ru via GigaAM
-        progressCallback?("Loading models...")
+        progressCallback?("Загрузка моделей…")
         try await prepare(
             downloadProgress: downloadProgress,
             statusCallback: progressCallback
         )
 
-        progressCallback?("Transcribing audio (GigaAM)...")
+        progressCallback?("Расшифровка (GigaAM)…")
         NSLog("[TranscriptionService] Starting gigastt transcription for: \(audioURL.lastPathComponent)")
 
         let (segments, rawText) = try await PipelineMetrics.interval(
@@ -153,11 +153,11 @@ class TranscriptionService {
         progressCallback: ((String) -> Void)? = nil
     ) async throws -> MeetingTranscriptionResult {
         if diarizer == nil {
-            progressCallback?("Loading diarizer...")
+            progressCallback?("Загрузка диаризатора…")
             _ = try await prepareDiarizer()
         }
 
-        progressCallback?("Identifying speakers...")
+        progressCallback?("Определяем спикеров…")
         var diarizedSegments: [DiarizedSegment] = []
 
         if let diarizer = diarizer {
@@ -345,7 +345,7 @@ class TranscriptionService {
 
     // MARK: - Engine info (Settings UI)
 
-    static let engineDescription = "GigaAM v3 (e2e_rnnt) via local gigastt"
+    static let engineDescription = "GigaAM v3 (e2e_rnnt) через локальный gigastt"
 
     enum TranscriptionError: LocalizedError {
         case modelNotLoaded
@@ -354,9 +354,9 @@ class TranscriptionService {
         var errorDescription: String? {
             switch self {
             case .modelNotLoaded:
-                return "gigastt is not available. The speech engine failed to start."
+                return "gigastt недоступен — не удалось запустить движок речи."
             case .noResults:
-                return "No transcription results produced."
+                return "Расшифровка ничего не вернула."
             }
         }
     }

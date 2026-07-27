@@ -12,8 +12,8 @@ enum ZoomAutoRecordMode: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .off: return "Off"
-        case .auto: return "Auto-record"
+        case .off: return "Выкл"
+        case .auto: return "Автозапись"
         }
     }
 }

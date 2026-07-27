@@ -1,49 +1,59 @@
 import SwiftUI
+import AppKit
 
 /// Welcome → Name → Calendar → Permissions → End.
 /// Glass lives on the host window (not per-step).
+///
+/// "Пропустить" on the welcome carousel skips the *tour*, not the setup: it
+/// jumps to permissions, which stay mandatory (mic + system audio). The name
+/// defaults to the macOS full name so a skipped name step never leaves the
+/// owner-by-mic labelling without a name.
 public struct OnboardingFlowView: View {
     var onComplete: (String) -> Void
     var microphoneGranted: Bool
     var systemAudioGranted: Bool
-    var notesGranted: Bool
-    var onConnectCalendar: () -> Void
+    var notificationsGranted: Bool
+    var calendarGranted: Bool
+    var onConnectCalendar: (CalendarProvider) -> Void
     var onGrantMicrophone: () -> Void
     var onGrantSystemAudio: () -> Void
-    var onGrantNotes: () -> Void
+    var onGrantNotifications: () -> Void
     var onSetLaunchAtLogin: (Bool) -> Void
 
     public init(
         onComplete: @escaping (String) -> Void,
         microphoneGranted: Bool = false,
         systemAudioGranted: Bool = false,
-        notesGranted: Bool = false,
-        onConnectCalendar: @escaping () -> Void = {},
+        notificationsGranted: Bool = false,
+        calendarGranted: Bool = false,
+        onConnectCalendar: @escaping (CalendarProvider) -> Void = { _ in },
         onGrantMicrophone: @escaping () -> Void = {},
         onGrantSystemAudio: @escaping () -> Void = {},
-        onGrantNotes: @escaping () -> Void = {},
+        onGrantNotifications: @escaping () -> Void = {},
         onSetLaunchAtLogin: @escaping (Bool) -> Void = { _ in }
     ) {
         self.onComplete = onComplete
         self.microphoneGranted = microphoneGranted
         self.systemAudioGranted = systemAudioGranted
-        self.notesGranted = notesGranted
+        self.notificationsGranted = notificationsGranted
+        self.calendarGranted = calendarGranted
         self.onConnectCalendar = onConnectCalendar
         self.onGrantMicrophone = onGrantMicrophone
         self.onGrantSystemAudio = onGrantSystemAudio
-        self.onGrantNotes = onGrantNotes
+        self.onGrantNotifications = onGrantNotifications
         self.onSetLaunchAtLogin = onSetLaunchAtLogin
     }
 
     private enum Step { case welcome, name, calendar, permissions, end }
     @State private var step: Step = .welcome
-    @State private var name = ""
+    @State private var name = NSFullUserName()
 
     public var body: some View {
         Group {
             switch step {
             case .welcome:
-                OnboardingWelcomeView(onSetUp: { go(.name) }, onSkip: { go(.name) })
+                OnboardingWelcomeView(onSetUp: { go(.name) },
+                                      onSkip: { go(.permissions) })
             case .name:
                 OnboardingNameView(onNext: { name = $0; go(.calendar) },
                                    onBack: { go(.welcome) })
@@ -51,16 +61,17 @@ public struct OnboardingFlowView: View {
                 OnboardingCalendarView(onNext: { go(.permissions) },
                                        onSkip: { go(.permissions) },
                                        onBack: { go(.name) },
-                                       onConnect: { _ in onConnectCalendar() })
+                                       calendarGranted: calendarGranted,
+                                       onConnect: onConnectCalendar)
             case .permissions:
                 OnboardingPermissionsView(onNext: { go(.end) },
                                           onBack: { go(.calendar) },
                                           microphoneGranted: microphoneGranted,
                                           systemAudioGranted: systemAudioGranted,
-                                          notesGranted: notesGranted,
+                                          notificationsGranted: notificationsGranted,
                                           onGrantMicrophone: onGrantMicrophone,
                                           onGrantSystemAudio: onGrantSystemAudio,
-                                          onGrantNotes: onGrantNotes,
+                                          onGrantNotifications: onGrantNotifications,
                                           onSetLaunchAtLogin: onSetLaunchAtLogin)
             case .end:
                 OnboardingEndView(onFinish: { onComplete(name) })

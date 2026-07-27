@@ -36,7 +36,7 @@ struct MainView: View {
     private var canGoForward: Bool { navIndex + 1 < navStack.count }
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
                 topBar
                     .zIndex(2)
@@ -50,11 +50,15 @@ struct MainView: View {
                     .zIndex(1)
             }
 
-            if state.selectedRecording == nil, !state.isRecording {
-                floatingSearch
-                    .padding(.bottom, 16)
+            if !toastIdentity.isEmpty {
+                activeToastContent
+                    .padding(.trailing, Tokens.Toast.trailingInset)
+                    .padding(.bottom, Tokens.Toast.bottomInset)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(3)
             }
         }
+        .animation(.easeOut(duration: 0.2), value: toastIdentity)
         .frame(minWidth: Tokens.Window.contentWidth + Tokens.Window.chromePadding * 2,
                minHeight: 560)
         .ignoresSafeArea(.container, edges: .top)
@@ -87,29 +91,66 @@ struct MainView: View {
             .keyboardShortcut("r", modifiers: .command)
             .hidden()
 
-            Button("") { showSearchPalette = true }
+            Button("") {
+                showSearchPalette = true
+                Analytics.signal("Search.opened")
+            }
                 .keyboardShortcut("k", modifiers: .command)
                 .hidden()
         }
-        .alert("Microphone Access Required", isPresented: $state.showMicPermissionAlert) {
-            Button("Open System Settings") { state.openMicrophoneSettings() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Propeller needs microphone access to record audio. Please enable it in System Settings > Privacy & Security > Microphone.")
-        }
-        .alert("Low Disk Space", isPresented: $state.showDiskSpaceAlert) {
-            Button("Continue Anyway") { state.diskSpaceAlertContinue() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(state.diskSpaceWarning ?? "Disk space is low.")
-        }
-        .alert("Recording Recovered", isPresented: Binding(
+        .alert("Запись восстановлена", isPresented: Binding(
             get: { state.recoveredCount > 0 },
             set: { if !$0 { state.recoveredCount = 0 } }
         )) {
-            Button("OK") { state.recoveredCount = 0 }
+            Button("ОК") { state.recoveredCount = 0 }
         } message: {
-            Text("\(state.recoveredCount) recording\(state.recoveredCount == 1 ? " was" : "s were") interrupted and may need re-transcription.")
+            Text(state.recoveredCount == 1
+                 ? "1 запись прервана — возможно, нужна повторная расшифровка."
+                 : "\(state.recoveredCount) записей прервано — возможно, нужна повторная расшифровка.")
+        }
+    }
+
+    /// One toast at a time — mic / disk / storage nudge (Figma 640:1987).
+    private var toastIdentity: String {
+        if state.showMicPermissionAlert { return "mic" }
+        if state.showDiskSpaceAlert { return "disk" }
+        if state.showStorageNudgeAlert { return "storage" }
+        return ""
+    }
+
+    @ViewBuilder
+    private var activeToastContent: some View {
+        if state.showMicPermissionAlert {
+            PropellerToast(
+                title: "Нужен микрофон",
+                subtitle: "Разрешите доступ в Системных настройках, чтобы записывать встречи.",
+                primary: .init("Настройки") {
+                    state.openMicrophoneSettings()
+                    state.showMicPermissionAlert = false
+                },
+                secondary: .init("ОК") { state.showMicPermissionAlert = false },
+                onDismiss: { state.showMicPermissionAlert = false }
+            )
+        } else if state.showDiskSpaceAlert {
+            PropellerToast(
+                title: "Мало места на диске",
+                subtitle: state.diskSpaceWarning ?? "На диске заканчивается место для записей.",
+                primary: .init("Всё равно записать") { state.diskSpaceAlertContinue() },
+                secondary: .init("Отмена") { state.diskSpaceAlertCancel() },
+                onDismiss: { state.diskSpaceAlertCancel() }
+            )
+        } else if state.showStorageNudgeAlert {
+            let used = ByteCountFormatter.string(fromByteCount: state.storageLibraryBytes, countStyle: .file)
+            PropellerToast(
+                title: "Библиотека разрослась",
+                subtitle: "Записи занимают около \(used). Propeller сам ничего не удаляет.",
+                primary: .init("Настройки") {
+                    state.showStorageNudgeAlert = false
+                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                },
+                secondary: .init("Позже") { state.snoozeStorageNudge() },
+                onDismiss: { state.snoozeStorageNudge() }
+            )
         }
     }
 
@@ -129,7 +170,7 @@ struct MainView: View {
                         weight: .medium,
                         enabled: canGoBack
                     ) { goBack() }
-                    .help("Back")
+                    .help("Назад")
 
                     IconButton(
                         systemName: "chevron.right",
@@ -138,7 +179,18 @@ struct MainView: View {
                         weight: .medium,
                         enabled: canGoForward
                     ) { goForward() }
-                    .help("Forward")
+                    .help("Вперёд")
+
+                    IconButton(
+                        systemName: "magnifyingglass",
+                        prominence: .minimal,
+                        iconSize: 14,
+                        weight: .medium
+                    ) {
+                        showSearchPalette = true
+                        Analytics.signal("Search.opened")
+                    }
+                    .help("Поиск (⌘K)")
                 }
             }
 
@@ -154,11 +206,7 @@ struct MainView: View {
                         .frame(height: 32)
                 }
 
-                SettingsLink {
-                    MinimalIconGlyph(systemName: "gearshape.fill", iconSize: 15)
-                }
-                .buttonStyle(.plain)
-                .help("Settings")
+                MinimalIconSettingsLink()
             }
         }
         .frame(height: 32)
@@ -248,13 +296,13 @@ struct MainView: View {
 
     private var topStatusText: String? {
         if let frac = state.modelDownloadProgress {
-            return "Downloading model.. \(Int(frac * 100))%"
+            return "Загрузка модели… \(Int(frac * 100))%"
         }
         if state.busyRecordingID != nil
             || state.transcribeStep == .running
             || state.saveStep == .running
             || state.recapStep == .running {
-            return state.statusMessage.isEmpty ? "Working…" : state.statusMessage
+            return state.statusMessage.isEmpty ? "Обработка…" : state.statusMessage
         }
         return nil
     }
@@ -265,7 +313,7 @@ struct MainView: View {
     private var mainArea: some View {
         Group {
             if state.isRecording {
-                RecordingInProgressView(state: state)
+                RecordingInProgressView(state: state, recorder: state.recorder)
             } else if let entry = state.selectedRecording {
                 RecordingDetailView(state: state, entry: entry, presentation: .meeting)
             } else {
@@ -291,42 +339,13 @@ struct MainView: View {
 
     /// Figma 640:1877 — h=100, items-end, px=12 py=8, title 40/44/−0.8.
     private var titleBlock: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            Text("Meetings")
-                .font(.system(size: 40, weight: .semibold))
-                .foregroundStyle(Tokens.Ink.primary)
-                .tracking(-0.8)
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .bottomLeading)
-
-            Menu {
-                Button("All speakers") { speakerFilter = nil }
-                if !filterSpeakerOptions.isEmpty { Divider() }
-                ForEach(filterSpeakerOptions, id: \.self) { name in
-                    Button {
-                        speakerFilter = name
-                    } label: {
-                        if speakerFilter == name {
-                            Label(name, systemImage: "checkmark")
-                        } else {
-                            Text(name)
-                        }
-                    }
-                }
-            } label: {
-                MinimalIconGlyph(
-                    systemName: "line.3.horizontal.decrease",
-                    iconSize: 15,
-                    emphasized: speakerFilter != nil
-                )
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .help("Filter by speaker")
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .frame(height: Tokens.Window.titleBlockHeight, alignment: .bottom)
+        MeetingsTitleBlock(
+            showRecord: !state.isRecording,
+            speakerOptions: filterSpeakerOptions,
+            selectedSpeaker: speakerFilter,
+            onRecord: { state.startRecording() },
+            onSelectSpeaker: { speakerFilter = $0 }
+        )
     }
 
     // MARK: - List
@@ -335,7 +354,7 @@ struct MainView: View {
         // Frame 86 gap=24 between Upcoming / Today blocks; rows inside a section stack flush.
         LazyVStack(alignment: .leading, spacing: Tokens.Window.sectionStackGap) {
             if let next = nextUpcoming {
-                sectionBlock(title: "Upcoming") {
+                sectionBlock(title: "Скоро") {
                     upcomingRow(next)
                 }
             }
@@ -345,6 +364,30 @@ struct MainView: View {
                         meetingRow(entry)
                     }
                 }
+            }
+            if nextUpcoming == nil && groupedRecordings.isEmpty {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Пока нет встреч")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Tokens.Ink.tertiary)
+                    Text("Начните запись — или Propeller сам подхватит Zoom.")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.white.opacity(0.30))
+                    Button {
+                        state.startRecording()
+                    } label: {
+                        Text("Записать")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Tokens.Ink.primary)
+                            .padding(.horizontal, 14)
+                            .frame(height: 32)
+                            .background(Color.white.opacity(0.10), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Запись (⌘R)")
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 24)
             }
         }
     }
@@ -409,7 +452,7 @@ struct MainView: View {
                     iconSize: 14,
                     weight: .medium
                 ) { calendar.dismiss(m) }
-                .help("Don't record this meeting")
+                .help("Не записывать эту встречу в Zoom")
             }
         }
         .onHover { inside in
@@ -424,7 +467,7 @@ struct MainView: View {
         return rowChrome(hovered: hovered) {
             timeColumn(start: entry.date, end: end)
             textColumn(
-                title: entry.title.isEmpty ? "Untitled" : entry.title,
+                title: entry.title.isEmpty ? "Без названия" : entry.title,
                 subtitle: entry.subtitleText
             )
             Spacer(minLength: 0)
@@ -435,14 +478,14 @@ struct MainView: View {
                     iconSize: 14,
                     weight: .medium
                 ) { revealInFinder(entry) }
-                .help("Reveal in Finder")
+                .help("Показать в Finder")
                 IconButton(
                     systemName: "trash",
                     prominence: .minimal,
                     iconSize: 14,
                     weight: .medium
                 ) { state.removeRecording(entry) }
-                .help("Delete")
+                .help("Удалить")
             }
         }
         .contentShape(Rectangle())
@@ -451,11 +494,11 @@ struct MainView: View {
             hoveredRowID = inside ? entry.id : (hoveredRowID == entry.id ? nil : hoveredRowID)
         }
         .contextMenu {
-            Button("Reveal in Finder") { revealInFinder(entry) }
-            Button("Delete audio file") { state.deleteAudioFile(entry) }
+            Button("Показать в Finder") { revealInFinder(entry) }
+            Button("Удалить аудио") { state.deleteAudioFile(entry) }
                 .disabled(!entry.audioFileExists)
             Divider()
-            Button("Delete recording", role: .destructive) { state.removeRecording(entry) }
+            Button("Удалить встречу", role: .destructive) { state.removeRecording(entry) }
         }
     }
 
@@ -545,30 +588,6 @@ struct MainView: View {
         }
     }
 
-    // MARK: - Floating search
-
-    /// Figma 640:1987 — pill, backdrop-blur 12, fill white/10, gap 4, h=36, px=14.
-    private var floatingSearch: some View {
-        Button { showSearchPalette = true } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "magnifyingglass")
-                Text("Search")
-                    .padding(.horizontal, 2)
-            }
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(Tokens.Ink.primary)
-            .padding(.horizontal, 14)
-            .frame(height: 36)
-            .background {
-                Capsule()
-                    .fill(.ultraThinMaterial)
-                Capsule()
-                    .fill(Color.white.opacity(0.10))
-            }
-        }
-        .buttonStyle(.plain)
-    }
-
     // MARK: - Helpers
 
     private func revealInFinder(_ entry: RecordingEntry) {
@@ -627,10 +646,10 @@ struct MainView: View {
             else { o.append(rec) }
         }
 
-        if !t.isEmpty { groups.append(("Today", t)) }
-        if !y.isEmpty { groups.append(("Yesterday", y)) }
-        if !w.isEmpty { groups.append(("This Week", w)) }
-        if !o.isEmpty { groups.append(("Older", o)) }
+        if !t.isEmpty { groups.append(("Сегодня", t)) }
+        if !y.isEmpty { groups.append(("Вчера", y)) }
+        if !w.isEmpty { groups.append(("На этой неделе", w)) }
+        if !o.isEmpty { groups.append(("Ранее", o)) }
         return groups
     }
 }

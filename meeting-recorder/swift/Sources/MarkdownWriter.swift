@@ -9,7 +9,7 @@ enum MarkdownOutputFormat: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .simple: return "Simple"
+        case .simple: return "Простой"
         case .obsidian: return "Obsidian"
         }
     }

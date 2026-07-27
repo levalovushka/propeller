@@ -39,6 +39,10 @@ phase0/FluidDiarize/.swiftpm/
 *.pem
 credentials.json
 
+# Sparkle EdDSA private key — public key is committed under swift/sparkle/
+meeting-recorder/swift/sparkle/private/
+**/sparkle_eddsa_priv*
+
 # Archives
 *.dmg
 *.zip
