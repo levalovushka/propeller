@@ -322,7 +322,11 @@ struct RecordingDetailView: View {
                     .font(.callout)
                     .foregroundStyle(.tertiary)
                 if let hint = state.recapSkipHint, state.selectedRecordingID == entry.id {
-                    Text(hint).font(.caption).foregroundStyle(.tertiary)
+                    Text(hint).font(.caption).foregroundStyle(.orange)
+                } else if state.transcript.isEmpty {
+                    Text("Сначала расшифруйте запись (вкладка «Транскрипт»).")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                 } else {
                     Text("Нужны Ollama или API-ключ в Настройках.")
                         .font(.caption)
@@ -802,8 +806,13 @@ struct RecordingDetailView: View {
             VStack(spacing: 12) {
                 emptyTabPlaceholder(
                     title: "Нет саммари",
-                    detail: state.recapSkipHint
-                        ?? "Саммари появляется после обработки записи. Нужны Ollama (локально) или API-ключ в Настройках."
+                    detail: {
+                        if let hint = state.recapSkipHint { return hint }
+                        if state.transcript.isEmpty && (entry.transcript?.isEmpty ?? true) {
+                            return "Сначала расшифруйте запись на вкладке «Транскрипт»."
+                        }
+                        return "Саммари появляется после обработки. Нужны Ollama (локально) или API-ключ в Настройках."
+                    }()
                 )
                 HStack(spacing: 10) {
                     Button {
@@ -1169,7 +1178,11 @@ struct RecordingDetailView: View {
             if state.transcript.isEmpty {
                 VStack(spacing: 10) {
                     Spacer()
-                    if state.transcribeStep == .running && state.busyRecordingID == entry.id {
+                    if (state.transcribeStep == .running && state.busyRecordingID == entry.id)
+                        || (state.selectedRecordingID == entry.id
+                            && state.pipelineError == nil
+                            && !state.statusMessage.isEmpty
+                            && state.transcribeStep != .failed) {
                         if let dl = state.modelDownloadProgress {
                             VStack(spacing: 8) {
                                 Image(systemName: "arrow.down.circle")
@@ -1198,6 +1211,14 @@ struct RecordingDetailView: View {
                         Text("Нет транскрипта")
                             .font(.callout)
                             .foregroundStyle(.tertiary)
+                        if let err = state.pipelineError, !err.isEmpty,
+                           state.selectedRecordingID == entry.id {
+                            Text(err)
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
+                        }
                         if entry.status == "transcribed_raw" {
                             Button {
                                 Task { await state.completeDiarization() }

@@ -110,11 +110,12 @@ struct MainView: View {
         }
     }
 
-    /// One toast at a time — mic / disk / storage nudge (Figma 640:1987).
+    /// One toast at a time — mic / disk / storage / pipeline error.
     private var toastIdentity: String {
         if state.showMicPermissionAlert { return "mic" }
         if state.showDiskSpaceAlert { return "disk" }
         if state.showStorageNudgeAlert { return "storage" }
+        if let err = state.pipelineError, !err.isEmpty { return "pipeline:\(err.prefix(40))" }
         return ""
     }
 
@@ -150,6 +151,22 @@ struct MainView: View {
                 },
                 secondary: .init("Позже") { state.snoozeStorageNudge() },
                 onDismiss: { state.snoozeStorageNudge() }
+            )
+        } else if let err = state.pipelineError, !err.isEmpty {
+            let canRetryASR = state.transcribeStep == .failed
+                || (state.selectedRecording?.status == "recorded"
+                    && (state.selectedRecording?.transcript?.isEmpty ?? true))
+            PropellerToast(
+                title: "Не удалось обработать",
+                subtitle: err,
+                primary: canRetryASR
+                    ? .init("Повторить") {
+                        state.clearPipelineError()
+                        Task { await state.reprocess() }
+                    }
+                    : nil,
+                secondary: .init("Закрыть") { state.clearPipelineError() },
+                onDismiss: { state.clearPipelineError() }
             )
         }
     }
@@ -295,6 +312,13 @@ struct MainView: View {
     }
 
     private var topStatusText: String? {
+        if let frac = state.ollamaSetupProgress {
+            let msg = state.ollamaSetupMessage.isEmpty
+                ? "Скачиваем модель саммари…"
+                : state.ollamaSetupMessage
+            if msg.contains("%") { return msg }
+            return "\(msg) \(Int(frac * 100))%"
+        }
         if let frac = state.modelDownloadProgress {
             return "Загрузка модели… \(Int(frac * 100))%"
         }
@@ -303,6 +327,10 @@ struct MainView: View {
             || state.saveStep == .running
             || state.recapStep == .running {
             return state.statusMessage.isEmpty ? "Обработка…" : state.statusMessage
+        }
+        // Kick-off line after «Повторить» before the pipeline latches .running.
+        if !state.statusMessage.isEmpty, state.pipelineError == nil {
+            return state.statusMessage
         }
         return nil
     }

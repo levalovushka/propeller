@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// Welcome → Name → Calendar → Permissions → End.
+/// Welcome → Name → Calendar → Permissions → Summary model → End.
 /// Glass lives on the host window (not per-step).
 ///
 /// "Пропустить" on the welcome carousel skips the *tour*, not the setup: it
@@ -19,6 +19,11 @@ public struct OnboardingFlowView: View {
     var onGrantSystemAudio: () -> Void
     var onGrantNotifications: () -> Void
     var onSetLaunchAtLogin: (Bool) -> Void
+    var onDownloadSummaryModel: () -> Void
+    var ollamaProgress: Double?
+    var ollamaStatus: String
+    var ollamaReady: Bool
+    var ollamaError: String?
 
     public init(
         onComplete: @escaping (String) -> Void,
@@ -30,7 +35,12 @@ public struct OnboardingFlowView: View {
         onGrantMicrophone: @escaping () -> Void = {},
         onGrantSystemAudio: @escaping () -> Void = {},
         onGrantNotifications: @escaping () -> Void = {},
-        onSetLaunchAtLogin: @escaping (Bool) -> Void = { _ in }
+        onSetLaunchAtLogin: @escaping (Bool) -> Void = { _ in },
+        onDownloadSummaryModel: @escaping () -> Void = {},
+        ollamaProgress: Double? = nil,
+        ollamaStatus: String = "",
+        ollamaReady: Bool = false,
+        ollamaError: String? = nil
     ) {
         self.onComplete = onComplete
         self.microphoneGranted = microphoneGranted
@@ -42,11 +52,17 @@ public struct OnboardingFlowView: View {
         self.onGrantSystemAudio = onGrantSystemAudio
         self.onGrantNotifications = onGrantNotifications
         self.onSetLaunchAtLogin = onSetLaunchAtLogin
+        self.onDownloadSummaryModel = onDownloadSummaryModel
+        self.ollamaProgress = ollamaProgress
+        self.ollamaStatus = ollamaStatus
+        self.ollamaReady = ollamaReady
+        self.ollamaError = ollamaError
     }
 
-    private enum Step { case welcome, name, calendar, permissions, end }
+    private enum Step { case welcome, name, calendar, permissions, summaryModel, end }
     @State private var step: Step = .welcome
     @State private var name = NSFullUserName()
+    @State private var summarySkipped = false
 
     public var body: some View {
         Group {
@@ -64,7 +80,7 @@ public struct OnboardingFlowView: View {
                                        calendarGranted: calendarGranted,
                                        onConnect: onConnectCalendar)
             case .permissions:
-                OnboardingPermissionsView(onNext: { go(.end) },
+                OnboardingPermissionsView(onNext: { go(.summaryModel) },
                                           onBack: { go(.calendar) },
                                           microphoneGranted: microphoneGranted,
                                           systemAudioGranted: systemAudioGranted,
@@ -73,6 +89,20 @@ public struct OnboardingFlowView: View {
                                           onGrantSystemAudio: onGrantSystemAudio,
                                           onGrantNotifications: onGrantNotifications,
                                           onSetLaunchAtLogin: onSetLaunchAtLogin)
+            case .summaryModel:
+                OnboardingSummaryModelView(
+                    onNext: { go(.end) },
+                    onSkip: {
+                        summarySkipped = true
+                        go(.end)
+                    },
+                    onBack: { go(.permissions) },
+                    onStartDownload: onDownloadSummaryModel,
+                    progress: ollamaProgress,
+                    statusMessage: ollamaStatus,
+                    isReady: ollamaReady,
+                    errorMessage: ollamaError
+                )
             case .end:
                 OnboardingEndView(onFinish: { onComplete(name) })
             }

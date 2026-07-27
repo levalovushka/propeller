@@ -57,17 +57,17 @@ enum GigasttClient {
         var errorDescription: String? {
             switch self {
             case .notReachable(let detail):
-                return "gigastt is not reachable. \(detail)"
+                return "gigastt недоступен. \(detail)"
             case .badStatus(let code, let body):
                 return "gigastt HTTP \(code): \(body.prefix(200))"
             case .apiError(let msg):
-                return "gigastt error: \(msg)"
+                return "Ошибка gigastt: \(msg)"
             case .emptyResult:
-                return "gigastt returned no segments."
+                return "gigastt не вернул сегменты (тишина или слишком короткий фрагмент?)."
             case .readFailed(let path):
-                return "Could not read audio file: \(path)"
+                return "Не удалось прочитать аудио: \(path)"
             case .chunkFailed(let detail):
-                return "Could not split audio for transcription: \(detail)"
+                return "Не удалось разрезать аудио: \(detail)"
             }
         }
     }

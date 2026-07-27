@@ -49,7 +49,9 @@ struct MenuBarPanelView: View {
             Button("Выйти из Propeller") {
                 if state.isRecording {
                     Task {
-                        await state.stopRecordingAndWait()
+                        // Quit path: keep the WAV, don't start gigastt mid-terminate.
+                        // Next launch picks it up via reconcilePendingPipeline.
+                        await state.stopRecordingAndWait(runPipeline: false)
                         state.recordingStore.flush()
                         await MainActor.run { NSApplication.shared.terminate(nil) }
                     }

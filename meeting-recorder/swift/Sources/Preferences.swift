@@ -20,12 +20,7 @@ class Preferences {
             .filter { !$0.isEmpty }
     }
 
-    // MARK: - Automation
-
-    var autoTranscribe: Bool {
-        get { defaults.object(forKey: "autoTranscribe") as? Bool ?? true }
-        set { defaults.set(newValue, forKey: "autoTranscribe") }
-    }
+    // MARK: - Capture
 
     /// Capture system audio output (other participants in video calls) alongside the mic.
     /// Requires Screen Recording permission. On first use macOS will prompt.
@@ -99,7 +94,14 @@ class Preferences {
     var recapPrompt: String {
         get {
             let stored = defaults.string(forKey: "recapPrompt") ?? ""
-            return stored.isEmpty ? RecapService.defaultPrompt : stored
+            if stored.isEmpty { return RecapService.defaultPrompt }
+            // Migrate previous built-in default so users pick up the new structure
+            // without opening Settings → Reset. Custom prompts are left alone.
+            if stored.hasPrefix("Ты готовишь краткий рекап рабочей встречи") {
+                defaults.removeObject(forKey: "recapPrompt")
+                return RecapService.defaultPrompt
+            }
+            return stored
         }
         set { defaults.set(newValue, forKey: "recapPrompt") }
     }

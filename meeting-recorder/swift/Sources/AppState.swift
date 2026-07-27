@@ -21,12 +21,18 @@ class AppState: ObservableObject {
     /// when the user has navigated back to the meetings list.
     @Published private(set) var busyRecordingID: String?
     @Published var statusMessage = ""
+    /// Last pipeline failure shown in the empty transcript / recap panels (and toast).
+    /// Cleared when a new ASR/recap attempt starts successfully past the early guards.
+    @Published var pipelineError: String? = nil
     /// Hint when recap was skipped (no Ollama / no API key). Cleared on next successful recap.
     @Published var recapSkipHint: String? = nil
     @Published var lastRecapPath: String? = nil
     @Published var recordingDuration: TimeInterval = 0
     /// Model download progress 0.0–1.0. Nil when no download is active.
     @Published var modelDownloadProgress: Double? = nil
+    /// Ollama engine/model setup (onboarding + Settings). Nil when idle.
+    @Published var ollamaSetupProgress: Double? = nil
+    @Published var ollamaSetupMessage = ""
     /// Latched true when a recording was completed without system audio capture.
     /// Survives into the detail view so "Mic only" can be shown in the header.
     @Published var micOnlyRecording = false
@@ -416,12 +422,13 @@ class AppState: ObservableObject {
     }
 
     func stopRecording() {
-        Task { await stopRecordingAndWait(autoTranscribe: Preferences.shared.autoTranscribe) }
+        Task { await stopRecordingAndWait(runPipeline: true) }
     }
 
     /// Stop recording and await final WAV write. Safe to call from quit handlers.
-    /// When `autoTranscribe` is false, the transcribe chain is skipped (used on app quit).
-    func stopRecordingAndWait(autoTranscribe: Bool = false) async {
+    /// `runPipeline: false` only for app quit — otherwise ASR → save → recap always starts
+    /// (gigastt downloads/spawns inside `runTranscribe` on first need).
+    func stopRecordingAndWait(runPipeline: Bool = true) async {
         guard isRecording else { return }
         guard !isTerminalRecordingAction else { return }
         isTerminalRecordingAction = true
@@ -452,7 +459,7 @@ class AppState: ObservableObject {
             micOnlyRecording = micOnly
             Analytics.recordingFinished(duration: result.duration, micOnly: micOnly)
 
-            if autoTranscribe {
+            if runPipeline {
                 let body = wasZoomLinked
                     ? "Запись Zoom остановлена. Расшифровка…"
                     : "Запись остановлена. Расшифровка…"
@@ -620,7 +627,18 @@ class AppState: ObservableObject {
 
     /// Regenerate recap for the selected recording (requires saved transcript markdown).
     func regenerateRecap() async {
-        guard let rec = selectedRecording, !transcript.isEmpty else { return }
+        guard let rec = selectedRecording else {
+            surfacePipelineError("Запись не выбрана")
+            return
+        }
+        guard !transcript.isEmpty else {
+            let msg = "Сначала нужна расшифровка — без транскрипта саммари не из чего собрать."
+            recapSkipHint = msg
+            preferredDetailTab = "transcript"
+            surfacePipelineError(msg)
+            return
+        }
+        pipelineError = nil
         let speakers = MarkdownWriter.extractSpeakers(from: transcript)
         let slug = MarkdownWriter.slugify(rec.title.isEmpty ? rec.id : rec.title)
         let transcriptPath = URL(fileURLWithPath: Preferences.shared.meetingsPath)
@@ -643,6 +661,19 @@ class AppState: ObservableObject {
             recordingID: rec.id,
             duration: duration
         )
+    }
+
+    /// Persist a user-visible pipeline error (detail panel + toast). Does not clear mid-run status.
+    func surfacePipelineError(_ message: String) {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        pipelineError = trimmed
+        statusMessage = trimmed
+        NSLog("[AppState] pipelineError: \(trimmed)")
+    }
+
+    func clearPipelineError() {
+        pipelineError = nil
     }
 
     func renameRecording(_ entry: RecordingEntry, to newTitle: String) {
@@ -697,6 +728,13 @@ class AppState: ObservableObject {
             debugLog("[backfill] skip: busy (backfilling=\(isBackfilling) recording=\(isRecording) transcribing=\(isTranscribing) zoom=\(zoomMeetingDetected))")
             return false
         }
+        switch ProcessInfo.processInfo.thermalState {
+        case .serious, .critical:
+            debugLog("[backfill] skip: thermalState=\(ProcessInfo.processInfo.thermalState.rawValue)")
+            return false
+        default:
+            break
+        }
 
         // Cheap candidate scan BEFORE any network probe (plan-optimization P5).
         let candidates = recordingStore.recordings.filter { rec in
@@ -719,10 +757,17 @@ class AppState: ObservableObject {
         debugLog("[backfill] start via \(backendName), model=\(prefs.ollamaModel), \(candidates.count) candidates")
 
         isBackfilling = true
-        defer { isBackfilling = false }
+        defer {
+            isBackfilling = false
+            // Free VRAM after the batch — don't leave qwen resident for Zoom.
+            OllamaSidecar.shared.stopAfterIdle(30)
+        }
 
-        for rec in candidates {
-            if isRecording || isTranscribing { break }           // yield to live work
+        // Cap batch size so a long backlog doesn't cook the machine in one go.
+        for rec in candidates.prefix(2) {
+            if isRecording || isTranscribing || zoomMeetingDetected { break }
+            if ProcessInfo.processInfo.thermalState == .serious
+                || ProcessInfo.processInfo.thermalState == .critical { break }
             guard let text = rec.transcript, !text.isEmpty else { continue }
             // Re-check in case a concurrent save wrote the recap.
             guard !hasRecap(for: rec) else { continue }
@@ -753,17 +798,23 @@ class AppState: ObservableObject {
     /// Kick (or coalesce into) the background summary backfill. Safe to call
     /// repeatedly — one `NSBackgroundActivityScheduler` owns retries so
     /// launch + post-recap don't stack Task.sleep loops (plan-optimization S5).
-    func startSummaryBackfill() {
+    func startSummaryBackfill(delaySeconds: TimeInterval = 0) {
         ensureBackfillScheduler()
-        Task { _ = await backfillMissingSummaries() }
+        Task {
+            if delaySeconds > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+            }
+            _ = await backfillMissingSummaries()
+        }
     }
 
     private func ensureBackfillScheduler() {
         guard backfillScheduler == nil else { return }
         let scheduler = NSBackgroundActivityScheduler(identifier: "app.propeller.summary-backfill")
         scheduler.repeats = true
-        scheduler.interval = 60
-        scheduler.tolerance = 30
+        // Was 60s — too aggressive with a 7B local model. Give the machine room.
+        scheduler.interval = 180
+        scheduler.tolerance = 60
         scheduler.qualityOfService = .utility
         scheduler.schedule { [weak self] completion in
             Task { @MainActor in
@@ -870,11 +921,11 @@ class AppState: ObservableObject {
 
     func runTranscribe(recordingID explicitID: String? = nil) async {
         if isTranscribing {
-            if explicitID != nil {
-                statusMessage = "В очереди на расшифровку…"
-            } else {
-                statusMessage = "Расшифровка уже идёт"
-            }
+            let msg = explicitID != nil
+                ? "В очереди на расшифровку…"
+                : "Расшифровка уже идёт"
+            statusMessage = msg
+            surfacePipelineError(msg)
             return
         }
         let rec: RecordingEntry?
@@ -883,18 +934,25 @@ class AppState: ObservableObject {
         } else {
             rec = selectedRecording
         }
-        guard let rec else { return }
+        guard let rec else {
+            surfacePipelineError("Запись не выбрана")
+            return
+        }
         let recordingID = rec.id
         let language = rec.language
         let durationAtStart = rec.duration
         guard let audioURL = recordingStore.audioURL(for: rec) else {
-            statusMessage = "Аудио не найдено"
+            surfacePipelineError("Аудиофайл не найден — нельзя расшифровать.")
             return
         }
 
         let ok = await checkDiskSpaceForModelDownload()
-        guard ok else { return }
+        guard ok else {
+            surfacePipelineError("Расшифровка отменена — мало места на диске.")
+            return
+        }
 
+        pipelineError = nil
         isTranscribing = true
         beginPipelineWork(recordingID)
 
@@ -968,9 +1026,14 @@ class AppState: ObservableObject {
         } catch {
             transcribeStep = .failed
             modelDownloadProgress = nil
+            let msg = error.localizedDescription
             Analytics.transcriptionFinished(ok: false, reason: "error")
             if selectedRecordingID == recordingID {
-                statusMessage = error.localizedDescription
+                surfacePipelineError(msg)
+            } else {
+                // Keep error for when they open this meeting later.
+                pipelineError = msg
+                NSLog("[AppState] Transcription FAILED (background): \(error)")
             }
             if let current = recordingStore.recording(for: recordingID), current.status == "transcribed_raw" {
                 // Keep checkpoint
@@ -1065,7 +1128,9 @@ class AppState: ObservableObject {
             transcribeStep = .failed
             Analytics.transcriptionFinished(ok: false, reason: "diarize")
             if selectedRecordingID == recordingID {
-                statusMessage = error.localizedDescription
+                surfacePipelineError(error.localizedDescription)
+            } else {
+                pipelineError = error.localizedDescription
             }
             recordingStore.update(id: recordingID, status: "transcribed_raw")
             NSLog("[AppState] Diarization FAILED: \(error)")
@@ -1123,9 +1188,7 @@ class AppState: ObservableObject {
             )
         } catch {
             saveStep = .failed
-            if selectedRecordingID == recordingID {
-                statusMessage = error.localizedDescription
-            }
+            surfacePipelineError(error.localizedDescription)
         }
     }
 
@@ -1187,14 +1250,14 @@ class AppState: ObservableObject {
                         surfaceMeetingUI(preferSummaryTab: false)
                     case .noProvider:
                         recapSkipHint = "Нет провайдера саммари — запустите Ollama или добавьте API-ключ в Настройках"
-                        statusMessage = recapSkipHint ?? ""
+                        surfacePipelineError(recapSkipHint ?? "Саммари пропущено")
                         NotificationManager.shared.post(
                             title: "Propeller",
                             body: recapSkipHint ?? "Саммари пропущено"
                         )
                     case .emptyTranscript:
                         recapSkipHint = "Саммари пропущено — пустой транскрипт"
-                        statusMessage = recapSkipHint ?? ""
+                        surfacePipelineError(recapSkipHint ?? "")
                     }
                     surfaceMeetingUI(preferSummaryTab: false)
                 }
@@ -1212,17 +1275,18 @@ class AppState: ObservableObject {
                     body: "Саммари готово — в карточке встречи."
                 )
                 await generateMeetingMetadata(recordingID: recordingID, summary: recap.body)
+                OllamaSidecar.shared.stopAfterIdle(30)
             }
         } catch {
             recapStep = .failed
             Analytics.recapFinished(ok: false)
+            surfacePipelineError(error.localizedDescription)
             if selectedRecordingID == recordingID {
-                statusMessage = error.localizedDescription
                 recapSkipHint = error.localizedDescription
             }
         }
 
-        startSummaryBackfill()
+        startSummaryBackfill(delaySeconds: 60)
         await reconcilePendingPipeline()
     }
 
@@ -1282,14 +1346,17 @@ class AppState: ObservableObject {
         guard let rec = recordingStore.recording(for: recordingID) else { return }
         // Calendar / user titles must not be overwritten by the LLM.
         let needTitle = Self.isAutoGeneratedTitle(rec.title)
+        // Second 7B pass after every recap was cooking RAM/GPU. Only run it when
+        // we actually need an auto-title; topics/tags can wait for a quieter moment.
+        guard needTitle else { return }
         let meta = await RecapService.shared.generateMetadata(
             summaryMarkdown: summary,
-            needTitle: needTitle,
+            needTitle: true,
             prefs: RecapPreferences.fromShared()
         )
         guard let meta else { return }
         recordingStore.update(id: recordingID, topics: meta.topics, tags: meta.tags)
-        if needTitle, let newTitle = meta.title, !newTitle.isEmpty {
+        if let newTitle = meta.title, !newTitle.isEmpty {
             recordingStore.update(id: recordingID, title: newTitle)
         }
     }
@@ -1300,9 +1367,124 @@ class AppState: ObservableObject {
     }
 
     func reprocess() async {
-        transcribeStep = .pending
+        guard let id = selectedRecordingID else {
+            surfacePipelineError("Запись не выбрана")
+            return
+        }
+        pipelineError = nil
+        // Headphones / Zoom: FluidAudio often collapses everyone into the owner.
+        // If we already have segments + mic/sys stems, re-split by energy — no ASR.
+        if recordingStore.recording(for: id)?.mergedSegmentsJSON != nil {
+            statusMessage = "Уточняем спикеров…"
+            if await repairSpeakerAttribution(recordingID: id) {
+                return
+            }
+        }
+        statusMessage = "Запуск расшифровки…"
         saveStep = .pending
-        await runTranscribe()
+        await runTranscribe(recordingID: id)
+    }
+
+    /// Re-assign speakers from mic vs system stem energy. Returns false when
+    /// stems/segments are missing (caller should fall back to full ASR).
+    @discardableResult
+    func repairSpeakerAttribution(recordingID: String) async -> Bool {
+        guard let rec = recordingStore.recording(for: recordingID),
+              let audioURL = recordingStore.audioURL(for: rec),
+              let segments = loadPersistedSegments(for: rec),
+              !segments.isEmpty else { return false }
+        guard let relabeled = transcriptionService.relabelSegmentsFromStems(
+            audioURL: audioURL,
+            segments: segments
+        ) else { return false }
+
+        let before = Set(segments.map(\.speaker))
+        let after = Set(relabeled.map(\.speaker))
+        let newTranscript = TranscriptionService.formatTranscriptText(from: relabeled)
+        let segJSON = encodePersistedSegments(relabeled)
+        recordingStore.update(
+            id: recordingID,
+            transcript: newTranscript,
+            mergedSegmentsJSON: .some(segJSON)
+        )
+        if selectedRecordingID == recordingID {
+            transcript = newTranscript
+        }
+        markDirty()
+        // Rewrite markdown only — don't kick another qwen pass just for speaker labels.
+        let speakers = MarkdownWriter.extractSpeakers(from: newTranscript)
+        _ = try? MarkdownWriter.save(
+            title: rec.title,
+            transcript: newTranscript,
+            recordingID: recordingID,
+            duration: rec.duration,
+            speakers: speakers,
+            notes: rec.notes
+        )
+        let msg = before == after
+            ? "Спикеры без изменений"
+            : "Спикеры: \(after.sorted().joined(separator: ", "))"
+        statusMessage = msg
+        debugLog("[AppState] stem speaker repair \(recordingID): \(before) → \(after)")
+        return true
+    }
+
+    /// Download Ollama binary (if needed), start serve, pull the recap model.
+    /// Progress → `ollamaSetupProgress` / `ollamaSetupMessage` (onboarding + status bar).
+    /// On success, kicks summary backfill so meetings recorded meanwhile get recaps.
+    @discardableResult
+    func downloadOllamaRuntime() async -> Bool {
+        let okDisk = await checkDiskSpaceForModelDownload()
+        guard okDisk else {
+            surfacePipelineError("Недостаточно места для модели саммари (~5 ГБ).")
+            return false
+        }
+        pipelineError = nil
+        ollamaSetupProgress = 0
+        ollamaSetupMessage = "Подготовка…"
+        let model = Preferences.shared.recapOllamaModel
+        do {
+            try await OllamaSidecar.shared.ensureReady(
+                model: model.isEmpty ? OllamaSidecar.defaultModel : model,
+                statusCallback: { [weak self] msg in
+                    Task { @MainActor in
+                        self?.ollamaSetupMessage = msg
+                    }
+                },
+                progress: { [weak self] frac in
+                    Task { @MainActor in
+                        self?.ollamaSetupProgress = frac
+                    }
+                }
+            )
+            ollamaSetupProgress = nil
+            ollamaSetupMessage = "Модель готова"
+            Analytics.signal("Ollama.setup.ok")
+            // Don't slam the GPU with backfill the second the model lands —
+            // user may still be mid-call / mid-onboarding.
+            startSummaryBackfill(delaySeconds: 120)
+            return true
+        } catch {
+            ollamaSetupProgress = nil
+            ollamaSetupMessage = ""
+            surfacePipelineError(error.localizedDescription)
+            Analytics.signal("Ollama.setup.fail")
+            return false
+        }
+    }
+
+    private var ollamaDownloadTask: Task<Void, Never>?
+
+    /// Fire-and-forget: start Ollama install in background so onboarding / Settings
+    /// can proceed immediately. Progress stays in the status bar.
+    func startOllamaRuntimeDownload() {
+        if ollamaDownloadTask != nil || ollamaSetupProgress != nil { return }
+        ollamaDownloadTask = Task { [weak self] in
+            defer {
+                Task { @MainActor in self?.ollamaDownloadTask = nil }
+            }
+            _ = await self?.downloadOllamaRuntime()
+        }
     }
 
     // MARK: - Per-Segment Reassignment

@@ -17,10 +17,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if isTerminatingAfterFlush { return .terminateNow }
         Task { @MainActor in
             if let state = AppStateRegistry.shared, state.isRecording {
-                await state.stopRecordingAndWait(autoTranscribe: false)
+                await state.stopRecordingAndWait(runPipeline: false)
             }
             AppStateRegistry.shared?.recordingStore.flush()
             GigasttSidecar.shared.stop()
+            OllamaSidecar.shared.stop()
+            Analytics.flush()
             OnboardingPanelController.shared.close()
             self.isTerminatingAfterFlush = true
             NSApp.reply(toApplicationShouldTerminate: true)
@@ -29,7 +31,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        Analytics.flush()
         GigasttSidecar.shared.stop()
+        OllamaSidecar.shared.stop()
         OnboardingPanelController.shared.close()
         AppStateRegistry.shared?.recordingStore.flush()
     }

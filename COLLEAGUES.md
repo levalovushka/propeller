@@ -26,16 +26,11 @@
 
 ## Саммари (важно)
 
-Саммари **не появится само**, если нет LLM:
+В онбординге (или Настройки → Саммари → **Скачать модель**) Propeller распаковывает движок Ollama из приложения (~140 МБ уже в DMG) и один раз качает модель `qwen2.5:7b` (~5 ГБ) в фоне. Можно сразу идти записывать — саммари догонит встречи само. Ставить Ollama.app вручную не нужно.
 
-1. **Предпочтительно локально:** установи [Ollama](https://ollama.com), затем:
-   ```bash
-   ollama pull qwen2.5:7b
-   ```
-   Propeller по умолчанию ждёт эту модель.
-2. **Или** в Настройках → Recap укажи API-ключ OpenAI / Claude.
+Альтернатива: API-ключ OpenAI / Claude в Настройках → Саммари.
 
-Без провайдера увидишь пустой Summary и тост/подсказку — это не поломка записи.
+Без модели/ключа увидишь пустой Summary и подсказку — это не поломка записи.
 
 ## Как пользоваться
 
@@ -49,17 +44,16 @@
 ```bash
 # Нужен бинарь tools/gigastt/gigastt (без него build.sh падает)
 cd meeting-recorder/swift
-./build.sh          # → /Applications/Propeller.app
-# TelemetryDeck (dogfood): создай app на https://dashboard.telemetrydeck.com
-# и передай App ID:
-TELEMETRYDECK_APP_ID='xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' ./build.sh
+./build.sh          # → /Applications/Propeller.app (TelemetryDeck App ID уже вшит)
 ./package-dmg.sh    # → ../../dist/Propeller-….dmg
 ./make-appcast.sh   # → ../../dist/appcast.xml (нужен private key)
 ```
 
 Обновления: Settings → About → **Check for Updates…** (Sparkle + GitHub Releases). Первый запуск по-прежнему **ПКМ → Открыть** (нет Developer ID).
 
-Телеметрия (TelemetryDeck): по умолчанию вкл; Settings → Основное → выкл. Сигналы без контента: `Propeller.Recording.*`, `Transcription.*`, `Recap.*`, `Search.opened`, `Onboarding.completed`. DEBUG-сборки видны в дашборде как Test Signals.
+Телеметрия (TelemetryDeck): по умолчанию вкл; Settings → Основное → выкл. Сигналы без контента: `Propeller.App.opened`, `Recording.*`, `Transcription.*`, `Recap.*`, `Search.opened`, `Onboarding.completed`.
+
+В дашборде смотри **Explore → Recent Signals**, режим **Live** (не Test). Release-сборки (`./build.sh`) всегда Live; DEBUG из Xcode — Test. После первого запуска сигнал появляется за ~1–2 минуты.
 Для стабильных TCC между пересборками создай self-signed identity **`MeetingRecorder Dev`**  
 (`security` / Keychain → Certificate Assistant → Code Signing). Без него каждый rebuild = заново Mic/Screen/Calendar.
 

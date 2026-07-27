@@ -24,7 +24,7 @@ _Источник правды по архитектурным решениям 
 | Спикеры | Консистентные `Speaker N` + владелец-по-микрофону | Библиотека голосов/матчинг вырезаны (plan-v2 Job 3); «тупо и надёжно» |
 | Календарь | EventKit, read-only (не Google OAuth) | Читает системный Календарь; без облака, только разрешение |
 | Сохранение транскрипта | **Всегда** (сразу после диаризации) | Опроса спикеров и тугла auto-save нет |
-| Дистрибуция v1 | DMG, без Sparkle; нотаризация опциональна | Малая команда |
+| Дистрибуция v1 | DMG + **Sparkle** (GitHub Releases `appcast.xml`); нотаризация / Developer ID — позже | ad-hoc + ПКМ→Открыть; авто-апдейты с EdDSA |
 | Иконка | `propellericon.icon` → Assets.car + .icns через `actool` | Liquid Glass + fallback |
 | Саммари / заметки | Встреча: табы Transcript / Notes / Summary; sidebar **Summaries** — только summary+notes; заметки пишутся во время записи и якорят LLM (как Granola) | Talat-табы + Granola notes-as-anchors; авто-рекап после save |
 
@@ -60,7 +60,7 @@ ZoomMeetingDetector (Auto) / menu bar / ⌘R / UI
 | `NotificationManager` | UNUserNotificationCenter: интерактивная отмена авто-записи + баннеры |
 | `TranscriptionService` | ASR → diarize → `Speaker N` + владелец-по-микрофону |
 | `GigasttSidecar` / `GigasttClient` | Жизненный цикл сервера и HTTP |
-| `RecordingStore` | Индекс записей + CRUD + retention |
+| `RecordingStore` | Индекс записей + CRUD + size-nudge (без auto-delete) |
 | `MarkdownWriter` / `RecapService` | Экспорт и LLM-саммари + метадата (заголовок/темы/теги) |
 | `Preferences` | UserDefaults + Keychain для API-ключей |
 | UI | `MainView`, `RecordingDetailView`, `RecordingInProgressView`, `MenuBarPanelView`, `SettingsSheet`, `OnboardingView`, `SearchPalette`, … |

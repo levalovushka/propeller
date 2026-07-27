@@ -67,6 +67,40 @@ public enum DiarizationMerge {
     }
 }
 
+/// Headphones / Zoom calls: FluidAudio often collapses mic+system into one
+/// cluster. When stems exist, mic/sys energy is a stronger split than clustering.
+public enum SourceAwareSpeaker {
+    public enum Source: String {
+        case microphone, system, mixed, unknown
+    }
+
+    /// `fluidDisplayName` is already owner-mapped (e.g. "leva" or "Speaker 1").
+    public static func resolve(
+        fluidDisplayName: String,
+        source: Source,
+        ownerName: String,
+        remoteFallback: String = "Speaker 1"
+    ) -> String {
+        let owner = ownerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch source {
+        case .microphone:
+            return owner.isEmpty ? fluidDisplayName : owner
+        case .system:
+            // Never attribute headphone/system audio to the local owner —
+            // that's the usual "everyone is me" failure mode.
+            if !owner.isEmpty, fluidDisplayName.caseInsensitiveCompare(owner) == .orderedSame {
+                return remoteFallback
+            }
+            if fluidDisplayName.isEmpty || fluidDisplayName == "Speaker" {
+                return remoteFallback
+            }
+            return fluidDisplayName
+        case .mixed, .unknown:
+            return fluidDisplayName
+        }
+    }
+}
+
 public enum MixGain {
     /// Offline mic+system mix gain clamp.
     public static func systemMixGain(

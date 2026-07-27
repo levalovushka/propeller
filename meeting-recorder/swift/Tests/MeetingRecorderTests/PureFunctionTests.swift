@@ -47,6 +47,52 @@ final class PureFunctionTests: XCTestCase {
         XCTAssertEqual(DiarizationMerge.speakerLabel(forMidpoint: 1, diarization: []), "Speaker")
     }
 
+    // MARK: - SourceAwareSpeaker
+
+    func testSourceAwareSystemNeverGetsOwnerName() {
+        XCTAssertEqual(
+            SourceAwareSpeaker.resolve(
+                fluidDisplayName: "leva",
+                source: .system,
+                ownerName: "leva"
+            ),
+            "Speaker 1"
+        )
+    }
+
+    func testSourceAwareMicGetsOwnerName() {
+        XCTAssertEqual(
+            SourceAwareSpeaker.resolve(
+                fluidDisplayName: "Speaker 0",
+                source: .microphone,
+                ownerName: "leva"
+            ),
+            "leva"
+        )
+    }
+
+    func testSourceAwareKeepsRemoteFluidLabel() {
+        XCTAssertEqual(
+            SourceAwareSpeaker.resolve(
+                fluidDisplayName: "Speaker 2",
+                source: .system,
+                ownerName: "leva"
+            ),
+            "Speaker 2"
+        )
+    }
+
+    func testSourceAwareMixedLeavesFluid() {
+        XCTAssertEqual(
+            SourceAwareSpeaker.resolve(
+                fluidDisplayName: "leva",
+                source: .mixed,
+                ownerName: "leva"
+            ),
+            "leva"
+        )
+    }
+
     // MARK: - MixGain
 
     func testSystemMixGainSilentSystemReturnsOne() {

@@ -7,7 +7,7 @@ import TelemetryDeck
 /// and coarse buckets (`<1m`, `ollama`, `mic_only`, …).
 enum Analytics {
     /// TelemetryDeck → Propeller (org `com.propeller`).
-    /// Override via Info.plist `TelemetryDeckAppID` / `TELEMETRYDECK_APP_ID` in build.sh.
+    /// Always baked into release builds via `build.sh` (Info.plist + this constant).
     private static let appIDConstant = "FD2E1040-C134-4F44-BCAC-76441E1662D7"
 
     /// Prefer Info.plist `TelemetryDeckAppID`, else the constant above.
@@ -29,16 +29,39 @@ enum Analytics {
         didBootstrap = true
         let id = appID
         guard !id.isEmpty else {
-            NSLog("[Analytics] TelemetryDeck App ID missing — signals disabled. Paste ID in Analytics.swift or set TELEMETRYDECK_APP_ID for build.sh.")
+            NSLog("[Analytics] TelemetryDeck App ID missing — signals disabled.")
             return
         }
         let config = TelemetryDeck.Config(appID: id)
         config.defaultSignalPrefix = "Propeller."
         config.analyticsDisabled = !Preferences.shared.analyticsEnabled
+        // Dogfood DMGs are always `-c release`, but be explicit so Live Mode
+        // insights aren't empty because someone glanced at Test Mode only.
+        #if DEBUG
+        config.testMode = true
+        #else
+        config.testMode = false
+        #endif
+        // Surface send status in Console (subsystem TelemetryDeck / Analytics).
+        config.logHandler = .standard(.info)
         self.config = config
         TelemetryDeck.initialize(config: config)
-        NSLog("[Analytics] TelemetryDeck ready (enabled=\(Preferences.shared.analyticsEnabled))")
-        signal("App.opened")
+        let ver = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        NSLog("[Analytics] TelemetryDeck ready (enabled=\(Preferences.shared.analyticsEnabled) testMode=\(config.testMode) app=\(ver) id=\(id.prefix(8))…)")
+        signal("App.opened", parameters: [
+            "version": ver,
+            "test_mode": config.testMode ? "1" : "0",
+        ])
+        // Menu-bar apps often quit before the default 10s batch timer — push once.
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.0) {
+            TelemetryDeck.requestImmediateSync()
+        }
+    }
+
+    /// Flush pending signals (call on quit). Best-effort.
+    static func flush() {
+        guard Preferences.shared.analyticsEnabled, config != nil else { return }
+        TelemetryDeck.requestImmediateSync()
     }
 
     static func setEnabled(_ enabled: Bool) {
@@ -46,6 +69,7 @@ enum Analytics {
         config?.analyticsDisabled = !enabled
         if enabled {
             signal("Analytics.enabled")
+            flush()
         }
     }
 

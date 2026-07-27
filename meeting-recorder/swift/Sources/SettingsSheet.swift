@@ -27,7 +27,6 @@ struct SettingsView: View {
 
 private struct GeneralSettingsPane: View {
     @EnvironmentObject private var appState: AppState
-    @AppStorage("autoTranscribe") private var autoTranscribe = true
     @AppStorage("analyticsEnabled") private var analyticsEnabled = true
     @AppStorage("zoomAutoRecordMode") private var zoomAutoRecordMode = ZoomAutoRecordMode.auto.rawValue
     @State private var zoomSnap = ZoomMeetingDetector.shared.snapshot
@@ -76,9 +75,7 @@ private struct GeneralSettingsPane: View {
             }
 
             Section("Обработка") {
-                Toggle("Авторасшифровка после записи", isOn: $autoTranscribe)
-                    .onChange(of: autoTranscribe) { _, val in Preferences.shared.autoTranscribe = val }
-                Text("Расшифровки всегда сохраняются автоматически.")
+                Text("После стопа сразу идут расшифровка (gigastt / GigaAM), сохранение и саммари. Модель речи скачивается при первой расшифровке — прогресс в статус-баре.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -215,7 +212,7 @@ private struct TranscriptionSettingsPane: View {
         Form {
             Section("Движок") {
                 LabeledContent("Движок", value: TranscriptionService.engineDescription)
-                Text("Движок речи (gigastt) стартует с приложением. Только русский. Первый запуск может скачать модель ~225 МБ.")
+                Text("Бинарник gigastt уже в приложении; модель GigaAM в комплект не входит — скачивается при первой расшифровке (прогресс в статус-баре). Только русский.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -263,6 +260,7 @@ private struct TranscriptionSettingsPane: View {
 // MARK: - Recap (LLM)
 
 private struct RecapSettingsPane: View {
+    @EnvironmentObject private var appState: AppState
     @AppStorage("recapProvider") private var recapProvider = RecapProviderKind.auto.rawValue
     @AppStorage("recapOllamaModel") private var recapOllamaModel = "qwen2.5:7b"
     @AppStorage("recapOpenAIModel") private var recapOpenAIModel = "gpt-4o-mini"
@@ -271,6 +269,7 @@ private struct RecapSettingsPane: View {
     @State private var openAIKey: String = Preferences.shared.openAIAPIKey ?? ""
     @State private var claudeKey: String = Preferences.shared.claudeAPIKey ?? ""
     @State private var ollamaReachable: Bool? = nil
+    @State private var isInstalling = false
 
     var body: some View {
         Form {
@@ -291,10 +290,36 @@ private struct RecapSettingsPane: View {
                             .foregroundStyle(ollamaReachable == true ? .green : .secondary)
                         Button("Проверить") {
                             Task {
+                                await OllamaSidecar.shared.ensureServerRunning()
                                 ollamaReachable = await RecapService.shared.probeOllama()
                             }
                         }
                         .controlSize(.small)
+                        Button(appState.ollamaSetupProgress != nil ? "Скачиваем…" : "Скачать модель") {
+                            appState.startOllamaRuntimeDownload()
+                            isInstalling = true
+                        }
+                        .controlSize(.small)
+                        .disabled(appState.ollamaSetupProgress != nil)
+                        .onChange(of: appState.ollamaSetupProgress) { _, frac in
+                            if frac == nil { isInstalling = false }
+                        }
+                        .onChange(of: appState.ollamaSetupMessage) { _, msg in
+                            if msg == "Модель готова" {
+                                ollamaReachable = true
+                                isInstalling = false
+                            }
+                        }
+                    }
+                }
+                if let frac = appState.ollamaSetupProgress {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ProgressView(value: frac)
+                        Text(appState.ollamaSetupMessage.isEmpty
+                             ? "Скачиваем… \(Int(frac * 100))%"
+                             : appState.ollamaSetupMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -306,6 +331,9 @@ private struct RecapSettingsPane: View {
                         .onChange(of: recapOllamaModel) { _, val in
                             Preferences.shared.recapOllamaModel = val
                         }
+                    Text("Propeller сам скачивает движок Ollama и модель в Application Support — ставить Ollama.app не нужно.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -355,7 +383,7 @@ private struct RecapSettingsPane: View {
                     Preferences.shared.recapPrompt = RecapService.defaultPrompt
                 }
                 .controlSize(.small)
-                Text("Если Ollama недоступен и нет API-ключа, сохранение всё равно работает — саммари пропускается с подсказкой.")
+                Text("Если локальная модель ещё не скачана и нет API-ключа, сохранение всё равно работает — саммари пропускается с подсказкой. Кнопка «Скачать модель» ставит движок автоматически.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

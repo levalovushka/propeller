@@ -33,6 +33,7 @@ enum RecapError: LocalizedError {
     case emptyResponse
     case badJSON
     case providerUnavailable(String)
+    case timedOut
 
     var errorDescription: String? {
         switch self {
@@ -44,6 +45,8 @@ enum RecapError: LocalizedError {
             return "Не удалось разобрать ответ LLM"
         case .providerUnavailable(let name):
             return "\(name) недоступен"
+        case .timedOut:
+            return "Саммари не успело за 10 минут — модель перегружена. Подожди минуту и нажми «Сгенерировать» снова."
         }
     }
 }
@@ -59,22 +62,47 @@ actor RecapService {
     static let shared = RecapService()
 
     static let defaultPrompt = """
-    Ты готовишь краткий рекап рабочей встречи строго на русском языке.
+    Ты — эксперт по ведению конспектов встреч. На основе транскрипта ниже составь конспект, по которому человек, не присутствовавший на встрече, точно поймёт, о чём договорились.
 
-    Правила:
-    - Язык: только русский. Весь текст ответа — кириллица (имена людей и устоявшиеся англ. термины вроде API, Figma, PR допустимы как есть). Запрещены китайский, японский, корейский и любой другой язык; не подмешивай иероглифы и не переводи куски на них.
-    - Не выдумывай факты, решения, договорённости и action items, которых нет в транскрипте или заметках пользователя.
-    - Если есть заметки пользователя — это приоритетные якоря: раскрывай вокруг них контекст из транскрипта, не игнорируй их.
-    - По контексту аккуратно исправляй очевидные ASR-ошибки (искажённые имена и термины, обрывки на границах реплик), не меняя смысл.
-    - Не копируй транскрипт целиком — только сжатый рекап.
-    - Не добавляй шапку Date / Duration / Participants (и аналоги) — дата, длительность и список участников уже есть в UI встречи.
-    - Структура ответа (пропускай пустые разделы):
-      ## Кратко
-      ## Решения
-      ## Action items
-      ## Открытые вопросы
-    - Пиши плотным деловым русским без воды.
-    - Блок «Заметки» в итоговый файл добавит система отдельно — не дублируй сырые заметки в ответе.
+    ГЛАВНЫЙ ПРИНЦИП
+    Конспект — это договорённости и решения, а не стенограмма. Отделяй суть от хаоса разговора: чистые решения и задачи выноси вперёд, ход обсуждения оставляй ниже как справочный слой. Не пересказывай всё подряд — фиксируй то, что меняет положение дел: что решили, кто что делает, что осталось открытым.
+
+    ЗАМЕТКИ ПОЛЬЗОВАТЕЛЯ
+    Если пользователь приложил свои заметки со встречи — это маркер того, что он счёл важным. Вплетай их в конспект по смыслу, а не отдельным списком.
+
+    СТИЛЬ (информационный стиль)
+    - Активный залог, конкретные формулировки. «Пётр готовит смету к пятнице», а не «было решено, что смета будет подготовлена».
+    - Без канцелярита, вводных оборотов и воды. Каждая строка несёт факт или договорённость.
+    - Формулировки проверяемы: по ним видно, выполнено или нет.
+    - Слова участников используй там, где важна точная формулировка (спорные места, обещания, цифры).
+
+    СТРУКТУРА (Markdown, заголовки через ##, никогда #; жирный ** и списки -)
+
+    ## Итог
+    2–3 предложения: зачем собирались и к чему пришли. Результат, а не повестка.
+
+    ## Решения
+    - Что решили. Каждый пункт — завершённая договорённость.
+
+    ## Задачи
+    - **Кто** — что делает — **к какому сроку**. Ответственного и срок указывай, если они есть в транскрипте; если не названы — не выдумывай, пиши задачу без них.
+
+    ## Открытые вопросы
+    - Что обсудили, но не решили; что заблокировано и чего ждёт.
+
+    ## Ход обсуждения
+    Хронологический разбор по темам, каждая с таймкодом начала (например: «- [00:04:32] Ревью онбординга»). Здесь — контекст, аргументы, детали, которые не попали выше. Это справочный слой; не дублируй сюда решения и задачи целиком.
+
+    ## Прочее
+    Всё остальное, что стоит зафиксировать.
+
+    ПРАВИЛА
+    - Не выдумывай того, чего нет в транскрипте.
+    - Пустые секции полностью опускай — не пиши «Нет» или «—».
+    - Детальность — в служении понятности, а не подробности ради подробности.
+    - Не добавляй шапку Date / Duration / Participants (и аналоги) — дата, длительность и участники уже есть в UI встречи.
+    - Блок «Заметки» в итоговый файл добавит система отдельно — не дублируй сырые заметки отдельной секцией; их смысл уже вплетён выше.
+    - По контексту аккуратно исправляй очевидные ASR-ошибки (искажённые имена и термины), не меняя смысл.
     """
 
     /// Always appended so a custom Settings prompt can't drop the language lock
@@ -84,10 +112,13 @@ actor RecapService {
     ЯЗЫК ОТВЕТА (жёстко): только русский. Никакого китайского и других языков, кроме имён и устоявшихся латиницей терминов.
     """
 
+    /// Local qwen can sit silent for minutes (cold load ~4–5 GB + generate) with
+    /// `stream: false` — URLSession's request timeout is idle-until-first-byte, so
+    /// 180s was aborting real meetings with "The request timed out."
     private let session: URLSession = {
         let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 180
-        config.timeoutIntervalForResource = 300
+        config.timeoutIntervalForRequest = 600
+        config.timeoutIntervalForResource = 900
         return URLSession(configuration: config)
     }()
 
@@ -115,12 +146,14 @@ actor RecapService {
         case .off:
             return .failure(.disabled)
         case .ollama:
+            await OllamaSidecar.shared.ensureServerRunning()
             return await probeOllama() ? .success("ollama") : .failure(.noProvider)
         case .openai:
             return (openAIKey?.isEmpty == false) ? .success("openai") : .failure(.noProvider)
         case .claude:
             return (claudeKey?.isEmpty == false) ? .success("claude") : .failure(.noProvider)
         case .auto:
+            await OllamaSidecar.shared.ensureServerRunning()
             if await probeOllama() { return .success("ollama") }
             if openAIKey?.isEmpty == false { return .success("openai") }
             if claudeKey?.isEmpty == false { return .success("claude") }
@@ -362,26 +395,33 @@ actor RecapService {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Whole wall-clock budget: cold load + long transcript. Must match session.
+        req.timeoutInterval = 600
         let payload: [String: Any] = [
             "model": model,
             "stream": false,
-            // Unload the model shortly after generating so it doesn't sit in RAM
-            // (~4–5 GB) between meetings and starve Zoom/Figma.
-            "keep_alive": "10s",
+            // Brief linger so a retry / metadata pass doesn't pay another cold load;
+            // OllamaSidecar.stopAfterIdle still drops the serve process after the batch.
+            // (keep_alive: 0 + thermal Mac was timing out ~12 min meetings at 180s.)
+            "keep_alive": 90,
             "messages": [
                 ["role": "system", "content": system],
                 ["role": "user", "content": user],
             ],
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        let (data, response) = try await session.data(for: req)
-        try throwIfBadHTTP(response, data: data)
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let message = json["message"] as? [String: Any],
-              let content = message["content"] as? String else {
-            throw RecapError.badJSON
+        do {
+            let (data, response) = try await session.data(for: req)
+            try throwIfBadHTTP(response, data: data)
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let message = json["message"] as? [String: Any],
+                  let content = message["content"] as? String else {
+                throw RecapError.badJSON
+            }
+            return content
+        } catch let error as URLError where error.code == .timedOut {
+            throw RecapError.timedOut
         }
-        return content
     }
 
     private func callOpenAI(apiKey: String, model: String, system: String, user: String) async throws -> String {

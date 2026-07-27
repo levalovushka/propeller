@@ -193,13 +193,31 @@ class TranscriptionService {
         )
 
         let unmerged = mergedSegments.filter { !$0.text.isEmpty }
+        let ownerName = Preferences.shared.userName
+        let useSourceSplit = Self.hasUsableStems(for: audioURL)
         let persisted: [PersistedSegment] = unmerged.enumerated().map { idx, seg in
-            PersistedSegment(
+            let fluidName = speakerNameMap[seg.speakerLabel] ?? seg.speakerLabel
+            let speaker: String
+            if useSourceSplit {
+                let source = Self.captureSource(
+                    audioURL: audioURL,
+                    start: Double(seg.startTime),
+                    end: Double(seg.endTime)
+                )
+                speaker = SourceAwareSpeaker.resolve(
+                    fluidDisplayName: fluidName,
+                    source: source,
+                    ownerName: ownerName
+                )
+            } else {
+                speaker = fluidName
+            }
+            return PersistedSegment(
                 index: idx,
                 startTime: Double(seg.startTime),
                 endTime: Double(seg.endTime),
                 text: seg.text,
-                speaker: speakerNameMap[seg.speakerLabel] ?? seg.speakerLabel
+                speaker: speaker
             )
         }
 
@@ -209,6 +227,66 @@ class TranscriptionService {
             transcript: transcript,
             mergedSegments: persisted
         )
+    }
+
+    /// Re-label already-persisted segments using mic/sys stem energy — no ASR.
+    /// Fixes headphone meetings where FluidAudio collapsed everyone into the owner.
+    func relabelSegmentsFromStems(
+        audioURL: URL,
+        segments: [PersistedSegment]
+    ) -> [PersistedSegment]? {
+        guard Self.hasUsableStems(for: audioURL) else { return nil }
+        let ownerName = Preferences.shared.userName
+        return segments.map { seg in
+            let source = Self.captureSource(
+                audioURL: audioURL,
+                start: seg.startTime,
+                end: seg.endTime
+            )
+            let speaker = SourceAwareSpeaker.resolve(
+                fluidDisplayName: seg.speaker,
+                source: source,
+                ownerName: ownerName
+            )
+            return PersistedSegment(
+                index: seg.index,
+                startTime: seg.startTime,
+                endTime: seg.endTime,
+                text: seg.text,
+                speaker: speaker
+            )
+        }
+    }
+
+    private static func hasUsableStems(for finalAudioURL: URL) -> Bool {
+        let stems = AudioSourceStemURLs.expectedSiblings(for: finalAudioURL)
+        guard let mic = stems.existingMicrophoneURL,
+              let sys = stems.existingSystemURL else { return false }
+        // Tiny/empty sys (header-only) means mic-only capture.
+        let sysSize = (try? FileManager.default.attributesOfItem(atPath: sys.path)[.size] as? NSNumber)?.intValue ?? 0
+        _ = mic
+        return sysSize > 4096
+    }
+
+    private static func captureSource(
+        audioURL: URL,
+        start: Double,
+        end: Double
+    ) -> SourceAwareSpeaker.Source {
+        // Short ASR phrases need a minimum window or energy is all noise.
+        let mid = (start + end) / 2
+        let half = max(0.35, (end - start) / 2)
+        let window = max(0, mid - half)...(mid + half)
+        let report = AudioSourceEnergyClassifier.analyze(
+            finalAudioURL: audioURL,
+            windows: [window]
+        )
+        switch report.source {
+        case .microphone: return .microphone
+        case .system: return .system
+        case .mixed: return .mixed
+        case .unknown: return .unknown
+        }
     }
 
     /// Among the diarized speaker clusters, find the one most dominantly

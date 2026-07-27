@@ -23,6 +23,9 @@ tools/gigastt/**/*.onnx
 tools/gigastt/**/*.bin
 tools/gigastt/**/*.safetensors
 
+# Ollama engine tarball / extracted runtime (fetched by build.sh, not committed)
+tools/ollama/*.tgz
+tools/ollama/runtime*/
 # Phase 0 validation: personal meeting audio & full transcript dumps (keep STATUS.md)
 phase0/*.wav
 phase0/*.json

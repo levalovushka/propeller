@@ -37,7 +37,7 @@ struct MenuBarContentView: View {
     private func quit() {
         if state.isRecording {
             Task {
-                await state.stopRecordingAndWait()
+                await state.stopRecordingAndWait(runPipeline: false)
                 state.recordingStore.flush()
                 await MainActor.run { NSApplication.shared.terminate(nil) }
             }

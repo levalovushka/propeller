@@ -73,6 +73,27 @@ else
     exit 1
 fi
 
+# Bundle Ollama engine tarball (~140 MB compressed). Model (~5 GB) still downloads on demand.
+OLLAMA_TGZ="${OLLAMA_TGZ:-}"
+OLLAMA_TAG="v0.32.4"
+OLLAMA_CACHE="../../tools/ollama/ollama-darwin-${OLLAMA_TAG}.tgz"
+OLLAMA_URL="https://github.com/ollama/ollama/releases/download/${OLLAMA_TAG}/ollama-darwin.tgz"
+if [ -z "$OLLAMA_TGZ" ]; then
+    if [ -f "$OLLAMA_CACHE" ]; then
+        OLLAMA_TGZ="$OLLAMA_CACHE"
+    elif [ -f "../tools/ollama/ollama-darwin-${OLLAMA_TAG}.tgz" ]; then
+        OLLAMA_TGZ="../tools/ollama/ollama-darwin-${OLLAMA_TAG}.tgz"
+    fi
+fi
+if [ -z "$OLLAMA_TGZ" ] || [ ! -f "$OLLAMA_TGZ" ]; then
+    echo "  Fetching Ollama ${OLLAMA_TAG} tarball for DMG…"
+    mkdir -p "$(dirname "$OLLAMA_CACHE")"
+    curl -L --fail --progress-bar -o "$OLLAMA_CACHE" "$OLLAMA_URL"
+    OLLAMA_TGZ="$OLLAMA_CACHE"
+fi
+echo "  Bundling Ollama engine from $OLLAMA_TGZ"
+cp "$OLLAMA_TGZ" "$APP/Contents/Resources/ollama-darwin.tgz"
+
 # App icon: Icon Composer .icon → Assets.car (Liquid Glass) + .icns (fallback)
 ICON_SRC=""
 ICON_NAME="propellericon"
@@ -162,9 +183,9 @@ cat > "$APP/Contents/Info.plist" << PLIST
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
     <key>CFBundleVersion</key>
-    <string>1.10</string>
+    <string>1.11</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.10</string>
+    <string>1.11</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
@@ -199,13 +220,11 @@ ${ICON_PLIST_KEYS}
 </plist>
 PLIST
 
-# Optional TelemetryDeck App ID (dogfood analytics). Empty → Analytics bootstrap no-ops.
-TELEMETRYDECK_APP_ID="${TELEMETRYDECK_APP_ID:-}"
-if [ -n "$TELEMETRYDECK_APP_ID" ]; then
-    /usr/libexec/PlistBuddy -c "Add :TelemetryDeckAppID string ${TELEMETRYDECK_APP_ID}" "$APP/Contents/Info.plist" 2>/dev/null \
-        || /usr/libexec/PlistBuddy -c "Set :TelemetryDeckAppID ${TELEMETRYDECK_APP_ID}" "$APP/Contents/Info.plist"
-    echo "  TelemetryDeck App ID embedded"
-fi
+# TelemetryDeck App ID — always embed for dogfood (Analytics.swift has the same constant).
+TELEMETRYDECK_APP_ID="${TELEMETRYDECK_APP_ID:-FD2E1040-C134-4F44-BCAC-76441E1662D7}"
+/usr/libexec/PlistBuddy -c "Add :TelemetryDeckAppID string ${TELEMETRYDECK_APP_ID}" "$APP/Contents/Info.plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Set :TelemetryDeckAppID ${TELEMETRYDECK_APP_ID}" "$APP/Contents/Info.plist"
+echo "  TelemetryDeck App ID embedded (${TELEMETRYDECK_APP_ID:0:8}…)"
 
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 

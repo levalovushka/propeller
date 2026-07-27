@@ -20,6 +20,7 @@ struct OnboardingContainer: View {
     @State private var systemAudioGranted = false
     @State private var notificationsGranted = false
     @State private var calendarGranted = false
+    @State private var ollamaReady = false
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -84,9 +85,29 @@ struct OnboardingContainer: View {
                     if on { try SMAppService.mainApp.register() }
                     else { try SMAppService.mainApp.unregister() }
                 } catch { NSLog("[Onboarding] launch-at-login failed: \(error)") }
-            }
+            },
+            onDownloadSummaryModel: {
+                state.startOllamaRuntimeDownload()
+            },
+            ollamaProgress: state.ollamaSetupProgress,
+            ollamaStatus: state.ollamaSetupMessage,
+            ollamaReady: ollamaReady,
+            ollamaError: state.pipelineError
         )
-        .onAppear(perform: refreshGrants)
+        .onAppear {
+            refreshGrants()
+            Task {
+                let model = Preferences.shared.recapOllamaModel
+                let name = model.isEmpty ? OllamaSidecar.defaultModel : model
+                if await OllamaSidecar.shared.probeAPI(),
+                   await OllamaSidecar.shared.modelPresent(name) {
+                    await MainActor.run { ollamaReady = true }
+                }
+            }
+        }
+        .onChange(of: state.ollamaSetupMessage) { _, msg in
+            if msg == "Модель готова" { ollamaReady = true }
+        }
         .onReceive(poll) { _ in refreshGrants() }
     }
 
