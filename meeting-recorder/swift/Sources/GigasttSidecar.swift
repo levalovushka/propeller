@@ -1,6 +1,7 @@
 import Foundation
 import Darwin
 import PropellerMetrics
+import PropellerPure
 
 /// Owns the local `gigastt serve` child process: find/bundle binary, ensure
 /// e2e_rnnt models, spawn on loopback:9876, restart on crash, kill on quit.
@@ -151,6 +152,10 @@ final class GigasttSidecar: @unchecked Sendable {
         try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
 
         if !modelsPresent(at: modelDir) {
+            seedModelsFromBundle(into: modelDir, statusCallback: statusCallback)
+        }
+
+        if !modelsPresent(at: modelDir) {
             statusCallback?("Загрузка GigaAM…")
             try await downloadModels(
                 binary: binary,
@@ -222,6 +227,8 @@ final class GigasttSidecar: @unchecked Sendable {
         let logHandle = try FileHandle(forWritingTo: logURL)
         _ = try logHandle.seekToEnd()
 
+        ensureEncoderPresenceMarker(in: modelDir)
+
         var arguments = [
             "serve",
             "--model-dir", modelDir.path,
@@ -236,6 +243,12 @@ final class GigasttSidecar: @unchecked Sendable {
             // Curated Russian brand/acronym lexicon — always-on, free win with
             // no effect unless a term actually shows up in the audio.
             "--hotwords-default",
+            // Every fetch belongs to `downloadModels`, where there is a progress
+            // bar and a disk check. Without this, serve quietly pulls 885 MB
+            // mid-transcription and a flaky link strands it half-done - exactly
+            // the 85% hang seen on 2026-07-27. A missing file now fails fast,
+            // naming the file, instead of silently saturating the connection.
+            "--offline",
         ]
         if let hotwordsFile = writeHotwordsFile() {
             arguments.append("--hotwords-file")
@@ -497,11 +510,12 @@ final class GigasttSidecar: @unchecked Sendable {
         return appSupport
     }
 
-    /// Writes the user's "Domain terms" (Settings → Transcription → Vocabulary)
-    /// to gigastt's hotwords file, one phrase per line. Returns the file URL,
-    /// or nil (and removes any stale file) when there are no terms configured.
+    /// Writes gigastt's hotwords file, one phrase per line: the built-in team
+    /// lexicon (`BuiltinHotwords`) plus whatever the user added in Settings →
+    /// Transcription → Vocabulary. Always non-empty now that a baseline ships,
+    /// so the file is only removed if the baseline itself is somehow empty.
     private func writeHotwordsFile() -> URL? {
-        let terms = Preferences.shared.domainTermsList
+        let terms = BuiltinHotwords.merged(withUserTerms: Preferences.shared.domainTermsList)
         let url = Self.hotwordsFileURL
         guard !terms.isEmpty else {
             try? FileManager.default.removeItem(at: url)
@@ -551,6 +565,65 @@ final class GigasttSidecar: @unchecked Sendable {
         return fm.fileExists(atPath: encoder.path)
             && fm.fileExists(atPath: decoder.path)
             && fm.fileExists(atPath: joint.path)
+    }
+
+    /// Copy the ASR weights shipped inside the .app into the writable model dir.
+    ///
+    /// The weights (~247 MB INT8 set) ride in the DMG, so a fresh install has no
+    /// ASR download at all: no progress bar to strand on a dropped connection,
+    /// no disk gate, and the first meeting transcribes offline. `downloadModels`
+    /// stays as the fallback for dev builds run straight from `swift build`,
+    /// where Bundle.main has no Resources.
+    ///
+    /// Copied rather than used in place: gigastt writes `coreml_cache/` and lock
+    /// files next to the models, and Contents/Resources is code-signed — writing
+    /// there would break the signature.
+    private func seedModelsFromBundle(into modelDir: URL, statusCallback: ((String) -> Void)?) {
+        guard let bundled = Bundle.main.url(forResource: "gigastt-models", withExtension: nil) else {
+            return
+        }
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: bundled, includingPropertiesForKeys: nil),
+              !files.isEmpty else { return }
+
+        statusCallback?("Готовим модель распознавания…")
+        for src in files {
+            let dst = modelDir.appendingPathComponent(src.lastPathComponent)
+            guard !fm.fileExists(atPath: dst.path) else { continue }
+            do {
+                try fm.copyItem(at: src, to: dst)
+            } catch {
+                NSLog("[GigasttSidecar] seeding \(src.lastPathComponent) failed: \(error.localizedDescription)")
+            }
+        }
+        NSLog("[GigasttSidecar] seeded ASR models from app bundle")
+    }
+
+    /// Work around a gigastt 2.14 inconsistency between its own subcommands.
+    ///
+    /// `gigastt download --prequantized` fetches the INT8 bundle (258 MB) and
+    /// reports "Model ready". `gigastt serve` then decides the model is *not*
+    /// installed, because its presence check looks for the FP32 filename, and
+    /// silently downloads 885 MB from HuggingFace — a file it never reads: the
+    /// log says "Using INT8 quantized encoder" either way.
+    ///
+    /// Verified 2026-07-27 on 2.14.0: with a zero-byte file at that path, serve
+    /// loads the INT8 encoder and transcribes correctly. So the placeholder only
+    /// satisfies an existence test — it is never opened. Combined with `--offline`
+    /// on serve, this keeps every download inside our own progress-reported step.
+    ///
+    /// Re-check when bumping gigastt: if a release makes serve accept an
+    /// INT8-only directory, delete this and the `--offline` flag together.
+    private func ensureEncoderPresenceMarker(in dir: URL) {
+        let fp32 = dir.appendingPathComponent("v3_e2e_rnnt_encoder.onnx")
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: fp32.path) else { return }
+        guard fm.fileExists(atPath: dir.appendingPathComponent("v3_e2e_rnnt_encoder_int8.onnx").path) else {
+            return  // no INT8 either — let the normal download path run
+        }
+        if fm.createFile(atPath: fp32.path, contents: Data()) {
+            NSLog("[GigasttSidecar] wrote FP32 presence marker — skips a needless 885 MB fetch")
+        }
     }
 
     enum SidecarError: LocalizedError {

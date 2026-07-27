@@ -73,6 +73,35 @@ else
     exit 1
 fi
 
+# Bundle GigaAM ASR weights (~247 MB, INT8 set only).
+# Shipping these removes the whole first-run ASR download: no progress bar to
+# strand on a flaky link, no disk gate, and transcription works offline from
+# the first launch. The FP32 encoder (885 MB) is deliberately NOT bundled --
+# gigastt loads the INT8 one and only checks the FP32 filename for existence,
+# which GigasttSidecar satisfies with a zero-byte marker.
+MODELS_SRC=""
+for candidate in "../../tools/gigastt/models-e2e" "../tools/gigastt/models-e2e" "$HOME/Desktop/Propeller/tools/gigastt/models-e2e"; do
+    if [ -d "$candidate" ]; then MODELS_SRC="$candidate"; break; fi
+done
+MODEL_FILES="v3_e2e_rnnt_encoder_int8.onnx v3_e2e_rnnt_decoder.onnx v3_e2e_rnnt_joint.onnx v3_e2e_rnnt_vocab.txt wespeaker_resnet34.onnx"
+if [ -n "$MODELS_SRC" ]; then
+    MODELS_DST="$APP/Contents/Resources/gigastt-models"
+    mkdir -p "$MODELS_DST"
+    missing=""
+    for f in $MODEL_FILES; do
+        if [ -f "$MODELS_SRC/$f" ]; then cp "$MODELS_SRC/$f" "$MODELS_DST/$f"; else missing="$missing $f"; fi
+    done
+    if [ -n "$missing" ]; then
+        echo "  ERROR: GigaAM model files missing from $MODELS_SRC:$missing"
+        echo "  Fetch them with: tools/gigastt/gigastt download --prequantized --model-variant e2e_rnnt --model-dir tools/gigastt/models-e2e"
+        exit 1
+    fi
+    echo "  Bundling GigaAM INT8 models from $MODELS_SRC ($(du -sh "$MODELS_DST" | cut -f1))"
+else
+    echo "  ERROR: tools/gigastt/models-e2e not found -- cannot ship without ASR weights"
+    exit 1
+fi
+
 # Bundle Ollama engine tarball (~140 MB compressed). Model (~5 GB) still downloads on demand.
 OLLAMA_TGZ="${OLLAMA_TGZ:-}"
 OLLAMA_TAG="v0.32.4"
@@ -183,9 +212,9 @@ cat > "$APP/Contents/Info.plist" << PLIST
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
     <key>CFBundleVersion</key>
-    <string>1.11</string>
+    <string>1.12</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.11</string>
+    <string>1.12</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
