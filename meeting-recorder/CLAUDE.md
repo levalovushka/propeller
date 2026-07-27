@@ -6,7 +6,7 @@ Guidance for agents working in this repository (Propeller fork of meeting-record
 
 **Propeller** is a native macOS menu bar + window app (SwiftUI, macOS 14+, arm64) that records meetings (mic + system audio), transcribes Russian speech locally via **GigaAM-v3 / gigastt**, diarizes with **FluidAudio** into consistent `Speaker N` (no voice library — the mic-dominant speaker is labeled with the owner's name), saves markdown (Simple default / Obsidian optional), and optionally generates an LLM summary (Ollama / OpenAI / Claude) with auto title/topics/tags.
 
-Canonical architecture decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Product behaviour: [docs/SPEC.md](docs/SPEC.md). Active plan + decisions: [`../../plan-v2.md`](../../plan-v2.md). Engineering optimization: [`../../plan-optimization.md`](../../plan-optimization.md). UI: [`../../design/propeller-ui.md`](../../design/propeller-ui.md). Historical (phases, brief): [`../../archive/`](../../archive/).
+Canonical architecture decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Product behaviour: [docs/SPEC.md](docs/SPEC.md). **Living status / defects:** [`../../STATE.md`](../../STATE.md). Active plan + decisions: [`../../plan-v2.md`](../../plan-v2.md). Engineering optimization: [`../../plan-optimization.md`](../../plan-optimization.md). UI: [`../../design/propeller-ui.md`](../../design/propeller-ui.md). Historical (phases, brief): [`../../archive/`](../../archive/).
 
 ## Build & Run
 
@@ -28,17 +28,17 @@ Swift Package Manager (`Package.swift`). First ASR use may download ~225 MB Giga
 ### Data flow
 
 ```
-AudioRecorder (16 kHz mono mix + mic/sys stems)
+AudioRecorder (mic + SCK system stems → 16 kHz mix)   # Process Tap dormant
   → TranscriptionService
-      → gigastt (ASRSegment[])
+      → gigastt (chunked if large) → ASRSegment[]
       → checkpoint (transcribed_raw)
       → FluidAudio diarization → Speaker N + owner-by-mic
-  → MarkdownWriter → RecapService → metadata (title/topics/tags)
+  → MarkdownWriter → RecapService (конспект) → metadata (title/topics/tags)
 ```
 
 ### Key components
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full table. Coordinator is `AppState`; Zoom auto-record defaults to **Auto** with a system notification action **«Не записывать»** (`NotificationManager`) that discards the in-progress recording. Transcripts are **always** saved right after diarization (no speaker-confirmation gate, no auto-save toggle).
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full table. Coordinator is `AppState`; Zoom auto-record defaults to **Auto** with a system notification action **«Не записывать»** (`NotificationManager`) that discards the in-progress recording. Transcripts are **always** saved right after diarization (no speaker-confirmation gate, no auto-save toggle). Long meetings: client-side `GigasttChunking` + sidecar body-limit 64 MiB.
 
 ### UI
 

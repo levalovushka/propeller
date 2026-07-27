@@ -42,7 +42,7 @@ _Разбираем продукт по ключевым jobs-to-be-done, по �
 
 - ☑ **1.1 Убрать/спрятать глобальный хоткей.** Снять `addGlobalMonitorForEvents` и обещание «Ctrl+Opt+R» из онбординга/менюбара ([AppState.swift:132](meeting-recorder/swift/Sources/AppState.swift:132), [MenuBarPanelView.swift:69](meeting-recorder/swift/Sources/MenuBarPanelView.swift:69)). Заодно закрывает подтверждённые дефекты (нет local-monitor, нет проверки Accessibility-разрешения — хоткей молча не работал). ⌘R в фокусе окна можно оставить как бесплатный бонус. _Эффект: минус мёртвый путь и минус ложное обещание в UI._
 
-- ◐ **1.2 Захват только звука встречи, а не всего системного звука.** Основной путь — **Core Audio Process Taps** (`ProcessTapAudioCapture`, macOS 14.2+): Zoom-scoped `stereoMixdownOfProcesses`, иначе global exclude-self; SCK app-scoped остаётся фолбэком ([plan-optimization.md](plan-optimization.md) E4). Браузер (Meet/Телемост) — позже через `meetingAppBundleIDs`. _Статус «в работе», пока нет живого подтверждения на Zoom-звонке._
+- ◐ **1.2 Захват только звука встречи, а не всего системного звука.** **Канон 2026-07-24: ScreenCaptureKit — primary** (живой путь на Zoom). `ProcessTapAudioCapture` оставлен dormant (не hot path): Process Tap на практике давал header-only `.sys.wav` и ложные silence-баннеры. App-scoped SCK + display-wide fallback; браузер (Meet/Телемост) — позже через `meetingAppBundleIDs`. _См. [STATE.md](STATE.md) Часть 0._
 
 - ☑ **1.3 «Стоп + удалить» для чувствительного кейса.** Кнопка/пункт «Остановить и удалить» в окне записи и в менюбаре рядом со «Стоп». Логика уже есть (`cancelRecording` → `cancelRecordingAndDiscard`, [AppState.swift:357](meeting-recorder/swift/Sources/AppState.swift:357)) — нужна только точка входа в UI. Обычный «Стоп» (сохранить+обработать) уже есть везде — не трогаем. _Эталон паттерна остановки — Talat (см. решение 3)._
 
@@ -60,13 +60,13 @@ _Разбираем продукт по ключевым jobs-to-be-done, по �
 
 ### Открытые вопросы Джобы 1
 - Совсем убрать хоткей или оставить настраиваемым для редких power-user? (склоняемся к убрать)
-- Process Tap / SCK: подтвердить audible system stem на реальной Zoom-встрече (+ TCC Audio Capture).
+- Process Tap / SCK: **SCK-primary подтверждён**; Process Tap dormant. Остаётся следить за audible system stem на живых Zoom.
 
 ---
 
 ## Джоба 2 — «Получить точный транскрипт на русском»
 
-**Как сейчас:** ASR — один POST на `gigastt /v1/transcribe?segments=true` (GigaAM-v3 `e2e_rnnt`, пунктуация/регистр/ITN нативно). Чистка артефактов живёт **только в промпте рекапа** ([RecapService.swift:65](meeting-recorder/swift/Sources/RecapService.swift:65)) — сам транскрипт не чистится (`cleanASRText` только тримит). Редактирование — цельный `TextEditor`, коммит сбрасывает посегментный снапшот. Поле «Domain terms» в Settings — **мёртвое** («wired later»).
+**Как сейчас:** ASR — `gigastt /v1/transcribe?segments=true` (GigaAM-v3 `e2e_rnnt`); длинные файлы режутся клиентом (`GigasttChunking`, ~20 мин / body+duration caps) и мержатся; sidecar `--body-limit-bytes 67108864`. Чистка артефактов живёт **только в промпте рекапа** — сам транскрипт не чистится (`cleanASRText` только тримит). Редактирование — цельный `TextEditor`, коммит сбрасывает посегментный снапшот. Domain terms прокинуты в gigastt (`--hotwords-file`).
 
 **Решения пользователя (2026-07-22):**
 1. **Транскрипт — сырьё, не продукт.** Человек лезет в него редко и только чтобы найти конкретную деталь, которую саммари упустило; к этому моменту саммари уже готово. → **Редактирование/чистку транскрипта не делаем.** Инвестиции — в редактирование саммари (Джоба 4).
@@ -133,7 +133,7 @@ _Разбираем продукт по ключевым jobs-to-be-done, по �
 
 ## Джоба 4 — «Быстро вытащить суть встречи» (ядро ценности)
 
-**Как сейчас:** авто-пайплайн стоп→транскрипт→save→рекап работает, окно открывается на вкладке Summary. Промпт структурный (Кратко/Решения/Action items/Открытые вопросы), с запретом выдумывать и **заметками-якорями** (Granola, [RecapService.swift:189](meeting-recorder/swift/Sources/RecapService.swift:189)). Провайдеры Auto=Ollama→OpenAI→Claude; дефолты `llama3.2` / `gpt-4o-mini` / `claude-sonnet-4-5`. Саммари **рендерится read-only** ([RecordingDetailView.swift:675](meeting-recorder/swift/Sources/RecordingDetailView.swift:675)) — правки нет. Авто-заголовка **нет** (всегда «Recording <дата>», [AppState.swift:330](meeting-recorder/swift/Sources/AppState.swift:330)) — запись в бэклоге `done` стухла.
+**Как сейчас:** авто-пайплайн стоп→транскрипт→save→рекап работает, окно открывается на вкладке Summary. Промпт (2026-07-27) — конспект договорённостей: Итог / Решения / Задачи / Открытые вопросы / Ход обсуждения / Прочее; заметки вплетаются по смыслу; `languageLock` append ([RecapService.swift](meeting-recorder/swift/Sources/RecapService.swift)). Провайдеры Auto=Ollama→OpenAI→Claude; дефолт Ollama `qwen2.5:7b`. Саммари редактируемое. **Заголовок:** календарь при старте → иначе «Recording …» → LLM только для авто-placeholder (`titleManuallySet` не латчится на placeholder).
 
 **Решения пользователя (2026-07-22):**
 1. **Редактировать саммари в приложении — да.** Инлайн-правка прямо в приле, не только копия-в-чат.
@@ -146,7 +146,7 @@ _Разбираем продукт по ключевым jobs-to-be-done, по �
 ### Шаги
 
 - ◐ **4.1 Редактируемое саммари.** Готово: кнопка Edit/Done в тулбаре таба Summary → `TextEditor` поверх рендера, правка пишется в `recap.md` (`commitRecapEdit`, резолвинг файла через `resolvedRecapURL`). Copy прячется в режиме правки. _Осталось: предупреждение при re-summarize (сейчас на существующем рекапе кнопки re-summarize в UI нет — вернуться, когда появится); правка в Summaries-либе (summaryFocus)._
-- ◐ **4.2 Авто-заголовок.** _Backend готов (2026-07-22):_ LLM генерирует заголовок из саммари (`RecapService.generateMetadata`), пишется через `recordingStore.update(title:)` только если `titleManuallySet != true` (ручной `rename()` латчит флаг). Календарный приоритет (C1) добавится позже. _Осталось: отрисовать в списке/детали (UI-шаг с pgcorpus); проверить на реальной встрече._
+- ☑ **4.2 Авто-заголовок.** Календарь при `beginRecording` (`CalendarService.suggestedRecordingTitle`) → иначе placeholder → LLM `generateMetadata` только если title ещё авто-«Recording …» и `titleManuallySet != true`. Ложные латчи `titleManuallySet` на placeholder чистятся при load; бэкфилл заголовков из существующих рекапов на bootstrap (2026-07-24…27).
 - ☑ **4.3 Сабтайтл-темы.** Backend + UI готовы: `topics` на `RecordingEntry`, отрисовано второй строкой в `sidebarRow` ([MainView.swift](meeting-recorder/swift/Sources/MainView.swift)) — приоритетный секондари-слот над таймстемпом (PR-006), дата/длительность демонтированы в `.tertiary`. _Осталось: живая проверка на реальной встрече._
 - ◐ **4.4 Авто-теги.** _Backend готов:_ `MeetingTags.vocabulary` (13 тегов) + `tags` на `RecordingEntry`; LLM классифицирует, значения вне словаря отбрасываются на парсе. **Решение по канону (pgcorpus PR-005):** теги в строке списка НЕ рендерим чипами-плашками (совпадает с макетом — там тег-чипов нет). Теги остаются данными для **фильтра (6.3)**. _Осталось: фильтр по тегам; живая проверка классификации._
 - ☑ **4.5 Модель по умолчанию = Qwen2.5-7B (решено 2026-07-22).** Поправить дефолт `recapOllamaModel` на `qwen2.5:7b` (сильный русский, 32k контекст, влезает в 8ГБ-маки). _На 16ГБ-машинах позже можно предлагать 12B (Vikhr-Nemo) — не в Релиз 1._

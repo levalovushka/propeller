@@ -63,7 +63,7 @@ _Компаньон к [plan-v2.md](plan-v2.md). Там — продуктовы
 
 ### ☑ E4. Core Audio Process Taps вместо ScreenCaptureKit (стратегический; закрывает Job 1.2)
 
-**Сделано (2026-07-23):** новый `ProcessTapAudioCapture` (macOS 14.2+): `CATapDescription` → aggregate → `AudioDeviceCreateIOProcIDWithBlock`; Zoom-scoped mixdown при живом `us.zoom.xos`, иначе global exclude-self. `AudioRecorder` пробует Process Tap первым, при ошибке — SCK. В Info.plist добавлен `NSAudioCaptureUsageDescription`. `swift build` зелёный. _Живой тест на Zoom-звонке ещё нужен (TCC Audio Capture + audible stem)._
+**Сделано (2026-07-23), затем откат hot path (2026-07-24):** код `ProcessTapAudioCapture` жив, но **не вызывается** — канон снова **SCK-primary** ([STATE.md](STATE.md)). На живых Zoom: Process Tap часто писал header-only `.sys.wav`; speculative silence-watchdogs давали ложные баннеры. SCK (Screen Recording уже требуется) — единственный live-путь; mid-recording баннер только если capture не стартовал; mic-only — на stop по реальному стему.
 
 ### ☑ E5. Метринг-таймер: только когда waveform видим
 
@@ -546,7 +546,7 @@ _Метод: трассировка всех путей от интента до
 
 **Сначала — живые тесты на реальных встречах**, потом остальные фиксы. Причина: раунд 2 закрыл девять 🔴-пунктов, включая правки в путях захвата и терминации; накатывать поверх непроверенного ещё один слой изменений — значит отлаживать всё сразу. Живой прогон нужен и как приёмка E4/C10 (ProcessTap), и как источник первых реальных чисел для baseline из [plan-testing-metrics.md](plan-testing-metrics.md).
 
-**Замечание по E4/ProcessTap:** в раунде 1 E4 помечен ☑, но `AudioRecorder.start` сейчас идёт **только** через ScreenCaptureKit ([AudioRecorder.swift:113](meeting-recorder/swift/Sources/AudioRecorder.swift:113)) — `ProcessTapAudioCapture` в проекте есть, но не вызывается. Если это намеренный откат, статус E4 надо переписать; если временно — вернуть в план как незакрытое.
+**Замечание по E4/ProcessTap:** канон 2026-07-24 — **SCK-primary**; `ProcessTapAudioCapture` dormant (не вызывается). Статус E4 выше переписан. Живые Zoom-тесты и анти-413 чанкинг — в [STATE.md](STATE.md) Часть 0.
 
 ---
 

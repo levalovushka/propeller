@@ -1,5 +1,11 @@
 # System Audio Capture Experiments
 
+## Current canon (2026-07-24)
+
+**ScreenCaptureKit is the live path.** `ProcessTapAudioCapture` remains in the tree but is **not** on the hot path (empty/header-only stems and false silence banners in practice). Mic-only is judged at **stop** via the real `.sys.wav` stem (`AudioRecorder.lastStopWasMicOnly`). Mid-recording UI banners fire only if system capture **fails to start**, not on speculative silence watchdogs. Live health = System level meter.
+
+See also [STATE.md](../../STATE.md) Part 0.
+
 ## Working Hypotheses
 
 When the other person is missing from a recording, the failure is usually one of:

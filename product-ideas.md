@@ -7,7 +7,7 @@ _**Реестр продуктовых решений** (что делаем / �
 _Свежие идеи триажим в [plan-v2.md](plan-v2.md). Последний заход:_
 
 - **Google Calendar integration** → **реализовано** через EventKit (read-only, без OAuth). [plan-v2.md](plan-v2.md) C1.
-- **Захват только звука встречи (app-scoped SCK)** → в работе. [plan-v2.md](plan-v2.md) 1.2; целевой апгрейд на Core Audio Taps — [plan-optimization.md](plan-optimization.md) E4.
+- **Захват только звука встречи (app-scoped SCK)** → SCK-primary (2026-07-24); Process Tap dormant. [STATE.md](STATE.md); [plan-v2.md](plan-v2.md) 1.2.
 - **Убрать глобальный хоткей записи** → **сделано** (install & forget). [plan-v2.md](plan-v2.md) 1.1.
 - **Доставка саммари в Telegram-бота** → **отложено** (v2 шерит буфером обмена). [plan-v2.md](plan-v2.md) C2.
 

@@ -15,28 +15,29 @@ _Источник правды по архитектурным решениям 
 | Решение | Выбор | Почему |
 |---|---|---|
 | ASR | GigaAM-v3 head **`e2e_rnnt`** через локальный `gigastt serve` (HTTP) | Лучше `rnnt` на реальном Zoom (фаза 0); русский only |
-| Доставка ASR | Sidecar `gigastt` внутри `.app`, спаун при старте | Без внешних зависимостей у коллег |
+| Доставка ASR | Sidecar `gigastt` внутри `.app`, **ленивый** спаун + idle-stop; длинные файлы — **клиентский чанкинг** (`GigasttChunking`) + `--body-limit-bytes 67108864` | Без внешних зависимостей; обход HTTP 413 / duration cap |
 | Диаризация | FluidAudio (не gigastt diar) | На том же Zoom: FluidAudio ≈ 2 спикера, gigastt diar ≈ 14 |
+| Системный звук | **ScreenCaptureKit primary**; `ProcessTapAudioCapture` dormant (не hot path) | SCK подтверждён на Zoom; Process Tap давал пустые стемы / ложные баннеры |
 | Язык | Только `ru` | Ограничение модели; мультиязычность убита в бэклоге |
 | Вывод markdown | Дефолт **Simple**; Obsidian — опция | Коллеги без Vault |
-| Рекап | Ollama → OpenAI → Claude (Auto), или Off | Локально по умолчанию; ключи в Keychain |
+| Рекап | Ollama → OpenAI → Claude (Auto), или Off; промпт = конспект договорённостей + `languageLock` | Локально по умолчанию; ключи в Keychain |
 | Zoom | **Off / Auto-record** (дефолт Auto) | Запись без подтверждения; отмена через системное уведомление «Не записывать» |
 | Спикеры | Консистентные `Speaker N` + владелец-по-микрофону | Библиотека голосов/матчинг вырезаны (plan-v2 Job 3); «тупо и надёжно» |
-| Календарь | EventKit, read-only (не Google OAuth) | Читает системный Календарь; без облака, только разрешение |
+| Календарь | EventKit, read-only (не Google OAuth); title при старте записи | Читает системный Календарь; без облака |
 | Сохранение транскрипта | **Всегда** (сразу после диаризации) | Опроса спикеров и тугла auto-save нет |
 | Дистрибуция v1 | DMG + **Sparkle** (GitHub Releases `appcast.xml`); нотаризация / Developer ID — позже | ad-hoc + ПКМ→Открыть; авто-апдейты с EdDSA |
 | Иконка | `propellericon.icon` → Assets.car + .icns через `actool` | Liquid Glass + fallback |
-| Саммари / заметки | Встреча: табы Transcript / Notes / Summary; sidebar **Summaries** — только summary+notes; заметки пишутся во время записи и якорят LLM (как Granola) | Talat-табы + Granola notes-as-anchors; авто-рекап после save |
+| Саммари / заметки | Встреча: табы Transcript / Notes / Summary; sidebar **Summaries** — только summary+notes; заметки якорят LLM | Talat-табы + Granola notes-as-anchors; авто-рекап после save |
 
 ## Поток данных
 
 ```
 ZoomMeetingDetector (Auto) / menu bar / ⌘R / UI
   → AudioRecorder
-      mic (.mic.wav) + ScreenCaptureKit system (.sys.wav)
+      mic (.mic.wav) + ScreenCaptureKit system (.sys.wav)   # Process Tap dormant
       → offline mix → {id}.wav (+ stems пока аудио хранится)
   → TranscriptionService
-      → GigasttSidecar / GigasttClient  (ASR → ASRSegment[])
+      → GigasttSidecar / GigasttClient  (ASR; длинные файлы → chunk → merge)
       → checkpoint status=transcribed_raw
       → FluidAudio diarization → Speaker N + владелец-по-микрофону
       → transcript + PersistedSegment[]
@@ -52,18 +53,20 @@ ZoomMeetingDetector (Auto) / menu bar / ⌘R / UI
 | Файл | Роль |
 |---|---|
 | `AppState` | `@MainActor` координатор: запись, пайплайн, Zoom, backfill, переименование спикеров |
-| `AudioRecorder` | Mic (AVAudioRecorder или VoiceProcessing AEC) + system audio + офлайн-микс |
+| `AudioRecorder` | Mic (AVAudioRecorder или VoiceProcessing AEC) + system audio (SCK) + офлайн-микс; `lastStopWasMicOnly` |
 | `SystemAudioCapture` | ScreenCaptureKit stem (app-scoped фильтр + display-wide fallback) |
+| `ProcessTapAudioCapture` | Dormant — Core Audio Process Taps; не на hot path |
 | `ZoomMeetingDetector` | Поллы `aomhost` / meeting-window / display-sleep assertion (`caphost` ≠ встреча) |
-| `CalendarService` | EventKit: секция Upcoming (read-only, без OAuth) |
+| `CalendarService` | EventKit: Upcoming + `suggestedRecordingTitle` при старте записи |
 | `NoteOverlayController` | Оверлей быстрых заметок ⌃⌥N во время записи |
 | `NotificationManager` | UNUserNotificationCenter: интерактивная отмена авто-записи + баннеры |
 | `TranscriptionService` | ASR → diarize → `Speaker N` + владелец-по-микрофону |
-| `GigasttSidecar` / `GigasttClient` | Жизненный цикл сервера и HTTP |
+| `GigasttSidecar` / `GigasttClient` | Жизненный цикл сервера и HTTP (+ chunking) |
+| `PropellerPure` | Чистая логика: chunking, merge, парсеры, WAV helpers |
 | `RecordingStore` | Индекс записей + CRUD + size-nudge (без auto-delete) |
-| `MarkdownWriter` / `RecapService` | Экспорт и LLM-саммари + метадата (заголовок/темы/теги) |
+| `MarkdownWriter` / `RecapService` | Экспорт и LLM-конспект + метадата (заголовок/темы/теги) |
 | `Preferences` | UserDefaults + Keychain для API-ключей |
-| UI | `MainView`, `RecordingDetailView`, `RecordingInProgressView`, `MenuBarPanelView`, `SettingsSheet`, `OnboardingView`, `SearchPalette`, … |
+| UI | `MainView`, `RecordingDetailView`, `RecordingInProgressView`, `MenuBarPanelView`, `SettingsSheet`, `Onboarding*`, `PropellerUI/`, `SearchPalette`, … |
 
 ## Хранилище
 
