@@ -39,16 +39,10 @@ struct OnboardingCalendarView: View {
                         PillButton(title: "Календарь подключён", kind: .secondary,
                                    leadingSymbol: "checkmark") {}
                     } else {
-                        PillButton(title: "Подключить календарь", kind: .secondary,
+                        PillButton(title: "Apple Calendar", kind: .secondary,
                                    leadingSymbol: "plus") { connect(.mac) }
                     }
                 }
-
-                Text("Читаем Календарь macOS (EventKit). Google и Exchange — через Системные настройки → Учётные записи. Без OAuth и без облака.")
-                    .font(.system(size: 12, weight: .regular))
-                    .foregroundStyle(Tokens.Ink.tertiary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
 
                 if showGoogleHint && !calendarGranted {
                     Text("Если нужен именно Google: добавьте аккаунт в «Учётные записи», включите Календари — и нажмите снова.")
