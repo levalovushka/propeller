@@ -48,13 +48,13 @@ struct OnboardingNameView: View {
     private var nameField: some View {
         TextField("Ваше имя", text: $name)
             .textFieldStyle(.plain)
-            .font(.system(size: 14, weight: .semibold))
+            .typo(Tokens.Typography.Label.mdMedium)
             .foregroundStyle(Tokens.Ink.primary)
             .focused($focused)
             .onSubmit { submitIfReady() }
             .padding(.horizontal, 16)
             .frame(width: 200, height: Tokens.Pill.height, alignment: .leading)
-            .background(Color.white.opacity(0.05),
+            .background(Tokens.Paint.Bg.surface,
                         in: RoundedRectangle(cornerRadius: Tokens.Pill.radius, style: .continuous))
     }
 
@@ -63,12 +63,12 @@ struct OnboardingNameView: View {
             PillButton(title: "Далее", kind: .primary) { submitIfReady() }
         } else {
             Text("Далее")
-                .font(.pillLabel)
+                .typo(Tokens.Typography.Label.pill)
                 .foregroundStyle(Tokens.Ink.tertiary)
                 .padding(.horizontal, Tokens.Pill.hPadding)
                 .padding(.vertical, Tokens.Pill.vPadding)
                 .frame(height: Tokens.Pill.height)
-                .background(Color.white.opacity(0.07),
+                .background(Tokens.Paint.Bg.surface,
                             in: RoundedRectangle(cornerRadius: Tokens.Pill.radius, style: .continuous))
         }
     }

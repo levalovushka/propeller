@@ -216,9 +216,8 @@ struct MainView: View {
             HStack(spacing: 14) {
                 if let status = topStatusText {
                     Text(status)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.30))
-                        .tracking(0.025)
+                        .typo(Tokens.Typography.Label.smMedium)
+                        .foregroundStyle(Tokens.Ink.tertiary)
                         .lineLimit(1)
                         .frame(height: 32)
                 }
@@ -396,20 +395,20 @@ struct MainView: View {
             if nextUpcoming == nil && groupedRecordings.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Пока нет встреч")
-                        .font(.system(size: 14, weight: .medium))
+                        .typo(Tokens.Typography.Label.mdMedium)
                         .foregroundStyle(Tokens.Ink.tertiary)
                     Text("Начните запись — или Propeller сам подхватит Zoom.")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.30))
+                        .typo(Tokens.Typography.Label.smMedium)
+                        .foregroundStyle(Tokens.Ink.tertiary)
                     Button {
                         state.startRecording()
                     } label: {
                         Text("Записать")
-                            .font(.system(size: 13, weight: .semibold))
+                            .typo(Tokens.Typography.Label.mdMedium)
                             .foregroundStyle(Tokens.Ink.primary)
                             .padding(.horizontal, 14)
                             .frame(height: 32)
-                            .background(Color.white.opacity(0.10), in: Capsule())
+                            .background(Tokens.Neutral.aw10, in: Capsule())
                     }
                     .buttonStyle(.plain)
                     .help("Запись (⌘R)")
@@ -455,8 +454,8 @@ struct MainView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: Tokens.Window.sectionInnerGap) {
             Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.30))
+                .typo(Tokens.Typography.Label.smMedium)
+                .foregroundStyle(Tokens.Ink.tertiary)
                 .padding(.horizontal, 12)
             VStack(spacing: 0) { content() }
         }
@@ -546,7 +545,7 @@ struct MainView: View {
                         // Opaque wash so the spinner doesn't bleed through transparent icons.
                         Capsule()
                             .fill(Color(nsColor: NSColor(calibratedWhite: Tokens.Glass.fillWhite, alpha: 1)))
-                            .overlay(Capsule().fill(Color.white.opacity(0.05)))
+                            .overlay(Capsule().fill(Tokens.Paint.Bg.surface))
                     }
             }
         }
@@ -566,19 +565,19 @@ struct MainView: View {
         .frame(minHeight: 52)
         .background(
             RoundedRectangle(cornerRadius: Tokens.Window.rowRadius, style: .continuous)
-                .fill(Color.white.opacity(hovered ? 0.05 : 0))
+                .fill(hovered ? Tokens.Paint.Bg.surface : Color.clear)
         )
     }
 
     private func timeColumn(start: Date, end: Date) -> some View {
         VStack(alignment: .trailing, spacing: 0) {
             Text(Self.timeFormatter.string(from: start))
-                .font(.system(size: 14, weight: .medium))
+                .typo(Tokens.Typography.Label.mdMedium)
                 .foregroundStyle(Tokens.Ink.primary)
                 .frame(height: 20)
             Text(Self.timeFormatter.string(from: end))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.40))
+                .typo(Tokens.Typography.Label.smMedium)
+                .foregroundStyle(Tokens.Ink.quaternary)
                 .frame(height: 16)
         }
         .frame(width: 44, alignment: .trailing)
@@ -587,13 +586,13 @@ struct MainView: View {
     private func textColumn(title: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(title)
-                .font(.system(size: 14, weight: .medium))
+                .typo(Tokens.Typography.Label.mdMedium)
                 .foregroundStyle(Tokens.Ink.primary)
                 .lineLimit(1)
                 .frame(height: 20, alignment: .leading)
             Text(subtitle.isEmpty ? " " : subtitle)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color.white.opacity(subtitle.isEmpty ? 0 : 0.40))
+                .typo(Tokens.Typography.Label.smMedium)
+                .foregroundStyle(subtitle.isEmpty ? Color.clear : Tokens.Ink.quaternary)
                 .lineLimit(1)
                 .frame(height: 16, alignment: .leading)
         }
@@ -603,7 +602,7 @@ struct MainView: View {
     @ViewBuilder
     private var processingSpinner: some View {
         let icon = Image(systemName: "progress.indicator")
-            .font(.system(size: 14, weight: .medium))
+            .typo(Tokens.Typography.Label.mdMedium)
             .foregroundStyle(Tokens.Ink.secondary)
             .frame(width: 32, height: 32)
         if #available(macOS 15.0, *) {

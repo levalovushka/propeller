@@ -42,20 +42,20 @@ struct SearchPalette: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.40))
+                    .typo(Tokens.Typography.Label.mdMedium)
+                    .foregroundStyle(Tokens.Ink.quaternary)
                 TextField("Поиск встреч и транскриптов…", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 16, weight: .medium))
+                    .typo(Tokens.Typography.Label.mdMedium)
                     .foregroundStyle(Tokens.Ink.primary)
                     .focused($fieldFocused)
                     .onSubmit { activate(highlightedIndex) }
                 Text("esc")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.30))
+                    .typo(Tokens.Typography.Label.xsMedium)
+                    .foregroundStyle(Tokens.Ink.tertiary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
-                    .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    .background(Tokens.Paint.Bg.surface, in: RoundedRectangle(cornerRadius: Tokens.Radius.xxxs, style: .continuous))
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
@@ -69,12 +69,12 @@ struct SearchPalette: View {
                         highlightedIndex = 0
                     } label: {
                         Text("\(f.rawValue) \(count)")
-                            .font(.system(size: 12, weight: selected ? .semibold : .medium))
-                            .foregroundStyle(selected ? Tokens.Ink.primary : Color.white.opacity(0.40))
+                            .typo(selected ? Tokens.Typography.Label.smMedium : Tokens.Typography.Label.smMedium)
+                            .foregroundStyle(selected ? Tokens.Ink.primary : Tokens.Ink.quaternary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
                             .background(
-                                Capsule().fill(Color.white.opacity(selected ? 0.12 : 0.05))
+                                Capsule().fill(selected ? Tokens.Neutral.aw12 : Tokens.Paint.Bg.surface)
                             )
                     }
                     .buttonStyle(.plain)
@@ -85,7 +85,7 @@ struct SearchPalette: View {
             .padding(.bottom, 12)
 
             Rectangle()
-                .fill(Color.white.opacity(0.08))
+                .fill(Tokens.Paint.Bg.surface)
                 .frame(height: 1)
 
             ScrollViewReader { proxy in
@@ -94,8 +94,8 @@ struct SearchPalette: View {
                         let sections = groupedItems
                         ForEach(sections, id: \.0) { title, sectionItems in
                             Text(title)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(Color.white.opacity(0.30))
+                                .typo(Tokens.Typography.Label.xsMedium)
+                                .foregroundStyle(Tokens.Ink.tertiary)
                                 .textCase(.uppercase)
                                 .padding(.horizontal, 16)
                                 .padding(.top, 12)
@@ -113,8 +113,8 @@ struct SearchPalette: View {
 
                         if items.isEmpty {
                             Text("Ничего не найдено")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(Color.white.opacity(0.30))
+                                .typo(Tokens.Typography.Label.mdMedium)
+                                .foregroundStyle(Tokens.Ink.tertiary)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 28)
                         }
@@ -128,7 +128,7 @@ struct SearchPalette: View {
             .frame(maxHeight: 380)
 
             Rectangle()
-                .fill(Color.white.opacity(0.08))
+                .fill(Tokens.Paint.Bg.surface)
                 .frame(height: 1)
 
             HStack(spacing: 12) {
@@ -136,20 +136,20 @@ struct SearchPalette: View {
                 hint("↵", "открыть")
                 Spacer()
                 Text(Self.resultCountLabel(items.count))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.30))
+                    .typo(Tokens.Typography.Label.xsMedium)
+                    .foregroundStyle(Tokens.Ink.tertiary)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
         .frame(width: 560)
         .background {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: Tokens.Radius.lg, style: .continuous)
                 .fill(.ultraThinMaterial)
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: Tokens.Radius.lg, style: .continuous)
                 .fill(Color(nsColor: Tokens.Glass.fill))
         }
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.lg, style: .continuous))
         .onAppear { fieldFocused = true }
         .onChange(of: query) { _, _ in highlightedIndex = 0 }
         .onKeyPress(.downArrow) {
@@ -233,7 +233,7 @@ struct SearchPalette: View {
 
         var result = AttributedString(prefix.isEmpty ? "" : prefix + " ")
         var highlighted = AttributedString(match)
-        highlighted.font = .system(size: 12, weight: .semibold)
+        highlighted.font = Tokens.Typography.Label.smMedium.font
         highlighted.foregroundColor = Tokens.Ink.primary
         result += highlighted
         result += AttributedString(suffix.isEmpty ? "" : " " + suffix)
@@ -285,58 +285,58 @@ struct SearchPalette: View {
             case .recording(let match):
                 let entry = match.entry
                 Image(systemName: "mic")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.40))
+                    .typo(Tokens.Typography.Label.mdMedium)
+                    .foregroundStyle(Tokens.Ink.quaternary)
                     .frame(width: 20)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(entry.title.isEmpty ? "Без названия" : entry.title)
-                            .font(.system(size: 14, weight: .medium))
+                            .typo(Tokens.Typography.Label.mdMedium)
                             .foregroundStyle(Tokens.Ink.primary)
                             .lineLimit(1)
                         if match.matchCount > 1 {
                             Text("\(match.matchCount) совп.")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(Color.white.opacity(0.40))
+                                .typo(Tokens.Typography.Label.xsMedium)
+                                .foregroundStyle(Tokens.Ink.quaternary)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(Color.white.opacity(0.08), in: Capsule())
+                                .background(Tokens.Paint.Bg.surface, in: Capsule())
                         }
                     }
                     HStack(spacing: 4) {
                         Text(entry.dateFormatted)
                         if entry.duration > 0 { Text("·"); Text(entry.durationFormatted) }
                     }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.40))
+                    .typo(Tokens.Typography.Label.smMedium)
+                    .foregroundStyle(Tokens.Ink.quaternary)
                     if let snippet = match.snippet {
                         Text(snippet)
-                            .font(.system(size: 12, weight: .regular))
-                            .foregroundStyle(Color.white.opacity(0.40))
+                            .typo(Tokens.Typography.Label.smRegular)
+                            .foregroundStyle(Tokens.Ink.quaternary)
                             .lineLimit(2)
                     }
                 }
             case .startRecording:
                 Image(systemName: "record.circle")
-                    .font(.system(size: 13, weight: .medium))
+                    .typo(Tokens.Typography.Label.mdMedium)
                     .foregroundStyle(Color.red.opacity(0.9))
                     .frame(width: 20)
                 Text("Записать")
-                    .font(.system(size: 14, weight: .medium))
+                    .typo(Tokens.Typography.Label.mdMedium)
                     .foregroundStyle(Tokens.Ink.primary)
             }
             Spacer(minLength: 0)
             if highlighted {
                 Image(systemName: "return")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.30))
+                    .typo(Tokens.Typography.Label.xsMedium)
+                    .foregroundStyle(Tokens.Ink.tertiary)
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(highlighted ? 0.08 : 0))
+            RoundedRectangle(cornerRadius: Tokens.Radius.sm, style: .continuous)
+                .fill(highlighted ? Tokens.Paint.Bg.surface : Color.clear)
         )
         .contentShape(Rectangle())
     }
@@ -344,14 +344,14 @@ struct SearchPalette: View {
     private func hint(_ key: String, _ label: String) -> some View {
         HStack(spacing: 4) {
             Text(key)
-                .font(.system(size: 11, weight: .medium))
+                .typo(Tokens.Typography.Label.xsMedium)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
-                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 3, style: .continuous))
-                .foregroundStyle(Color.white.opacity(0.50))
+                .background(Tokens.Paint.Bg.surface, in: RoundedRectangle(cornerRadius: Tokens.Radius.xxxxs, style: .continuous))
+                .foregroundStyle(Tokens.Neutral.aw50)
             Text(label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.30))
+                .typo(Tokens.Typography.Label.xsMedium)
+                .foregroundStyle(Tokens.Ink.tertiary)
         }
     }
 

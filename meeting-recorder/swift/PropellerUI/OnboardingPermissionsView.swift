@@ -73,12 +73,12 @@ struct OnboardingPermissionsView: View {
             PillButton(title: "Далее", kind: .primary, action: onNext)
         } else {
             Text("Далее")
-                .font(.pillLabel)
+                .typo(Tokens.Typography.Label.pill)
                 .foregroundStyle(Tokens.Ink.tertiary)
                 .padding(.horizontal, Tokens.Pill.hPadding)
                 .padding(.vertical, Tokens.Pill.vPadding)
                 .frame(height: Tokens.Pill.height)
-                .background(Color.white.opacity(0.07),
+                .background(Tokens.Paint.Bg.surface,
                             in: RoundedRectangle(cornerRadius: Tokens.Pill.radius, style: .continuous))
         }
     }
@@ -89,10 +89,10 @@ struct OnboardingPermissionsView: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 0) {
                 Text(title)
-                    .font(.system(size: 14, weight: .medium))
+                    .typo(Tokens.Typography.Label.mdMedium)
                     .foregroundStyle(Tokens.Ink.primary)
                 Text(subtitle)
-                    .font(.system(size: 12, weight: .regular))
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(Tokens.Ink.tertiary)
                     .lineLimit(1)
             }
@@ -115,7 +115,7 @@ struct OnboardingPermissionsView: View {
     }
 
     private var divider: some View {
-        Rectangle().fill(Color.white.opacity(0.1)).frame(height: 1).frame(height: 16)
+        Rectangle().fill(Tokens.Neutral.aw10).frame(height: 1).frame(height: 16)
     }
 }
 

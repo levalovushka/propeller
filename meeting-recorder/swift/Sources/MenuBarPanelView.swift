@@ -1,4 +1,5 @@
 import SwiftUI
+import PropellerUI
 
 struct MenuBarPanelView: View {
     @ObservedObject var state: AppState
@@ -77,10 +78,10 @@ struct MenuBarPanelView: View {
                     Image(systemName: "record.circle.fill")
                         .foregroundStyle(.red)
                         .symbolRenderingMode(.hierarchical)
-                    Text("Запись").font(.headline)
+                    Text("Запись").typo(Tokens.Typography.Label.mdMedium)
                     Spacer()
                     Text(state.elapsedString)
-                        .font(.system(.title3, design: .monospaced))
+                        .typo(Tokens.Typography.Label.mdMedium, monospacedDigit: true)
                         .monospacedDigit()
                         .foregroundStyle(.red)
                 }
@@ -123,8 +124,8 @@ struct MenuBarPanelView: View {
                 Image(systemName: "video.fill")
                     .foregroundStyle(.cyan)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Звонок Zoom").font(.headline)
-                    Text("Запись не начата").font(.caption).foregroundStyle(.secondary)
+                    Text("Звонок Zoom").typo(Tokens.Typography.Label.mdMedium)
+                    Text("Запись не начата").typo(Tokens.Typography.Label.smRegular).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button {
@@ -140,9 +141,9 @@ struct MenuBarPanelView: View {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Обработка…").font(.headline)
+                    Text("Обработка…").typo(Tokens.Typography.Label.mdMedium)
                     Text(state.statusMessage.isEmpty ? "Обработка…" : state.statusMessage)
-                        .font(.caption)
+                        .typo(Tokens.Typography.Label.smRegular)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -151,8 +152,8 @@ struct MenuBarPanelView: View {
         } else {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Propeller").font(.headline)
-                    Text("Готов к записи").font(.caption).foregroundStyle(.secondary)
+                    Text("Propeller").typo(Tokens.Typography.Label.mdMedium)
+                    Text("Готов к записи").typo(Tokens.Typography.Label.smRegular).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button {
@@ -172,7 +173,7 @@ struct MenuBarPanelView: View {
     private var recentRecordingsSection: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Недавние")
-                .font(.caption2.weight(.medium))
+                .typo(Tokens.Typography.Label.xsMedium)
                 .foregroundStyle(.tertiary)
                 .textCase(.uppercase)
                 .padding(.horizontal, 12)
@@ -180,7 +181,7 @@ struct MenuBarPanelView: View {
 
             if state.recordingStore.recordings.isEmpty {
                 Text("Пока нет записей")
-                    .font(.caption)
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
@@ -194,7 +195,7 @@ struct MenuBarPanelView: View {
                             statusDot(entry)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(entry.title)
-                                    .font(.callout)
+                                    .typo(Tokens.Typography.Label.mdRegular)
                                     .lineLimit(1)
                                 HStack(spacing: 4) {
                                     Text(entry.dateFormatted)
@@ -203,13 +204,13 @@ struct MenuBarPanelView: View {
                                         Text(entry.durationFormatted)
                                     }
                                 }
-                                .font(.caption2)
+                                .typo(Tokens.Typography.Label.xsRegular)
                                 .foregroundStyle(.secondary)
                             }
                             Spacer()
                             if entry.status == "saved" {
                                 Image(systemName: "checkmark.circle.fill")
-                                    .font(.caption)
+                                    .typo(Tokens.Typography.Label.smRegular)
                                     .foregroundStyle(.green)
                             }
                         }

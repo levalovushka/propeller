@@ -1,4 +1,5 @@
 import SwiftUI
+import PropellerUI
 import PropellerPure
 import ServiceManagement
 
@@ -51,11 +52,11 @@ private struct GeneralSettingsPane: View {
                         }
                     }
                 Text("Propeller стартует при входе в систему. Управление — в «Объекты входа» в Системных настройках.")
-                    .font(.caption)
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
                 if let launchAtLoginError {
                     Text(launchAtLoginError)
-                        .font(.caption)
+                        .typo(Tokens.Typography.Label.smRegular)
                         .foregroundStyle(.orange)
                 }
             }
@@ -71,13 +72,13 @@ private struct GeneralSettingsPane: View {
                         }
                     }
                 Text("Читает macOS Календарь (включая Google/Exchange из Системных настроек → Интернет-аккаунты). Данные не покидают Mac.")
-                    .font(.caption)
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
             }
 
             Section("Обработка") {
                 Text("После стопа сразу идут расшифровка (gigastt / GigaAM), сохранение и саммари. Модель речи скачивается при первой расшифровке — прогресс в статус-баре.")
-                    .font(.caption)
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
             }
 
@@ -87,7 +88,7 @@ private struct GeneralSettingsPane: View {
                         Analytics.setEnabled(on)
                     }
                 Text("Только события воронки (запись, ASR, саммари, поиск). Без транскриптов, путей и названий. Для быстрых итераций dogfood.")
-                    .font(.caption)
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
             }
 
@@ -104,7 +105,7 @@ private struct GeneralSettingsPane: View {
                     appState.applyZoomDetectorMode()
                 }
                 Text(zoomModeHelp)
-                    .font(.caption)
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
 
                 LabeledContent("Статус") {
@@ -122,10 +123,10 @@ private struct GeneralSettingsPane: View {
                     HStack(alignment: .top, spacing: 6) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
-                            .font(.caption)
+                            .typo(Tokens.Typography.Label.smRegular)
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Обнаружение ограничено — нет разрешения Screen Recording, Propeller не читает заголовок окна Zoom. Остаётся сигнал процесса, он медленнее.")
-                                .font(.caption)
+                                .typo(Tokens.Typography.Label.smRegular)
                                 .foregroundStyle(.secondary)
                             Button("Открыть настройки Screen Recording") {
                                 if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
@@ -145,7 +146,7 @@ private struct GeneralSettingsPane: View {
                 }
                 .disabled(!SparkleUpdater.shared.canCheckForUpdates)
                 Text("Обновления с GitHub Releases (Sparkle). Первый запуск: ПКМ → Открыть, пока нет Developer ID.")
-                    .font(.caption)
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
             }
         }
@@ -188,13 +189,13 @@ private struct AudioSettingsPane: View {
                 Toggle("Захватывать системный звук", isOn: $captureSystemAudio)
                     .onChange(of: captureSystemAudio) { _, val in Preferences.shared.captureSystemAudio = val }
                 Text("Нужно разрешение Screen Recording (macOS спросит при первой записи). Если выкл — только микрофон.")
-                    .font(.caption)
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
 
                 Toggle("Подавлять эхо динамика", isOn: $voiceProcessingEnabled)
                     .onChange(of: voiceProcessingEnabled) { _, val in Preferences.shared.voiceProcessingEnabled = val }
                 Text("Микрофон через Apple voice processing (эхо + шум). Для звонков без наушников. По умолчанию выкл — с наушниками не влияет.")
-                    .font(.caption)
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
             }
         }
@@ -214,7 +215,7 @@ private struct TranscriptionSettingsPane: View {
             Section("Движок") {
                 LabeledContent("Движок", value: TranscriptionService.engineDescription)
                 Text("Бинарник gigastt уже в приложении; модель GigaAM в комплект не входит — скачивается при первой расшифровке (прогресс в статус-баре). Только русский.")
-                    .font(.caption)
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
             }
 
@@ -225,11 +226,11 @@ private struct TranscriptionSettingsPane: View {
                         scheduleRestart()
                     }
                 Text("В приложении уже есть словарь рабочего жаргона и англицизмов (\(BuiltinHotwords.terms.count) терминов) — он всегда включён. Здесь добавь своё через запятую: клиентов, фамилии, названия проектов. Применится к следующей расшифровке, распознаватель перезапустится через пару секунд.")
-                    .font(.caption)
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
                 if let restartStatus {
                     Text(restartStatus)
-                        .font(.caption2)
+                        .typo(Tokens.Typography.Label.xsRegular)
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -293,23 +294,33 @@ private struct RecapSettingsPane: View {
                             Task {
                                 await OllamaSidecar.shared.ensureServerRunning()
                                 ollamaReachable = await RecapService.shared.probeOllama()
+                                appState.refreshLocalRecapModelState()
                             }
                         }
                         .controlSize(.small)
-                        Button(appState.ollamaSetupProgress != nil ? "Скачиваем…" : "Скачать модель") {
-                            appState.startOllamaRuntimeDownload()
-                            isInstalling = true
-                        }
-                        .controlSize(.small)
-                        .disabled(appState.ollamaSetupProgress != nil)
-                        .onChange(of: appState.ollamaSetupProgress) { _, frac in
-                            if frac == nil { isInstalling = false }
-                        }
-                        .onChange(of: appState.ollamaSetupMessage) { _, msg in
-                            if msg == "Модель готова" {
-                                ollamaReachable = true
-                                isInstalling = false
+                        // Offered only while it can do something. A permanent
+                        // "Скачать модель" beside a working setup reads as "the
+                        // model is missing", which is how a stale status line
+                        // got mistaken for a hung download.
+                        if appState.localRecapModelReady != true {
+                            Button(appState.ollamaSetupProgress != nil ? "Скачиваем…" : "Скачать модель") {
+                                appState.startOllamaRuntimeDownload()
+                                isInstalling = true
                             }
+                            .controlSize(.small)
+                            .disabled(appState.ollamaSetupProgress != nil)
+                        }
+                    }
+                    // On the HStack, not the button: the button disappears once
+                    // the model lands, and these still have to settle state.
+                    .onChange(of: appState.ollamaSetupProgress) { _, frac in
+                        if frac == nil { isInstalling = false }
+                    }
+                    .onChange(of: appState.ollamaSetupMessage) { _, msg in
+                        if msg == "Модель готова" {
+                            ollamaReachable = true
+                            isInstalling = false
+                            appState.refreshLocalRecapModelState()
                         }
                     }
                 }
@@ -319,7 +330,7 @@ private struct RecapSettingsPane: View {
                         Text(appState.ollamaSetupMessage.isEmpty
                              ? "Скачиваем… \(Int(frac * 100))%"
                              : appState.ollamaSetupMessage)
-                            .font(.caption)
+                            .typo(Tokens.Typography.Label.smRegular)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -333,7 +344,7 @@ private struct RecapSettingsPane: View {
                             Preferences.shared.recapOllamaModel = val
                         }
                     Text("Propeller сам скачивает движок Ollama и модель в Application Support — ставить Ollama.app не нужно.")
-                        .font(.caption)
+                        .typo(Tokens.Typography.Label.smRegular)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -350,7 +361,7 @@ private struct RecapSettingsPane: View {
                             Preferences.shared.recapOpenAIModel = val
                         }
                     Text("Ключ хранится в Keychain.")
-                        .font(.caption)
+                        .typo(Tokens.Typography.Label.smRegular)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -367,14 +378,14 @@ private struct RecapSettingsPane: View {
                             Preferences.shared.recapClaudeModel = val
                         }
                     Text("Ключ хранится в Keychain.")
-                        .font(.caption)
+                        .typo(Tokens.Typography.Label.smRegular)
                         .foregroundStyle(.secondary)
                 }
             }
 
             Section("Промпт") {
                 TextEditor(text: $recapPrompt)
-                    .font(.callout)
+                    .typo(Tokens.Typography.Label.mdRegular)
                     .frame(minHeight: 110, maxHeight: 160)
                     .onChange(of: recapPrompt) { _, val in
                         Preferences.shared.recapPrompt = val
@@ -384,13 +395,14 @@ private struct RecapSettingsPane: View {
                     Preferences.shared.recapPrompt = RecapService.defaultPrompt
                 }
                 .controlSize(.small)
-                Text("Если локальная модель ещё не скачана и нет API-ключа, сохранение всё равно работает — саммари пропускается с подсказкой. Кнопка «Скачать модель» ставит движок автоматически.")
-                    .font(.caption)
+                Text("Без локальной модели и без API-ключа запись и расшифровка работают как обычно — пропускается только саммари, с подсказкой в карточке встречи.")
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .onAppear {
+            appState.refreshLocalRecapModelState()
             recapPrompt = Preferences.shared.recapPrompt
             openAIKey = Preferences.shared.openAIAPIKey ?? ""
             claudeKey = Preferences.shared.claudeAPIKey ?? ""
@@ -435,7 +447,7 @@ private struct ExportSettingsPane: View {
                 Text(markdownOutputFormat == MarkdownOutputFormat.obsidian.rawValue
                      ? "YAML frontmatter + [[wikilinks]] для vault Obsidian."
                      : "Читаемый markdown: заголовок, участники, расшифровка. По умолчанию для обмена.")
-                    .font(.caption)
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
             }
 
@@ -451,7 +463,7 @@ private struct ExportSettingsPane: View {
                         Preferences.shared.peoplePagesPath = peoplePagesPath
                     }
                     Text("Папка vault Obsidian со страницами людей. Если задана, имена спикеров ссылаются через [[wikilinks]].")
-                        .font(.caption)
+                        .typo(Tokens.Typography.Label.smRegular)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -468,7 +480,7 @@ private struct ExportSettingsPane: View {
                 LabeledContent("Аудио на диске", value: used)
                 LabeledContent("Порог напоминания", value: limit)
                 Text("Propeller никогда не удаляет сам. При превышении порога — напоминание. Удаление аудио сохраняет расшифровки и саммари.")
-                    .font(.caption)
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
                 if Preferences.shared.storageNudgeSnoozed {
                     Button("Сбросить отложку «Позже»") {
@@ -482,7 +494,7 @@ private struct ExportSettingsPane: View {
                             Text(entry.title.isEmpty ? "Без названия" : entry.title)
                                 .lineLimit(1)
                             Text("\(entry.dateFormatted) · \(ByteCountFormatter.string(fromByteCount: appState.recordingStore.byteSize(of: entry), countStyle: .file))")
-                                .font(.caption)
+                                .typo(Tokens.Typography.Label.smRegular)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()

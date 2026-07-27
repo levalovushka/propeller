@@ -9,28 +9,37 @@ public enum DSSize {
 
 /// Four prominence levels shared by pill and icon buttons. Each resolves a fill
 /// and a foreground for the current hover state.
-/// - primary: white fill, black text; dims slightly on hover.
-/// - secondary: white-10% fill, white text; lightens to 15%.
-/// - ghost: transparent; text 30→70% and a 7% fill appear on hover.
-/// - minimal: transparent, never fills; icon/text just goes 30→50% on hover.
+/// - primary / secondary / ghost: semantic interactive fills.
+/// - minimal: never fills — content only brightens (Propeller-specific).
 public enum ButtonProminence {
     case primary, secondary, ghost, minimal
 
     public func fill(hovering: Bool) -> Color {
         switch self {
-        case .primary:   return .white.opacity(hovering ? 0.88 : 1.0)
-        case .secondary: return .white.opacity(hovering ? 0.15 : 0.10)
-        case .ghost:     return .white.opacity(hovering ? 0.07 : 0.0)
+        case .primary:   return hovering ? Tokens.Paint.Interactive.Primary.hover : Tokens.Paint.Interactive.Primary.rest
+        case .secondary: return hovering ? Tokens.Paint.Interactive.Secondary.hover : Tokens.Paint.Interactive.Secondary.rest
+        case .ghost:     return hovering ? Tokens.Paint.Interactive.Ghost.hover : Tokens.Paint.Interactive.Ghost.rest
         case .minimal:   return .clear
         }
     }
 
     public func foreground(hovering: Bool) -> Color {
         switch self {
-        case .primary:   return .black
-        case .secondary: return Tokens.Ink.primary
-        case .ghost:     return hovering ? Tokens.Ink.secondary : Tokens.Ink.tertiary
-        case .minimal:   return .white.opacity(hovering ? 0.5 : 0.3)
+        case .primary:   return Tokens.Paint.Text.primaryInverse
+        case .secondary: return Tokens.Paint.Text.primary
+        case .ghost:     return hovering ? Tokens.Paint.Text.secondary : Tokens.Paint.Text.tertiary
+        case .minimal:   return hovering
+            ? Tokens.Paint.Interactive.Minimal.hover
+            : Tokens.Paint.Interactive.Minimal.rest
+        }
+    }
+
+    public var disabledForeground: Color {
+        switch self {
+        case .primary, .secondary, .ghost:
+            return Tokens.Paint.Text.disabled
+        case .minimal:
+            return Tokens.Paint.Interactive.Minimal.disabled
         }
     }
 }
@@ -74,7 +83,7 @@ public struct IconButton: View {
                 .foregroundStyle(
                     enabled
                         ? prominence.foreground(hovering: hovering)
-                        : Color.white.opacity(0.15)
+                        : prominence.disabledForeground
                 )
                 .frame(width: size.dim, height: size.dim)
                 .background(
@@ -86,7 +95,7 @@ public struct IconButton: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .onHover { if enabled { hovering = $0 } else { hovering = false } }
-        .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
     }
 }
 
@@ -122,7 +131,7 @@ public struct MinimalIconGlyph: View {
             .frame(width: DSSize.sm.dim, height: DSSize.sm.dim)
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
-            .animation(.easeOut(duration: 0.12), value: hovering)
+            .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
     }
 }
 
@@ -169,7 +178,7 @@ public struct MinimalIconMenu<Content: View>: View {
         .frame(width: DSSize.sm.dim, height: DSSize.sm.dim)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
         .modifier(OptionalHelp(helpText))
     }
 }
@@ -207,7 +216,7 @@ public struct MinimalIconSettingsLink: View {
         .buttonStyle(.plain)
         .tint(ButtonProminence.minimal.foreground(hovering: hovering))
         .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
         .modifier(OptionalHelp(helpText))
     }
 }

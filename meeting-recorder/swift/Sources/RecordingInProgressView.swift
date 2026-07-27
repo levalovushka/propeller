@@ -19,7 +19,7 @@ struct RecordingInProgressView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider().overlay(Color.white.opacity(0.08))
+            Divider().overlay(Tokens.Paint.Bg.surface)
             notepad
                 .frame(maxHeight: .infinity)
             stopBar
@@ -44,8 +44,7 @@ struct RecordingInProgressView: View {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 TextField("Без названия", text: $liveTitle)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 40, weight: .semibold))
-                    .tracking(-0.8)
+                    .typo(Tokens.Typography.Heading.lg)
                     .foregroundStyle(Tokens.Ink.primary)
                     .focused($titleFocused)
                     .onChange(of: liveTitle) { _, val in
@@ -68,7 +67,7 @@ struct RecordingInProgressView: View {
                             .frame(width: 8, height: 8)
                     }
                     Text("REC")
-                        .font(.system(size: 12, weight: .semibold))
+                        .typo(Tokens.Typography.Label.smMedium)
                         .foregroundStyle(Color.red.opacity(0.9))
                 }
                 .padding(.horizontal, 10)
@@ -78,7 +77,7 @@ struct RecordingInProgressView: View {
 
             HStack(spacing: 10) {
                 Text(state.elapsedString)
-                    .font(.system(size: 14, weight: .medium).monospacedDigit())
+                    .typo(Tokens.Typography.Label.mdMedium, monospacedDigit: true)
                     .foregroundStyle(Tokens.Ink.primary)
                     .contentTransition(.numericText())
 
@@ -100,8 +99,8 @@ struct RecordingInProgressView: View {
 
                 Spacer(minLength: 0)
             }
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(Color.white.opacity(0.40))
+            .typo(Tokens.Typography.Label.smMedium)
+            .foregroundStyle(Tokens.Ink.quaternary)
 
             if let micWarning = recorder.micCaptureWarning {
                 warningBanner(title: "Микрофон не пишет", detail: micWarning, tint: .red) {
@@ -133,7 +132,7 @@ struct RecordingInProgressView: View {
         return HStack(spacing: 6) {
             Text(label)
             Capsule()
-                .fill(Color.white.opacity(0.08))
+                .fill(Tokens.Paint.Bg.surface)
                 .frame(width: 48, height: 4)
                 .overlay(alignment: .leading) {
                     Capsule()
@@ -141,7 +140,7 @@ struct RecordingInProgressView: View {
                         .frame(width: barWidth, height: 4)
                 }
         }
-        .foregroundStyle(warning ? Color.orange.opacity(0.9) : Color.white.opacity(0.40))
+        .foregroundStyle(warning ? Color.orange.opacity(0.9) : Tokens.Ink.quaternary)
     }
 
     private func warningBanner(
@@ -150,24 +149,24 @@ struct RecordingInProgressView: View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .typo(Tokens.Typography.Label.smMedium)
                     .foregroundStyle(tint)
                 Text(detail)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.50))
+                    .typo(Tokens.Typography.Label.smMedium)
+                    .foregroundStyle(Tokens.Neutral.aw50)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
             Button("Настройки", action: action)
                 .buttonStyle(.plain)
-                .font(.system(size: 12, weight: .semibold))
+                .typo(Tokens.Typography.Label.smMedium)
                 .foregroundStyle(Tokens.Ink.primary)
                 .padding(.horizontal, 10)
                 .frame(height: 28)
-                .background(Color.white.opacity(0.10), in: Capsule())
+                .background(Tokens.Neutral.aw10, in: Capsule())
         }
         .padding(10)
-        .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: Tokens.Radius.md, style: .continuous))
     }
 
     // MARK: - Notepad
@@ -175,12 +174,12 @@ struct RecordingInProgressView: View {
     private var notepad: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Заметки")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.30))
+                .typo(Tokens.Typography.Label.smMedium)
+                .foregroundStyle(Tokens.Ink.tertiary)
                 .padding(.horizontal, 12)
 
             TextEditor(text: $liveNotes)
-                .font(.system(size: 14, weight: .medium))
+                .typo(Tokens.Typography.Body.md)
                 .foregroundStyle(Tokens.Ink.primary)
                 .scrollContentBackground(.hidden)
                 .padding(.horizontal, 8)
@@ -213,11 +212,11 @@ struct RecordingInProgressView: View {
                 showingDiscardConfirm = true
             } label: {
                 Text("Сбросить")
-                    .font(.system(size: 14, weight: .semibold))
+                    .typo(Tokens.Typography.Label.mdMedium)
                     .foregroundStyle(Tokens.Ink.secondary)
                     .padding(.horizontal, 16)
                     .frame(height: 36)
-                    .background(Color.white.opacity(0.08), in: Capsule())
+                    .background(Tokens.Paint.Bg.surface, in: Capsule())
             }
             .buttonStyle(.plain)
             .help("Стоп и удалить")
@@ -227,7 +226,7 @@ struct RecordingInProgressView: View {
                 state.stopRecording()
             } label: {
                 Text("Стоп")
-                    .font(.system(size: 14, weight: .semibold))
+                    .typo(Tokens.Typography.Label.mdMedium)
                     .foregroundStyle(Tokens.Ink.primary)
                     .padding(.horizontal, 16)
                     .frame(height: 36)

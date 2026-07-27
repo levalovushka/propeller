@@ -1,5 +1,6 @@
 import AVFoundation
 import SwiftUI
+import PropellerUI
 
 /// Full-width waveform player for the meeting detail view (talat-style).
 /// Draws downsampled peaks, fills the played portion with the accent color,
@@ -25,7 +26,7 @@ struct WaveformScrubber: View {
                     Spacer()
                     Text(player.totalDurationFormatted)
                 }
-                .font(.caption2.monospacedDigit())
+                .typo(Tokens.Typography.Label.xsMedium, monospacedDigit: true)
                 .foregroundStyle(.tertiary)
             }
         }

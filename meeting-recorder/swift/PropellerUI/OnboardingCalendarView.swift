@@ -46,7 +46,7 @@ struct OnboardingCalendarView: View {
 
                 if showGoogleHint && !calendarGranted {
                     Text("Если нужен именно Google: добавьте аккаунт в «Учётные записи», включите Календари — и нажмите снова.")
-                        .font(.system(size: 12, weight: .regular))
+                        .typo(Tokens.Typography.Label.smRegular)
                         .foregroundStyle(Tokens.Ink.tertiary)
                         .multilineTextAlignment(.center)
                         .fixedSize(horizontal: false, vertical: true)

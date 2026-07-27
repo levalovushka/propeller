@@ -38,11 +38,11 @@ public struct PropellerToast: View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .typo(Tokens.Typography.Label.smMedium)
                     .foregroundStyle(Tokens.Ink.primary)
                     .lineLimit(2)
                 Text(subtitle)
-                    .font(.system(size: 12, weight: .regular))
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(Tokens.Ink.secondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -74,7 +74,7 @@ public struct PropellerToast: View {
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(0.45))
+                    .foregroundStyle(Tokens.Ink.quaternary)
                     .frame(width: 24, height: 24)
                     .contentShape(Rectangle())
             }
@@ -88,11 +88,11 @@ public struct PropellerToast: View {
     private func toastPill(_ button: ToastButton) -> some View {
         Button(action: button.action) {
             Text(button.title)
-                .font(.system(size: 12, weight: .semibold))
+                .typo(Tokens.Typography.Label.smMedium)
                 .foregroundStyle(Tokens.Ink.primary)
                 .padding(.horizontal, 10)
                 .frame(height: 32)
-                .background(Color.white.opacity(0.10), in: Capsule())
+                .background(Tokens.Neutral.aw10, in: Capsule())
         }
         .buttonStyle(.plain)
     }
@@ -100,7 +100,7 @@ public struct PropellerToast: View {
     private func toastPlain(_ button: ToastButton) -> some View {
         Button(action: button.action) {
             Text(button.title)
-                .font(.system(size: 12, weight: .semibold))
+                .typo(Tokens.Typography.Label.smMedium)
                 .foregroundStyle(Tokens.Ink.primary)
                 .padding(.horizontal, 10)
                 .frame(height: 32)

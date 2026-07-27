@@ -83,7 +83,7 @@ public struct PillButton: View {
                 Text(title)
                 if let trailingSymbol { Image(systemName: trailingSymbol) }
             }
-            .font(.pillLabel)
+            .typo(Tokens.Typography.Label.pill)
             .foregroundStyle(kind.foreground(hovering: hovering))
             .padding(.horizontal, Tokens.Pill.hPadding)
             .padding(.vertical, Tokens.Pill.vPadding)
@@ -94,7 +94,7 @@ public struct PillButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
     }
 }
 

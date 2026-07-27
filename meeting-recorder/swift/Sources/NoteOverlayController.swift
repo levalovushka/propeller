@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import PropellerUI
 
 /// A borderless panel that can still take keyboard focus (needed to type into
 /// the quick-note field without fully activating the app).
@@ -120,7 +121,7 @@ private struct NoteInputView: View {
                 .foregroundStyle(.secondary)
             TextField("Быстрая заметка…", text: $text)
                 .textFieldStyle(.plain)
-                .font(.system(size: 15))
+                .typo(Tokens.Typography.Label.mdRegular)
                 .focused($focused)
                 .onSubmit {
                     let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -132,10 +133,10 @@ private struct NoteInputView: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 14)
         .frame(width: 440, height: 58)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
         .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: Tokens.Radius.lg)
+                .strokeBorder(Tokens.Neutral.aw7, lineWidth: 1)
         )
         .onAppear {
             DispatchQueue.main.async { focused = true }

@@ -43,9 +43,8 @@ public struct MeetingsTitleBlock: View {
     public var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
             Text(title)
-                .font(.system(size: 40, weight: .semibold))
+                .typo(Tokens.Typography.Heading.lg)
                 .foregroundStyle(Tokens.Ink.primary)
-                .tracking(-0.8)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .bottomLeading)
 

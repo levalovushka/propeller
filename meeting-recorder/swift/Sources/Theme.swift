@@ -12,19 +12,12 @@ struct VisualEffectBackground: View {
     }
 }
 
-extension Font {
-    /// System grotesque for page titles (SF Pro Display).
-    static func pageTitle(_ size: CGFloat = 30) -> Font {
-        .system(size: size, weight: .medium)
-    }
-}
-
 extension View {
     /// A large page title, aligned leading, with the standard content inset.
     func pageHeader(_ title: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(title)
-                .font(.pageTitle())
+                .typo(Tokens.Typography.Heading.lg)
                 .foregroundStyle(.primary)
                 .padding(.horizontal, 16)
                 .padding(.top, 20)

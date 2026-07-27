@@ -57,7 +57,7 @@ public struct MenuBarPopover: View {
         .padding(6)
         .frame(width: 260)
         .background(GlassBackground(material: .regularMaterial, tinted: false))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.md, style: .continuous))
     }
 
     private var header: some View {
@@ -66,7 +66,7 @@ public struct MenuBarPopover: View {
                 Text("Propeller").foregroundStyle(Tokens.Ink.primary)
                 Text(version).foregroundStyle(Tokens.Ink.tertiary)
             }
-            .font(.system(size: 12, weight: .medium))
+            .typo(Tokens.Typography.Label.smMedium)
             .padding(.leading, 10)
 
             Spacer(minLength: 8)
@@ -87,7 +87,7 @@ public struct MenuBarPopover: View {
                         Text(title).foregroundStyle(Tokens.Ink.primary).lineLimit(1)
                         Text(elapsed).foregroundStyle(Tokens.Ink.tertiary).monospacedDigit()
                     }
-                    .font(.system(size: 12, weight: .medium))
+                    .typo(Tokens.Typography.Label.smMedium)
                     Spacer(minLength: 0)
                 }
                 if onDiscard != nil {
@@ -98,7 +98,7 @@ public struct MenuBarPopover: View {
             .padding(.vertical, 6)
         case .processing(let text):
             Text(text)
-                .font(.system(size: 12, weight: .medium))
+                .typo(Tokens.Typography.Label.smMedium)
                 .foregroundStyle(Tokens.Ink.tertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
@@ -121,7 +121,7 @@ public struct MenuBarPopover: View {
     // 8px row with a centred hairline, inset to align with the row text.
     private var divider: some View {
         Color.clear.frame(height: 8).overlay(
-            Rectangle().fill(Color.white.opacity(0.1)).frame(height: 1).padding(.horizontal, 10)
+            Rectangle().fill(Tokens.Neutral.aw10).frame(height: 1).padding(.horizontal, 10)
         )
     }
 }
@@ -135,14 +135,14 @@ private struct MenuRow: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 12, weight: .medium))
+                .typo(Tokens.Typography.Label.smMedium)
                 .foregroundStyle(Tokens.Ink.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
-                .background(Color.white.opacity(hovering ? 0.07 : 0),
-                            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .background(hovering ? Tokens.Paint.Interactive.Ghost.hover : Color.clear,
+                            in: RoundedRectangle(cornerRadius: Tokens.Radius.xxs, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.xxs, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }

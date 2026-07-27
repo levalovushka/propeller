@@ -28,21 +28,21 @@ struct OnboardingSummaryModelView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
                 Text("Локальная модель для саммари и рекапа.\n\nСкачается в фоне, записывать можно без неё.")
-                    .font(.system(size: 13, weight: .regular))
+                    .typo(Tokens.Typography.Label.mdRegular)
                     .foregroundStyle(Tokens.Ink.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if isReady {
                     Label("Модель готова", systemImage: "checkmark.circle.fill")
-                        .font(.system(size: 13, weight: .semibold))
+                        .typo(Tokens.Typography.Label.mdMedium)
                         .foregroundStyle(.green)
                         .padding(.top, 8)
                 }
 
                 if let errorMessage, !errorMessage.isEmpty {
                     Text(errorMessage)
-                        .font(.system(size: 12, weight: .medium))
+                        .typo(Tokens.Typography.Label.smMedium)
                         .foregroundStyle(.orange)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 8)

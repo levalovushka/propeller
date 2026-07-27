@@ -269,7 +269,7 @@ struct RecordingDetailView: View {
                 }
                 summaryFocusSection(title: "Заметки", systemImage: "square.and.pencil") {
                     TextEditor(text: $editedNotes)
-                        .font(.body)
+                        .typo(Tokens.Typography.Body.md)
                         .scrollContentBackground(.hidden)
                         .frame(minHeight: 140)
                         .onChange(of: editedNotes) { _, newValue in
@@ -298,7 +298,7 @@ struct RecordingDetailView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(title, systemImage: systemImage)
-                .font(.headline)
+                .typo(Tokens.Typography.Label.mdMedium)
                 .foregroundStyle(.secondary)
             content()
         }
@@ -310,7 +310,7 @@ struct RecordingDetailView: View {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text("Генерируем саммари…")
-                    .font(.callout)
+                    .typo(Tokens.Typography.Label.mdRegular)
                     .foregroundStyle(.secondary)
             }
             .padding(.vertical, 12)
@@ -321,23 +321,23 @@ struct RecordingDetailView: View {
             let downloading = state.ollamaSetupProgress != nil
             VStack(alignment: .leading, spacing: 8) {
                 Text("Нет саммари")
-                    .font(.callout)
+                    .typo(Tokens.Typography.Label.mdRegular)
                     .foregroundStyle(.tertiary)
                 if state.transcript.isEmpty {
                     Text("Сначала расшифруйте запись (вкладка «Транскрипт»).")
-                        .font(.caption)
+                        .typo(Tokens.Typography.Label.smRegular)
                         .foregroundStyle(.tertiary)
                 } else if downloading {
                     Text(state.ollamaSetupMessage.isEmpty
                          ? "Загружаем модель саммари…" : state.ollamaSetupMessage)
-                        .font(.caption)
+                        .typo(Tokens.Typography.Label.smRegular)
                         .foregroundStyle(.tertiary)
                 } else if needsModel {
                     Text("Для саммари нужно загрузить модель. Это займет около 10 минут — записывать встречи можно и без неё.")
-                        .font(.caption)
+                        .typo(Tokens.Typography.Label.smRegular)
                         .foregroundStyle(.tertiary)
                 } else if let hint = state.recapSkipHint, state.selectedRecordingID == entry.id {
-                    Text(hint).font(.caption).foregroundStyle(.orange)
+                    Text(hint).typo(Tokens.Typography.Label.smRegular).foregroundStyle(.orange)
                 }
                 HStack(spacing: 8) {
                     if needsModel && !state.transcript.isEmpty {
@@ -409,8 +409,8 @@ struct RecordingDetailView: View {
                 }
                 // Pipeline progress lives in the top status bar only — no duplicate here.
             }
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(Color.white.opacity(0.40))
+            .typo(Tokens.Typography.Label.smMedium)
+            .foregroundStyle(Tokens.Ink.quaternary)
 
             HStack(alignment: .top, spacing: 12) {
                 titleField
@@ -449,12 +449,10 @@ struct RecordingDetailView: View {
     /// Same display type as Meetings list title (40 / semibold / −0.8).
     @ViewBuilder
     private var titleField: some View {
-        let titleFont = Font.system(size: 40, weight: .semibold)
         if editingTitle {
             TextField("Название", text: $editedTitle)
                 .textFieldStyle(.plain)
-                .font(titleFont)
-                .tracking(-0.8)
+                .typo(Tokens.Typography.Heading.lg)
                 .foregroundStyle(Tokens.Ink.primary)
                 .focused($titleFieldFocused)
                 .onSubmit { commitTitleEdit() }
@@ -471,12 +469,11 @@ struct RecordingDetailView: View {
                         Text(entry.title).foregroundStyle(Tokens.Ink.primary)
                     }
                 }
-                .font(titleFont)
-                .tracking(-0.8)
+                .typo(Tokens.Typography.Heading.lg)
                 .lineLimit(2)
 
                 Image(systemName: "pencil")
-                    .font(.system(size: 14, weight: .medium))
+                    .typo(Tokens.Typography.Label.mdMedium)
                     .foregroundStyle(Tokens.Ink.tertiary)
                     .opacity(titleHovered ? 1 : 0)
             }
@@ -503,8 +500,8 @@ struct RecordingDetailView: View {
             }
         } label: {
             Text(Self.participantCountLabel(count))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.40))
+                .typo(Tokens.Typography.Label.smMedium)
+                .foregroundStyle(Tokens.Ink.quaternary)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -561,7 +558,7 @@ struct RecordingDetailView: View {
         .frame(maxWidth: .infinity)
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(Color.white.opacity(0.08))
+                .fill(Tokens.Paint.Bg.surface)
                 .frame(height: 1)
         }
     }
@@ -570,7 +567,7 @@ struct RecordingDetailView: View {
         let selected = tab == t
         return Button { tab = t } label: {
             Text(t.title)
-                .font(.system(size: 13, weight: .medium))
+                .typo(Tokens.Typography.Label.mdMedium)
                 .foregroundStyle(selected ? Tokens.Ink.primary : Tokens.Ink.tertiary)
                 .frame(maxHeight: .infinity)
                 .overlay(alignment: .bottom) {
@@ -770,7 +767,7 @@ struct RecordingDetailView: View {
 
     private var notesPanel: some View {
         TextEditor(text: $editedNotes)
-            .font(.system(size: 14))
+            .typo(Tokens.Typography.Body.md)
             .foregroundStyle(Tokens.Ink.primary)
             .scrollContentBackground(.hidden)
             .padding(.horizontal, 12)
@@ -799,14 +796,14 @@ struct RecordingDetailView: View {
                 Spacer()
                 ProgressView().controlSize(.small)
                 Text("Генерируем саммари…")
-                    .font(.system(size: 13, weight: .medium))
+                    .typo(Tokens.Typography.Label.mdMedium)
                     .foregroundStyle(Tokens.Ink.tertiary)
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if isEditingRecap {
             TextEditor(text: $editedRecapText)
-                .font(.system(size: 14))
+                .typo(Tokens.Typography.Body.md)
                 .foregroundStyle(Tokens.Ink.primary)
                 .scrollContentBackground(.hidden)
                 .padding(.horizontal, 12)
@@ -855,11 +852,11 @@ struct RecordingDetailView: View {
                             state.startOllamaRuntimeDownload()
                         } label: {
                             Text(downloading ? "Загружается…" : "Скачать")
-                                .font(.system(size: 13, weight: .semibold))
+                                .typo(Tokens.Typography.Label.mdMedium)
                                 .foregroundStyle(Tokens.Ink.primary)
                                 .padding(.horizontal, 14)
                                 .frame(height: 32)
-                                .background(Color.white.opacity(0.10), in: Capsule())
+                                .background(Tokens.Neutral.aw10, in: Capsule())
                         }
                         .buttonStyle(.plain)
                         .disabled(downloading)
@@ -868,11 +865,11 @@ struct RecordingDetailView: View {
                             Task { await state.regenerateRecap() }
                         } label: {
                             Text("Сгенерировать")
-                                .font(.system(size: 13, weight: .semibold))
+                                .typo(Tokens.Typography.Label.mdMedium)
                                 .foregroundStyle(Tokens.Ink.primary)
                                 .padding(.horizontal, 14)
                                 .frame(height: 32)
-                                .background(Color.white.opacity(0.10), in: Capsule())
+                                .background(Tokens.Neutral.aw10, in: Capsule())
                         }
                         .buttonStyle(.plain)
                         .disabled(noTranscript)
@@ -883,7 +880,7 @@ struct RecordingDetailView: View {
                     if needsModel || state.localRecapModelReady == nil {
                         SettingsLink {
                             Text("Открыть настройки")
-                                .font(.system(size: 13, weight: .medium))
+                                .typo(Tokens.Typography.Label.mdMedium)
                                 .foregroundStyle(Tokens.Ink.secondary)
                         }
                         .buttonStyle(.plain)
@@ -902,7 +899,7 @@ struct RecordingDetailView: View {
     private var followUpPanel: some View {
         if isEditingFollowUp {
             TextEditor(text: $editedFollowUpText)
-                .font(.system(size: 14))
+                .typo(Tokens.Typography.Body.md)
                 .foregroundStyle(Tokens.Ink.primary)
                 .scrollContentBackground(.hidden)
                 .padding(.horizontal, 12)
@@ -931,11 +928,11 @@ struct RecordingDetailView: View {
         VStack(spacing: 10) {
             Spacer()
             Text(title)
-                .font(.system(size: 14, weight: .medium))
+                .typo(Tokens.Typography.Label.mdMedium)
                 .foregroundStyle(Tokens.Ink.tertiary)
             Text(detail)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Color.white.opacity(0.30))
+                .typo(Tokens.Typography.Label.smMedium)
+                .foregroundStyle(Tokens.Ink.tertiary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 380)
             Spacer()
@@ -951,32 +948,30 @@ struct RecordingDetailView: View {
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
                 if trimmed.hasPrefix("### ") {
                     Text(String(trimmed.dropFirst(4)))
-                        .font(.system(size: 14, weight: .semibold))
+                        .typo(Tokens.Typography.Label.mdMedium)
                         .padding(.top, 6)
                 } else if trimmed.hasPrefix("## ") {
                     Text(String(trimmed.dropFirst(3)))
-                        .font(.system(size: 16, weight: .semibold))
-                        .tracking(-0.2)
+                        .typo(Tokens.Typography.Heading.sm)
                         .padding(.top, 8)
                 } else if trimmed.hasPrefix("# ") {
                     Text(String(trimmed.dropFirst(2)))
-                        .font(.system(size: 20, weight: .semibold))
-                        .tracking(-0.3)
+                        .typo(Tokens.Typography.Heading.sm)
                         .padding(.top, 8)
                 } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
                     HStack(alignment: .top, spacing: 8) {
-                        Text("•").foregroundStyle(Color.white.opacity(0.40))
+                        Text("•").foregroundStyle(Tokens.Ink.quaternary)
                         inlineMarkdown(String(trimmed.dropFirst(2)))
                     }
                     .padding(.leading, 4)
                 } else if trimmed == "---" {
-                    Divider().overlay(Color.white.opacity(0.08)).padding(.vertical, 4)
+                    Divider().overlay(Tokens.Paint.Bg.surface).padding(.vertical, 4)
                 } else if !trimmed.isEmpty {
                     inlineMarkdown(trimmed)
                 }
             }
         }
-        .font(.system(size: 14, weight: .medium))
+        .typo(Tokens.Typography.Body.md)
         .foregroundStyle(Tokens.Ink.primary)
         .textSelection(.enabled)
     }
@@ -1163,7 +1158,7 @@ struct RecordingDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Text("Участники")
-                    .font(.caption.weight(.medium))
+                    .typo(Tokens.Typography.Label.smMedium)
                     .foregroundStyle(.tertiary)
                     .textCase(.uppercase)
                     .padding(.horizontal, 14)
@@ -1173,7 +1168,7 @@ struct RecordingDetailView: View {
                 let list = participants
                 if list.isEmpty {
                     Text("Спикеры появятся после расшифровки.")
-                        .font(.caption)
+                        .typo(Tokens.Typography.Label.smRegular)
                         .foregroundStyle(.tertiary)
                         .padding(.horizontal, 14)
                         .padding(.top, 4)
@@ -1192,11 +1187,11 @@ struct RecordingDetailView: View {
             AvatarCircle(name: p.name, size: 26)
             VStack(alignment: .leading, spacing: 1) {
                 Text(p.name)
-                    .font(.callout)
+                    .typo(Tokens.Typography.Label.mdRegular)
                     .lineLimit(1)
                 if p.talkTime > 0 {
                     Text(compactTalkTime(p.talkTime))
-                        .font(.caption2)
+                        .typo(Tokens.Typography.Label.xsRegular)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -1241,35 +1236,35 @@ struct RecordingDetailView: View {
                         if let dl = state.modelDownloadProgress {
                             VStack(spacing: 8) {
                                 Image(systemName: "arrow.down.circle")
-                                    .font(.title)
+                                    .typo(Tokens.Typography.Heading.sm)
                                     .foregroundStyle(.secondary)
                                 Text(state.statusMessage.isEmpty ? "Загрузка модели…" : state.statusMessage)
-                                    .font(.callout)
+                                    .typo(Tokens.Typography.Label.mdRegular)
                                     .foregroundStyle(.secondary)
                                 ProgressView(value: dl)
                                     .progressViewStyle(.linear)
                                     .frame(width: 240)
                                 Text("\(Int(dl * 100))%")
-                                    .font(.caption.monospacedDigit())
+                                    .typo(Tokens.Typography.Label.smMedium, monospacedDigit: true)
                                     .foregroundStyle(.tertiary)
                             }
                         } else {
                             ProgressView().controlSize(.small)
                             Text(state.statusMessage.isEmpty ? "Расшифровка…" : state.statusMessage)
-                                .font(.callout)
+                                .typo(Tokens.Typography.Label.mdRegular)
                                 .foregroundStyle(.secondary)
                         }
                     } else {
                         Image(systemName: "text.quote")
-                            .font(.title)
+                            .typo(Tokens.Typography.Heading.sm)
                             .foregroundStyle(.quaternary)
                         Text("Нет транскрипта")
-                            .font(.callout)
+                            .typo(Tokens.Typography.Label.mdRegular)
                             .foregroundStyle(.tertiary)
                         if let err = state.pipelineError, !err.isEmpty,
                            state.selectedRecordingID == entry.id {
                             Text(err)
-                                .font(.caption)
+                                .typo(Tokens.Typography.Label.smRegular)
                                 .foregroundStyle(.orange)
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 24)
@@ -1305,7 +1300,7 @@ struct RecordingDetailView: View {
             } else {
                 if isEditingTranscript {
                     TextEditor(text: $editedTranscriptText)
-                        .font(.system(size: 14, weight: .medium))
+                        .typo(Tokens.Typography.Label.mdMedium)
                         .foregroundStyle(Tokens.Ink.primary)
                         .scrollContentBackground(.hidden)
                         .padding(.horizontal, 12)
@@ -1605,7 +1600,7 @@ struct RecordingDetailView: View {
             HStack(alignment: .top, spacing: 10) {
                 if !turn.speaker.isEmpty {
                     Text(turn.speaker.prefix(1).uppercased())
-                        .font(.system(size: 11, weight: .bold))
+                        .typo(Tokens.Typography.Label.xsMedium)
                         .foregroundStyle(.white)
                         .frame(width: 24, height: 24)
                         .background(
@@ -1619,17 +1614,16 @@ struct RecordingDetailView: View {
                     if !turn.speaker.isEmpty {
                         HStack(spacing: 6) {
                             Text(turn.speaker)
-                                .font(.system(size: 13, weight: .medium))
+                                .typo(Tokens.Typography.Label.mdMedium)
                             if !turn.timestamp.isEmpty {
                                 Text(turn.timestamp)
-                                    .font(.system(size: 12, weight: .medium).monospacedDigit())
-                                    .foregroundStyle(Color.white.opacity(0.30))
+                                    .typo(Tokens.Typography.Label.smMedium, monospacedDigit: true)
+                                    .foregroundStyle(Tokens.Ink.tertiary)
                             }
                         }
                     }
                     Text(phraseAttributedText(for: turn, playhead: t, playing: playing))
-                        .font(.system(size: 14, weight: .medium))
-                        .lineSpacing(2)
+                        .typo(Tokens.Typography.Body.md)
                         .fixedSize(horizontal: false, vertical: true)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1664,7 +1658,7 @@ struct RecordingDetailView: View {
             if isCurrent {
                 chunk.foregroundColor = Tokens.Ink.primary
             } else if isFuture {
-                chunk.foregroundColor = Color.white.opacity(0.35)
+                chunk.foregroundColor = Tokens.Ink.tertiary
             } else {
                 chunk.foregroundColor = Tokens.Ink.primary
             }
@@ -1686,7 +1680,7 @@ struct RecordingDetailView: View {
 
         return HStack(alignment: .top, spacing: 10) {
             Text(seg.speaker.prefix(1).uppercased())
-                .font(.caption2.weight(.bold))
+                .typo(Tokens.Typography.Label.xsMedium)
                 .foregroundStyle(.white)
                 .frame(width: 24, height: 24)
                 .background(Circle().fill(colorFor(speaker: seg.speaker)))
@@ -1694,12 +1688,12 @@ struct RecordingDetailView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(seg.speaker)
-                        .font(.subheadline.weight(.medium))
+                        .typo(Tokens.Typography.Label.mdMedium)
                     Button {
                         seekToSeconds(seg.startTime)
                     } label: {
                         Text(timestamp)
-                            .font(.caption.monospacedDigit())
+                            .typo(Tokens.Typography.Label.smMedium, monospacedDigit: true)
                             .foregroundStyle(.tertiary)
                     }
                     .buttonStyle(.plain)
@@ -1710,10 +1704,9 @@ struct RecordingDetailView: View {
                     reassignMenu(for: seg)
                         .opacity(selected ? 1 : 0.0001)
                 }
-                Text(seg.text)
-                    .font(.body)
+                    Text(seg.text)
+                    .typo(Tokens.Typography.Body.md)
                     .textSelection(.enabled)
-                    .lineSpacing(3)
             }
         }
         .padding(.horizontal, 20)
@@ -1735,7 +1728,7 @@ struct RecordingDetailView: View {
     private func reassignToolbar(selected: Int) -> some View {
         HStack(spacing: 12) {
             Text("выбрано \(selected)")
-                .font(.caption.weight(.medium))
+                .typo(Tokens.Typography.Label.smMedium)
                 .foregroundStyle(.secondary)
 
             Button("Сбросить") {
@@ -1807,13 +1800,13 @@ struct RecordingDetailView: View {
     private var renameSpeakerSheet: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Переименовать спикера")
-                .font(.headline)
+                .typo(Tokens.Typography.Label.mdMedium)
             Text(
                 renamingParticipant != nil
                     ? "Переименует все реплики этого спикера."
                     : "Переименует выбранные сегменты — только метка."
             )
-                .font(.callout)
+                .typo(Tokens.Typography.Label.mdRegular)
                 .foregroundStyle(.secondary)
 
             TextField("Имя", text: $renameSpeakerName)
