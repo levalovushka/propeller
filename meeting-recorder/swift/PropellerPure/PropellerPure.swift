@@ -144,6 +144,80 @@ public enum RecordingRecovery {
     }
 }
 
+/// Which model-pull failures are worth another attempt.
+///
+/// Ollama reports transport trouble as free text from its Go stack ("dial tcp:
+/// lookup ... no such host", "unexpected EOF"), so classification is by message.
+/// Getting the direction right matters more than precision: retrying a
+/// permanent failure wastes ~17 minutes of silence before telling the user
+/// anything, while not retrying a blip strands a 3.4 GB download.
+public enum OllamaRetry {
+    /// Same failure every time — the name is wrong, the disk is full, or we are
+    /// not allowed. Checked first, because a permanent failure often surfaces
+    /// wrapped in transport wording ("pull model manifest: ... manifest unknown"
+    /// carries "manifest", "no space left" arrives mid-connection). DNS failure
+    /// is deliberately NOT here: "no such host" means the link is down, which is
+    /// exactly the case worth waiting out.
+    static let permanentMarkers = [
+        "manifest unknown", "file does not exist", "not found", "no space left",
+        "unauthorized", "invalid model", "insufficient", "access denied",
+    ]
+
+    static let transientMarkers = [
+        "connection", "timeout", "timed out", "eof", "reset by peer", "network",
+        "temporarily", "tls", "handshake", "unreachable", "no such host",
+        "dial tcp", "broken pipe", "i/o error",
+    ]
+
+    public static func isRetryable(message: String) -> Bool {
+        let text = message.lowercased()
+        if permanentMarkers.contains(where: text.contains) { return false }
+        return transientMarkers.contains(where: text.contains)
+    }
+}
+
+/// Context window sizing for the Ollama recap call.
+///
+/// Ollama picks the window per request. With no `num_ctx` it falls back to a ~4k
+/// window and *slides* it (`--context-shift`), silently dropping the oldest
+/// tokens — so the recap gets written from the tail of the meeting. Measured
+/// 2026-07-27 on a 42-minute Russian call: 5538 prompt tokens, of which the
+/// model actually saw 2050.
+public enum OllamaContext {
+    /// Russian transcripts measured ~2.6 characters per token on the Qwen
+    /// tokenizer. Held deliberately low so the estimate errs toward a window
+    /// that is too large rather than one that truncates.
+    public static let charactersPerToken = 2.2
+
+    /// Headroom reserved for the reply — `num_ctx` covers prompt *and*
+    /// completion. Generation itself stays uncapped (no `num_predict`) so a long
+    /// recap ends on EOS instead of being cut mid-sentence.
+    public static let replyTokens = 3072
+
+    /// Coarse on purpose: every distinct `num_ctx` makes Ollama spin up a fresh
+    /// llama-server and pay a cold model load, so the common meeting must not
+    /// straddle a boundary. 16k holds ~2 h of Russian speech; the second bucket
+    /// exists for the rare all-day call.
+    public static let buckets = [16384, 32768]
+
+    public static func estimatedTokens(promptCharacters: Int) -> Int {
+        Int((Double(max(0, promptCharacters)) / charactersPerToken).rounded(.up))
+    }
+
+    /// Window to request for a prompt of `promptCharacters`, clamped to the
+    /// largest bucket.
+    public static func numCtx(promptCharacters: Int) -> Int {
+        let needed = estimatedTokens(promptCharacters: promptCharacters) + replyTokens
+        return buckets.first { $0 >= needed } ?? buckets[buckets.count - 1]
+    }
+
+    /// True when even the largest bucket can't hold the prompt — the caller
+    /// should say so out loud rather than ship a quietly truncated summary.
+    public static func exceedsLargestWindow(promptCharacters: Int) -> Bool {
+        estimatedTokens(promptCharacters: promptCharacters) + replyTokens > buckets[buckets.count - 1]
+    }
+}
+
 /// Client-side chunking for gigastt REST (body-limit ~50 MiB + ~30 min file cap).
 public enum GigasttChunking {
     /// Stay under default `--body-limit-bytes` (52 428 800) with headroom.

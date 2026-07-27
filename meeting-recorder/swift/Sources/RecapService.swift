@@ -397,31 +397,85 @@ actor RecapService {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         // Whole wall-clock budget: cold load + long transcript. Must match session.
         req.timeoutInterval = 600
-        let payload: [String: Any] = [
+
+        // Without an explicit num_ctx Ollama runs a ~4k sliding window and drops
+        // the *oldest* tokens, so the recap silently describes only the tail of
+        // the meeting. Size the window from the prompt instead.
+        let promptCharacters = system.count + user.count
+        let numCtx = OllamaContext.numCtx(promptCharacters: promptCharacters)
+        if OllamaContext.exceedsLargestWindow(promptCharacters: promptCharacters) {
+            NSLog("""
+            [RecapService] transcript ~\(OllamaContext.estimatedTokens(promptCharacters: promptCharacters)) \
+            tokens exceeds the \(numCtx)-token window — Ollama will drop the beginning of the meeting
+            """)
+        }
+
+        var payload: [String: Any] = [
             "model": model,
             "stream": false,
             // Brief linger so a retry / metadata pass doesn't pay another cold load;
             // OllamaSidecar.stopAfterIdle still drops the serve process after the batch.
             // (keep_alive: 0 + thermal Mac was timing out ~12 min meetings at 180s.)
             "keep_alive": 90,
+            "options": [
+                "num_ctx": numCtx,
+                // Match the cloud providers so the three backends drift less.
+                "temperature": 0.2,
+            ],
             "messages": [
                 ["role": "system", "content": system],
                 ["role": "user", "content": user],
             ],
         ]
-        req.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        // Reasoning models (Qwen3.x) answer in a separate `thinking` channel we
+        // never show, and it is not free. Measured on an 11-minute meeting:
+        // thinking on = 177 s and 5434 characters of reasoning; on the full recap
+        // prompt it consumed the entire 16k window and returned content EMPTY —
+        // a failed recap, not a slow one. Off = 62 s and a complete answer.
+        //
+        // Sent unconditionally rather than for an allowlist of known reasoning
+        // models: the model name is free text in Settings, so any allowlist goes
+        // stale exactly when someone picks a new reasoning model. Verified
+        // accepted by Ollama for a non-thinking model too (qwen2.5:7b → 200);
+        // `sendChat` falls back for older builds that reject the field.
+        payload["think"] = false
+
         do {
-            let (data, response) = try await session.data(for: req)
-            try throwIfBadHTTP(response, data: data)
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let message = json["message"] as? [String: Any],
-                  let content = message["content"] as? String else {
-                throw RecapError.badJSON
+            let message = try await sendChat(req: req, payload: payload)
+            let content = message["content"] as? String ?? ""
+            if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let thinking = message["thinking"] as? String, !thinking.isEmpty {
+                // Model reasoned itself out of a reply — say which failure this is.
+                NSLog("[RecapService] \(model) returned only `thinking` (\(thinking.count) chars), no content")
+                throw RecapError.providerUnavailable("\(model) — модель ушла в рассуждения и не выдала конспект")
             }
             return content
         } catch let error as URLError where error.code == .timedOut {
             throw RecapError.timedOut
         }
+    }
+
+    /// POST the chat payload, retrying once without `think` if this Ollama build
+    /// rejects the field — otherwise an old runtime would fail *every* recap.
+    private func sendChat(req: URLRequest, payload: [String: Any]) async throws -> [String: Any] {
+        var req = req
+        req.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        var (data, response) = try await session.data(for: req)
+
+        if (response as? HTTPURLResponse)?.statusCode == 400, payload["think"] != nil {
+            var retry = payload
+            retry.removeValue(forKey: "think")
+            NSLog("[RecapService] Ollama rejected `think` (400) — retrying without it")
+            req.httpBody = try JSONSerialization.data(withJSONObject: retry)
+            (data, response) = try await session.data(for: req)
+        }
+
+        try throwIfBadHTTP(response, data: data)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let message = json["message"] as? [String: Any] else {
+            throw RecapError.badJSON
+        }
+        return message
     }
 
     private func callOpenAI(apiKey: String, model: String, system: String, user: String) async throws -> String {

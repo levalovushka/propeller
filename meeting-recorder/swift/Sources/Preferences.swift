@@ -106,10 +106,39 @@ class Preferences {
         set { defaults.set(newValue, forKey: "recapPrompt") }
     }
 
+    /// Default recap model. Moved off `qwen2.5:7b` on 2026-07-27: a 4B reasoning
+    /// model matches it on these transcripts at ~2/3 the disk and roughly half
+    /// the weights, and the recap's remaining errors come from diarization / ASR
+    /// / prompt, not model size.
+    static let defaultRecapModel = "qwen3.5:4b"
+    /// Superseded built-ins, migrated away on read (see below). `llama3.2` was
+    /// the pre-1.10 default and was never bundled; its migration used to live in
+    /// `AppState.bootstrap`, which missed any read that happened before launch
+    /// finished — hence both are handled here now.
+    private static let legacyRecapModels = ["qwen2.5:7b", "llama3.2"]
+
+    /// True once the user asked for the local summary model (onboarding «Скачать»
+    /// or Settings). Persisted so a download interrupted by quitting the app is
+    /// resumed on the next launch instead of waiting for another manual trip to
+    /// Settings — Ollama keeps partial blobs, so resuming is cheap.
+    var localRecapModelRequested: Bool {
+        get { defaults.bool(forKey: "localRecapModelRequested") }
+        set { defaults.set(newValue, forKey: "localRecapModelRequested") }
+    }
+
     var recapOllamaModel: String {
         get {
             let v = defaults.string(forKey: "recapOllamaModel") ?? ""
-            return v.isEmpty ? "qwen2.5:7b" : v
+            if v.isEmpty { return Self.defaultRecapModel }
+            // SettingsSheet's @AppStorage persists the value as soon as the pane
+            // is opened, so 1.11 users have the old default written to disk and
+            // would never pick up the new one. Deliberately narrow: only the
+            // exact previous built-in migrates, a hand-picked model is kept.
+            if Self.legacyRecapModels.contains(v) {
+                defaults.removeObject(forKey: "recapOllamaModel")
+                return Self.defaultRecapModel
+            }
+            return v
         }
         set { defaults.set(newValue, forKey: "recapOllamaModel") }
     }

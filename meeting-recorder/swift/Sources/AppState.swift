@@ -33,6 +33,10 @@ class AppState: ObservableObject {
     /// Ollama engine/model setup (onboarding + Settings). Nil when idle.
     @Published var ollamaSetupProgress: Double? = nil
     @Published var ollamaSetupMessage = ""
+    /// Is the local summary model on disk? Nil until first checked. Drives the
+    /// empty-summary panel: without it the UI offers «Сгенерировать», which can
+    /// only fail with `HTTP 404: model not found`.
+    @Published var localRecapModelReady: Bool? = nil
     /// Latched true when a recording was completed without system audio capture.
     /// Survives into the detail view so "Mic only" can be shown in the header.
     @Published var micOnlyRecording = false
@@ -97,11 +101,8 @@ class AppState: ObservableObject {
         guard !didBootstrap else { return }
         didBootstrap = true
 
-        // One-time migration: the legacy hardcoded default was llama3.2 (not bundled
-        // and not our team model). Move it to the new default so recaps actually run.
-        if Preferences.shared.recapOllamaModel == "llama3.2" {
-            Preferences.shared.recapOllamaModel = "qwen2.5:7b"
-        }
+        // (model migration lives in `Preferences.recapOllamaModel` so it also
+        // covers launches that read the pref before bootstrap runs)
 
         recordingStore.load()
         recoveredCount = recordingStore.recoverInterruptedRecordings()
@@ -129,13 +130,23 @@ class AppState: ObservableObject {
 
         // Fill in summaries for any past recordings that don't have one yet — no
         // button, no prompt; they just appear once a provider is reachable.
+        // (this also catches up titles/topics/tags for meetings whose recap
+        // landed before the metadata pass ran — see backfillMissingMetadata)
         startSummaryBackfill()
-        // Rename leftover "Recording …" titles once a recap already exists
-        // (titleManuallySet was falsely latched by the live title field).
-        Task { await backfillAutoTitlesFromRecaps() }
 
         // Advance recovered / queued recordings (G1/G2 / BUG-PIPE-01+05).
         Task { await reconcilePendingPipeline() }
+
+        // Finish a summary-model download that a quit (or a dropped connection
+        // that outlived the in-session retries) left half-done. No-op when the
+        // model is already there; delayed so launch stays quiet.
+        if Preferences.shared.localRecapModelRequested {
+            Task {
+                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                guard !isRecording, !isTranscribing, !zoomMeetingDetected else { return }
+                startOllamaRuntimeDownload()
+            }
+        }
 
         // ASR sidecar starts lazily on first transcription (plan-optimization E1).
     }
@@ -229,12 +240,40 @@ class AppState: ObservableObject {
         return true
     }
 
-    /// Check disk space before model download. Returns true if OK to proceed.
-    func checkDiskSpaceForModelDownload() async -> Bool {
+    /// The two model downloads are very different sizes, and one gate for both
+    /// was wrong in both directions: it demanded 4 GB before a 1.1 GB ASR
+    /// download, and waved through a 3.4 GB recap model with 4 GB free — the
+    /// user passed the check and then ran out mid-pull. Measured 2026-07-27.
+    enum ModelDownload {
+        /// GigaAM ASR weights (~1.1 GB on disk) + working room.
+        case transcription
+        /// qwen3.5:4b (~3.4 GB) plus the unpacked Ollama runtime (~0.5 GB).
+        case recap
+
+        var requiredBytes: Int64 {
+            switch self {
+            case .transcription: return 2_000_000_000
+            case .recap: return 5_000_000_000
+            }
+        }
+
+        var humanSize: String {
+            switch self {
+            case .transcription: return "~1,1 ГБ"
+            case .recap: return "~3,9 ГБ"
+            }
+        }
+    }
+
+    /// Check disk space before a model download. Returns true if OK to proceed.
+    func checkDiskSpaceForModelDownload(_ kind: ModelDownload = .transcription) async -> Bool {
         let path = NSHomeDirectory()
-        if let bytes = availableBytes(at: path), bytes < 4_000_000_000 {
+        if let bytes = availableBytes(at: path), bytes < kind.requiredBytes {
             let gbFree = Double(bytes) / 1_000_000_000
-            diskSpaceWarning = String(format: "Свободно только %.1f ГБ. Для загрузки модели может понадобиться до 3 ГБ.", gbFree)
+            diskSpaceWarning = String(
+                format: "Свободно только %.1f ГБ. Для загрузки нужно %@ плюс запас.",
+                gbFree, kind.humanSize
+            )
             return await presentDiskSpaceAlert()
         }
         return true
@@ -663,6 +702,34 @@ class AppState: ObservableObject {
         )
     }
 
+    /// Refresh `localRecapModelReady`. Cheap: reads the manifest off disk unless
+    /// a server is already up, so it is safe to call whenever the summary tab
+    /// is shown.
+    func refreshLocalRecapModelState() {
+        let model = Preferences.shared.recapOllamaModel
+        Task {
+            let installed = await OllamaSidecar.shared.isModelInstalled(model)
+            await MainActor.run { self.localRecapModelReady = installed }
+        }
+    }
+
+    /// True when a summary can only come from the local model and that model is
+    /// not there yet — i.e. the honest CTA is «Скачать», not «Сгенерировать».
+    var needsLocalRecapModel: Bool {
+        guard localRecapModelReady == false else { return false }
+        switch Preferences.shared.recapProvider {
+        case .off, .openai, .claude:
+            return false          // cloud / disabled: the local model is irrelevant
+        case .ollama:
+            return true
+        case .auto:
+            // Auto falls back to a cloud provider only if a key exists.
+            let hasKey = (Preferences.shared.openAIAPIKey?.isEmpty == false)
+                || (Preferences.shared.claudeAPIKey?.isEmpty == false)
+            return !hasKey
+        }
+    }
+
     /// Persist a user-visible pipeline error (detail panel + toast). Does not clear mid-run status.
     func surfacePipelineError(_ message: String) {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -805,6 +872,8 @@ class AppState: ObservableObject {
                 try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
             }
             _ = await backfillMissingSummaries()
+            // Runs second so it reuses the model the summaries just loaded.
+            await backfillMissingMetadata()
         }
     }
 
@@ -823,6 +892,7 @@ class AppState: ObservableObject {
                     return
                 }
                 let ran = await self.backfillMissingSummaries()
+                if ran { await self.backfillMissingMetadata() }
                 // Deferred when busy / no provider — system retries when freer.
                 completion(ran ? .finished : .deferred)
             }
@@ -1280,6 +1350,11 @@ class AppState: ObservableObject {
         } catch {
             recapStep = .failed
             Analytics.recapFinished(ok: false)
+            // "model ... not found" means the pull never finished — flip the flag
+            // so the panel offers «Скачать» instead of a retry that cannot work.
+            if error.localizedDescription.lowercased().contains("not found") {
+                localRecapModelReady = false
+            }
             surfacePipelineError(error.localizedDescription)
             if selectedRecordingID == recordingID {
                 recapSkipHint = error.localizedDescription
@@ -1307,13 +1382,33 @@ class AppState: ObservableObject {
         }
     }
 
-    /// Re-run metadata for saved meetings still stuck on the default title.
-    private func backfillAutoTitlesFromRecaps() async {
+    /// Re-run metadata over meetings that already have a recap but no topics/tags
+    /// (or are still stuck on the default title). Catches up 1.11 recordings,
+    /// which only ran the pass for auto-titled meetings.
+    ///
+    /// Same guards as the summary backfill: never during a call, never on a hot
+    /// machine, and capped per pass so a long backlog can't cook the Mac.
+    private func backfillMissingMetadata() async {
+        guard !isRecording, !isTranscribing, !zoomMeetingDetected else { return }
+        switch ProcessInfo.processInfo.thermalState {
+        case .serious, .critical:
+            debugLog("[metadata-backfill] skip: thermal")
+            return
+        default:
+            break
+        }
+
         let candidates = recordingStore.recordings.filter { rec in
-            Self.isAutoGeneratedTitle(rec.title) && hasRecap(for: rec)
+            needsMetadata(rec) && hasRecap(for: rec)
         }
         guard !candidates.isEmpty else { return }
-        for rec in candidates {
+        debugLog("[metadata-backfill] \(candidates.count) candidates")
+
+        var did = false
+        for rec in candidates.prefix(2) {
+            if isRecording || isTranscribing || zoomMeetingDetected { break }
+            if ProcessInfo.processInfo.thermalState == .serious
+                || ProcessInfo.processInfo.thermalState == .critical { break }
             let preferred = AppState.recapURL(for: rec)
             let url: URL? = {
                 if let preferred, FileManager.default.fileExists(atPath: preferred.path) {
@@ -1325,7 +1420,14 @@ class AppState: ObservableObject {
                   let body = try? String(contentsOf: url, encoding: .utf8),
                   !body.isEmpty else { continue }
             await generateMeetingMetadata(recordingID: rec.id, summary: body)
+            did = true
         }
+        if did {
+            // Push the idle-stop back so the batch above doesn't get its server
+            // killed mid-flight by a timer armed during the summary backfill.
+            OllamaSidecar.shared.stopAfterIdle(30)
+        }
+        debugLog("[metadata-backfill] done")
     }
 
     private static func findRecapURL(for entry: RecordingEntry) -> URL? {
@@ -1346,19 +1448,33 @@ class AppState: ObservableObject {
         guard let rec = recordingStore.recording(for: recordingID) else { return }
         // Calendar / user titles must not be overwritten by the LLM.
         let needTitle = Self.isAutoGeneratedTitle(rec.title)
-        // Second 7B pass after every recap was cooking RAM/GPU. Only run it when
-        // we actually need an auto-title; topics/tags can wait for a quieter moment.
-        guard needTitle else { return }
+        // 1.11 skipped this pass entirely unless a title was needed, which meant
+        // calendar-titled meetings (now the common case) never got topics or tags
+        // at all. The pass runs on the short summary, not the transcript, and
+        // `keep_alive` + a single shared num_ctx keep the model resident from the
+        // recap call — so it costs one short prompt, not a second cold load.
         let meta = await RecapService.shared.generateMetadata(
             summaryMarkdown: summary,
-            needTitle: true,
+            needTitle: needTitle,
             prefs: RecapPreferences.fromShared()
         )
         guard let meta else { return }
+        // Always written, even when empty: `topics == nil` is the marker for
+        // "metadata never ran" that the backfill scans for.
         recordingStore.update(id: recordingID, topics: meta.topics, tags: meta.tags)
-        if let newTitle = meta.title, !newTitle.isEmpty {
+        if needTitle, let newTitle = meta.title, !newTitle.isEmpty {
             recordingStore.update(id: recordingID, title: newTitle)
         }
+    }
+
+    /// A recap exists but the metadata pass never ran over it. `topics == nil`
+    /// means "never ran", `[]` means "ran, found nothing" — so a provider failure
+    /// (which writes neither) retries next cycle, while a successful pass never
+    /// does. Deliberately *not* keyed on the title still looking auto-generated:
+    /// the model is allowed to return `title: null`, and that must not turn into
+    /// a meeting the backfill re-runs forever.
+    private func needsMetadata(_ rec: RecordingEntry) -> Bool {
+        rec.topics == nil
     }
 
     /// Placeholder stamped at record start when no calendar event matched.
@@ -1434,9 +1550,9 @@ class AppState: ObservableObject {
     /// On success, kicks summary backfill so meetings recorded meanwhile get recaps.
     @discardableResult
     func downloadOllamaRuntime() async -> Bool {
-        let okDisk = await checkDiskSpaceForModelDownload()
+        let okDisk = await checkDiskSpaceForModelDownload(.recap)
         guard okDisk else {
-            surfacePipelineError("Недостаточно места для модели саммари (~5 ГБ).")
+            surfacePipelineError("Недостаточно места для модели саммари (~3,4 ГБ).")
             return false
         }
         pipelineError = nil
@@ -1459,7 +1575,13 @@ class AppState: ObservableObject {
             )
             ollamaSetupProgress = nil
             ollamaSetupMessage = "Модель готова"
+            localRecapModelReady = true
             Analytics.signal("Ollama.setup.ok")
+            // Setup is done and nothing needs the server yet. Without this a
+            // launch-time resume check that finds the model already present
+            // would leave `ollama serve` resident for the whole session
+            // (backfill's own idle-stop is skipped when it has no candidates).
+            OllamaSidecar.shared.stopAfterIdle(30)
             // Don't slam the GPU with backfill the second the model lands —
             // user may still be mid-call / mid-onboarding.
             startSummaryBackfill(delaySeconds: 120)
@@ -1478,6 +1600,9 @@ class AppState: ObservableObject {
     /// Fire-and-forget: start Ollama install in background so onboarding / Settings
     /// can proceed immediately. Progress stays in the status bar.
     func startOllamaRuntimeDownload() {
+        // Remember the opt-in before the first byte, so quitting mid-download
+        // still resumes on the next launch.
+        Preferences.shared.localRecapModelRequested = true
         if ollamaDownloadTask != nil || ollamaSetupProgress != nil { return }
         ollamaDownloadTask = Task { [weak self] in
             defer {

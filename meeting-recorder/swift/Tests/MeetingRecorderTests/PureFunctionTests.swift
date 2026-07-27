@@ -3,6 +3,118 @@ import PropellerPure
 
 final class PureFunctionTests: XCTestCase {
 
+    // MARK: - OllamaRetry
+
+    /// The failure that actually stranded a download on 2026-07-27: the link
+    /// dropped mid-pull. This must retry, or a 3.4 GB download dies on a blip.
+    func testDroppedConnectionIsRetryable() {
+        let real = #"pull model manifest: Get "https://registry.ollama.ai/v2/library/qwen3.5/manifests/4b": dial tcp: lookup registry.ollama.ai: no such host"#
+        XCTAssertTrue(OllamaRetry.isRetryable(message: real))
+        for m in ["unexpected EOF", "connection reset by peer", "context deadline exceeded: timeout",
+                  "TLS handshake timeout", "network is unreachable"] {
+            XCTAssertTrue(OllamaRetry.isRetryable(message: m), m)
+        }
+    }
+
+    /// These fail identically forever — retrying buys 17 minutes of silence and
+    /// then the same error, so the user must hear about them immediately.
+    func testPermanentFailuresAreNotRetried() {
+        for m in ["pull model manifest: manifest unknown",
+                  "write /models/blobs/sha256-abc: no space left on device",
+                  "model \"qwen9:999b\" not found",
+                  "unauthorized: authentication required"] {
+            XCTAssertFalse(OllamaRetry.isRetryable(message: m), m)
+        }
+    }
+
+    /// A permanent reason wrapped in transport wording must still read permanent —
+    /// this is why the permanent list is checked first.
+    func testPermanentWinsOverTransientWording() {
+        XCTAssertFalse(OllamaRetry.isRetryable(
+            message: "Get \"https://registry.ollama.ai/v2/...\": manifest unknown"))
+        XCTAssertFalse(OllamaRetry.isRetryable(
+            message: "connection established, then: no space left on device"))
+    }
+
+    func testUnknownFailureIsNotRetried() {
+        XCTAssertFalse(OllamaRetry.isRetryable(message: "something completely unexpected"))
+        XCTAssertFalse(OllamaRetry.isRetryable(message: ""))
+    }
+
+    // MARK: - BuiltinHotwords
+
+    /// `vocab/hotwords-core.txt` is the human-maintained source; the Swift
+    /// constant is a paste of it. This fails when someone edits one and not the
+    /// other — the whole point of shipping a baseline is that it stays current.
+    func testBuiltinHotwordsMatchVocabFile() throws {
+        // …/meeting-recorder/swift/Tests/MeetingRecorderTests/PureFunctionTests.swift
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // → MeetingRecorderTests/
+            .deletingLastPathComponent()   // → Tests/
+            .deletingLastPathComponent()   // → swift/
+            .deletingLastPathComponent()   // → meeting-recorder/
+            .deletingLastPathComponent()   // → repo root
+        let vocab = repoRoot.appendingPathComponent("vocab/hotwords-core.txt")
+        guard let raw = try? String(contentsOf: vocab, encoding: .utf8) else {
+            throw XCTSkip("vocab/hotwords-core.txt not present (shallow checkout)")
+        }
+        let fromFile = raw.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        XCTAssertEqual(BuiltinHotwords.terms, fromFile,
+                       "BuiltinHotwords.terms drifted from vocab/hotwords-core.txt")
+    }
+
+    func testMergedHotwordsAppendUserTermsAndDedupe() {
+        let merged = BuiltinHotwords.merged(withUserTerms: ["Пропеллер", "  ", "Газпромнефть", "ДЕЙЛИК"])
+        // User's own term lands after the baseline…
+        XCTAssertTrue(merged.contains("Газпромнефть"))
+        // …blanks are dropped, and a term we already ship isn't duplicated
+        // just because the user typed it in a different case.
+        XCTAssertFalse(merged.contains("  "))
+        XCTAssertEqual(merged.filter { $0.lowercased() == "дейлик" }.count, 1)
+        XCTAssertEqual(merged.filter { $0.lowercased() == "пропеллер" }.count, 1)
+        // Baseline still leads the file.
+        XCTAssertEqual(merged.first, BuiltinHotwords.terms.first)
+    }
+
+    // MARK: - OllamaContext
+
+    /// The real regression: a 42-minute Russian meeting is ~14 285 characters
+    /// (measured 2026-07-27 → 5538 tokens). It must land in a window that holds
+    /// the whole thing, not the 4k default that showed the model only 2050.
+    func testNumCtxHoldsARealFortyMinuteMeeting() {
+        let systemPrompt = 3_200          // defaultPrompt + languageLock
+        let ctx = OllamaContext.numCtx(promptCharacters: 14_285 + systemPrompt)
+        XCTAssertEqual(ctx, 16_384)
+        let needed = OllamaContext.estimatedTokens(promptCharacters: 14_285 + systemPrompt)
+        XCTAssertLessThan(needed + OllamaContext.replyTokens, ctx)
+    }
+
+    /// The estimate must not *under*count tokens, or we size the window too small
+    /// and silently truncate again. 2.2 chars/token vs ~2.6 measured.
+    func testTokenEstimateIsConservative() {
+        XCTAssertGreaterThan(OllamaContext.estimatedTokens(promptCharacters: 14_285), 5_538)
+    }
+
+    func testNumCtxEscalatesForLongMeetingsThenClamps() {
+        // ~3 h of speech: past the 16k bucket, still inside the largest.
+        let long = OllamaContext.numCtx(promptCharacters: 45_000)
+        XCTAssertEqual(long, 32_768)
+        // Absurd input clamps instead of asking for a window Ollama can't give.
+        XCTAssertEqual(OllamaContext.numCtx(promptCharacters: 5_000_000), 32_768)
+        XCTAssertTrue(OllamaContext.exceedsLargestWindow(promptCharacters: 5_000_000))
+        XCTAssertFalse(OllamaContext.exceedsLargestWindow(promptCharacters: 14_285))
+    }
+
+    /// A short metadata prompt must reuse the same window as the recap that just
+    /// ran — a different num_ctx makes Ollama reload the model from cold.
+    func testShortMetadataPromptSharesTheRecapWindow() {
+        XCTAssertEqual(OllamaContext.numCtx(promptCharacters: 1_500),
+                       OllamaContext.numCtx(promptCharacters: 14_285 + 3_200))
+        XCTAssertEqual(OllamaContext.numCtx(promptCharacters: 0), 16_384)
+    }
+
     // MARK: - RecapMetadataParser
 
     func testParseMetadataValidJSON() {

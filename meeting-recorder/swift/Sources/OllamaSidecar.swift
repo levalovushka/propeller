@@ -1,4 +1,5 @@
 import Foundation
+import PropellerPure
 
 /// Owns a local Ollama runtime for dogfood recaps — download official darwin
 /// binary into Application Support, `ollama serve`, pull the default model.
@@ -12,7 +13,7 @@ final class OllamaSidecar: @unchecked Sendable {
     static let baseURL = URL(string: "http://127.0.0.1:\(port)")!
     /// Pinned for reproducible dogfood installs (not floating `latest`).
     static let releaseTag = "v0.32.4"
-    static let defaultModel = "qwen2.5:7b"
+    static let defaultModel = Preferences.defaultRecapModel
 
     private let lock = NSLock()
     private var process: Process?
@@ -109,6 +110,35 @@ final class OllamaSidecar: @unchecked Sendable {
         idleStopWork = nil
     }
 
+    /// Is the model already on disk? Answers without spawning `ollama serve`,
+    /// so the summary panel can offer «Скачать» instead of a «Сгенерировать»
+    /// button that can only produce `HTTP 404: model not found`.
+    ///
+    /// Prefers the live API when a server happens to be up (authoritative), and
+    /// otherwise reads the manifest layout directly. Both our own models dir and
+    /// `~/.ollama` are checked, because `adopt-if-present` means the model may
+    /// legitimately live in the user's own install.
+    func isModelInstalled(_ name: String) async -> Bool {
+        if await probeAPI(), let tags = try? await fetchTags() {
+            return tags.contains { $0 == name || $0.hasPrefix(name) }
+        }
+        let parts = name.split(separator: ":", maxSplits: 1)
+        let repo = String(parts.first ?? "")
+        let tag = parts.count > 1 ? String(parts[1]) : "latest"
+        guard !repo.isEmpty else { return false }
+
+        // Only our own store. When nothing is listening we are the ones who will
+        // spawn `serve`, and we spawn it with OLLAMA_MODELS pointed here — a
+        // model sitting in the user's ~/.ollama would be invisible to it. Counting
+        // it would make the panel claim "ready" and the recap fail with 404.
+        // The adopted-server case is already covered by the probe above.
+        let manifest = modelsDir
+            .appendingPathComponent("manifests/registry.ollama.ai/library", isDirectory: true)
+            .appendingPathComponent(repo, isDirectory: true)
+            .appendingPathComponent(tag)
+        return FileManager.default.fileExists(atPath: manifest.path)
+    }
+
     func modelPresent(_ name: String) async -> Bool {
         guard let tags = try? await fetchTags() else { return false }
         return tags.contains { $0 == name || $0.hasPrefix(name) }
@@ -140,17 +170,121 @@ final class OllamaSidecar: @unchecked Sendable {
         if await modelPresent(model) {
             statusCallback?("Модель готова")
             progress?(1.0)
+            await reclaimSupersededModels(keeping: model)
             return
         }
 
         statusCallback?("Скачиваем модель саммари…")
-        try await pullModel(
+        try await pullModelWithRetry(
             model,
             statusCallback: statusCallback,
             progress: { frac in progress?(0.25 + frac * 0.75) }
         )
         statusCallback?("Модель готова")
         progress?(1.0)
+        await reclaimSupersededModels(keeping: model)
+    }
+
+    /// Backoff between pull attempts. Long tail on purpose: the download is
+    /// unattended, so waiting out a tunnel or a hotel Wi-Fi hiccup beats making
+    /// the user find Settings. ~17 minutes of wall clock across all attempts.
+    private static let pullRetryDelays: [UInt64] = [5, 15, 45, 120, 300, 600]
+
+    /// Retry a dropped model pull instead of dying on the first blip.
+    ///
+    /// Ollama stores blobs incrementally and skips what it already has, so a
+    /// retry resumes rather than restarting the 3.4 GB — which is what makes an
+    /// aggressive retry policy affordable here.
+    ///
+    /// Only transport failures are retried: a bad model name or an out-of-space
+    /// disk fails the same way forever, and hiding that behind 17 minutes of
+    /// silent retries would be worse than reporting it.
+    private func pullModelWithRetry(
+        _ model: String,
+        statusCallback: ((String) -> Void)?,
+        progress: ((Double) -> Void)?
+    ) async throws {
+        var attempt = 0
+        while true {
+            do {
+                try await pullModel(model, statusCallback: statusCallback, progress: progress)
+                return
+            } catch {
+                // A pull that actually landed the model counts as success even if
+                // the stream died on the last line.
+                if await modelPresent(model) { return }
+
+                guard Self.isRetryable(error), attempt < Self.pullRetryDelays.count else {
+                    throw error
+                }
+                let delay = Self.pullRetryDelays[attempt]
+                attempt += 1
+                NSLog("[OllamaSidecar] pull failed (\(error.localizedDescription)) — retry \(attempt) in \(delay)s")
+                statusCallback?("Связь прервалась. Продолжим через \(Self.humanDelay(delay))…")
+                try await Task.sleep(nanoseconds: delay * 1_000_000_000)
+                statusCallback?("Догружаем модель саммари…")
+            }
+        }
+    }
+
+    private static func humanDelay(_ seconds: UInt64) -> String {
+        seconds < 60 ? "\(seconds) с" : "\(seconds / 60) мин"
+    }
+
+    /// Transport-level failure worth another attempt, as opposed to a request
+    /// that will fail identically forever. Message classification lives in
+    /// `PropellerPure.OllamaRetry` so it can be tested without a network.
+    static func isRetryable(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet, .networkConnectionLost, .timedOut,
+                 .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed,
+                 .resourceUnavailable, .secureConnectionFailed, .badServerResponse:
+                return true
+            default:
+                return false
+            }
+        }
+        return OllamaRetry.isRetryable(message: error.localizedDescription)
+    }
+
+    /// Models we shipped as a default in an earlier version and no longer use.
+    /// A 1.11 install pulled qwen2.5:7b (4.7 GB); after the 1.12 migration it is
+    /// dead weight next to the 3.4 GB replacement.
+    static let supersededModels = ["qwen2.5:7b"]
+
+    /// Delete superseded default models to get the disk back.
+    ///
+    /// `adopt-if-present` means this may run against the user's own Ollama, so
+    /// deleting there removes a model we did not install. Owner decision
+    /// 2026-07-27, made with the facts: the audience is managers who have no
+    /// personal Ollama, and every qwen2.5:7b in the fleet was put there by
+    /// Propeller 1.11. Scope stays narrow on purpose — only tags this app once
+    /// shipped as its default (`supersededModels`), never an arbitrary model
+    /// someone pulled themselves.
+    private func reclaimSupersededModels(keeping keep: String) async {
+        for stale in Self.supersededModels where stale != keep {
+            guard await modelPresent(stale) else { continue }
+            if await deleteModel(stale) {
+                NSLog("[OllamaSidecar] reclaimed disk from superseded model \(stale)")
+            }
+        }
+    }
+
+    private func deleteModel(_ name: String) async -> Bool {
+        var req = URLRequest(url: Self.baseURL.appendingPathComponent("api/delete"))
+        req.httpMethod = "DELETE"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 30
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["name": name])
+        do {
+            let (_, response) = try await URLSession.shared.data(for: req)
+            return (200..<300).contains((response as? HTTPURLResponse)?.statusCode ?? 0)
+        } catch {
+            NSLog("[OllamaSidecar] delete \(name) failed: \(error.localizedDescription)")
+            return false
+        }
     }
 
     // MARK: - Paths

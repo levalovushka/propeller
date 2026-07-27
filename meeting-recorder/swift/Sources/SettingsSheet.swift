@@ -1,4 +1,5 @@
 import SwiftUI
+import PropellerPure
 import ServiceManagement
 
 /// Native Settings window (⌘,) with talat-style sub-sections, built on the
@@ -218,12 +219,12 @@ private struct TranscriptionSettingsPane: View {
             }
 
             Section("Словарь") {
-                TextField("Термины", text: $domainTerms, prompt: Text("напр. Газпромнефть, спринт"))
+                TextField("Свои термины", text: $domainTerms, prompt: Text("напр. Газпромнефть, Аэрофлот"))
                     .onChange(of: domainTerms) { _, val in
                         Preferences.shared.domainTerms = val
                         scheduleRestart()
                     }
-                Text("Подсказки через запятую — усиливаются при распознавании (бренды, имена, жаргон). Для следующей расшифровки; распознаватель перезапускается через пару секунд после ввода.")
+                Text("В приложении уже есть словарь рабочего жаргона и англицизмов (\(BuiltinHotwords.terms.count) терминов) — он всегда включён. Здесь добавь своё через запятую: клиентов, фамилии, названия проектов. Применится к следующей расшифровке, распознаватель перезапустится через пару секунд.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if let restartStatus {
@@ -262,7 +263,7 @@ private struct TranscriptionSettingsPane: View {
 private struct RecapSettingsPane: View {
     @EnvironmentObject private var appState: AppState
     @AppStorage("recapProvider") private var recapProvider = RecapProviderKind.auto.rawValue
-    @AppStorage("recapOllamaModel") private var recapOllamaModel = "qwen2.5:7b"
+    @AppStorage("recapOllamaModel") private var recapOllamaModel = Preferences.defaultRecapModel
     @AppStorage("recapOpenAIModel") private var recapOpenAIModel = "gpt-4o-mini"
     @AppStorage("recapClaudeModel") private var recapClaudeModel = "claude-sonnet-4-5"
     @State private var recapPrompt: String = Preferences.shared.recapPrompt
@@ -327,7 +328,7 @@ private struct RecapSettingsPane: View {
             if recapProvider == RecapProviderKind.ollama.rawValue
                 || recapProvider == RecapProviderKind.auto.rawValue {
                 Section("Ollama") {
-                    TextField("Модель", text: $recapOllamaModel, prompt: Text("qwen2.5:7b"))
+                    TextField("Модель", text: $recapOllamaModel, prompt: Text(Preferences.defaultRecapModel))
                         .onChange(of: recapOllamaModel) { _, val in
                             Preferences.shared.recapOllamaModel = val
                         }
