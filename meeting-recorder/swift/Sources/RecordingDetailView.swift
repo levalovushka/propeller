@@ -230,6 +230,12 @@ struct RecordingDetailView: View {
         .task(id: "\(entry.id)-\(entry.status.rawValue)-\(tab.rawValue)-\(presentation)") {
             if tab == .recap || presentation == .summaryFocus { loadRecapText() }
             if tab == .followUp { loadFollowUpText() }
+#if GALLERY
+            if state.galleryEditingRecap, tab == .recap, !isEditingRecap {
+                editedRecapText = recapText ?? ""
+                isEditingRecap = true
+            }
+#endif
         }
         .onChange(of: tab) { _, _ in
             endActiveInlineEdit()

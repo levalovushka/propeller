@@ -1,5 +1,6 @@
 #if GALLERY
 import AppKit
+import CryptoKit
 import PropellerPure
 import SwiftUI
 
@@ -63,7 +64,33 @@ enum GalleryExport {
             }
         }
         NSLog("[GalleryExport] wrote \(written.count)/\(UIStateCatalog.allScreenIDs.count) screens to \(directory.path)")
+        reportDuplicates(in: written)
         return written
+    }
+
+    /// A state that photographs exactly like its neighbour is a state the
+    /// reference does not document — and it is invisible in a folder of forty
+    /// thumbnails. The first export shipped twenty-one such frames to Figma
+    /// before anyone compared bytes, so the exporter now compares them itself.
+    private static func reportDuplicates(in urls: [URL]) {
+        var byDigest: [String: [String]] = [:]
+        for url in urls {
+            guard let data = try? Data(contentsOf: url) else { continue }
+            let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            byDigest[digest, default: []].append(url.deletingPathExtension().lastPathComponent)
+        }
+        let groups = byDigest.values
+            .filter { $0.count > 1 }
+            .sorted { $0.count > $1.count }
+        guard !groups.isEmpty else {
+            NSLog("[GalleryExport] every frame differs from every other")
+            return
+        }
+        for group in groups {
+            NSLog("[GalleryExport] IDENTICAL: \(group.sorted().joined(separator: " = "))")
+        }
+        let total = groups.reduce(0) { $0 + $1.count }
+        NSLog("[GalleryExport] \(total) frames are pixel-identical to another — check the poses above before uploading")
     }
 
     @MainActor
@@ -89,9 +116,12 @@ enum GalleryExport {
         window.orderFrontRegardless()
         defer { window.orderOut(nil) }
 
-        // One runloop turn plus a beat: materials and AppKit controls need a
-        // real display pass before the compositor has anything to hand back.
-        try? await Task.sleep(nanoseconds: 250_000_000)
+        // Materials and AppKit controls need a real display pass before the
+        // compositor has anything to hand back — and the panels that read their
+        // content off disk (`loadRecapText`, the follow-up markdown) do it from
+        // `.task`, i.e. after the first pass. Capturing at 250 ms photographed
+        // several of them mid-load, empty.
+        try? await Task.sleep(nanoseconds: 600_000_000)
 
         let windowID = CGWindowID(window.windowNumber)
         guard windowID != 0,

@@ -76,6 +76,11 @@ struct MeetingRecorderApp: App {
     @StateObject private var state = AppState()
 
     init() {
+#if GALLERY
+        // Before `AppState`: the store reads its index during init, and a store
+        // pointed at the real archive stays pointed at it for the whole run.
+        GalleryFixture.installIfRequested()
+#endif
         Analytics.bootstrap()
     }
 

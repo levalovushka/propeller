@@ -30,13 +30,12 @@ import SwiftUI
 ///
 /// # What it is not allowed to do
 ///
-/// **It never writes.** Meetings shown here are fabricated in memory and passed
-/// straight to the view, which takes an entry by value; `RecordingStore` is
-/// never asked to update, rename or delete anything. `galleryPose` sets only
-/// `activity` and `preferredDetailTab`, both ephemeral. The library screens do
-/// read the real archive — that is deliberate, real data photographs better
-/// than lorem ipsum — but read is all they do. Running this against a real
-/// archive is safe.
+/// **It never touches the real archive.** Meetings, markdown and index all come
+/// from `GalleryFixture`, a temp directory the whole process is pointed at
+/// before `AppState` exists. Reads land there, and so would any write. The
+/// library screens used to photograph whatever the machine happened to hold;
+/// that was unreproducible — "список встреч — пусто" showed six meetings — and
+/// it put private meeting titles into a shared Figma file.
 struct StateGallery: View {
     @ObservedObject var state: AppState
     @State private var selected: String = UIStateCatalog.meetingStates.first?.id ?? ""
@@ -102,35 +101,17 @@ struct GalleryStage: View {
 @MainActor
 enum GalleryScreenFactory {
 
-    /// Ephemeral app state this screen needs. Never persisted.
+    /// Ephemeral app state this screen needs. Never persisted — and never the
+    /// user's own archive either: the data behind every screen is
+    /// `GalleryFixture`, which explains why at length.
     static func pose(id: String, state: AppState) {
-        if let meeting = UIStateCatalog.meetingStates.first(where: { $0.id == id }) {
-            switch meeting.involvement {
-            case .idle:
-                state.galleryPose(activity: .idle)
-            case .working(let phase):
-                state.galleryPose(activity: .working(
-                    recordingID: entry(for: meeting).id, phase: phase, detail: nil))
-            case .elsewhere(let phase):
-                // A different id on purpose — this is the row that must stay
-                // static while the worker is busy with something else.
-                state.galleryPose(activity: .working(
-                    recordingID: "gallery-other-meeting", phase: phase, detail: nil))
-            }
-            state.preferredDetailTab = nil
-            return
-        }
-        state.galleryPose(activity: .idle)
-        state.preferredDetailTab = Self.tab(for: id)
+        GalleryFixture.pose(id: id, state: state)
     }
 
-    private static func tab(for id: String) -> String? {
-        if id.hasPrefix("tab-summary")    { return "recap" }
-        if id.hasPrefix("tab-notes")      { return "notes" }
-        if id.hasPrefix("tab-transcript") { return "transcript" }
-        if id.hasPrefix("tab-letter")     { return "letter" }
-        return nil
-    }
+    /// The app's own window size. Every screen that lives in the window is shot
+    /// at it, so the reference shows states of one surface rather than a pile of
+    /// differently-sized crops.
+    static let windowSize = CGSize(width: 940, height: 700)
 
     @ViewBuilder
     static func view(id: String, state: AppState) -> some View {
@@ -138,96 +119,33 @@ enum GalleryScreenFactory {
             // Onboarding and toasts are PropellerUI's own screens — its step
             // views are internal to that module, so it draws them itself.
             GalleryScreens.view(for: id)
-        } else if let meeting = UIStateCatalog.meetingStates.first(where: { $0.id == id }) {
-            RecordingDetailView(state: state, entry: entry(for: meeting))
-                .frame(width: 900, height: 640)
-        } else if id.hasPrefix("tab-") {
-            RecordingDetailView(state: state, entry: tabEntry(for: id))
-                .frame(width: 900, height: 640)
-        } else if id.hasPrefix("lib-") {
-            MainView(state: state, recordingStore: state.recordingStore)
-                .frame(width: 900, height: 700)
+        } else if id == "lib-search" {
+            // ⌘K is presented as a sheet, and a sheet is a window of its own —
+            // capturing the list window would miss it entirely. Drawn in place
+            // over the list it covers, which is what a person sees anyway.
+            ZStack {
+                window(state: state)
+                Rectangle().fill(Color.black.opacity(0.45)).ignoresSafeArea()
+                SearchPalette(state: state, onOpenRecording: { _ in }, onClose: {})
+            }
+            .frame(width: windowSize.width, height: windowSize.height)
+            .background(Color.black)
+        } else if UIStateCatalog.meetingStates.contains(where: { $0.id == id })
+                    || id.hasPrefix("tab-") || id.hasPrefix("lib-") {
+            // Pipeline states are rows in the list; tab states are the detail
+            // inside the same chrome. Both are `MainView` deciding what to show
+            // from the posed state — photographing `RecordingDetailView` on its
+            // own left out the frame around it and made eleven pipeline states
+            // look like one screen.
+            window(state: state)
         } else {
             ContentUnavailableView("Нет экрана для \(id)", systemImage: "questionmark.square.dashed")
         }
     }
 
-    // MARK: - Fabricated meetings (in memory only, never stored)
-
-    static func entry(for meeting: UIStateCatalog.MeetingState) -> RecordingEntry {
-        make(
-            id: "gallery-\(meeting.id)",
-            stage: meeting.stage,
-            transcript: meeting.stage >= .transcribed ? sampleTranscript : nil,
-            summarized: meeting.stage >= .summarized,
-            failure: meeting.hasFailure
-                ? PipelineFailure(phase: .diarizing,
-                                  message: "gigastt HTTP 413: тело запроса слишком большое")
-                : nil
-        )
+    private static func window(state: AppState) -> some View {
+        MainView(state: state, recordingStore: state.recordingStore)
+            .frame(width: windowSize.width, height: windowSize.height)
     }
-
-    static func tabEntry(for id: String) -> RecordingEntry {
-        switch id {
-        case "tab-summary-empty-nomodel", "tab-summary-empty-ready":
-            return make(id: "gallery-\(id)", stage: .saved, transcript: sampleTranscript,
-                        summarized: false, failure: nil)
-        case "tab-notes-empty":
-            return make(id: "gallery-\(id)", stage: .summarized, transcript: sampleTranscript,
-                        summarized: true, failure: nil, notes: nil)
-        case "tab-transcript-empty":
-            return make(id: "gallery-\(id)", stage: .recorded, transcript: nil,
-                        summarized: false, failure: nil)
-        case "tab-transcript-failed":
-            return make(id: "gallery-\(id)", stage: .recorded, transcript: nil, summarized: false,
-                        failure: PipelineFailure(phase: .transcribing,
-                                                 message: "gigastt завершился до готовности"))
-        default:
-            return make(id: "gallery-\(id)", stage: .summarized, transcript: sampleTranscript,
-                        summarized: true, failure: nil)
-        }
-    }
-
-    private static func make(
-        id: String,
-        stage: RecordingStage,
-        transcript: String?,
-        summarized: Bool,
-        failure: PipelineFailure?,
-        notes: String? = "созвониться с подрядчиком\nпроверить бюджет к пятнице"
-    ) -> RecordingEntry {
-        RecordingEntry(
-            id: id,
-            filename: "\(id).wav",
-            date: Date(timeIntervalSince1970: 1_785_000_000),
-            duration: 2_950,
-            title: "Воркшоп по музыке",
-            status: stage,
-            transcript: transcript,
-            notes: notes,
-            language: "ru",
-            rawSegmentsJSON: nil,
-            mergedSegmentsJSON: nil,
-            topics: summarized ? ["дизайн-система", "релиз бота", "корпус"] : nil,
-            tags: summarized ? ["планирование"] : nil,
-            titleManuallySet: nil,
-            micOnlyCaptured: nil,
-            lastFailure: failure
-        )
-    }
-
-    static let sampleTranscript = """
-    **Левон** · 00:00
-    Давайте начнём. Сегодня разбираем скоуп дизайн-системы под веб.
-
-    **Speaker 1** · 00:12
-    У меня вопрос по срокам — успеваем к понедельнику?
-
-    **Левон** · 00:19
-    Успеваем, если сегодня закроем компоненты и заведём сторибук.
-
-    **Speaker 3** · 00:31
-    Тогда я беру на себя токены, а ревью в четверг.
-    """
 }
 #endif

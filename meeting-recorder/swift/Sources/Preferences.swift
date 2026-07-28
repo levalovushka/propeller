@@ -44,13 +44,34 @@ class Preferences {
 
     // MARK: - Paths
 
+#if GALLERY
+    /// Points the whole archive at a throwaway directory for the duration of a
+    /// screenshot run (`GalleryFixture`). Set before `AppState` is built and
+    /// never cleared — the process exits when the last frame is on disk.
+    ///
+    /// It exists so posed states can have files behind them without a single
+    /// write reaching the real archive, and so no one's actual meeting titles
+    /// end up in a Figma file. Absent from shipping builds.
+    static var galleryArchiveRoot: String?
+#endif
+
     var meetingsPath: String {
-        get { defaults.string(forKey: "meetingsPath") ?? defaultMeetingsPath }
+        get {
+#if GALLERY
+            if let root = Preferences.galleryArchiveRoot { return root + "/meetings" }
+#endif
+            return defaults.string(forKey: "meetingsPath") ?? defaultMeetingsPath
+        }
         set { defaults.set(newValue, forKey: "meetingsPath") }
     }
 
     var recordingsPath: String {
-        get { defaults.string(forKey: "recordingsPath") ?? defaultRecordingsPath }
+        get {
+#if GALLERY
+            if let root = Preferences.galleryArchiveRoot { return root + "/recordings" }
+#endif
+            return defaults.string(forKey: "recordingsPath") ?? defaultRecordingsPath
+        }
         set { defaults.set(newValue, forKey: "recordingsPath") }
     }
 

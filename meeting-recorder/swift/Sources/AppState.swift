@@ -26,6 +26,21 @@ class AppState: ObservableObject {
     /// become the second source of truth the whole state refactor removed.
     /// Activity is ephemeral by design — nothing here is persisted.
     func galleryPose(activity: PipelineActivity) { self.activity = activity }
+
+    /// Keeps the worker out of a screenshot run. Posed meetings are fiction —
+    /// they have no audio — and a worker that took one seriously would race the
+    /// poser for `activity` halfway through a frame.
+    var galleryFrozen = false
+
+    /// Forces the summary panel's «Скачать» / «Сгенерировать» branch. The real
+    /// answer depends on the user's provider settings and installed models,
+    /// neither of which a screenshot run may touch.
+    var galleryRecapModelOverride: Bool?
+
+    /// Opens the summary in its editor. Editing is entered by tapping the
+    /// rendered recap, i.e. through private `@State` no poser can reach —
+    /// without this, "Саммари — правка" photographed the read view.
+    var galleryEditingRecap = false
 #endif
     /// Last pipeline failure shown in the empty transcript / recap panels (and toast).
     /// Cleared when a new ASR/recap attempt starts successfully past the early guards.
@@ -109,6 +124,13 @@ class AppState: ObservableObject {
     ) {
         self.transcriptionService = transcriber ?? TranscriptionService()
         self.recapBackend = recapBackend
+#if GALLERY
+        // Freeze here rather than when the first pose runs: `bootstrap()` kicks
+        // the worker before any screen is posed, and the fixture archive holds
+        // meetings that look like unfinished work — silent audio the worker
+        // would happily send to the ASR sidecar.
+        galleryFrozen = GalleryFixture.isActive
+#endif
     }
 
     var selectedRecording: RecordingEntry? {
@@ -711,6 +733,9 @@ class AppState: ObservableObject {
     /// True when a summary can only come from the local model and that model is
     /// not there yet — i.e. the honest CTA is «Скачать», not «Сгенерировать».
     var needsLocalRecapModel: Bool {
+#if GALLERY
+        if let forced = galleryRecapModelOverride { return forced }
+#endif
         guard localRecapModelReady == false else { return false }
         switch Preferences.shared.recapProvider {
         case .off, .openai, .claude:
@@ -819,6 +844,9 @@ class AppState: ObservableObject {
     /// Ask the worker to look for work. Safe to call from anywhere, any number
     /// of times — a loop is already running or one gets started, never two.
     func kickPipeline() {
+#if GALLERY
+        if galleryFrozen { return }
+#endif
         guard workerTask == nil else { return }
         workerTask = Task { [weak self] in
             await self?.runPipelineLoop()
