@@ -189,11 +189,17 @@ public enum WavHeader {
 }
 
 public enum RecordingRecovery {
-    /// Status transitions for interrupted recordings (mirrors RecordingStore).
-    public static func recoveredStatus(current: String, hasTranscript: Bool) -> String? {
+    /// Where an interrupted recording lands on the next launch. Nil means the
+    /// stage is durable and needs no repair.
+    public static func recoveredStage(
+        current: RecordingStage,
+        hasTranscript: Bool
+    ) -> RecordingStage? {
         switch current {
-        case "recording": return "recorded"
-        case "transcribing": return hasTranscript ? "transcribed_raw" : "recorded"
+        case .recording: return .recorded
+        // ASR finished before the crash — keep the checkpoint so diarization
+        // resumes instead of re-running an hour of GPU work.
+        case .transcribing: return hasTranscript ? .transcribedRaw : .recorded
         default: return nil
         }
     }

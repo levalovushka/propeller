@@ -153,8 +153,8 @@ struct MainView: View {
                 onDismiss: { state.snoozeStorageNudge() }
             )
         } else if let err = state.pipelineError, !err.isEmpty {
-            let canRetryASR = state.transcribeStep == .failed
-                || (state.selectedRecording?.status == "recorded"
+            let canRetryASR = state.selectedRecording?.lastFailure != nil
+                || (state.selectedRecording?.status == .recorded
                     && (state.selectedRecording?.transcript?.isEmpty ?? true))
             PropellerToast(
                 title: "Не удалось обработать",
@@ -321,17 +321,7 @@ struct MainView: View {
         if let frac = state.modelDownloadProgress {
             return "Загрузка модели… \(Int(frac * 100))%"
         }
-        if state.busyRecordingID != nil
-            || state.transcribeStep == .running
-            || state.saveStep == .running
-            || state.recapStep == .running {
-            return state.statusMessage.isEmpty ? "Обработка…" : state.statusMessage
-        }
-        // Kick-off line after «Повторить» before the pipeline latches .running.
-        if !state.statusMessage.isEmpty, state.pipelineError == nil {
-            return state.statusMessage
-        }
-        return nil
+        return state.activity.message
     }
 
     // MARK: - Main area
@@ -397,7 +387,7 @@ struct MainView: View {
                     Text("Пока нет встреч")
                         .typo(Tokens.Typography.Label.mdMedium)
                         .foregroundStyle(Tokens.Ink.tertiary)
-                    Text("Начните запись — или Propeller сам подхватит Zoom.")
+                    Text("Начните запись — или Propeller сам подхватит звонок.")
                         .typo(Tokens.Typography.Label.smMedium)
                         .foregroundStyle(Tokens.Ink.tertiary)
                     Button {
@@ -479,7 +469,7 @@ struct MainView: View {
                     iconSize: 14,
                     weight: .medium
                 ) { calendar.dismiss(m) }
-                .help("Не записывать эту встречу в Zoom")
+                .help("Не записывать эту встречу")
             }
         }
         .onHover { inside in
@@ -634,10 +624,10 @@ struct MainView: View {
     }
 
     private func isProcessing(_ entry: RecordingEntry) -> Bool {
-        // Never key off idle statuses like "recorded" / "transcribed_raw" —
-        // that made every unfinished meeting spin forever.
-        if entry.status == "recording" { return true }
-        return state.busyRecordingID == entry.id
+        // Never key off idle stages like `.recorded` / `.transcribedRaw` — that
+        // made every unfinished meeting spin forever.
+        if entry.status == .recording { return true }
+        return state.activity.concerns(entry.id)
     }
 
     private var visibleRecordings: [RecordingEntry] {

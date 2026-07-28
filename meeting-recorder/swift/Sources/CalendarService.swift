@@ -41,7 +41,7 @@ final class CalendarService: ObservableObject {
     @Published var upcoming: [UpcomingMeeting] = []
     @Published var accessGranted = false
     /// Events muted via Upcoming «Don't record» this session (DECIDE-6: mute session).
-    /// Kept even after removal from `upcoming` so Zoom auto-record can still match them.
+    /// Kept even after removal from `upcoming` so auto-record can still match them.
     private var mutedEventIDs: Set<String> = []
     private var mutedMeetings: [String: UpcomingMeeting] = [:]
 
@@ -94,7 +94,7 @@ final class CalendarService: ObservableObject {
             .filter { !mutedEventIDs.contains($0.id) }
     }
 
-    /// Hide from Upcoming and mute Zoom auto-record while this event is in progress
+    /// Hide from Upcoming and mute auto-record while this event is in progress
     /// (or starting within 15 minutes).
     func dismiss(_ meeting: UpcomingMeeting) {
         mutedEventIDs.insert(meeting.id)

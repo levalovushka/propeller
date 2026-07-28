@@ -32,37 +32,45 @@ _Источник правды по архитектурным решениям 
 ## Поток данных
 
 ```
-ZoomMeetingDetector (Auto) / menu bar / ⌘R / UI
+MeetingDetector (Auto) / menu bar / ⌘R / UI
   → AudioRecorder
       mic (.mic.wav) + ScreenCaptureKit system (.sys.wav)   # Process Tap dormant
       → offline mix → {id}.wav (+ stems пока аудио хранится)
-  → TranscriptionService
-      → GigasttSidecar / GigasttClient  (ASR; длинные файлы → chunk → merge)
-      → checkpoint status=transcribed_raw
-      → FluidAudio diarization → Speaker N + владелец-по-микрофону
-      → transcript + PersistedSegment[]
-  → MarkdownWriter  (simple | obsidian) → save (транскрипт всегда)
-  → RecapService    (если провайдер доступен)
-      → generateMetadata → заголовок / темы / теги
+  → одна очередь, один воркер (AppState.kickPipeline → PipelineDrain)
+      фазы: transcribing → diarizing → saving → summarizing
 ```
 
-Статусы записи: `recording → recorded → transcribing → transcribed_raw → transcribed → saved`.
+**Пайплайн — очередь, а не цепочка вызовов.** Фазы не вызывают друг друга: каждая
+двигает стадию записи и заканчивается `kickPipeline()`. Что делать дальше,
+`nextJob` выводит из стадий на диске, поэтому очередь переживает краш и не
+хранится вторым местом. Подробности и обоснования — [REFACTOR-PIPELINE-STATE.md](REFACTOR-PIPELINE-STATE.md).
+
+Состояние встречи — два независимых измерения:
+
+- **`RecordingEntry.status: RecordingStage`** — что достигнуто (персистентно):
+  `recording → recorded → transcribing → transcribed_raw → transcribed → saved → summarized`.
+  `transcribing` встречается только после краша; `RecordingRecovery` разбирает его при старте.
+- **`AppState.activity: PipelineActivity`** — что идёт прямо сейчас (эфемерно,
+  одно на приложение: воркер один).
+- Ошибка принадлежит записи (`entry.lastFailure`), не приложению, и выводит её
+  из очереди до явного «Повторить».
 
 ## Компоненты (`swift/Sources/`)
 
 | Файл | Роль |
 |---|---|
-| `AppState` | `@MainActor` координатор: запись, пайплайн, Zoom, backfill, переименование спикеров |
+| `AppState` | `@MainActor` координатор: запись, воркер пайплайна, детект звонков, переименование спикеров |
 | `AudioRecorder` | Mic (AVAudioRecorder или VoiceProcessing AEC) + system audio (SCK) + офлайн-микс; `lastStopWasMicOnly` |
 | `SystemAudioCapture` | ScreenCaptureKit stem (app-scoped фильтр + display-wide fallback) |
 | `ProcessTapAudioCapture` | Dormant — Core Audio Process Taps; не на hot path |
-| `ZoomMeetingDetector` | Поллы `aomhost` / meeting-window / display-sleep assertion (`caphost` ≠ встреча) |
+| `MeetingDetector` | Поллинг звонка в любой платформе из `MeetingPlatform.all` (Zoom, Контур.Толк): helper-процесс, заголовок окна, вкладка браузера, display-sleep assertion |
+| `PipelineBoundaries` | `Transcriber` / `RecapBackend` — две подменяемые границы наружу |
 | `CalendarService` | EventKit: Upcoming + `suggestedRecordingTitle` при старте записи |
 | `NoteOverlayController` | Оверлей быстрых заметок ⌃⌥N во время записи |
 | `NotificationManager` | UNUserNotificationCenter: интерактивная отмена авто-записи + баннеры |
 | `TranscriptionService` | ASR → diarize → `Speaker N` + владелец-по-микрофону |
 | `GigasttSidecar` / `GigasttClient` | Жизненный цикл сервера и HTTP (+ chunking) |
-| `PropellerPure` | Чистая логика: chunking, merge, парсеры, WAV helpers |
+| `PropellerPure` | Чистое ядро (988 строк, 111 тестов): стадии и очередь (`RecordingStage`, `PipelineActivity`, `PipelineDrain`), презентация транскрипта (`TranscriptPresentation`), разбор ответов границ (`BoundaryResponses`), платформы созвонов (`MeetingPlatform`), chunking, парсеры, WAV helpers |
 | `RecordingStore` | Индекс записей + CRUD + size-nudge (без auto-delete) |
 | `MarkdownWriter` / `RecapService` | Экспорт и LLM-конспект + метадата (заголовок/темы/теги) |
 | `Preferences` | UserDefaults + Keychain для API-ключей |

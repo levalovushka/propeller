@@ -25,11 +25,11 @@ struct MenuBarContentView: View {
             return .recording(title: state.selectedRecording?.title ?? "Новая запись",
                               elapsed: state.elapsedString)
         }
-        // Recap counts as work — without it the menu bar read "idle" for the
-        // whole summary step (release-review rev-17).
-        if state.transcribeStep == .running || state.saveStep == .running
-            || state.recapStep == .running {
-            return .processing(state.statusMessage.isEmpty ? "Обработка…" : state.statusMessage)
+        // One question instead of three step flags — and the summary phase is
+        // included by construction, not by remembering to list it
+        // (release-review rev-17).
+        if let message = state.activity.message {
+            return .processing(message)
         }
         return .idle
     }

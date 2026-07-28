@@ -69,6 +69,7 @@ class RecordingStore: ObservableObject {
             }
             clearFalseManualTitleFlags()
             scanForOrphanRecordings()
+            reconcileSummarizedStage()
         } catch {
             // Quarantine the corrupt file BEFORE any rewrite so we never destroy the only copy (C5).
             let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
@@ -125,7 +126,7 @@ class RecordingStore: ObservableObject {
     func update(
         id: String,
         transcript: String? = nil,
-        status: String? = nil,
+        status: RecordingStage? = nil,
         duration: Double? = nil,
         language: String?? = nil,
         notes: String?? = nil,
@@ -134,7 +135,8 @@ class RecordingStore: ObservableObject {
         title: String? = nil,
         topics: [String]? = nil,
         tags: [String]? = nil,
-        micOnlyCaptured: Bool? = nil
+        micOnlyCaptured: Bool? = nil,
+        lastFailure: PipelineFailure?? = nil
     ) {
         guard let idx = recordings.firstIndex(where: { $0.id == id }) else { return }
         if let t = transcript { recordings[idx].transcript = t }
@@ -149,6 +151,7 @@ class RecordingStore: ObservableObject {
         if let tp = topics { recordings[idx].topics = tp }
         if let tg = tags { recordings[idx].tags = tg }
         if let mo = micOnlyCaptured { recordings[idx].micOnlyCaptured = mo }
+        if let lf = lastFailure { recordings[idx].lastFailure = lf }
         scheduleSave()
     }
 
@@ -226,13 +229,51 @@ class RecordingStore: ObservableObject {
         }
     }
 
+    // MARK: - Summary stage reconciliation
+
+    /// Bring `.saved` / `.summarized` in line with the recap files actually on
+    /// disk. One directory listing for the whole archive, once per launch.
+    ///
+    /// Runs on every load, not just the first: `.summarized` is a cache of "a
+    /// recap exists", and the user can delete the markdown in Obsidian or
+    /// Finder. Without the downgrade half, that meeting would never get its
+    /// summary back.
+    ///
+    /// Never guesses when the directory can't be read — an unreadable meetings
+    /// folder would otherwise downgrade the entire archive and send it through
+    /// the model again.
+    func reconcileSummarizedStage() {
+        let dir = URL(fileURLWithPath: Preferences.shared.meetingsPath)
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: nil
+        ) else { return }
+
+        let recapNames = files.map(\.lastPathComponent).filter { $0.hasSuffix(RecapFile.suffix) }
+        var changed = 0
+        for i in recordings.indices {
+            let id = recordings[i].id
+            guard let next = SummaryStageReconciler.reconciled(
+                current: recordings[i].status,
+                hasRecapFile: recapNames.contains { RecapFile.isRecap($0, for: id) },
+                // `topics == nil` is the existing marker for "metadata never ran".
+                hasMetadata: recordings[i].topics != nil
+            ) else { continue }
+            recordings[i].status = next
+            changed += 1
+        }
+        if changed > 0 {
+            NSLog("[RecordingStore] Reconciled summary stage on \(changed) recording(s)")
+            scheduleSave()
+        }
+    }
+
     // MARK: - Recovery
 
     @discardableResult
     func recoverInterruptedRecordings() -> Int {
         let dir = URL(fileURLWithPath: Preferences.shared.recordingsPath)
         var recoveredCount = 0
-        for i in recordings.indices where recordings[i].status == "recording" {
+        for i in recordings.indices where recordings[i].status == .recording {
             let url = dir.appendingPathComponent(recordings[i].filename)
             let stems = AudioSourceStemURLs.expectedSiblings(for: url)
             let hasFinal = FileManager.default.fileExists(atPath: url.path)
@@ -244,7 +285,7 @@ class RecordingStore: ObservableObject {
                     // Final mix pending — duration from mic stem until recoverMissingFinalMixes runs.
                     recordings[i].duration = Self.wavDuration(url: stems.microphoneURL)
                 }
-                if let next = RecordingRecovery.recoveredStatus(current: "recording", hasTranscript: false) {
+                if let next = RecordingRecovery.recoveredStage(current: .recording, hasTranscript: false) {
                     recordings[i].status = next
                 }
                 recoveredCount += 1
@@ -254,9 +295,9 @@ class RecordingStore: ObservableObject {
         // If they have a transcript (ASR finished), promote to "transcribed_raw"
         // so the diarization can resume without re-running the expensive ASR pass.
         // Otherwise reset to "recorded" so user can retry from scratch.
-        for i in recordings.indices where recordings[i].status == "transcribing" {
+        for i in recordings.indices where recordings[i].status == .transcribing {
             let hasTranscript = recordings[i].transcript != nil
-            if let next = RecordingRecovery.recoveredStatus(current: "transcribing", hasTranscript: hasTranscript) {
+            if let next = RecordingRecovery.recoveredStage(current: .transcribing, hasTranscript: hasTranscript) {
                 recordings[i].status = next
             }
             recoveredCount += 1
@@ -314,7 +355,7 @@ class RecordingStore: ObservableObject {
             recordings.append(RecordingEntry(
                 id: id, filename: file.lastPathComponent, date: date,
                 duration: Self.wavDuration(url: file), title: id,
-                status: "recorded", transcript: nil
+                status: .recorded, transcript: nil
             ))
             changed = true
         }

@@ -119,17 +119,17 @@ struct MenuBarPanelView: View {
                     Text("Запись будет удалена сразу. Расшифровка и саммари не создаются.")
                 }
             }
-        } else if state.zoomMeetingDetected && !state.isRecording {
+        } else if state.meetingDetected && !state.isRecording {
             HStack(spacing: 6) {
                 Image(systemName: "video.fill")
                     .foregroundStyle(.cyan)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Звонок Zoom").typo(Tokens.Typography.Label.mdMedium)
+                    Text("Идёт звонок").typo(Tokens.Typography.Label.mdMedium)
                     Text("Запись не начата").typo(Tokens.Typography.Label.smRegular).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button {
-                    state.acceptZoomRecordingPrompt()
+                    state.acceptDetectedCallPrompt()
                 } label: {
                     Label("Записать", systemImage: "record.circle.fill")
                 }
@@ -137,12 +137,12 @@ struct MenuBarPanelView: View {
                 .tint(.red)
                 .controlSize(.small)
             }
-        } else if state.transcribeStep == .running || state.saveStep == .running {
+        } else if let progress = state.activity.message {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Обработка…").typo(Tokens.Typography.Label.mdMedium)
-                    Text(state.statusMessage.isEmpty ? "Обработка…" : state.statusMessage)
+                    Text(progress)
                         .typo(Tokens.Typography.Label.smRegular)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -208,7 +208,7 @@ struct MenuBarPanelView: View {
                                 .foregroundStyle(.secondary)
                             }
                             Spacer()
-                            if entry.status == "saved" {
+                            if entry.status >= .saved {
                                 Image(systemName: "checkmark.circle.fill")
                                     .typo(Tokens.Typography.Label.smRegular)
                                     .foregroundStyle(.green)
@@ -228,21 +228,21 @@ struct MenuBarPanelView: View {
     @ViewBuilder
     private func statusDot(_ entry: RecordingEntry) -> some View {
         switch entry.status {
-        case "saved":
+        case .saved, .summarized:
             Circle().fill(.green).frame(width: 7, height: 7)
-        case "transcribed":
+        case .transcribed:
             Circle().fill(.blue).frame(width: 7, height: 7)
-        case "transcribed_raw":
+        case .transcribedRaw:
             Circle().fill(.yellow).frame(width: 7, height: 7)
-        case "transcribing":
+        case .transcribing:
             // Stuck "transcribing" after a crash must not spin forever — only
-            // the recording AppState is actually working on.
-            if state.busyRecordingID == entry.id {
+            // the recording the pipeline is actually working on.
+            if state.activity.concerns(entry.id) {
                 ProgressView().controlSize(.mini).frame(width: 10, height: 10)
             } else {
                 Circle().fill(.orange).frame(width: 7, height: 7)
             }
-        case "recording":
+        case .recording:
             Circle().fill(.red).frame(width: 7, height: 7)
         default:
             Circle().fill(.quaternary).frame(width: 7, height: 7)

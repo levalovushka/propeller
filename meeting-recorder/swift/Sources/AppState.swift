@@ -1,4 +1,5 @@
 import AVFoundation
+import PropellerPure
 import SwiftUI
 
 @MainActor
@@ -14,13 +15,11 @@ class AppState: ObservableObject {
 
     // Pipeline
     @Published var transcript = ""
-    @Published var transcribeStep: PipelineStep = .pending
-    @Published var saveStep: PipelineStep = .pending
-    @Published var recapStep: PipelineStep = .pending
-    /// Recording currently in ASR / save / recap — drives per-row spinners even
-    /// when the user has navigated back to the meetings list.
-    @Published private(set) var busyRecordingID: String?
-    @Published var statusMessage = ""
+    /// The single source of truth for in-flight work
+    /// (docs/REFACTOR-PIPELINE-STATE.md). Replaced `transcribeStep` /
+    /// `saveStep` / `recapStep` / `busyRecordingID` / `statusMessage` /
+    /// `statusIsTransient` — seven fields, ~2000 combinations, one now.
+    @Published private(set) var activity: PipelineActivity = .idle
     /// Last pipeline failure shown in the empty transcript / recap panels (and toast).
     /// Cleared when a new ASR/recap attempt starts successfully past the early guards.
     @Published var pipelineError: String? = nil
@@ -37,9 +36,6 @@ class AppState: ObservableObject {
     /// empty-summary panel: without it the UI offers «Сгенерировать», which can
     /// only fail with `HTTP 404: model not found`.
     @Published var localRecapModelReady: Bool? = nil
-    /// Latched true when a recording was completed without system audio capture.
-    /// Survives into the detail view so "Mic only" can be shown in the header.
-    @Published var micOnlyRecording = false
 
     // Selection
     @Published var selectedRecordingID: String?
@@ -61,7 +57,7 @@ class AppState: ObservableObject {
     @Published var showOnboarding = !Preferences.shared.onboardingCompleted
     private var didBootstrap = false
     @Published var showMicPermissionAlert = false
-    @Published var zoomMeetingDetected = false
+    @Published var meetingDetected = false
     @Published var diskSpaceWarning: String?
     @Published var showDiskSpaceAlert = false
     /// Library size exceeded the nudge threshold (plan-v2 6.1 / GROW-11). Never auto-deletes.
@@ -73,22 +69,34 @@ class AppState: ObservableObject {
     @Published var preferredDetailTab: String?
     private var diskSpaceContinuation: CheckedContinuation<Bool, Never>?
 
-    /// True when the current recording was started because of a Zoom meeting.
-    private var recordingLinkedToZoom = false
-    /// User cancelled auto-recording for the current Zoom meeting — sticky until Zoom.app quits (G3).
-    private var ignoredZoomMeeting = false
+    /// True when this recording was started by a detected call (any platform),
+    /// so hanging up can stop it.
+    private var recordingLinkedToCall = false
+    /// User declined auto-recording for the call in progress — sticky until the
+    /// conferencing app quits, so it isn't asked again mid-call (G3).
+    private var ignoredDetectedCall = false
     /// Set right before an auto-start so `beginRecording` knows to post the
     /// interactive "recording started" notification (manual starts don't).
     private var autoStartedFromMeeting = false
-    /// Mutex so Stop / Discard / Zoom-end can't race two `recorder.stop()` calls.
+    /// Mutex so Stop / Discard / end-of-call can't race two `recorder.stop()` calls.
     private var isTerminalRecordingAction = false
-    /// Reconciler guard — one drain of pending `recorded` / `transcribed_raw` at a time.
-    private var isReconcilingPipeline = false
 
     // Stores & Services
     let recordingStore = RecordingStore()
-    let transcriptionService = TranscriptionService()
-    private let zoomDetector = ZoomMeetingDetector.shared
+    /// The two swappable boundaries (see PipelineBoundaries.swift). Concrete in
+    /// the app, doubles in a harness — nothing else about the pipeline needs to
+    /// change to run it against fixtures.
+    let transcriptionService: Transcriber
+    private let recapBackend: RecapBackend
+    private let meetingDetector = MeetingDetector.shared
+
+    init(
+        transcriber: Transcriber? = nil,
+        recapBackend: RecapBackend = RecapService.shared
+    ) {
+        self.transcriptionService = transcriber ?? TranscriptionService()
+        self.recapBackend = recapBackend
+    }
 
     var selectedRecording: RecordingEntry? {
         guard let id = selectedRecordingID else { return nil }
@@ -115,7 +123,7 @@ class AppState: ObservableObject {
 
         showOnboarding = !Preferences.shared.onboardingCompleted
 
-        setupZoomDetector()
+        setupMeetingDetector()
 
         // Quick-note overlay: register the state; key monitors install only
         // while a recording is active (plan-optimization E7).
@@ -128,14 +136,9 @@ class AppState: ObservableObject {
             Task { await CalendarService.shared.enableAndLoad() }
         }
 
-        // Fill in summaries for any past recordings that don't have one yet — no
-        // button, no prompt; they just appear once a provider is reachable.
-        // (this also catches up titles/topics/tags for meetings whose recap
-        // landed before the metadata pass ran — see backfillMissingMetadata)
-        startSummaryBackfill()
-
-        // Advance recovered / queued recordings (G1/G2 / BUG-PIPE-01+05).
-        Task { await reconcilePendingPipeline() }
+        // Everything unfinished — recovered recordings, meetings still owed a
+        // transcript, and past meetings still owed a summary — is one queue now.
+        kickPipeline()
 
         // Finish a summary-model download that a quit (or a dropped connection
         // that outlived the in-session retries) left half-done. No-op when the
@@ -143,7 +146,7 @@ class AppState: ObservableObject {
         if Preferences.shared.localRecapModelRequested {
             Task {
                 try? await Task.sleep(nanoseconds: 20_000_000_000)
-                guard !isRecording, !isTranscribing, !zoomMeetingDetected else { return }
+                guard !isRecording, !isTranscribing, !meetingDetected else { return }
                 startOllamaRuntimeDownload()
             }
         }
@@ -151,72 +154,73 @@ class AppState: ObservableObject {
         // ASR sidecar starts lazily on first transcription (plan-optimization E1).
     }
 
-    // MARK: - Zoom auto-detect
+    // MARK: - Call auto-detect
 
-    private func setupZoomDetector() {
-        zoomDetector.onMeetingStarted = { [weak self] in
-            Task { @MainActor in self?.handleZoomMeetingStarted() }
+    private func setupMeetingDetector() {
+        meetingDetector.onMeetingStarted = { [weak self] in
+            Task { @MainActor in self?.handleCallStarted() }
         }
-        zoomDetector.onMeetingEnded = { [weak self] in
-            Task { @MainActor in self?.handleZoomMeetingEnded() }
+        meetingDetector.onMeetingEnded = { [weak self] in
+            Task { @MainActor in self?.handleCallEnded() }
         }
-        applyZoomDetectorMode()
+        applyAutoRecordMode()
     }
 
-    /// Call when the Zoom preference changes in Settings.
-    func applyZoomDetectorMode() {
-        let mode = Preferences.shared.zoomAutoRecordMode
+    /// Call when the auto-record preference changes in Settings.
+    func applyAutoRecordMode() {
+        let mode = Preferences.shared.autoRecordMode
         if mode == .off {
-            zoomDetector.stop()
-            zoomMeetingDetected = false
-            ignoredZoomMeeting = false
+            meetingDetector.stop()
+            meetingDetected = false
+            ignoredDetectedCall = false
         } else {
-            zoomDetector.start()
-            zoomMeetingDetected = zoomDetector.isInMeeting
+            meetingDetector.start()
+            meetingDetected = meetingDetector.isInMeeting
         }
     }
 
-    private func handleZoomMeetingStarted() {
-        zoomMeetingDetected = true
-        // Do NOT clear ignoredZoomMeeting here — sticky for this Zoom session (G3).
-        guard Preferences.shared.zoomAutoRecordMode != .off else { return }
+    private func handleCallStarted() {
+        meetingDetected = true
+        // A 4 GB model must not stay on the GPU for the duration of a call.
+        pausePipeline()
+        // Do NOT clear ignoredDetectedCall here — sticky for this call (G3).
+        guard Preferences.shared.autoRecordMode != .off else { return }
         guard !isRecording else {
             // Already recording (manual) — still link so end-of-call can stop it (DECIDE-7).
-            recordingLinkedToZoom = true
+            recordingLinkedToCall = true
             return
         }
-        startRecordingFromZoom()
+        startRecordingFromDetectedCall()
     }
 
-    private func handleZoomMeetingEnded() {
-        zoomMeetingDetected = false
-        if isRecording && recordingLinkedToZoom {
-            statusMessage = "Zoom завершён — останавливаем"
+    private func handleCallEnded() {
+        meetingDetected = false
+        if isRecording && recordingLinkedToCall {
             stopRecording()
         }
-        recordingLinkedToZoom = false
-        // Sticky ignore clears only when Zoom.app itself is gone (not on brief detector flaps).
-        if !ZoomMeetingDetector.isZoomAppRunning() {
-            ignoredZoomMeeting = false
+        recordingLinkedToCall = false
+        // Sticky ignore clears only once the conferencing app is gone (not on brief detector flaps).
+        if !MeetingDetector.isAnyConferencingAppRunning() {
+            ignoredDetectedCall = false
         }
+        kickPipeline()
     }
 
-    /// Start recording a detected Zoom call without asking. A system
+    /// Start recording a detected call without asking. A system
     /// notification is posted (in `beginRecording`) so the user can decline.
-    func acceptZoomRecordingPrompt() {
-        ignoredZoomMeeting = false
-        startRecordingFromZoom()
+    func acceptDetectedCallPrompt() {
+        ignoredDetectedCall = false
+        startRecordingFromDetectedCall()
     }
 
-    private func startRecordingFromZoom() {
+    private func startRecordingFromDetectedCall() {
         guard !isRecording else { return }
-        guard !ignoredZoomMeeting else { return }
+        guard !ignoredDetectedCall else { return }
         // Upcoming «Don't record» mutes this calendar session (DECIDE-6).
         if CalendarService.shared.isMutedForRecording() { return }
-        recordingLinkedToZoom = true
+        recordingLinkedToCall = true
         autoStartedFromMeeting = true
         startRecording()
-        statusMessage = "Идёт запись"
     }
 
     // MARK: - Disk Space Pre-flight
@@ -344,29 +348,27 @@ class AppState: ObservableObject {
 
     private func beginRecording() {
         transcript = ""
-        // Don't wipe another meeting's in-flight pipeline lights (BUG-PIPE-03).
-        if busyRecordingID == nil {
-            transcribeStep = .pending
-            saveStep = .pending
-            recapStep = .pending
-        }
+        // BUG-PIPE-03 is gone by construction: there are no global step lights
+        // left to wipe, and another meeting's job lives in `activity`.
         recapSkipHint = nil
         lastRecapPath = nil
-        statusMessage = ""
-        micOnlyRecording = false
 
         // Playback of an older meeting must not keep running under a new
         // recording — it also poisons the next auto-load (release-review rev-7).
         player.stop()
+        // Catch-up work yields to the meeting being recorded (D10).
+        pausePipeline()
 
-        let recordingSource = autoStartedFromMeeting ? "zoom" : "manual"
+        // Analytics dimension: how the recording began, not which app it was.
+        let recordingSource = autoStartedFromMeeting ? "auto" : "manual"
 
         do {
             try recorder.start()
             isRecording = true
-            // If Zoom meeting is active and user started manually, still auto-stop on hangup.
-            if zoomDetector.isInMeeting || zoomMeetingDetected {
-                recordingLinkedToZoom = true
+            // Call already in progress and the user started manually — still link it so
+            // hanging up stops the recording.
+            if meetingDetector.isInMeeting || meetingDetected {
+                recordingLinkedToCall = true
             }
             elapsedString = "00:00"
             elapsedSeconds = 0
@@ -387,7 +389,7 @@ class AppState: ObservableObject {
                 date: now,
                 duration: 0,
                 title: title,
-                status: "recording",
+                status: .recording,
                 transcript: nil
             )
             recordingStore.add(entry)
@@ -414,8 +416,7 @@ class AppState: ObservableObject {
             }
             autoStartedFromMeeting = false
         } catch {
-            statusMessage = "Ошибка записи: \(error.localizedDescription)"
-            recordingLinkedToZoom = false
+            recordingLinkedToCall = false
             autoStartedFromMeeting = false
         }
     }
@@ -424,7 +425,7 @@ class AppState: ObservableObject {
     /// no saved audio). Triggered by the "Don't record" notification action.
     func cancelRecording() {
         guard isRecording else { return }
-        ignoredZoomMeeting = true
+        ignoredDetectedCall = true
         Task { await cancelRecordingAndDiscard() }
     }
 
@@ -437,7 +438,7 @@ class AppState: ObservableObject {
         NoteOverlayController.shared.stopMonitoring()
         recorder.setMeteringDesired(false)
         isRecording = false
-        recordingLinkedToZoom = false
+        recordingLinkedToCall = false
         player.stop()
         let id = recorder.recordingID
         do {
@@ -449,7 +450,6 @@ class AppState: ObservableObject {
             recordingStore.remove(entry)
             if selectedRecordingID == id { selectedRecordingID = nil }
         }
-        statusMessage = ""
         Analytics.recordingCancelled()
         NotificationManager.shared.clearRecordingNotification()
     }
@@ -477,8 +477,8 @@ class AppState: ObservableObject {
         NoteOverlayController.shared.stopMonitoring()
         recorder.setMeteringDesired(false)
         isRecording = false
-        let wasZoomLinked = recordingLinkedToZoom
-        recordingLinkedToZoom = false
+        let wasLinkedToCall = recordingLinkedToCall
+        recordingLinkedToCall = false
         NotificationManager.shared.clearRecordingNotification()
         player.stop()
 
@@ -488,25 +488,23 @@ class AppState: ObservableObject {
             let micOnly = recorder.lastStopWasMicOnly
             recordingStore.update(
                 id: result.id,
-                status: "recorded",
+                status: .recorded,
                 duration: result.duration,
                 micOnlyCaptured: micOnly
             )
             selectedRecordingID = result.id
 
             // Keep for live detail of *this* stop; badge itself reads entry.micOnlyCaptured.
-            micOnlyRecording = micOnly
             Analytics.recordingFinished(duration: result.duration, micOnly: micOnly)
 
             if runPipeline {
-                let body = wasZoomLinked
-                    ? "Запись Zoom остановлена. Расшифровка…"
+                let body = wasLinkedToCall
+                    ? "Запись звонка остановлена. Расшифровка…"
                     : "Запись остановлена. Расшифровка…"
                 NotificationManager.shared.post(title: "Propeller", body: body)
-                await enqueueOrRunTranscribe(recordingID: result.id)
+                kickPipeline()
             }
         } catch {
-            statusMessage = "Ошибка остановки: \(error.localizedDescription)"
             NSLog("[AppState] stopRecording error: \(error)")
         }
     }
@@ -514,7 +512,7 @@ class AppState: ObservableObject {
     // MARK: - Display Timer
 
     /// Hard ceiling for a single recording (decision 2026-07-25). A meeting that
-    /// never gets a detected end (Zoom left open, detector wedged) would
+    /// never gets a detected end (conferencing app left open, detector wedged) would
     /// otherwise record until the disk fills. Stops through the normal path, so
     /// the recording is kept and the pipeline runs on it.
     static let maxRecordingSeconds: TimeInterval = 8 * 3600
@@ -528,7 +526,7 @@ class AppState: ObservableObject {
                 self.elapsedString = Self.formatElapsed(secs)
 
                 if secs >= Self.maxRecordingSeconds, self.isRecording {
-                    self.statusMessage = "Запись остановлена — достигнут предел 8 часов"
+                    NSLog("[AppState] 8h recording ceiling reached — stopping")
                     self.stopRecording()
                 }
             }
@@ -563,31 +561,16 @@ class AppState: ObservableObject {
         selectedRecordingID = entry.id
         transcript = entry.transcript ?? ""
         recordingDuration = entry.duration
-        micOnlyRecording = entry.micOnlyCaptured == true
 
-        // While another meeting owns the pipeline, keep global step lights for that
-        // job — per-row UI uses busyRecordingID (BUG-PIPE-02).
-        let pipelineOwnedElsewhere = busyRecordingID != nil && busyRecordingID != entry.id
-        if !pipelineOwnedElsewhere {
-            if entry.status == "transcribed_raw" {
-                transcribeStep = .pending
-            } else {
-                transcribeStep = entry.transcript != nil ? .done : .pending
-            }
-            saveStep = entry.status == "saved" ? .done : .pending
-            if let recapURL = Self.recapURL(for: entry), FileManager.default.fileExists(atPath: recapURL.path) {
-                recapStep = .done
-                lastRecapPath = recapURL.path
-                recapSkipHint = nil
-            } else {
-                recapStep = .pending
-                lastRecapPath = nil
-                recapSkipHint = nil
-            }
+        // Selecting a meeting no longer restores any pipeline lights: what is
+        // running is `activity`, what was achieved is `entry.status`. Neither
+        // depends on which row happens to be open (BUG-PIPE-02).
+        recapSkipHint = nil
+        if let recapURL = Self.recapURL(for: entry), FileManager.default.fileExists(atPath: recapURL.path) {
+            lastRecapPath = recapURL.path
+        } else {
+            lastRecapPath = nil
         }
-        statusMessage = entry.status == "transcribed_raw"
-            ? "Диаризация не завершена — нажмите «Завершить»"
-            : ""
     }
 
     static func recapURL(for entry: RecordingEntry) -> URL? {
@@ -597,21 +580,20 @@ class AppState: ObservableObject {
             .appendingPathComponent(filename)
     }
 
-    /// Resolve `*-recap.md` on disk (tolerates title rename after write).
+    /// Resolve `*-recap.md` on disk. The filename embeds a slug of the title, so
+    /// after a rename the expected name no longer exists — hence the fall back to
+    /// matching by recording id (`RecapFile`, shared with the reconciler).
+    ///
+    /// The only recap resolver in the app: there were four, all subtly different (D4).
     static func resolvedRecapURL(for entry: RecordingEntry) -> URL? {
         if let url = recapURL(for: entry), FileManager.default.fileExists(atPath: url.path) {
             return url
         }
         let dir = URL(fileURLWithPath: Preferences.shared.meetingsPath)
-        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
-            return nil
-        }
-        let prefix = entry.id + "-"
-        return files.first { file in
-            file.pathExtension == "md"
-                && file.lastPathComponent.hasPrefix(prefix)
-                && file.lastPathComponent.hasSuffix("-recap.md")
-        }
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: nil
+        ) else { return nil }
+        return files.first { RecapFile.isRecap($0.lastPathComponent, for: entry.id) }
     }
 
     static func loadRecapText(for entry: RecordingEntry) -> String? {
@@ -730,13 +712,11 @@ class AppState: ObservableObject {
         }
     }
 
-    /// Persist a user-visible pipeline error (detail panel + toast). Does not clear mid-run status.
+    /// Persist a user-visible pipeline error (detail panel + toast).
     func surfacePipelineError(_ message: String) {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         pipelineError = trimmed
-        statusMessage = trimmed
-        statusIsTransient = false
         NSLog("[AppState] pipelineError: \(trimmed)")
     }
 
@@ -760,11 +740,7 @@ class AppState: ObservableObject {
         NotificationManager.shared.post(title: "Propeller", body: "Заметка сохранена")
     }
 
-    // MARK: - Summary backfill (no-button path)
-
-    private var isBackfilling = false
-    /// Single coalesced, thermal/battery-aware backfill schedule (S5/A3).
-    private var backfillScheduler: NSBackgroundActivityScheduler?
+    // MARK: - Transcript markdown lookup
 
     /// Resolve the transcript markdown file for a recording (the title slug in the
     /// filename may be stale after a rename), or nil if it hasn't been saved yet.
@@ -773,159 +749,10 @@ class AppState: ObservableObject {
         let slug = MarkdownWriter.slugify(entry.title.isEmpty ? entry.id : entry.title)
         let expected = dir.appendingPathComponent("\(entry.id)-\(slug).md")
         if FileManager.default.fileExists(atPath: expected.path) { return expected }
-        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return nil }
-        let prefix = entry.id + "-"
-        return files.first { f in
-            f.pathExtension == "md"
-                && f.lastPathComponent.hasPrefix(prefix)
-                && !f.lastPathComponent.hasSuffix("-recap.md")
-        }
-    }
-
-    /// Silently generate summaries for recordings that have a transcript but no
-    /// summary yet. The user never asks — summaries just appear. Runs sequentially
-    /// in the background, yields to live recording/transcription, and quietly does
-    /// nothing if no LLM provider is available.
-    /// Generate any missing summaries. Returns false when it couldn't run yet
-    /// (busy, or no provider reachable) so the caller can retry later.
-    @discardableResult
-    func backfillMissingSummaries() async -> Bool {
-        // Never run the LLM while the user is in (or detected to be in) a call —
-        // loading the model is ~4–5 GB and would choke Zoom/Figma. Defer to when idle.
-        guard !isBackfilling, !isRecording, !isTranscribing, !zoomMeetingDetected else {
-            debugLog("[backfill] skip: busy (backfilling=\(isBackfilling) recording=\(isRecording) transcribing=\(isTranscribing) zoom=\(zoomMeetingDetected))")
-            return false
-        }
-        switch ProcessInfo.processInfo.thermalState {
-        case .serious, .critical:
-            debugLog("[backfill] skip: thermalState=\(ProcessInfo.processInfo.thermalState.rawValue)")
-            return false
-        default:
-            break
-        }
-
-        // Cheap candidate scan BEFORE any network probe (plan-optimization P5).
-        let candidates = recordingStore.recordings.filter { rec in
-            guard let text = rec.transcript, !text.isEmpty else { return false }
-            return !hasRecap(for: rec)
-        }
-        guard !candidates.isEmpty else {
-            debugLog("[backfill] skip: nothing to backfill")
-            return true
-        }
-
-        let prefs = RecapPreferences.fromShared()
-        let backend = await RecapService.shared.resolveBackend(
-            kind: prefs.provider, openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey
-        )
-        guard case .success(let backendName) = backend else {
-            debugLog("[backfill] skip: no provider (\(backend))")
-            return false
-        }
-        debugLog("[backfill] start via \(backendName), model=\(prefs.ollamaModel), \(candidates.count) candidates")
-
-        isBackfilling = true
-        defer {
-            isBackfilling = false
-            // Free VRAM after the batch — don't leave qwen resident for Zoom.
-            OllamaSidecar.shared.stopAfterIdle(30)
-        }
-
-        // Cap batch size so a long backlog doesn't cook the machine in one go.
-        for rec in candidates.prefix(2) {
-            if isRecording || isTranscribing || zoomMeetingDetected { break }
-            if ProcessInfo.processInfo.thermalState == .serious
-                || ProcessInfo.processInfo.thermalState == .critical { break }
-            guard let text = rec.transcript, !text.isEmpty else { continue }
-            // Re-check in case a concurrent save wrote the recap.
-            guard !hasRecap(for: rec) else { continue }
-
-            // Ensure a transcript markdown exists (recap is written next to it).
-            let mdPath: String
-            if let existing = transcriptMarkdownURL(for: rec) {
-                mdPath = existing.path
-            } else if let saved = try? MarkdownWriter.save(
-                title: rec.title, transcript: text, recordingID: rec.id,
-                duration: rec.duration,
-                speakers: MarkdownWriter.extractSpeakers(from: text), notes: rec.notes
-            ) {
-                recordingStore.update(id: rec.id, status: "saved")
-                mdPath = saved
-            } else {
-                debugLog("[backfill] \(rec.id): no transcript markdown, skip")
-                continue
-            }
-
-            debugLog("[backfill] \(rec.id): generating summary…")
-            await backfillOne(rec, transcriptPath: mdPath, prefs: prefs)
-        }
-        debugLog("[backfill] done")
-        return true
-    }
-
-    /// Kick (or coalesce into) the background summary backfill. Safe to call
-    /// repeatedly — one `NSBackgroundActivityScheduler` owns retries so
-    /// launch + post-recap don't stack Task.sleep loops (plan-optimization S5).
-    func startSummaryBackfill(delaySeconds: TimeInterval = 0) {
-        ensureBackfillScheduler()
-        Task {
-            if delaySeconds > 0 {
-                try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
-            }
-            _ = await backfillMissingSummaries()
-            // Runs second so it reuses the model the summaries just loaded.
-            await backfillMissingMetadata()
-        }
-    }
-
-    private func ensureBackfillScheduler() {
-        guard backfillScheduler == nil else { return }
-        let scheduler = NSBackgroundActivityScheduler(identifier: "app.propeller.summary-backfill")
-        scheduler.repeats = true
-        // Was 60s — too aggressive with a 7B local model. Give the machine room.
-        scheduler.interval = 180
-        scheduler.tolerance = 60
-        scheduler.qualityOfService = .utility
-        scheduler.schedule { [weak self] completion in
-            Task { @MainActor in
-                guard let self else {
-                    completion(.finished)
-                    return
-                }
-                let ran = await self.backfillMissingSummaries()
-                if ran { await self.backfillMissingMetadata() }
-                // Deferred when busy / no provider — system retries when freer.
-                completion(ran ? .finished : .deferred)
-            }
-        }
-        backfillScheduler = scheduler
-    }
-
-    private func backfillOne(_ rec: RecordingEntry, transcriptPath: String, prefs: RecapPreferences) async {
-        guard let md = try? String(contentsOfFile: transcriptPath, encoding: .utf8) else {
-            debugLog("[backfill] \(rec.id): couldn't read \(transcriptPath)")
-            return
-        }
-        let speakers = MarkdownWriter.extractSpeakers(from: rec.transcript ?? "")
-        do {
-            let result = try await RecapService.shared.generateRecap(
-                title: rec.title, transcriptMarkdown: md, transcriptPath: transcriptPath,
-                notes: rec.notes, speakers: speakers, duration: rec.duration,
-                recordingID: rec.id, prefs: prefs
-            )
-            guard case .success(let recap) = result else {
-                debugLog("[backfill] \(rec.id): skipped (\(result))")
-                return
-            }
-            debugLog("[backfill] \(rec.id): wrote \(recap.path)")
-            await generateMeetingMetadata(recordingID: rec.id, summary: recap.body)
-            if selectedRecordingID == rec.id {
-                lastRecapPath = recap.path
-                recapStep = .done
-            }
-        } catch {
-            debugLog("[backfill] \(rec.id): ERROR \(error.localizedDescription)")
-        }
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: nil
+        ) else { return nil }
+        return files.first { RecapFile.isTranscript($0.lastPathComponent, for: entry.id) }
     }
 
     /// Set transcription language for a specific recording. Pass nil to clear (use global default).
@@ -959,267 +786,266 @@ class AppState: ObservableObject {
     /// second Stop can queue (BUG-PIPE-01 / G1).
     private var isTranscribing = false
 
-    /// Queue a transcription if one is already running; otherwise start immediately.
-    private func enqueueOrRunTranscribe(recordingID: String) async {
-        if isTranscribing {
-            statusMessage = "В очереди на расшифровку…"
-            debugLog("[pipeline] queued \(recordingID) — ASR busy")
+    // MARK: - Worker
+
+    /// The single running pipeline loop, or nil when idle.
+    private var workerTask: Task<Void, Never>?
+
+    /// What the scheduler is allowed to do right now. These guards used to live
+    /// only inside the summary backfill, which is why ASR could still fire in
+    /// the middle of a call.
+    private var workerPolicy: WorkerPolicy {
+        let thermal = ProcessInfo.processInfo.thermalState
+        return WorkerPolicy(
+            isRecording: isRecording,
+            inCall: meetingDetected,
+            isThermallyStressed: thermal == .serious || thermal == .critical
+        )
+    }
+
+    /// Ask the worker to look for work. Safe to call from anywhere, any number
+    /// of times — a loop is already running or one gets started, never two.
+    func kickPipeline() {
+        guard workerTask == nil else { return }
+        workerTask = Task { [weak self] in
+            await self?.runPipelineLoop()
+            await MainActor.run { self?.workerTask = nil }
+        }
+    }
+
+    /// Stop after the current phase. Called when the policy closes — a call
+    /// starting mid-summary should not keep Ollama on the GPU for its duration.
+    func pausePipeline() {
+        workerTask?.cancel()
+    }
+
+    /// Throw away work in flight and start over. Used when an edit invalidates
+    /// what is being generated right now: a second edit while the first summary
+    /// is still running must supersede it, not queue behind it.
+    func restartPipeline() {
+        guard let running = workerTask else {
+            kickPipeline()
             return
         }
-        await runTranscribe(recordingID: recordingID)
-    }
-
-    /// Advance the oldest `recorded` / `transcribed_raw` meeting one step.
-    /// Called after bootstrap and after each pipeline completion (G2 / BUG-PIPE-05).
-    func reconcilePendingPipeline() async {
-        guard !isReconcilingPipeline else { return }
-        guard !isRecording, !isTranscribing else { return }
-        isReconcilingPipeline = true
-        defer { isReconcilingPipeline = false }
-
-        let pending = recordingStore.recordings
-            .filter { $0.status == "recorded" || $0.status == "transcribed_raw" }
-            .sorted { $0.date < $1.date }
-        guard let next = pending.first else { return }
-
-        debugLog("[pipeline] reconcile → \(next.id) status=\(next.status)")
-        if next.status == "transcribed_raw" {
-            await completeDiarization(recordingID: next.id)
-        } else {
-            await runTranscribe(recordingID: next.id)
+        running.cancel()
+        Task { [weak self] in
+            _ = await running.value      // clears `workerTask` on the way out
+            self?.kickPipeline()
         }
     }
 
+    /// Drains the queue one phase at a time. The loop's rules live in
+    /// `PipelineDrain` so they can be tested without an ASR sidecar or an LLM;
+    /// this supplies the three things only the app knows.
+    private func runPipelineLoop() async {
+        let stop = await PipelineDrain.run(
+            nextJob: { [weak self] in
+                guard let self else { return nil }
+                return PropellerPure.nextJob(
+                    from: self.recordingStore.recordings,
+                    policy: self.workerPolicy
+                )
+            },
+            perform: { [weak self] job in
+                guard let self else { return .blocked }
+                debugLog("[pipeline] → \(job.recordingID) \(job.phase)")
+                return await self.run(job)
+            }
+        )
+        switch stop {
+        case .finished:
+            break
+        case .blocked(let job):
+            debugLog("[pipeline] blocked on \(job.phase) — waiting for a kick")
+        case .cancelled:
+            debugLog("[pipeline] paused: \(workerPolicy)")
+        case .stalled(let job):
+            // A phase claimed progress and made none. Loud, because the loop
+            // would otherwise ask for this same job forever.
+            checkInvariant("i11.no-stall", false)
+            NSLog("[AppState] pipeline stalled on \(job.recordingID) \(job.phase)")
+        }
+    }
+
+    /// Runs exactly one phase. Phases never call each other — the loop decides
+    /// what comes next, from the stage on disk.
+    private func run(_ job: PipelineJob) async -> PhaseOutcome {
+        switch job.phase {
+        case .transcribing:
+            await runTranscribe(recordingID: job.recordingID)
+        case .diarizing:
+            await completeDiarization(recordingID: job.recordingID)
+        case .saving:
+            guard let rec = recordingStore.recording(for: job.recordingID),
+                  let text = rec.transcript, !text.isEmpty else {
+                recordFailure(job.recordingID, phase: .saving, message: "Нет транскрипта для сохранения")
+                return .advanced
+            }
+            await runSave(recordingID: rec.id, transcriptText: text, duration: rec.duration)
+        case .summarizing:
+            return await runSummarize(recordingID: job.recordingID)
+        }
+        return .advanced
+    }
+
+    /// Summary phase entry point: resolves the transcript markdown the recap is
+    /// written next to, then runs the one recap path there is.
+    private func runSummarize(recordingID: String) async -> PhaseOutcome {
+        guard let rec = recordingStore.recording(for: recordingID) else { return .advanced }
+        guard let mdURL = transcriptMarkdownURL(for: rec) else {
+            recordFailure(recordingID, phase: .summarizing, message: "Транскрипт не найден на диске")
+            return .advanced
+        }
+        return await runRecap(
+            title: rec.title,
+            transcriptPath: mdURL.path,
+            speakers: MarkdownWriter.extractSpeakers(from: rec.transcript ?? ""),
+            notes: rec.notes,
+            recordingID: recordingID,
+            duration: rec.duration
+        )
+    }
+
+    /// ASR + diarization. Both phases live here because they share everything
+    /// except where they start: `.transcribing` runs the full pass, `.diarizing`
+    /// resumes from the checkpoint a crash left behind. Keeping them apart meant
+    /// ~90 duplicated lines of orchestration (D6).
     func runTranscribe(recordingID explicitID: String? = nil) async {
+        await runASR(recordingID: explicitID, phase: .transcribing)
+    }
+
+    /// Resume diarization for a recording that finished ASR but crashed before
+    /// speakers were assigned — the expensive pass is not repeated.
+    func completeDiarization(recordingID explicitID: String? = nil) async {
+        await runASR(recordingID: explicitID, phase: .diarizing)
+    }
+
+    private func runASR(recordingID explicitID: String?, phase: PipelineActivity.Phase) async {
         if isTranscribing {
-            let msg = explicitID != nil
-                ? "В очереди на расшифровку…"
-                : "Расшифровка уже идёт"
-            statusMessage = msg
-            surfacePipelineError(msg)
+            // Only the user-facing path complains; the worker just moves on.
+            if phase == .transcribing {
+                surfacePipelineError(explicitID != nil ? "В очереди на расшифровку…" : "Расшифровка уже идёт")
+            }
             return
         }
-        let rec: RecordingEntry?
-        if let explicitID {
-            rec = recordingStore.recording(for: explicitID)
-        } else {
-            rec = selectedRecording
-        }
-        guard let rec else {
-            surfacePipelineError("Запись не выбрана")
+        guard let rec = explicitID.flatMap({ recordingStore.recording(for: $0) }) ?? selectedRecording else {
+            if phase == .transcribing { surfacePipelineError("Запись не выбрана") }
             return
         }
         let recordingID = rec.id
-        let language = rec.language
         let durationAtStart = rec.duration
         guard let audioURL = recordingStore.audioURL(for: rec) else {
-            surfacePipelineError("Аудиофайл не найден — нельзя расшифровать.")
+            let msg = "Аудиофайл не найден — нельзя расшифровать."
+            surfacePipelineError(msg)
+            recordFailure(recordingID, phase: phase, message: msg)
             return
         }
 
-        let ok = await checkDiskSpaceForModelDownload()
-        guard ok else {
-            surfacePipelineError("Расшифровка отменена — мало места на диске.")
-            return
+        // Only a full pass can need the ASR model on disk.
+        if phase == .transcribing {
+            guard await checkDiskSpaceForModelDownload() else {
+                surfacePipelineError("Расшифровка отменена — мало места на диске.")
+                return
+            }
+        }
+
+        // Resuming needs the checkpoint the earlier pass wrote.
+        var checkpoint: [ASRSegment]?
+        if phase == .diarizing {
+            guard let json = rec.rawSegmentsJSON,
+                  let data = json.data(using: .utf8),
+                  let decoded = try? JSONDecoder().decode([ASRSegment].self, from: data) else {
+                recordFailure(recordingID, phase: phase, message: "Сегменты не найдены — запустите расшифровку заново")
+                return
+            }
+            checkpoint = decoded
         }
 
         pipelineError = nil
         isTranscribing = true
-        beginPipelineWork(recordingID)
-
-        transcribeStep = .running
-        setTransientStatus("Загрузка моделей…")
+        beginPipelineWork(recordingID, phase: phase)
+        setActivityDetail(phase == .transcribing ? "Загрузка моделей…" : "Определяем спикеров…")
         modelDownloadProgress = nil
-        recordingStore.update(id: recordingID, status: "transcribing")
+        recordingStore.update(id: recordingID, status: .transcribing)
 
-        var saveAfterASR: (transcript: String, duration: TimeInterval)?
+        let progressCb: (String) -> Void = { [weak self] progress in
+            Task { @MainActor in self?.setActivityDetail(progress) }
+        }
 
         do {
-            let progressCb: (String) -> Void = { [weak self] progress in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.statusMessage = progress
+            let asrSegments: [ASRSegment]
+            if let checkpoint {
+                asrSegments = checkpoint
+            } else {
+                let downloadCb: (Double) -> Void = { [weak self] fraction in
+                    Task { @MainActor in
+                        self?.modelDownloadProgress = fraction >= 1.0 ? nil : fraction
+                    }
                 }
+                let raw = try await transcriptionService.transcribeAudio(
+                    audioURL: audioURL,
+                    languageOverride: rec.language,
+                    progressCallback: progressCb,
+                    downloadProgress: downloadCb
+                )
+                // Checkpoint before diarization: this is the line that saves an
+                // hour of GPU if the next step dies (I4).
+                recordingStore.update(
+                    id: recordingID,
+                    transcript: raw.rawText,
+                    status: .transcribedRaw,
+                    rawSegmentsJSON: .some(Self.encodeASRSegments(raw.segments))
+                )
+                modelDownloadProgress = nil
+                asrSegments = raw.segments
             }
-            let downloadCb: (Double) -> Void = { [weak self] fraction in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.modelDownloadProgress = fraction >= 1.0 ? nil : fraction
-                }
-            }
-
-            let rawResult = try await transcriptionService.transcribeAudio(
-                audioURL: audioURL,
-                languageOverride: language,
-                progressCallback: progressCb,
-                downloadProgress: downloadCb
-            )
-
-            let rawText = rawResult.rawText
-            let segmentsJSON: String? = {
-                let encoder = JSONEncoder()
-                guard let data = try? encoder.encode(rawResult.segments) else { return nil }
-                return String(data: data, encoding: .utf8)
-            }()
-            recordingStore.update(
-                id: recordingID,
-                transcript: rawText,
-                status: "transcribed_raw",
-                rawSegmentsJSON: .some(segmentsJSON)
-            )
-
-            modelDownloadProgress = nil
 
             let result = try await transcriptionService.diarize(
                 audioURL: audioURL,
-                asrSegments: rawResult.segments,
+                asrSegments: asrSegments,
                 progressCallback: progressCb
             )
-
-            let segJSON = encodePersistedSegments(result.mergedSegments)
             recordingStore.update(
                 id: recordingID,
                 transcript: result.transcript,
-                status: "transcribed",
+                status: .transcribed,
                 rawSegmentsJSON: .some(nil),
-                mergedSegmentsJSON: .some(segJSON)
+                mergedSegmentsJSON: .some(encodePersistedSegments(result.mergedSegments))
             )
-
-            transcribeStep = .done
-            if selectedRecordingID == recordingID {
-                transcript = result.transcript
-                statusMessage = ""
-            }
-            Analytics.transcriptionFinished(ok: true)
-
-            let duration = recordingStore.recording(for: recordingID)?.duration ?? durationAtStart
-            saveAfterASR = (result.transcript, duration)
+            if selectedRecordingID == recordingID { transcript = result.transcript }
+            Analytics.transcriptionFinished(
+                ok: true,
+                reason: phase == .diarizing ? "diarize_resume" : nil
+            )
+            _ = durationAtStart
         } catch {
-            transcribeStep = .failed
             modelDownloadProgress = nil
             let msg = error.localizedDescription
-            Analytics.transcriptionFinished(ok: false, reason: "error")
+            Analytics.transcriptionFinished(ok: false, reason: phase == .diarizing ? "diarize" : "error")
             if selectedRecordingID == recordingID {
                 surfacePipelineError(msg)
             } else {
-                // Keep error for when they open this meeting later.
+                // Keep it for when they open this meeting later.
                 pipelineError = msg
-                NSLog("[AppState] Transcription FAILED (background): \(error)")
             }
-            if let current = recordingStore.recording(for: recordingID), current.status == "transcribed_raw" {
-                // Keep checkpoint
-            } else {
-                recordingStore.update(id: recordingID, status: "recorded")
+            // Never fall below the checkpoint (I4).
+            let current = recordingStore.recording(for: recordingID)?.status
+            if current != .transcribedRaw {
+                recordingStore.update(id: recordingID, status: phase == .diarizing ? .transcribedRaw : .recorded)
             }
-            NSLog("[AppState] Transcription FAILED: \(error)")
+            recordFailure(recordingID, phase: phase, message: msg)
+            NSLog("[AppState] \(phase) FAILED: \(error)")
         }
 
-        // Release ASR lock before save/recap so a second Stop can start ASR.
         isTranscribing = false
         endPipelineWork(recordingID)
         transcriptionService.releaseHeavyResources()
-
-        if let saveAfterASR {
-            await runSave(
-                recordingID: recordingID,
-                transcriptText: saveAfterASR.transcript,
-                duration: saveAfterASR.duration
-            )
-        } else {
-            await reconcilePendingPipeline()
-        }
+        kickPipeline()
     }
 
-    /// Resume diarization for a recording that completed ASR but crashed before
-    /// diarization finished. Deserializes the stored segments and runs only Phase 2.
-    func completeDiarization(recordingID explicitID: String? = nil) async {
-        if isTranscribing {
-            statusMessage = "Расшифровка уже идёт"
-            return
-        }
-        let rec: RecordingEntry?
-        if let explicitID {
-            rec = recordingStore.recording(for: explicitID)
-        } else {
-            rec = selectedRecording
-        }
-        guard let rec else { return }
-        let recordingID = rec.id
-        let durationAtStart = rec.duration
-        guard let audioURL = recordingStore.audioURL(for: rec) else {
-            statusMessage = "Аудио не найдено — нельзя завершить диаризацию"
-            return
-        }
-        guard let json = rec.rawSegmentsJSON,
-              let data = json.data(using: .utf8),
-              let segments = try? JSONDecoder().decode([ASRSegment].self, from: data) else {
-            statusMessage = "Сегменты не найдены — запустите расшифровку заново"
-            return
-        }
-
-        isTranscribing = true
-        beginPipelineWork(recordingID)
-
-        transcribeStep = .running
-        setTransientStatus("Определяем спикеров…")
-        recordingStore.update(id: recordingID, status: "transcribing")
-
-        var saveAfter: (transcript: String, duration: TimeInterval)?
-
-        do {
-            let result = try await transcriptionService.diarize(
-                audioURL: audioURL,
-                asrSegments: segments,
-                progressCallback: { [weak self] progress in
-                    Task { @MainActor in
-                        self?.statusMessage = progress
-                    }
-                }
-            )
-
-            let segJSON = encodePersistedSegments(result.mergedSegments)
-            recordingStore.update(
-                id: recordingID,
-                transcript: result.transcript,
-                status: "transcribed",
-                rawSegmentsJSON: .some(nil),
-                mergedSegmentsJSON: .some(segJSON)
-            )
-
-            transcribeStep = .done
-            if selectedRecordingID == recordingID {
-                transcript = result.transcript
-                statusMessage = ""
-            }
-            Analytics.transcriptionFinished(ok: true, reason: "diarize_resume")
-
-            let duration = recordingStore.recording(for: recordingID)?.duration ?? durationAtStart
-            saveAfter = (result.transcript, duration)
-        } catch {
-            transcribeStep = .failed
-            Analytics.transcriptionFinished(ok: false, reason: "diarize")
-            if selectedRecordingID == recordingID {
-                surfacePipelineError(error.localizedDescription)
-            } else {
-                pipelineError = error.localizedDescription
-            }
-            recordingStore.update(id: recordingID, status: "transcribed_raw")
-            NSLog("[AppState] Diarization FAILED: \(error)")
-        }
-
-        isTranscribing = false
-        endPipelineWork(recordingID)
-        transcriptionService.releaseHeavyResources()
-
-        if let saveAfter {
-            await runSave(
-                recordingID: recordingID,
-                transcriptText: saveAfter.transcript,
-                duration: saveAfter.duration
-            )
-        } else {
-            await reconcilePendingPipeline()
-        }
+    private static func encodeASRSegments(_ segments: [ASRSegment]) -> String? {
+        guard let data = try? JSONEncoder().encode(segments) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 
     func runSave(
@@ -1228,10 +1054,8 @@ class AppState: ObservableObject {
         duration: TimeInterval
     ) async {
         guard let rec = recordingStore.recording(for: recordingID) else { return }
-        beginPipelineWork(recordingID)
+        beginPipelineWork(recordingID, phase: .saving)
         defer { endPipelineWork(recordingID) }
-        saveStep = .running
-        recapStep = .pending
         if selectedRecordingID == recordingID {
             recapSkipHint = nil
         }
@@ -1246,24 +1070,17 @@ class AppState: ObservableObject {
                 speakers: speakers,
                 notes: rec.notes
             )
-            recordingStore.update(id: recordingID, status: "saved")
-            saveStep = .done
+            advanceStage(recordingID, to: .saved)
             NotificationManager.shared.post(title: "Propeller", body: "Сохранено: \(URL(fileURLWithPath: path).lastPathComponent)")
-            await runRecap(
-                title: rec.title,
-                transcriptPath: path,
-                speakers: speakers,
-                notes: rec.notes,
-                recordingID: recordingID,
-                duration: duration
-            )
+            kickPipeline()
         } catch {
-            saveStep = .failed
+            recordFailure(recordingID, phase: .saving, message: error.localizedDescription)
             surfacePipelineError(error.localizedDescription)
         }
     }
 
     /// Generate LLM recap next to the saved transcript. Skips quietly when no provider is configured.
+    @discardableResult
     func runRecap(
         title: String,
         transcriptPath: String,
@@ -1271,11 +1088,10 @@ class AppState: ObservableObject {
         notes: String?,
         recordingID: String,
         duration: TimeInterval
-    ) async {
-        beginPipelineWork(recordingID)
+    ) async -> PhaseOutcome {
+        beginPipelineWork(recordingID, phase: .summarizing)
         defer { endPipelineWork(recordingID) }
-        recapStep = .running
-        setTransientStatus("Генерируем саммари…")
+        setActivityDetail("Генерируем саммари…")
         if selectedRecordingID == recordingID {
             lastRecapPath = nil
         }
@@ -1284,16 +1100,22 @@ class AppState: ObservableObject {
         do {
             md = try String(contentsOfFile: transcriptPath, encoding: .utf8)
         } catch {
-            recapStep = .failed
             Analytics.recapFinished(ok: false, skip: "read_error")
+            recordFailure(recordingID, phase: .summarizing, message: "Не удалось прочитать транскрипт")
             if selectedRecordingID == recordingID {
-                statusMessage = "Не удалось прочитать транскрипт для саммари"
             }
-            return
+            return .advanced
         }
 
+        // Assume progress; the no-provider branch downgrades this.
+        var outcome = PhaseOutcome.advanced
+        // A summary appearing for the first time is news — the window comes
+        // forward and a notification is posted. Regenerating one after an edit
+        // is not: it happens quietly, wherever the user happens to be.
+        let isFirstSummary = recordingStore.recording(for: recordingID)
+            .map { !hasRecap(for: $0) } ?? true
         do {
-            let result = try await RecapService.shared.generateRecap(
+            let result = try await recapBackend.generateRecap(
                 title: title,
                 transcriptMarkdown: md,
                 transcriptPath: transcriptPath,
@@ -1305,7 +1127,6 @@ class AppState: ObservableObject {
             )
             switch result {
             case .failure(let reason):
-                recapStep = .pending
                 let skip: String
                 switch reason {
                 case .disabled: skip = "disabled"
@@ -1313,11 +1134,16 @@ class AppState: ObservableObject {
                 case .emptyTranscript: skip = "empty"
                 }
                 Analytics.recapFinished(ok: false, skip: skip)
+                // Not this meeting's fault: retrying it, or moving to the next
+                // one, would fail identically until a provider shows up.
+                if reason != .emptyTranscript { outcome = .blocked }
+                if reason == .emptyTranscript {
+                    recordFailure(recordingID, phase: .summarizing, message: "Пустой транскрипт")
+                }
                 if selectedRecordingID == recordingID {
                     switch reason {
                     case .disabled:
                         recapSkipHint = nil
-                        statusMessage = ""
                         surfaceMeetingUI(preferSummaryTab: false)
                     case .noProvider:
                         recapSkipHint = "Нет провайдера саммари — запустите Ollama или добавьте API-ключ в Настройках"
@@ -1333,24 +1159,31 @@ class AppState: ObservableObject {
                     surfaceMeetingUI(preferSummaryTab: false)
                 }
             case .success(let recap):
-                recapStep = .done
                 Analytics.recapFinished(ok: true, backend: recap.provider)
                 if selectedRecordingID == recordingID {
                     lastRecapPath = recap.path
                     recapSkipHint = nil
-                    statusMessage = "Саммари через \(recap.provider)"
-                    statusIsTransient = false
                 }
-                surfaceSummaryUI(for: recordingID)
-                NotificationManager.shared.post(
-                    title: "Propeller",
-                    body: "Саммари готово — в карточке встречи."
-                )
+                if isFirstSummary {
+                    surfaceSummaryUI(for: recordingID)
+                    NotificationManager.shared.post(
+                        title: "Propeller",
+                        body: "Саммари готово — в карточке встречи."
+                    )
+                }
                 await generateMeetingMetadata(recordingID: recordingID, summary: recap.body)
+                // Recap + metadata are both in — this is what `.summarized`
+                // means, and it is what takes the meeting out of the queue.
+                advanceStage(recordingID, to: .summarized)
                 OllamaSidecar.shared.stopAfterIdle(30)
             }
+        } catch is CancellationError {
+            // Superseded by a newer edit: leave the stage and the entry alone so
+            // the restarted loop picks it straight back up.
+            debugLog("[pipeline] recap cancelled for \(recordingID)")
+            return .advanced
         } catch {
-            recapStep = .failed
+            recordFailure(recordingID, phase: .summarizing, message: error.localizedDescription)
             Analytics.recapFinished(ok: false)
             // "model ... not found" means the pull never finished — flip the flag
             // so the panel offers «Скачать» instead of a retry that cannot work.
@@ -1362,103 +1195,66 @@ class AppState: ObservableObject {
                 recapSkipHint = error.localizedDescription
             }
         }
-
-        startSummaryBackfill(delaySeconds: 60)
-        await reconcilePendingPipeline()
+        return outcome
     }
 
     /// Nesting depth for begin/end around transcribe → save → recap.
     private var pipelineWorkDepth = 0
-    /// True while `statusMessage` holds a "работаем…" line rather than a result.
-    /// Progress lines were being set unconditionally but cleared only when the
-    /// finished recording happened to be the selected one, so finishing a recap
-    /// from the meetings list left "Генерируем саммари…" in the top bar forever.
-    private var statusIsTransient = false
-
-    /// Set an in-progress status. Cleared centrally by `endPipelineWork` so no
-    /// individual exit path can forget it.
-    private func setTransientStatus(_ message: String) {
-        statusMessage = message
-        statusIsTransient = true
+    /// Attach a sidecar progress line to the running phase. No-op when idle —
+    /// which is what makes a stale progress line unrepresentable (I1).
+    private func setActivityDetail(_ detail: String) {
+        guard case .working(let id, let phase, _) = activity else { return }
+        activity = .working(recordingID: id, phase: phase, detail: detail)
     }
 
-    private func beginPipelineWork(_ recordingID: String) {
+    private func beginPipelineWork(_ recordingID: String, phase: PipelineActivity.Phase) {
         pipelineWorkDepth += 1
-        busyRecordingID = recordingID
+        activity = .working(recordingID: recordingID, phase: phase, detail: nil)
+        // A new attempt is starting, so the previous failure is history. The
+        // worker never reaches here for a blocked recording, so this only ever
+        // fires on an explicit retry.
+        if recordingStore.recording(for: recordingID)?.lastFailure != nil {
+            clearFailure(recordingID)
+        }
     }
 
     private func endPipelineWork(_ recordingID: String) {
         pipelineWorkDepth = max(0, pipelineWorkDepth - 1)
         if pipelineWorkDepth == 0 {
-            busyRecordingID = nil
+            activity = .idle
             // Nothing is running any more — a progress line here would be a lie.
-            // Results and errors are not transient and survive.
-            if statusIsTransient {
-                statusMessage = ""
-                statusIsTransient = false
-            }
-        } else if busyRecordingID == nil {
-            busyRecordingID = recordingID
         }
+        // I1: nothing running ⇒ nothing claiming to run.
+        checkInvariant("i1.idle-after-work", pipelineWorkDepth > 0 || activity.isIdle)
     }
 
-    /// Re-run metadata over meetings that already have a recap but no topics/tags
-    /// (or are still stuck on the default title). Catches up 1.11 recordings,
-    /// which only ran the pass for auto-titled meetings.
-    ///
-    /// Same guards as the summary backfill: never during a call, never on a hot
-    /// machine, and capped per pass so a long backlog can't cook the Mac.
-    private func backfillMissingMetadata() async {
-        guard !isRecording, !isTranscribing, !zoomMeetingDetected else { return }
-        switch ProcessInfo.processInfo.thermalState {
-        case .serious, .critical:
-            debugLog("[metadata-backfill] skip: thermal")
-            return
-        default:
-            break
-        }
-
-        let candidates = recordingStore.recordings.filter { rec in
-            needsMetadata(rec) && hasRecap(for: rec)
-        }
-        guard !candidates.isEmpty else { return }
-        debugLog("[metadata-backfill] \(candidates.count) candidates")
-
-        var did = false
-        for rec in candidates.prefix(2) {
-            if isRecording || isTranscribing || zoomMeetingDetected { break }
-            if ProcessInfo.processInfo.thermalState == .serious
-                || ProcessInfo.processInfo.thermalState == .critical { break }
-            let preferred = AppState.recapURL(for: rec)
-            let url: URL? = {
-                if let preferred, FileManager.default.fileExists(atPath: preferred.path) {
-                    return preferred
-                }
-                return Self.findRecapURL(for: rec)
-            }()
-            guard let url,
-                  let body = try? String(contentsOf: url, encoding: .utf8),
-                  !body.isEmpty else { continue }
-            await generateMeetingMetadata(recordingID: rec.id, summary: body)
-            did = true
-        }
-        if did {
-            // Push the idle-stop back so the batch above doesn't get its server
-            // killed mid-flight by a timer armed during the summary backfill.
-            OllamaSidecar.shared.stopAfterIdle(30)
-        }
-        debugLog("[metadata-backfill] done")
+    /// Trips the debugger locally, and reports from release builds — an
+    /// invariant only checked on the author's machine tells you nothing about
+    /// the five colleagues actually using the app.
+    private func checkInvariant(_ name: String, _ holds: Bool) {
+        guard !holds else { return }
+        assertionFailure("invariant \(name) violated")
+        NSLog("[AppState] INVARIANT \(name) violated")
+        Analytics.signal("Invariant.\(name)")
     }
 
-    private static func findRecapURL(for entry: RecordingEntry) -> URL? {
-        let dir = URL(fileURLWithPath: Preferences.shared.meetingsPath)
-        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
-            return nil
-        }
-        let prefix = entry.id + "-"
-        return files.first {
-            $0.lastPathComponent.hasPrefix(prefix) && $0.lastPathComponent.hasSuffix("-recap.md")
-        }
+    /// Record a failure on the recording it happened to. Persisted, so it
+    /// outlives other work and a relaunch — and takes the recording out of the
+    /// queue until the user retries (I7).
+    private func recordFailure(
+        _ recordingID: String,
+        phase: PipelineActivity.Phase,
+        message: String
+    ) {
+        recordingStore.update(
+            id: recordingID,
+            lastFailure: .some(PipelineFailure(phase: phase, message: message))
+        )
+    }
+
+    /// Clear the block so the worker can pick this recording up again.
+    func clearFailure(_ recordingID: String) {
+        recordingStore.update(id: recordingID, lastFailure: .some(nil))
     }
 
     /// Derive title / topics / tags from the finished summary and persist them.
@@ -1476,14 +1272,14 @@ class AppState: ObservableObject {
         // at all. The pass runs on the short summary, not the transcript, and
         // `keep_alive` + a single shared num_ctx keep the model resident from the
         // recap call — so it costs one short prompt, not a second cold load.
-        let meta = await RecapService.shared.generateMetadata(
+        let meta = await recapBackend.generateMetadata(
             summaryMarkdown: summary,
             needTitle: needTitle,
             prefs: RecapPreferences.fromShared()
         )
         guard let meta else { return }
         // Always written, even when empty: `topics == nil` is the marker for
-        // "metadata never ran" that the backfill scans for.
+        // "metadata never ran" that reconciliation reads.
         recordingStore.update(id: recordingID, topics: meta.topics, tags: meta.tags)
         if needTitle, let newTitle = meta.title, !newTitle.isEmpty {
             recordingStore.update(id: recordingID, title: newTitle)
@@ -1495,7 +1291,7 @@ class AppState: ObservableObject {
     /// (which writes neither) retries next cycle, while a successful pass never
     /// does. Deliberately *not* keyed on the title still looking auto-generated:
     /// the model is allowed to return `title: null`, and that must not turn into
-    /// a meeting the backfill re-runs forever.
+    /// a meeting the pipeline re-runs forever.
     private func needsMetadata(_ rec: RecordingEntry) -> Bool {
         rec.topics == nil
     }
@@ -1511,16 +1307,17 @@ class AppState: ObservableObject {
             return
         }
         pipelineError = nil
-        // Headphones / Zoom: FluidAudio often collapses everyone into the owner.
+        clearFailure(id)
+        // Headphones on a call: FluidAudio often collapses everyone into the owner.
         // If we already have segments + mic/sys stems, re-split by energy — no ASR.
         if recordingStore.recording(for: id)?.mergedSegmentsJSON != nil {
-            setTransientStatus("Уточняем спикеров…")
-            if await repairSpeakerAttribution(recordingID: id) {
-                return
-            }
+            // Relabelling *is* diarization, so it reports as that phase rather
+            // than through a separate status line nobody else can clear.
+            beginPipelineWork(id, phase: .diarizing)
+            let repaired = await repairSpeakerAttribution(recordingID: id)
+            endPipelineWork(id)
+            if repaired { return }
         }
-        setTransientStatus("Запуск расшифровки…")
-        saveStep = .pending
         await runTranscribe(recordingID: id)
     }
 
@@ -1549,7 +1346,6 @@ class AppState: ObservableObject {
         if selectedRecordingID == recordingID {
             transcript = newTranscript
         }
-        markDirty()
         // Rewrite markdown only — don't kick another qwen pass just for speaker labels.
         let speakers = MarkdownWriter.extractSpeakers(from: newTranscript)
         _ = try? MarkdownWriter.save(
@@ -1563,14 +1359,13 @@ class AppState: ObservableObject {
         let msg = before == after
             ? "Спикеры без изменений"
             : "Спикеры: \(after.sorted().joined(separator: ", "))"
-        statusMessage = msg
         debugLog("[AppState] stem speaker repair \(recordingID): \(before) → \(after)")
         return true
     }
 
     /// Download Ollama binary (if needed), start serve, pull the recap model.
     /// Progress → `ollamaSetupProgress` / `ollamaSetupMessage` (onboarding + status bar).
-    /// On success, kicks summary backfill so meetings recorded meanwhile get recaps.
+    /// On success, kicks the pipeline so meetings recorded meanwhile get recaps.
     @discardableResult
     func downloadOllamaRuntime() async -> Bool {
         let okDisk = await checkDiskSpaceForModelDownload(.recap)
@@ -1605,9 +1400,9 @@ class AppState: ObservableObject {
             // would leave `ollama serve` resident for the whole session
             // (backfill's own idle-stop is skipped when it has no candidates).
             OllamaSidecar.shared.stopAfterIdle(30)
-            // Don't slam the GPU with backfill the second the model lands —
-            // user may still be mid-call / mid-onboarding.
-            startSummaryBackfill(delaySeconds: 120)
+            // A provider just appeared, which is exactly the condition that
+            // parks the loop — everything waiting on a summary can go now.
+            kickPipeline()
             return true
         } catch {
             ollamaSetupProgress = nil
@@ -1690,7 +1485,8 @@ class AppState: ObservableObject {
             transcript: newTranscript,
             mergedSegmentsJSON: .some(segJSON)
         )
-        markDirty()
+        // Only speaker labels changed, so `runSave` rewrites the markdown and
+        // the stage stays where it was — same reasoning as the stem relabel.
         await runSave(
             recordingID: rec.id,
             transcriptText: newTranscript,
@@ -1711,18 +1507,34 @@ class AppState: ObservableObject {
         return ordered
     }
 
-    /// Drop the per-segment snapshot. Called from RecordingDetailView when the
-    /// user manually edits the transcript text — segment timings can no longer
-    /// be trusted to match the new text, so we hide the reassignment UI.
-    func invalidateSegmentSnapshot(for recordingID: String) {
-        recordingStore.update(id: recordingID, mergedSegmentsJSON: .some(nil))
-    }
-
     // MARK: - Dirty Tracking
 
-    /// Reset saveStep to .pending when the user modifies content after a save.
+    /// Move a recording forward to the stage a finished phase reached. Never
+    /// backwards — see `RecordingStage.advanced(to:)`.
+    private func advanceStage(_ recordingID: String, to reached: RecordingStage) {
+        guard let current = recordingStore.recording(for: recordingID)?.status else { return }
+        let next = current.advanced(to: reached)
+        guard next != current else { return }
+        recordingStore.update(id: recordingID, status: next)
+    }
+
+    /// Title or notes changed. Both appear in the transcript markdown, so the
+    /// file is rewritten — but the summary is built from the transcript text,
+    /// which did not change, so it is deliberately left alone. Renaming a
+    /// meeting must not cost minutes of GPU.
     func markDirty() {
-        if saveStep == .done { saveStep = .pending }
+        guard let id = selectedRecordingID,
+              let rec = recordingStore.recording(for: id),
+              let text = rec.transcript, !text.isEmpty,
+              rec.status >= .saved else { return }
+        _ = try? MarkdownWriter.save(
+            title: rec.title,
+            transcript: text,
+            recordingID: id,
+            duration: rec.duration,
+            speakers: MarkdownWriter.extractSpeakers(from: text),
+            notes: rec.notes
+        )
     }
 
     /// Update notes for the selected recording with debounced persistence.

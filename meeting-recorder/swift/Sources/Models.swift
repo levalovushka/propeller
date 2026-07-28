@@ -1,20 +1,6 @@
 import Foundation
+import PropellerPure
 import SwiftUI
-
-// MARK: - Pipeline Step
-
-enum PipelineStep: String {
-    case pending, running, done, failed
-
-    var color: Color {
-        switch self {
-        case .pending: return .secondary
-        case .running: return .blue
-        case .done: return .green
-        case .failed: return .red
-        }
-    }
-}
 
 // MARK: - Recording Entry (persisted to recordings.json)
 
@@ -24,8 +10,9 @@ struct RecordingEntry: Identifiable, Codable {
     let date: Date
     var duration: Double      // seconds (preserved even after audio deletion)
     var title: String
-    /// Status chain: recording → recorded → transcribing → transcribed_raw → transcribed → saved
-    var status: String
+    /// How far the pipeline has taken this recording. Persisted; the in-flight
+    /// half of the state lives in `AppState`, not here.
+    var status: RecordingStage
     var transcript: String?
     var notes: String?
     var language: String?     // ISO code ("da", "en") or nil = use default
@@ -53,6 +40,10 @@ struct RecordingEntry: Identifiable, Codable {
     /// True when this recording finished without a usable system-audio stem.
     /// Per-entry (not a global latch) so the badge doesn't stick on other meetings.
     var micOnlyCaptured: Bool?
+    /// Last pipeline failure for *this* recording. Per-entry so work on another
+    /// meeting can't erase it, and persisted so it survives a relaunch. While
+    /// set, the worker skips this recording; "Повторить" clears it.
+    var lastFailure: PipelineFailure?
 
     /// Topics joined for subtitle display ("Ретро, ресурсы команды, планирование").
     var subtitleText: String { (topics ?? []).joined(separator: ", ") }
@@ -93,6 +84,10 @@ struct RecordingEntry: Identifiable, Codable {
     }
 }
 
+/// Everything the scheduler needs is already here — `id`, `date`, `status`,
+/// `lastFailure` — so the queue is a pure function over the archive.
+extension RecordingEntry: PipelineCandidate {}
+
 // MARK: - Meeting tag vocabulary
 
 /// Approved meeting-type tag vocabulary (v1, 2026-07-22). The LLM classifies each
@@ -104,23 +99,4 @@ enum MeetingTags {
         "брейншторм", "стратегия", "клиентская", "защита решения", "найм",
         "админ", "внутренняя",
     ]
-}
-
-// MARK: - Persisted Segment (codable, stored on RecordingEntry.mergedSegmentsJSON)
-
-/// A single transcribed line with its speaker attribution and timing.
-/// Stored on RecordingEntry so the user can reassign individual segments
-/// to a different speaker label after the fact, including the case where
-/// diarization merged two real participants into one "Speaker N" cluster.
-///
-/// `speaker` is the displayed name in the transcript ("Speaker 0", the
-/// recording owner's name, or a manually typed name).
-struct PersistedSegment: Codable, Identifiable {
-    var id: Int { index }
-    /// Stable index used as identity in the segment list.
-    let index: Int
-    var startTime: Double
-    var endTime: Double
-    var text: String
-    var speaker: String
 }

@@ -127,6 +127,7 @@ class AudioPlayer: ObservableObject {
         }
         currentTime = t
         progress = totalDuration > 0 ? t / totalDuration : 0
+        pendingSeekTarget = t
         if wasPlaying {
             _ = resume()
         } else {
@@ -207,12 +208,23 @@ class AudioPlayer: ObservableObject {
         return max(0, min(frame, max(0, fileLengthFrames - 1)))
     }
 
+    /// Where the node was last told to play from. Until its own clock catches
+    /// up, `playerTime` still reports the previous schedule — applying that
+    /// would drag `currentTime` backwards and make the karaoke highlight blink
+    /// (white → grey → white) on every click.
+    private var pendingSeekTarget: TimeInterval?
+
     private func refreshTimeFromNode() {
         guard let nodeTime = playerNode.lastRenderTime,
               nodeTime.isSampleTimeValid,
               let playerTime = playerNode.playerTime(forNodeTime: nodeTime),
               playerTime.isSampleTimeValid else { return }
         let seconds = Double(scheduledStartFrame + playerTime.sampleTime) / max(playerTime.sampleRate, 1)
+        if let target = pendingSeekTarget {
+            // Stale reading from before the seek — ignore it rather than jump back.
+            guard seconds + 0.05 >= target else { return }
+            pendingSeekTarget = nil
+        }
         if seconds.isFinite {
             currentTime = max(0, min(seconds, totalDuration))
             progress = totalDuration > 0 ? currentTime / totalDuration : 0

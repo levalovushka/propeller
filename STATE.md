@@ -1,6 +1,6 @@
 # Propeller — единая карта состояния
 
-_Собрано 2026-07-25, обновлено **2026-07-27, вечер** (переезд на qwen3.5:4b · окно контекста · бандл GigaAM · хотворды · ретрай загрузки). **Это источник правды.** Остальные доки (`plan-v2`, `plan-optimization`, `plan-testing-metrics`, `release-review`, `SPEC`, `ARCHITECTURE`) остаются как история решений; при расхождении — верить этому файлу._
+_Собрано 2026-07-25, обновлено **2026-07-28** (рефакторинг состояния пайплайна · Контур.Толк · фикстуры границ). **Это источник правды.** Остальные доки (`plan-v2`, `plan-optimization`, `plan-testing-metrics`, `release-review`) остаются как история решений; при расхождении — верить этому файлу и коду._
 
 **Как пользоваться:** документ организован **по компонентам**, а не по раундам планов — под режим «беру кусок приложения и довожу до здорового состояния изолированно». В каждом компоненте: где живёт · что здорово · что сломано · что значит «готово».
 
@@ -10,6 +10,28 @@ _Собрано 2026-07-25, обновлено **2026-07-27, вечер** (пе�
 - ⚠️ — расхождение доков с кодом или между доками
 
 **Тяжесть:** 🔴 потеря данных/доверия · 🟠 сильно бьёт при использовании · 🔵 позже
+
+---
+
+## Часть 0а — 2026-07-28: пайплайн, детект звонков, границы
+
+Крупная перестройка. Полный разбор с обоснованиями — [`meeting-recorder/docs/REFACTOR-PIPELINE-STATE.md`](meeting-recorder/docs/REFACTOR-PIPELINE-STATE.md); ниже — что изменилось по существу.
+
+**Состояние пайплайна: 4 источника правды → 1.** Было: строковый `status` на диске, три эфемерных шага на всё приложение, наличие файла рекапа, `topics == nil`. Стало: `RecordingStage` (что достигнуто, персистентно) + `PipelineActivity` (что идёт, одно на приложение) + `lastFailure` на записи. Удалены `PipelineStep`, `transcribeStep`/`saveStep`/`recapStep`, `busyRecordingID`, `statusMessage`, `statusIsTransient`, `micOnlyRecording`.
+
+**Один воркер вместо трёх планировщиков.** `enqueueOrRunTranscribe`, `reconcilePendingPipeline` и `NSBackgroundActivityScheduler`-бэкфилл заменены очередью, выводимой из стадий (`nextJob` → `PipelineDrain`). Бэкфилл рекапов перестал быть подсистемой: встреча в `saved` — просто встреча, которой причитается работа. Хвостовая рекурсия на 4 async-кадра на встречу убрана.
+
+**Приоритет:** самая новая незавершённая встреча доводится до саммари раньше бэклога.
+
+**Пауза во время звонка** распространяется на весь пайплайн, а не только на бэкфилл: раньше ASR мог стартовать посреди созвона.
+
+**Детект звонков — данные, а не код.** `MeetingPlatform.all` описывает Zoom и **Контур.Толк** (bundle id, helper-процессы, маркеры и холостые заголовки, веб-вкладки). ⚠️ Идентификаторы Толка **не проверены на живой установке** — снять реальные через `./tools/detect-meeting-signals.sh толк talk kontur` во время созвона и обновить строку + тесты.
+
+**Границы наружу подменяемы** (`Transcriber`, `RecapBackend`), а их ответы разбираются чистыми функциями (`BoundaryResponses`) поверх записанных фикстур: 413 от gigastt, «модель ушла в thinking», пустой результат на 200, битый JSON. Раньше эти случаи требовали живого сайдкара и 40-минутной встречи.
+
+**Презентация транскрипта вынута из вьюхи** (`TranscriptPresentation`): реплики, фразы, слова — с тестами на реальных данных.
+
+**Тесты: 31 → 111**, все за ~0,3 с. Чистое ядро `PropellerPure`: 403 → 988 строк.
 
 ---
 
@@ -42,7 +64,7 @@ _Собрано 2026-07-25, обновлено **2026-07-27, вечер** (пе�
 | **SCK-primary** для системного звука; Process Tap оставлен в дереве, **не** на hot path | `AudioRecorder`, `SystemAudioCapture`, `ProcessTapAudioCapture` (dormant) |
 | Баннер mid-recording только если захват **не стартовал**; mic-only судят на **stop** по реальному стему (`lastStopWasMicOnly`); health = level meter | `AudioRecorder`, `RecordingInProgressView` |
 | Клиентский чанкинг ASR (~20 мин / под body+duration caps) + sidecar `--body-limit-bytes 67108864`, `--inference-timeout-secs 0` | `PropellerPure.GigasttChunking`, `GigasttClient`, `GigasttSidecar` |
-| Спиннер строки = `status == recording` **или** `busyRecordingID == entry.id` (не idle-статусы) | `MainView`, `MenuBarPanelView` |
+| Спиннер строки = `status == .recording` **или** `activity.concerns(entry.id)` (не idle-стадии) | `MainView`, `MenuBarPanelView` |
 | Заголовок: не латчить `titleManuallySet` на авто-«Recording …»; при старте — `CalendarService.suggestedRecordingTitle`; бэкфилл заголовков из уже существующих рекапов | `AppState`, `RecordingStore`, `RecordingInProgressView`, `CalendarService` |
 | Онбординг: Mic + **Screen Recording** обязательны для Next; Notes / Launch at login опциональны; убран нерабочий Update-pill | `Onboarding*` |
 | Glass tint `#0A0A0A` @ 80% поверх `.thickMaterial` (main + onboarding) | `PropellerUI/Tokens.Glass`, `Controls.GlassBackground` |
@@ -136,7 +158,7 @@ _Собрано 2026-07-25, обновлено **2026-07-27, вечер** (пе�
 
 **Файлы:** `AppState.swift` (~1100 строк)
 
-**Здорово:** ✅ пайплайн работает по `recordingID`-снапшоту, а не по текущему выбору (C1); `beginPipelineWork`/`busyRecordingID` есть; `stopRecordingAndWait` идемпотентен; бэкфилл рекапов — рабочая автостраховка; дешёвый скан кандидатов до сетевой пробы (P5).
+**Здорово:** ✅ пайплайн работает по `recordingID`, а не по текущему выбору (C1); одна очередь, выводимая из стадий, переживает краш без отдельного механизма; `stopRecordingAndWait` идемпотентен; «догон» несделанных саммари — часть той же очереди, а не отдельная подсистема.
 
 **Сломано:**
 
@@ -255,7 +277,7 @@ _Собрано 2026-07-25, обновлено **2026-07-27, вечер** (пе�
 
 **Файлы:** `MainView.swift` · `RecordingDetailView.swift` (~1600 строк) · `RecordingInProgressView.swift` · `SearchPalette.swift` · `MenuBar*.swift` · `Onboarding*` · `SettingsSheet.swift` · `PropellerUI/`
 
-**Здорово (2026-07-24…27):** ✅ онбординг требует Mic + Screen Recording для Next (Notes / Launch optional); glass `#0A0A0A`@80%; спиннер списка только при `recording` / `busyRecordingID`; live title не латчит `titleManuallySet` на авто-«Recording …»; ложные `titleManuallySet` чистятся при load; убран нерабочий Update-pill из top bar.
+**Здорово (2026-07-24…27):** ✅ онбординг требует Mic + Screen Recording для Next (Notes / Launch optional); glass `#0A0A0A`@80%; спиннер списка только при `.recording` / `activity.concerns(id)`; live title не латчит `titleManuallySet` на авто-«Recording …»; ложные `titleManuallySet` чистятся при load; убран нерабочий Update-pill из top bar.
 
 **Сломано (правда и мёртвые контролы):**
 
@@ -266,7 +288,7 @@ _Собрано 2026-07-25, обновлено **2026-07-27, вечер** (пе�
 | ~~rev-12~~ | **Закрыто:** `showingDiscardConfirm` + `cancelRecording()` в `RecordingInProgressView`. Сверено 2026-07-27 | — | ✅ |
 | empty-home | Нет Record CTA и пустого состояния библиотеки | 🟠 | 📋 |
 | rev-7 | ◐ **Половина исправлена 2026-07-25:** `player.stop()` добавлен в `beginRecording`. Осталось: ранний выход `autoLoadAudioForPlayer` при `totalDuration > 0` — грузит не тот файл | 🟠 | ✅ |
-| ~~rev-3~~ | **Исправлено:** busy-спиннер / «Generating…» завязаны на `busyRecordingID == entry.id` | — | ✅ |
+| ~~rev-3~~ | **Исправлено:** busy-спиннер / «Generating…» завязаны на `activity.concerns(entry.id)` | — | ✅ |
 | rev-20 | Бейдж «Mic only» глобальный — залипает на чужих встречах | 🟠 | ✅ |
 | ~~rev-17~~ | **Исправлено 2026-07-25:** `MenuBarContentView.status` учитывает `recapStep` | — | ✅ |
 | P1 | SearchPalette: полнотекстовый поиск гоняется по всем транскриптам на каждый рендер (computed, дёргается многократно) | 🟠 | ✅ |

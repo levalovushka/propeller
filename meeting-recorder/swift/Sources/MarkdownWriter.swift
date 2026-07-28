@@ -1,5 +1,6 @@
 import Foundation
 import PropellerMetrics
+import PropellerPure
 
 enum MarkdownOutputFormat: String, CaseIterable, Identifiable {
     case simple
@@ -35,13 +36,12 @@ struct MarkdownWriter {
         let filename = "\(recordingID)-\(slug).md"
         let filepath = dir.appendingPathComponent(filename)
 
-        // On rename + re-save, delete old file whose prefix matches the recordingID
+        // On rename + re-save, drop the transcript written under the old slug.
+        // Same matcher as every other transcript/recap lookup (`RecapFile`).
         if let contents = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
-            let prefix = recordingID + "-"
-            for file in contents where file.pathExtension == "md"
-                && file.lastPathComponent.hasPrefix(prefix)
-                && file.lastPathComponent != filename
-                && !file.lastPathComponent.hasSuffix("-recap.md") {
+            for file in contents
+            where RecapFile.isTranscript(file.lastPathComponent, for: recordingID)
+                && file.lastPathComponent != filename {
                 try? fm.removeItem(at: file)
             }
         }

@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import PropellerPure
 import PropellerUI
 
 // MARK: - Avatar
@@ -92,8 +93,6 @@ struct RecordingDetailView: View {
     @State private var titleHovered = false
     @FocusState private var titleFieldFocused: Bool
     @State private var editedNotes = ""
-    @State private var isEditingTranscript = false
-    @State private var editedTranscriptText = ""
     @State private var isEditingRecap = false
     @State private var editedRecapText = ""
     @State private var isEditingFollowUp = false
@@ -108,7 +107,7 @@ struct RecordingDetailView: View {
     @State private var activeKaraokeID: Int?
 
     private var isInlineEditing: Bool {
-        editingTitle || isEditingTranscript || isEditingRecap || isEditingFollowUp
+        editingTitle || isEditingRecap || isEditingFollowUp
     }
 
     /// Leave any in-place editor (summary / follow-up / transcript / title), saving.
@@ -116,7 +115,6 @@ struct RecordingDetailView: View {
         if editingTitle { commitTitleEdit() }
         if isEditingRecap { commitRecapEdit() }
         if isEditingFollowUp { commitFollowUpEdit() }
-        if isEditingTranscript { commitTranscriptEdit() }
     }
 
     private static var pendingNotesSave: DispatchWorkItem?
@@ -195,13 +193,11 @@ struct RecordingDetailView: View {
         .onChange(of: state.selectedRecordingID) { _, _ in
             // Commit any in-flight transcript edit before swapping recordings,
             // otherwise edits are silently discarded.
-            if isEditingTranscript { commitTranscriptEdit() }
             if isEditingRecap { commitRecapEdit() }
             if isEditingFollowUp { commitFollowUpEdit() }
             // Flush any pending debounced notes save so we don't lose keystrokes.
             Self.flushPendingNotesSave()
             editingTitle = false
-            isEditingTranscript = false
             isEditingRecap = false
             isEditingFollowUp = false
             selectedSegmentIndices = []
@@ -231,7 +227,7 @@ struct RecordingDetailView: View {
         .onChange(of: state.preferredDetailTab) { _, _ in
             applyPreferredTab()
         }
-        .task(id: "\(entry.id)-\(state.recapStep.rawValue)-\(tab.rawValue)-\(presentation)") {
+        .task(id: "\(entry.id)-\(entry.status.rawValue)-\(tab.rawValue)-\(presentation)") {
             if tab == .recap || presentation == .summaryFocus { loadRecapText() }
             if tab == .followUp { loadFollowUpText() }
         }
@@ -306,7 +302,7 @@ struct RecordingDetailView: View {
 
     @ViewBuilder
     private var recapPanelEmbedded: some View {
-        if state.recapStep == .running && state.selectedRecordingID == entry.id {
+        if state.activity.concerns(entry.id), case .working(_, .summarizing, _) = state.activity {
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
                 Text("Генерируем саммари…")
@@ -392,16 +388,16 @@ struct RecordingDetailView: View {
                     Text("Только мик").foregroundStyle(Color.orange.opacity(0.8))
                 }
                 Spacer(minLength: 0)
-                if entry.status == "transcribed_raw", state.transcribeStep != .running {
+                if entry.status == .transcribedRaw, !state.activity.concerns(entry.id) {
                     Button("Завершить") {
                         Task { await state.completeDiarization() }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.mini)
                 } else if entry.audioFileExists,
-                          (entry.status == "recorded" || state.transcribeStep == .failed),
-                          state.transcribeStep != .running {
-                    Button(state.transcribeStep == .failed ? "Повтор" : "Расшифровать") {
+                          (entry.status == .recorded || entry.lastFailure != nil),
+                          !state.activity.concerns(entry.id) {
+                    Button(entry.lastFailure != nil ? "Повтор" : "Расшифровать") {
                         Task { await state.reprocess() }
                     }
                     .buttonStyle(.bordered)
@@ -626,7 +622,7 @@ struct RecordingDetailView: View {
                         ) { copyRecapForChat() }
                         .help("Копировать саммари")
                     }
-                } else if state.saveStep == .done || entry.status == "saved" {
+                } else if entry.status >= .saved {
                     IconButton(
                         systemName: "arrow.clockwise",
                         prominence: .minimal,
@@ -737,7 +733,7 @@ struct RecordingDetailView: View {
     }
 
     /// Merged speaker blocks, optionally narrowed to the speaker filter selection.
-    private var displayedTranscriptTurns: [TranscriptTurn] {
+    private var displayedTranscriptTurns: [TranscriptPresentation.Turn] {
         let turns = transcriptTurns
         guard !speakerFilter.isEmpty else { return turns }
         return turns.filter { speakerFilter.contains($0.speaker) }
@@ -791,7 +787,7 @@ struct RecordingDetailView: View {
 
     @ViewBuilder
     private var recapPanel: some View {
-        if state.recapStep == .running && state.busyRecordingID == entry.id {
+        if state.activity.concerns(entry.id), case .working(_, .summarizing, _) = state.activity {
             VStack(spacing: 10) {
                 Spacer()
                 ProgressView().controlSize(.small)
@@ -986,18 +982,8 @@ struct RecordingDetailView: View {
         return Text(line)
     }
 
-    /// Resolve the recap markdown file on disk, tolerating a title change since
-    /// it was written (the filename embeds the title slug).
     private func resolvedRecapURL() -> URL? {
-        if let url = recapURL { return url }
-        let dir = URL(fileURLWithPath: Preferences.shared.meetingsPath)
-        let prefix = entry.id + "-"
-        return (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil))?
-            .first {
-                $0.pathExtension == "md"
-                    && $0.lastPathComponent.hasPrefix(prefix)
-                    && $0.lastPathComponent.hasSuffix("-recap.md")
-            }
+        AppState.resolvedRecapURL(for: entry)
     }
 
     private func loadRecapText() {
@@ -1143,15 +1129,9 @@ struct RecordingDetailView: View {
             }
         }
         // Fallback: names parsed out of the transcript text (no timing data).
-        var seen = Set<String>()
-        var result: [Participant] = []
-        for seg in rawParsedSegments where !seg.speaker.isEmpty {
-            if !seen.contains(seg.speaker) {
-                seen.insert(seg.speaker)
-                result.append(Participant(name: seg.speaker, talkTime: 0, segmentIndices: []))
-            }
+        return TranscriptPresentation.speakers(in: transcriptTurns).map {
+            Participant(name: $0, talkTime: 0, segmentIndices: [])
         }
-        return result
     }
 
     private var participantsPanel: some View {
@@ -1228,17 +1208,17 @@ struct RecordingDetailView: View {
             if state.transcript.isEmpty {
                 VStack(spacing: 10) {
                     Spacer()
-                    if (state.transcribeStep == .running && state.busyRecordingID == entry.id)
-                        || (state.selectedRecordingID == entry.id
-                            && state.pipelineError == nil
-                            && !state.statusMessage.isEmpty
-                            && state.transcribeStep != .failed) {
+                    // Five conditions collapsed into one: the pipeline is
+                    // working on *this* meeting. Everything else it used to
+                    // guard against — a stale status line, another meeting's
+                    // job, a failure — is unrepresentable now.
+                    if let progress = state.activity.concerns(entry.id) ? state.activity.message : nil {
                         if let dl = state.modelDownloadProgress {
                             VStack(spacing: 8) {
                                 Image(systemName: "arrow.down.circle")
                                     .typo(Tokens.Typography.Heading.sm)
                                     .foregroundStyle(.secondary)
-                                Text(state.statusMessage.isEmpty ? "Загрузка модели…" : state.statusMessage)
+                                Text(progress)
                                     .typo(Tokens.Typography.Label.mdRegular)
                                     .foregroundStyle(.secondary)
                                 ProgressView(value: dl)
@@ -1250,7 +1230,7 @@ struct RecordingDetailView: View {
                             }
                         } else {
                             ProgressView().controlSize(.small)
-                            Text(state.statusMessage.isEmpty ? "Расшифровка…" : state.statusMessage)
+                            Text(progress)
                                 .typo(Tokens.Typography.Label.mdRegular)
                                 .foregroundStyle(.secondary)
                         }
@@ -1269,7 +1249,7 @@ struct RecordingDetailView: View {
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 24)
                         }
-                        if entry.status == "transcribed_raw" {
+                        if entry.status == .transcribedRaw {
                             Button {
                                 Task { await state.completeDiarization() }
                             } label: {
@@ -1277,39 +1257,28 @@ struct RecordingDetailView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
-                            .disabled(state.transcribeStep == .running)
+                            .disabled(state.activity.concerns(entry.id))
                         } else if entry.audioFileExists,
-                                  ["recorded", "transcribing"].contains(entry.status)
-                                    || state.transcribeStep == .failed {
+                                  [.recorded, .transcribing].contains(entry.status)
+                                    || entry.lastFailure != nil {
                             Button {
                                 Task { await state.reprocess() }
                             } label: {
                                 Label(
-                                    state.transcribeStep == .failed ? "Повторить" : "Расшифровать",
+                                    entry.lastFailure != nil ? "Повторить" : "Расшифровать",
                                     systemImage: "waveform"
                                 )
                             }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)
-                            .disabled(state.transcribeStep == .running)
+                            .disabled(state.activity.concerns(entry.id))
                         }
                     }
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                if isEditingTranscript {
-                    TextEditor(text: $editedTranscriptText)
-                        .typo(Tokens.Typography.Label.mdMedium)
-                        .foregroundStyle(Tokens.Ink.primary)
-                        .scrollContentBackground(.hidden)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 12)
-                        .onExitCommand { endActiveInlineEdit() }
-                        .onDisappear { commitTranscriptEdit() }
-                } else {
-                    karaokeTranscriptList
-                }
+                karaokeTranscriptList
             }
         }
     }
@@ -1388,216 +1357,31 @@ struct RecordingDetailView: View {
 
     // MARK: - Transcript Editing
 
-    private func commitTranscriptEdit() {
-        guard isEditingTranscript else { return }
-        isEditingTranscript = false
-        guard editedTranscriptText != state.transcript else { return }
-        state.transcript = editedTranscriptText
-        if let id = state.selectedRecordingID {
-            state.recordingStore.update(id: id, transcript: editedTranscriptText)
-            // Free-text edits invalidate per-segment timing/labels — drop the
-            // snapshot so the reassignment UI doesn't operate on stale data.
-            state.invalidateSegmentSnapshot(for: id)
-        }
-        selectedSegmentIndices = []
-        state.markDirty()
-    }
-
     // MARK: - Transcript Parsing & Display
 
-    private struct TranscriptPhrase {
-        let startSeconds: Double
-        let endSeconds: Double
-        let text: String
-    }
-
-    /// One speaker turn (merged consecutive phrases) for display.
-    private struct TranscriptTurn {
-        let timestamp: String
-        let startSeconds: Double
-        let endSeconds: Double
-        let speaker: String
-        let phrases: [TranscriptPhrase]
-    }
-
-    /// Fine-grained ASR slices used to build turns + phrase karaoke.
-    private var fineTranscriptSegments: [TranscriptPhrase] {
-        alignedFineSlices.map(\.phrase)
-    }
-
-    private var transcriptTurns: [TranscriptTurn] {
-        mergeConsecutivePhrases(fineTranscriptSegments, speakers: fineSpeakers(), maxGap: 5.0)
-    }
-
-    /// Speaker label per fine segment (aligned with `fineTranscriptSegments`).
-    private func fineSpeakers() -> [String] {
-        alignedFineSlices.map(\.speaker)
-    }
-
-    private var alignedFineSlices: [(phrase: TranscriptPhrase, speaker: String)] {
-        if let persisted = state.loadPersistedSegments(for: entry), !persisted.isEmpty {
-            return persisted.compactMap { seg in
-                let trimmed = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !trimmed.isEmpty else { return nil }
-                return (
-                    TranscriptPhrase(
-                        startSeconds: seg.startTime,
-                        endSeconds: max(seg.endTime, seg.startTime + 0.05),
-                        text: trimmed
-                    ),
-                    seg.speaker
-                )
-            }
+    /// Turns come from the segment snapshot when there is one — that is what
+    /// keeps karaoke phrase-level. Parsing the rendered text is the fallback,
+    /// and it can only recover one phrase per remark.
+    private var transcriptTurns: [TranscriptPresentation.Turn] {
+        if let segments = state.loadPersistedSegments(for: entry), !segments.isEmpty {
+            return TranscriptPresentation.turns(from: segments)
         }
-        return rawParsedSegments.map {
-            (
-                TranscriptPhrase(
-                    startSeconds: $0.startSeconds,
-                    endSeconds: $0.endSeconds,
-                    text: $0.text
-                ),
-                $0.speaker
-            )
-        }
+        return TranscriptPresentation.turns(parsing: state.transcript, duration: entry.duration)
     }
 
-    private func mergeConsecutivePhrases(
-        _ phrases: [TranscriptPhrase],
-        speakers: [String],
-        maxGap: Double
-    ) -> [TranscriptTurn] {
-        guard phrases.count == speakers.count else {
-            // Mismatch — one phrase = one turn.
-            return zip(phrases, speakers).map { phrase, speaker in
-                TranscriptTurn(
-                    timestamp: formatTimestamp(phrase.startSeconds),
-                    startSeconds: phrase.startSeconds,
-                    endSeconds: phrase.endSeconds,
-                    speaker: speaker,
-                    phrases: [phrase]
-                )
-            }
-        }
-        var turns: [TranscriptTurn] = []
-        for (phrase, speaker) in zip(phrases, speakers) {
-            if let last = turns.last,
-               last.speaker == speaker,
-               !speaker.isEmpty,
-               (phrase.startSeconds - last.endSeconds) <= maxGap {
-                var nextPhrases = last.phrases
-                nextPhrases.append(phrase)
-                turns[turns.count - 1] = TranscriptTurn(
-                    timestamp: last.timestamp,
-                    startSeconds: last.startSeconds,
-                    endSeconds: max(phrase.endSeconds, last.endSeconds),
-                    speaker: last.speaker,
-                    phrases: nextPhrases
-                )
-            } else {
-                turns.append(TranscriptTurn(
-                    timestamp: formatTimestamp(phrase.startSeconds),
-                    startSeconds: phrase.startSeconds,
-                    endSeconds: phrase.endSeconds,
-                    speaker: speaker,
-                    phrases: [phrase]
-                ))
-            }
-        }
-        return turns
-    }
-
-    private struct TranscriptSegment {
-        let timestamp: String
-        let startSeconds: Double
-        let endSeconds: Double
-        let speaker: String
-        let text: String
-    }
-
-    private var rawParsedSegments: [TranscriptSegment] {
-        // Format: [Speaker Name] [MM:SS]\nText\n\n[Speaker Name] [MM:SS]\nText
-        let blocks = state.transcript.components(separatedBy: "\n\n")
-        var starts: [(ts: String, speaker: String, text: String, start: Double)] = []
-
-        for block in blocks {
-            let lines = block.components(separatedBy: "\n")
-            guard let firstLine = lines.first?.trimmingCharacters(in: .whitespaces),
-                  !firstLine.isEmpty else { continue }
-
-            let newPattern = #"^\[(.+?)\]\s*\[(\d+:\d+)\]$"#
-            if let regex = try? NSRegularExpression(pattern: newPattern),
-               let match = regex.firstMatch(in: firstLine, range: NSRange(firstLine.startIndex..., in: firstLine)) {
-                let speaker = Range(match.range(at: 1), in: firstLine).map { String(firstLine[$0]) } ?? ""
-                let ts = Range(match.range(at: 2), in: firstLine).map { String(firstLine[$0]) } ?? ""
-                let text = lines.dropFirst().joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else { continue }
-                starts.append((ts, speaker, text, Self.parseTimestamp(ts)))
-                continue
-            }
-
-            let oldPatterns = [
-                #"^\*{0,2}\[(\d+:\d+)\]\s*(.+?):\*{0,2}\s*(.*)"#,
-                #"^\[(\d+:\d+)\]\s*(.+?):\s*(.*)"#,
-            ]
-            var matched = false
-            for pattern in oldPatterns {
-                if let regex = try? NSRegularExpression(pattern: pattern),
-                   let match = regex.firstMatch(in: firstLine, range: NSRange(firstLine.startIndex..., in: firstLine)) {
-                    let ts = Range(match.range(at: 1), in: firstLine).map { String(firstLine[$0]) } ?? ""
-                    let speaker = Range(match.range(at: 2), in: firstLine).map { String(firstLine[$0]) } ?? ""
-                    var text = Range(match.range(at: 3), in: firstLine).map { String(firstLine[$0]) } ?? firstLine
-                    text = text.replacingOccurrences(of: "**", with: "")
-                    if let tokenRegex = try? NSRegularExpression(pattern: #"<\|[^|]*\|>"#) {
-                        text = tokenRegex.stringByReplacingMatches(
-                            in: text, range: NSRange(text.startIndex..., in: text), withTemplate: ""
-                        ).trimmingCharacters(in: .whitespaces)
-                    }
-                    guard !text.isEmpty else { break }
-                    starts.append((ts, speaker, text, Self.parseTimestamp(ts)))
-                    matched = true
-                    break
-                }
-            }
-            if !matched {
-                starts.append(("", "", firstLine, 0))
-            }
-        }
-
-        let fallbackEnd = max(entry.duration, starts.last.map(\.start) ?? 0) + 1
-        return starts.enumerated().map { i, item in
-            let end = i + 1 < starts.count ? starts[i + 1].start : fallbackEnd
-            return TranscriptSegment(
-                timestamp: item.ts,
-                startSeconds: item.start,
-                endSeconds: max(end, item.start + 0.01),
-                speaker: item.speaker,
-                text: item.text
-            )
-        }
-    }
-
-    private static func parseTimestamp(_ ts: String) -> Double {
-        let parts = ts.split(separator: ":").compactMap { Double($0) }
-        switch parts.count {
-        case 2: return parts[0] * 60 + parts[1]
-        case 3: return parts[0] * 3600 + parts[1] * 60 + parts[2]
-        default: return 0
-        }
-    }
-
-    private func transcriptTurnRow(_ turn: TranscriptTurn, index: Int) -> some View {
+    private func transcriptTurnRow(_ turn: TranscriptPresentation.Turn, index: Int) -> some View {
         let playing = player.isPlaying
         let t = player.currentTime
         let turnIsFuture = playing && t < turn.startSeconds
         let turnIsPastOrCurrent = !turnIsFuture
 
-        // Button (not onTapGesture) so macOS ScrollView reliably delivers clicks.
-        return Button {
-            followPlaybackScroll = true
-            activeKaraokeID = index
-            seekToSeconds(turn.startSeconds)
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
+        // Each phrase is its own Button, so the row itself can no longer be one:
+        // views inside a Button's label never receive clicks. Buttons (not
+        // onTapGesture) so macOS ScrollView reliably delivers them.
+        return HStack(alignment: .top, spacing: 10) {
+            Button {
+                seek(to: turn.startSeconds, turn: index)
+            } label: {
                 if !turn.speaker.isEmpty {
                     Text(turn.speaker.prefix(1).uppercased())
                         .typo(Tokens.Typography.Label.xsMedium)
@@ -1609,9 +1393,14 @@ struct RecordingDetailView: View {
                 } else {
                     Color.clear.frame(width: 24, height: 24)
                 }
+            }
+            .buttonStyle(.plain)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    if !turn.speaker.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                if !turn.speaker.isEmpty {
+                    Button {
+                        seek(to: turn.startSeconds, turn: index)
+                    } label: {
                         HStack(spacing: 6) {
                             Text(turn.speaker)
                                 .typo(Tokens.Typography.Label.mdMedium)
@@ -1620,51 +1409,51 @@ struct RecordingDetailView: View {
                                     .typo(Tokens.Typography.Label.smMedium, monospacedDigit: true)
                                     .foregroundStyle(Tokens.Ink.tertiary)
                             }
+                            Spacer(minLength: 0)
                         }
+                        .contentShape(Rectangle())
                     }
-                    Text(phraseAttributedText(for: turn, playhead: t, playing: playing))
-                        .typo(Tokens.Typography.Body.md)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    .buttonStyle(.plain)
                 }
+                FlowLayout(
+                    spacing: 4,
+                    // Match the reading line-height instead of guessing: every
+                    // item is one word tall, so this is the row pitch.
+                    lineSpacing: Tokens.Typography.Body.md.lineSpacingExtra
+                ) {
+                    ForEach(TranscriptPresentation.words(in: turn)) { word in
+                        Button {
+                            seek(to: word.startSeconds, turn: index)
+                        } label: {
+                            Text(word.text)
+                                .typo(Tokens.Typography.Body.md)
+                                .foregroundStyle(
+                                    playing && t < word.startSeconds
+                                        ? Tokens.Ink.tertiary
+                                        : Tokens.Ink.primary
+                                )
+                                .fixedSize()
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .foregroundStyle(Tokens.Ink.primary)
-            .opacity(turnIsPastOrCurrent ? 1.0 : 0.35)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .opacity(turnIsPastOrCurrent ? 1.0 : 0.35)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
         .animation(.easeOut(duration: 0.12), value: turnIsFuture)
-        .animation(.easeOut(duration: 0.12), value: playing)
-        .animation(.easeOut(duration: 0.12), value: t)
     }
 
-    /// Phrase-level karaoke inside a merged speaker turn.
-    private func phraseAttributedText(
-        for turn: TranscriptTurn,
-        playhead: Double,
-        playing: Bool
-    ) -> AttributedString {
-        var result = AttributedString()
-        for (i, phrase) in turn.phrases.enumerated() {
-            if i > 0 { result += AttributedString(" ") }
-            var chunk = AttributedString(phrase.text)
-            let isCurrent = playing
-                && playhead >= phrase.startSeconds
-                && playhead < phrase.endSeconds
-            let isFuture = playing && playhead < phrase.startSeconds
-            if isCurrent {
-                chunk.foregroundColor = Tokens.Ink.primary
-            } else if isFuture {
-                chunk.foregroundColor = Tokens.Ink.tertiary
-            } else {
-                chunk.foregroundColor = Tokens.Ink.primary
-            }
-            result += chunk
-        }
-        return result
+    /// Every karaoke click target: follow the playhead again, mark the row
+    /// active, and seek. Phrase clicks land on the phrase, chrome clicks on the
+    /// start of the remark.
+    private func seek(to seconds: Double, turn index: Int) {
+        followPlaybackScroll = true
+        activeKaraokeID = index
+        seekToSeconds(seconds)
     }
 
     private func colorFor(speaker: String) -> Color {
@@ -1676,7 +1465,7 @@ struct RecordingDetailView: View {
 
     private func reassignableRow(_ seg: PersistedSegment) -> some View {
         let selected = selectedSegmentIndices.contains(seg.index)
-        let timestamp = formatTimestamp(seg.startTime)
+        let timestamp = TranscriptPresentation.formatTimestamp(seg.startTime)
 
         return HStack(alignment: .top, spacing: 10) {
             Text(seg.speaker.prefix(1).uppercased())
@@ -1854,11 +1643,6 @@ struct RecordingDetailView: View {
         }
     }
 
-    private func formatTimestamp(_ seconds: Double) -> String {
-        let m = Int(seconds) / 60
-        let s = Int(seconds) % 60
-        return String(format: "%02d:%02d", m, s)
-    }
 
     private func seekToSeconds(_ seconds: Double) {
         guard let url = audioURL else { return }

@@ -289,10 +289,20 @@ final class PureFunctionTests: XCTestCase {
     // MARK: - RecordingRecovery
 
     func testRecoveredStatusTransitions() {
-        XCTAssertEqual(RecordingRecovery.recoveredStatus(current: "recording", hasTranscript: false), "recorded")
-        XCTAssertEqual(RecordingRecovery.recoveredStatus(current: "transcribing", hasTranscript: true), "transcribed_raw")
-        XCTAssertEqual(RecordingRecovery.recoveredStatus(current: "transcribing", hasTranscript: false), "recorded")
-        XCTAssertNil(RecordingRecovery.recoveredStatus(current: "saved", hasTranscript: true))
+        XCTAssertEqual(RecordingRecovery.recoveredStage(current: .recording, hasTranscript: false), .recorded)
+        XCTAssertEqual(RecordingRecovery.recoveredStage(current: .transcribing, hasTranscript: true), .transcribedRaw)
+        XCTAssertEqual(RecordingRecovery.recoveredStage(current: .transcribing, hasTranscript: false), .recorded)
+        XCTAssertNil(RecordingRecovery.recoveredStage(current: .saved, hasTranscript: true))
+    }
+
+    /// Invariant I4: a crash after the ASR checkpoint must never cost the pass.
+    func testRecoveryNeverDropsBelowTheASRCheckpoint() {
+        for stage in RecordingStage.allCases {
+            let landed = RecordingRecovery.recoveredStage(current: stage, hasTranscript: true) ?? stage
+            if stage >= .transcribedRaw {
+                XCTAssertGreaterThanOrEqual(landed, .transcribedRaw, "\(stage)")
+            }
+        }
     }
 
     // MARK: - GigasttChunking

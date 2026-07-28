@@ -30,8 +30,8 @@ struct SettingsView: View {
 private struct GeneralSettingsPane: View {
     @EnvironmentObject private var appState: AppState
     @AppStorage("analyticsEnabled") private var analyticsEnabled = true
-    @AppStorage("zoomAutoRecordMode") private var zoomAutoRecordMode = ZoomAutoRecordMode.auto.rawValue
-    @State private var zoomSnap = ZoomMeetingDetector.shared.snapshot
+    @AppStorage("autoRecordMode") private var autoRecordMode = AutoRecordMode.auto.rawValue
+    @State private var detectionSnapshot = MeetingDetector.shared.snapshot
     @State private var hasScreenRecordingPermission = true
     @State private var launchAtLogin = LoginItem.isEnabled
     @State private var launchAtLoginError: String?
@@ -92,28 +92,28 @@ private struct GeneralSettingsPane: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Встречи Zoom") {
-                Picker("Когда начинается звонок Zoom", selection: $zoomAutoRecordMode) {
-                    ForEach(ZoomAutoRecordMode.allCases) { mode in
+            Section("Автозапись звонков") {
+                Picker("Когда начинается звонок", selection: $autoRecordMode) {
+                    ForEach(AutoRecordMode.allCases) { mode in
                         Text(mode.displayName).tag(mode.rawValue)
                     }
                 }
                 .pickerStyle(.segmented)
-                .onChange(of: zoomAutoRecordMode) { _, val in
-                    Preferences.shared.zoomAutoRecordMode =
-                        ZoomAutoRecordMode(rawValue: val) ?? .auto
-                    appState.applyZoomDetectorMode()
+                .onChange(of: autoRecordMode) { _, val in
+                    Preferences.shared.autoRecordMode =
+                        AutoRecordMode(rawValue: val) ?? .auto
+                    appState.applyAutoRecordMode()
                 }
-                Text(zoomModeHelp)
+                Text(autoRecordModeHelp)
                     .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
 
                 LabeledContent("Статус") {
                     HStack(spacing: 8) {
-                        Text(zoomProbeLabel(zoomSnap))
-                            .foregroundStyle(zoomSnap.inMeeting ? .green : .secondary)
+                        Text(meetingProbeLabel(detectionSnapshot))
+                            .foregroundStyle(detectionSnapshot.inMeeting ? .green : .secondary)
                         Button("Проверить") {
-                            zoomSnap = ZoomMeetingDetector.shared.probe()
+                            detectionSnapshot = MeetingDetector.shared.probe()
                         }
                         .controlSize(.small)
                     }
@@ -125,7 +125,7 @@ private struct GeneralSettingsPane: View {
                             .foregroundStyle(.orange)
                             .typo(Tokens.Typography.Label.smRegular)
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Обнаружение ограничено — нет разрешения Screen Recording, Propeller не читает заголовок окна Zoom. Остаётся сигнал процесса, он медленнее.")
+                            Text("Обнаружение ограничено — нет разрешения Screen Recording, Propeller не читает заголовки окон. Остаётся сигнал процесса: он медленнее и есть не у всех сервисов.")
                                 .typo(Tokens.Typography.Label.smRegular)
                                 .foregroundStyle(.secondary)
                             Button("Открыть настройки Screen Recording") {
@@ -152,28 +152,30 @@ private struct GeneralSettingsPane: View {
         }
         .formStyle(.grouped)
         .onAppear {
-            zoomSnap = ZoomMeetingDetector.shared.probe()
-            hasScreenRecordingPermission = ZoomMeetingDetector.hasScreenRecordingPermission()
+            detectionSnapshot = MeetingDetector.shared.probe()
+            hasScreenRecordingPermission = MeetingDetector.hasScreenRecordingPermission()
             launchAtLogin = LoginItem.isEnabled
         }
     }
 
-    private var zoomModeHelp: String {
-        switch ZoomAutoRecordMode(rawValue: zoomAutoRecordMode) ?? .auto {
+    private var autoRecordModeHelp: String {
+        switch AutoRecordMode(rawValue: autoRecordMode) ?? .auto {
         case .off:
-            return "Zoom игнорируется. Запись — вручную."
+            return "Звонки игнорируются. Запись — вручную."
         case .auto:
-            return "Запись стартует при обнаружении звонка Zoom — без подтверждения. В уведомлении можно отказаться; остановить можно из меню или приложения. Запись останавливается с концом звонка."
+            return "Запись стартует при обнаружении звонка (Zoom, Контур.Толк) — без подтверждения. В уведомлении можно отказаться; остановить можно из меню или приложения. Запись останавливается с концом звонка."
         }
     }
 
-    private func zoomProbeLabel(_ snap: ZoomMeetingSnapshot) -> String {
-        if !snap.zoomRunning { return "Zoom: не запущен" }
-        if snap.inMeeting {
-            let sig = snap.signals.joined(separator: ", ")
-            return "Zoom: на встрече (\(sig))"
+    /// Names the platform it actually found — with more than one supported,
+    /// "Zoom: ожидание" while sitting in Толк would be actively misleading.
+    private func meetingProbeLabel(_ snap: MeetingSnapshot) -> String {
+        if let platformID = snap.platformID {
+            let name = MeetingPlatform.platform(id: platformID)?.displayName ?? platformID
+            return "\(name): идёт звонок (\(snap.signals.joined(separator: ", ")))"
         }
-        return "Zoom: запущен, ожидание"
+        if snap.appRunning { return "Приложение запущено, звонка нет" }
+        return "Ни одно приложение для созвонов не запущено"
     }
 }
 

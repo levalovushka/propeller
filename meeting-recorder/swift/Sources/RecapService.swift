@@ -377,12 +377,12 @@ actor RecapService {
         let filename = "\(recordingID)-\(slug)-recap.md"
         let filepath = dir.appendingPathComponent(filename)
 
+        // Drop stale recaps for this recording (the slug changes on rename), using
+        // the same matcher as every other recap lookup.
         let fm = FileManager.default
         if let contents = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
-            let prefix = recordingID + "-"
-            for file in contents where file.pathExtension == "md"
-                && file.lastPathComponent.hasPrefix(prefix)
-                && file.lastPathComponent.hasSuffix("-recap.md")
+            for file in contents
+            where RecapFile.isRecap(file.lastPathComponent, for: recordingID)
                 && file.lastPathComponent != filename {
                 try? fm.removeItem(at: file)
             }
@@ -458,15 +458,20 @@ actor RecapService {
         }
 
         do {
-            let message = try await sendChat(req: req, payload: payload)
-            let content = message["content"] as? String ?? ""
-            if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-               let thinking = message["thinking"] as? String, !thinking.isEmpty {
-                // Model reasoned itself out of a reply — say which failure this is.
-                NSLog("[RecapService] \(model) returned only `thinking` (\(thinking.count) chars), no content")
+            let data = try await sendChat(req: req, payload: payload)
+            switch BoundaryResponses.readChatReply(data: data) {
+            case .success(let content):
+                return content
+            case .failure(.reasonedItselfEmpty(let characters)):
+                // Distinct from a plain empty answer: retrying with the same
+                // settings burns the same minutes for the same nothing.
+                NSLog("[RecapService] \(model) returned only `thinking` (\(characters) chars), no content")
                 throw RecapError.providerUnavailable("\(model) — модель ушла в рассуждения и не выдала конспект")
+            case .failure(.empty):
+                return ""
+            case .failure(.malformed):
+                throw RecapError.badJSON
             }
-            return content
         } catch let error as URLError where error.code == .timedOut {
             throw RecapError.timedOut
         }
@@ -474,7 +479,7 @@ actor RecapService {
 
     /// POST the chat payload, retrying once without `think` if this Ollama build
     /// rejects the field — otherwise an old runtime would fail *every* recap.
-    private func sendChat(req: URLRequest, payload: [String: Any]) async throws -> [String: Any] {
+    private func sendChat(req: URLRequest, payload: [String: Any]) async throws -> Data {
         var req = req
         req.httpBody = try JSONSerialization.data(withJSONObject: payload)
         var (data, response) = try await session.data(for: req)
@@ -488,11 +493,8 @@ actor RecapService {
         }
 
         try throwIfBadHTTP(response, data: data)
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let message = json["message"] as? [String: Any] else {
-            throw RecapError.badJSON
-        }
-        return message
+        // Interpretation belongs to `BoundaryResponses`; this only transports.
+        return data
     }
 
     private func callOpenAI(apiKey: String, model: String, system: String, user: String) async throws -> String {

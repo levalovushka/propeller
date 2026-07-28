@@ -55,6 +55,81 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full table. Coordinator
 ~/Library/Application Support/Meeting Recorder/{gigastt-models/,hotwords.txt}
 ```
 
+## Pipeline state — invariants
+
+The pipeline was rebuilt around one state model; the reasoning and every defect it
+closed are in [docs/REFACTOR-PIPELINE-STATE.md](docs/REFACTOR-PIPELINE-STATE.md). Read that before
+changing how meetings move through the pipeline. The rules below hold today and are enforced by
+tests in `PropellerPure` — breaking one should turn a test red, not surprise a user.
+
+**Two dimensions, never mixed.** `RecordingEntry.status` (`RecordingStage`) is what a meeting has
+*achieved* and is persisted. `AppState.activity` (`PipelineActivity`) is what is *running*, is
+ephemeral, and there is exactly one of it because there is one worker.
+
+- **`RecordingStage.rawValue`s are the strings already on users' disks** — never change one, an older
+  build has to keep reading the index. New stages append; unknown values decode to `.recorded` rather
+  than throwing (I6).
+- **Compare stages with `>=`, not `==`.** `status == .saved` silently goes false at `.summarized`.
+- **A phase never moves a stage backwards** — use `advanced(to:)` (I3). Only an explicit user action
+  walks a stage back, and it says so at the call site. Getting this wrong once turned "rename a
+  meeting" into "re-summarise it".
+- **A crash after ASR lands on `.transcribedRaw`, never `.recorded`** (I4) — the difference is an
+  hour of GPU work.
+- **`.summarized` ⟺ recap file **and** metadata exist** (I9), reconciled both ways in
+  `RecordingStore.reconcileSummarizedStage()`. A 1.11 meeting with a summary but no topics is *not*
+  done: marking it done strands it, because the worker skips terminal stages.
+- **A failure belongs to its recording** (`entry.lastFailure`), never to the app. While set, the
+  recording is out of the queue until an explicit retry clears it (I7). Cancellation is *not* a
+  failure — parking a superseded job would need a manual retry to undo.
+- **Phases never call each other.** Each ends with `kickPipeline()`; `nextJob` derives what is next
+  from stages on disk. A phase that returns `.advanced` **must** have moved the stage or parked the
+  recording, or the loop asks for the same job forever (caught as `.stalled`, I11).
+- **Newest unfinished meeting wins.** The one that just ended is the one someone is waiting to read;
+  the backlog is catch-up. Prioritising transcripts over summaries looks equivalent and is not — it
+  drops the fresh meeting to the back of the queue right after `.saved`.
+- Do not add `@Published` flags to `AppState` for pipeline state. Seven of them were removed; the
+  point was to stop having a second source of truth.
+- **Changing what a function *means* means reading every caller first** (`grep` the name). Cheap
+  check, expensive miss.
+
+## Meeting detection
+
+Which apps count as a call, and which window titles mean "in one", is **data** in
+[`PropellerPure/MeetingPlatform.swift`](swift/PropellerPure/MeetingPlatform.swift), covered by
+`MeetingPlatformTests`. Adding a service is a row in `MeetingPlatform.all`, not new code in the detector.
+
+- Auto-record starts a recording *without asking*, so a wrong title in `meetingTitleMarkers` records
+  something nobody wanted. Idle titles always win over markers — that regression already shipped once
+  (RU panels «Настройки»/«Чат» triggered auto-record).
+- Store every identifier lowercased; matching lowercases the input, not the table.
+- **Контур.Толк identifiers are unverified** — no install was available when they were written. Confirm
+  them during a real call with `./tools/detect-meeting-signals.sh толк talk kontur`, then update the row
+  and its tests.
+
+## How to work in this repo
+
+The order that pays off here, learned the expensive way:
+
+1. **Types first.** Seven state fields with ~2000 combinations became one enum with two branches, and
+   a whole class of "status stuck / spinner on the wrong meeting" bugs stopped being *expressible*.
+   No test was needed for that; the bugs simply had nowhere left to live.
+2. **Then invariants** — for rules a type can't hold. Written as a test *and* as `checkInvariant`,
+   which trips the debugger locally and reports through telemetry from release builds. An invariant
+   only checked on the author's machine says nothing about the people actually using the app.
+3. **Then tests**, named after what a user saw ("the whole remark highlights at once"), not after the
+   function under test.
+4. **Documents last**, and only ones that can't drift: the state diagram in
+   REFACTOR-PIPELINE-STATE.md §4 is rendered from the types and compared byte-for-byte by
+   `PipelineDiagramTests`. A document that *can* go stale *will*.
+
+Everything decidable without AppKit, the disk or the network belongs in `PropellerPure`, where a
+test can reach it. `Sources/` is an executable target: nothing there is importable by tests, so logic
+left in a view is logic nobody can check. That is where every hand-found bug in this project has been.
+
+Boundaries (`Transcriber`, `RecapBackend`) exist so recorded fixtures can stand in for a live ASR
+sidecar and a live model — see `Tests/Fixtures/boundaries/`. Add a fixture when a real service
+surprises you; each file there cost a real incident.
+
 ## Development practices
 
 - Prefer surgical diffs; don’t expand scope beyond the task.

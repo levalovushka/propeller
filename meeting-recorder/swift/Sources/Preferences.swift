@@ -40,16 +40,17 @@ class Preferences {
         set { defaults.set(newValue, forKey: "voiceProcessingEnabled") }
     }
 
-    /// Zoom meeting auto-record: off / auto. Default auto: recording starts
+    /// Auto-record on a detected call (any platform in `MeetingPlatform.all`):
+    /// off / auto. Default auto: recording starts
     /// automatically and a notification lets the user decline.
-    var zoomAutoRecordMode: ZoomAutoRecordMode {
+    var autoRecordMode: AutoRecordMode {
         get {
-            let raw = defaults.string(forKey: "zoomAutoRecordMode") ?? ""
+            let raw = defaults.string(forKey: "autoRecordMode") ?? ""
             // Migrate the removed "ask" mode to auto (no confirmation prompt).
             if raw == "ask" { return .auto }
-            return ZoomAutoRecordMode(rawValue: raw) ?? .auto
+            return AutoRecordMode(rawValue: raw) ?? .auto
         }
-        set { defaults.set(newValue.rawValue, forKey: "zoomAutoRecordMode") }
+        set { defaults.set(newValue.rawValue, forKey: "autoRecordMode") }
     }
 
     // MARK: - Paths

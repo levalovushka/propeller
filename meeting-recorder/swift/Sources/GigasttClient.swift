@@ -2,15 +2,6 @@ import AVFoundation
 import Foundation
 import PropellerPure
 
-/// Codable ASR segment used across checkpointing and diarization merge.
-/// Segment from gigastt ASR (`/v1/transcribe?segments=true`).
-/// Only start/end/text are needed for FluidAudio merge.
-struct ASRSegment: Codable, Equatable {
-    var start: Float
-    var end: Float
-    var text: String
-}
-
 /// Thin HTTP client for a local `gigastt serve` instance (loopback).
 /// Process lifecycle is owned by `GigasttSidecar`.
 enum GigasttClient {
@@ -23,30 +14,18 @@ enum GigasttClient {
         let version: String?
     }
 
-    struct TranscribeResponse: Decodable {
-        let text: String?
-        let duration: Double?
-        let confidence: Float?
-        let segments: [Segment]?
-        let words: [Word]?
-        // Error envelope
-        let error: String?
-        let code: String?
-
-        struct Segment: Decodable {
-            let start: Double
-            let end: Double
-            let text: String
-        }
-
-        struct Word: Decodable {
-            let word: String?
-            let start: Double?
-            let end: Double?
-        }
-    }
 
     enum ClientError: LocalizedError {
+        init(_ failure: BoundaryResponses.ASRFailure) {
+            switch failure {
+            case .tooLarge(let status): self = .badStatus(status, "тело запроса слишком большое")
+            case .rejected(let message): self = .apiError(message)
+            case .badStatus(let status, let body): self = .badStatus(status, body)
+            case .empty: self = .emptyResult
+            case .malformed: self = .apiError("не удалось разобрать ответ gigastt")
+            }
+        }
+
         case notReachable(String)
         case badStatus(Int, String)
         case apiError(String)
@@ -150,18 +129,15 @@ enum GigasttClient {
             throw ClientError.notReachable(error.localizedDescription)
         }
 
-        let http = response as? HTTPURLResponse
-        let status = http?.statusCode ?? -1
-        if !(200..<300).contains(status) {
-            let body = String(data: data, encoding: .utf8) ?? ""
-            if let env = try? JSONDecoder().decode(TranscribeResponse.self, from: data),
-               let msg = env.error ?? env.code {
-                throw ClientError.apiError(msg)
-            }
-            throw ClientError.badStatus(status, body)
+        // One place decides what the sidecar's answer means — the same one the
+        // recorded fixtures exercise (BoundaryResponses).
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        switch BoundaryResponses.readASR(status: status, data: data) {
+        case .success(let transcription):
+            return (transcription.segments, transcription.rawText)
+        case .failure(let failure):
+            throw ClientError(failure)
         }
-
-        return try decodeTranscription(data)
     }
 
     private static func transcribeChunked(
@@ -266,38 +242,6 @@ enum GigasttClient {
         }
     }
 
-    private static func decodeTranscription(_ data: Data) throws -> (segments: [ASRSegment], rawText: String) {
-        let decoded = try JSONDecoder().decode(TranscribeResponse.self, from: data)
-        if let err = decoded.error {
-            throw ClientError.apiError(err)
-        }
-
-        let segments: [ASRSegment]
-        if let segs = decoded.segments, !segs.isEmpty {
-            segments = segs.map {
-                ASRSegment(
-                    start: Float($0.start),
-                    end: Float($0.end),
-                    text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                )
-            }.filter { !$0.text.isEmpty }
-        } else if let words = decoded.words, !words.isEmpty {
-            let text = (decoded.text ?? words.compactMap(\.word).joined(separator: " "))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let start = Float(words.compactMap(\.start).first ?? 0)
-            let end = Float(words.compactMap(\.end).last ?? decoded.duration ?? 0)
-            segments = text.isEmpty ? [] : [ASRSegment(start: start, end: end, text: text)]
-        } else if let text = decoded.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
-            segments = [ASRSegment(start: 0, end: Float(decoded.duration ?? 0), text: text)]
-        } else {
-            throw ClientError.emptyResult
-        }
-
-        guard !segments.isEmpty else { throw ClientError.emptyResult }
-        let rawText = (decoded.text?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
-            ?? segments.map(\.text).joined(separator: " ")
-        return (segments, rawText)
-    }
 
     private static func contentType(for url: URL) -> String {
         switch url.pathExtension.lowercased() {
