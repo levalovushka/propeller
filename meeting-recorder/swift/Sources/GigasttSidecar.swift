@@ -140,7 +140,7 @@ final class GigasttSidecar: @unchecked Sendable {
                 downloadProgress?(1.0)
                 return
             }
-            if await reclaimOrphanIfOurs() {
+            if await reclaimOrphan() {
                 // Port freed — fall through to a fresh spawn.
             } else {
                 throw SidecarError.portOccupied(Self.port)
@@ -183,8 +183,26 @@ final class GigasttSidecar: @unchecked Sendable {
         NSLog("[GigasttSidecar] ready on \(Self.baseURL.absoluteString)")
     }
 
-    /// Kill a leftover `gigastt` from a previous crash/kill-9 if the PID file matches.
-    private func reclaimOrphanIfOurs() async -> Bool {
+    /// Free our port from a leftover `gigastt`, whether or not we can prove we
+    /// started it.
+    ///
+    /// The PID file only identifies orphans from the *same* build. After an
+    /// update it is gone or stale, so a sidecar left over from the previous
+    /// version kept :9876 and every launch failed with `portOccupied` — the app
+    /// could not transcribe at all until the user killed the process by hand.
+    ///
+    /// We reclaim rather than adopt on purpose. Unlike Ollama, gigastt takes its
+    /// body limit, hotwords file and `--offline` as *launch arguments*, so an old
+    /// process silently carries the old limits — which is how a 49-minute meeting
+    /// still hit HTTP 413 after we had raised that limit. A server we did not
+    /// start is not a server we can trust the behaviour of.
+    private func reclaimOrphan() async -> Bool {
+        if await reclaimByPIDFile() { return true }
+        return await reclaimByProcessName()
+    }
+
+    /// Fast path: an orphan from this same build, recorded in the PID file.
+    private func reclaimByPIDFile() async -> Bool {
         let url = Self.pidFileURL
         guard let text = try? String(contentsOf: url, encoding: .utf8),
               let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -216,6 +234,54 @@ final class GigasttSidecar: @unchecked Sendable {
         return !(await probeHealth())
     }
 
+    /// Fallback: find any running `gigastt` that is not our child and stop it.
+    ///
+    /// Scans the process table rather than the socket table — no `lsof`, no
+    /// elevated access, and the match is narrow: the executable's own file name
+    /// must be exactly `gigastt`. Only ever runs when our port is already taken
+    /// and we have no tracked child, i.e. when the alternative is failing.
+    private func reclaimByProcessName() async -> Bool {
+        let ours = { () -> pid_t in
+            lock.lock(); defer { lock.unlock() }
+            return process?.processIdentifier ?? -1
+        }()
+
+        var candidates: [pid_t] = []
+        let capacity = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)
+        guard capacity > 0 else { return false }
+        var pids = [pid_t](repeating: 0, count: Int(capacity) / MemoryLayout<pid_t>.size)
+        let written = proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids,
+                                    Int32(pids.count * MemoryLayout<pid_t>.size))
+        guard written > 0 else { return false }
+
+        for pid in pids where pid > 1 && pid != ours && pid != getpid() {
+            var buf = [CChar](repeating: 0, count: 4096)
+            guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { continue }
+            if SidecarProcess.isBundledSidecar(path: String(cString: buf)) {
+                candidates.append(pid)
+            }
+        }
+        guard !candidates.isEmpty else { return false }
+
+        NSLog("[GigasttSidecar] port held by untracked gigastt \(candidates) — reclaiming")
+        for pid in candidates { kill(pid, SIGTERM) }
+        for _ in 0..<25 {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            if !(await probeHealth()) {
+                Self.clearPIDFile()
+                return true
+            }
+        }
+        for pid in candidates { kill(pid, SIGKILL) }
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        Self.clearPIDFile()
+        let freed = !(await probeHealth())
+        if !freed {
+            NSLog("[GigasttSidecar] something still answers on :\(Self.port) after SIGKILL")
+        }
+        return freed
+    }
+
     private func spawnServer(binary: URL, modelDir: URL) throws {
         lock.lock()
         intentionalStop = false
@@ -237,7 +303,7 @@ final class GigasttSidecar: @unchecked Sendable {
             "--pool-size", "1",
             // Headroom for ~25–27 min 16 kHz mono chunks (client still chunks
             // longer meetings — body-limit alone cannot cover 2h files).
-            "--body-limit-bytes", "67108864",
+            "--body-limit-bytes", "\(GigasttChunking.serverBodyLimitBytes)",
             // Long chunks on CPU can exceed the 600s default inference cap.
             "--inference-timeout-secs", "0",
             // Curated Russian brand/acronym lexicon — always-on, free win with

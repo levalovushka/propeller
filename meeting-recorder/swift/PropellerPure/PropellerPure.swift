@@ -205,6 +205,28 @@ public enum RecordingRecovery {
     }
 }
 
+/// Identifying our own ASR sidecar process among everything else running.
+public enum SidecarProcess {
+    /// Is this executable a `gigastt` shipped inside an app bundle — i.e. ours,
+    /// from this build or a previous one?
+    ///
+    /// Used to free :9876 when a sidecar outlives the app that started it: after
+    /// an update the PID file no longer matches, so the leftover process held the
+    /// port and every launch failed until the user killed it by hand.
+    ///
+    /// Deliberately narrower than "named gigastt". A developer running
+    /// `tools/gigastt/gigastt`, or anyone with their own install, must not have
+    /// it killed out from under them — only `…/Something.app/Contents/MacOS/gigastt`
+    /// counts, which is exactly what a stale sidecar still reports.
+    public static func isBundledSidecar(path: String) -> Bool {
+        let exe = path as NSString
+        guard exe.lastPathComponent == "gigastt" else { return false }
+        let macOS = exe.deletingLastPathComponent as NSString
+        guard macOS.lastPathComponent == "MacOS" else { return false }
+        return (macOS.deletingLastPathComponent as NSString).lastPathComponent == "Contents"
+    }
+}
+
 /// Which model-pull failures are worth another attempt.
 ///
 /// Ollama reports transport trouble as free text from its Go stack ("dial tcp:
@@ -287,6 +309,27 @@ public enum GigasttChunking {
     public static let maxSingleShotSeconds: Double = 25 * 60
     /// Chunk length for long meetings (~38 MiB at 16 kHz mono PCM16).
     public static let chunkSeconds: Double = 20 * 60
+
+    /// Body limit the sidecar is launched with (`--body-limit-bytes`). Lives here
+    /// so the client's chunk sizing and the server's limit cannot drift apart in
+    /// two different files.
+    public static let serverBodyLimitBytes: Int64 = 64 * 1024 * 1024
+
+    /// Bytes a chunk occupies on disk. `bytesPerFrame` is what the WAV is
+    /// *written* as — not what AVAudioFile decodes to in memory. Writing a
+    /// 16 kHz Int16 mix out in its Float32 processing format doubled every
+    /// chunk to 73.2 MiB and tripped the 64 MiB limit as HTTP 413.
+    public static func chunkBytes(
+        seconds: Double = chunkSeconds,
+        sampleRate: Double,
+        bytesPerFrame: Int
+    ) -> Int64 {
+        Int64(seconds * sampleRate) * Int64(bytesPerFrame)
+    }
+
+    public static func chunkFitsBodyLimit(sampleRate: Double, bytesPerFrame: Int) -> Bool {
+        chunkBytes(sampleRate: sampleRate, bytesPerFrame: bytesPerFrame) <= serverBodyLimitBytes
+    }
 
     public static func needsChunking(fileBytes: Int64, durationSeconds: Double) -> Bool {
         fileBytes > maxSingleShotBytes || durationSeconds > maxSingleShotSeconds

@@ -36,6 +36,45 @@ final class PureFunctionTests: XCTestCase {
         XCTAssertTrue(arr[2] is NSNull)
     }
 
+    /// A 49-minute meeting failed with HTTP 413 on 2026-07-28 even though
+    /// chunking ran: chunks were written in AVAudioFile's Float32 processing
+    /// format instead of the file's own Int16, doubling each one past the limit.
+    func testChunkFitsBodyLimitOnlyInTheOnDiskFormat() {
+        // 16 kHz mono Int16 — what the mix actually is on disk.
+        XCTAssertTrue(GigasttChunking.chunkFitsBodyLimit(sampleRate: 16_000, bytesPerFrame: 2))
+        // The same audio decoded to Float32: what the buggy writer produced.
+        XCTAssertFalse(GigasttChunking.chunkFitsBodyLimit(sampleRate: 16_000, bytesPerFrame: 4))
+
+        let int16 = GigasttChunking.chunkBytes(sampleRate: 16_000, bytesPerFrame: 2)
+        let float32 = GigasttChunking.chunkBytes(sampleRate: 16_000, bytesPerFrame: 4)
+        XCTAssertEqual(float32, int16 * 2)
+        XCTAssertGreaterThan(float32, GigasttChunking.serverBodyLimitBytes)
+    }
+
+    // MARK: - SidecarProcess
+
+    /// The friend's 1.13 upgrade: a sidecar from the old build kept :9876, the
+    /// PID file no longer matched, and the app refused to start ASR at all.
+    func testStaleBundledSidecarIsReclaimable() {
+        XCTAssertTrue(SidecarProcess.isBundledSidecar(
+            path: "/Applications/Propeller.app/Contents/MacOS/gigastt"))
+        XCTAssertTrue(SidecarProcess.isBundledSidecar(
+            path: "/Users/x/Downloads/Propeller 1.12.app/Contents/MacOS/gigastt"))
+    }
+
+    /// Everything else must survive: killing a gigastt we did not ship would be
+    /// taking out someone's own process.
+    func testNonBundledGigasttIsLeftAlone() {
+        for path in ["/Users/x/Desktop/Propeller/tools/gigastt/gigastt",
+                     "/opt/homebrew/bin/gigastt",
+                     "/Applications/Propeller.app/Contents/MacOS/MeetingRecorder",
+                     "/Applications/Other.app/Contents/Resources/gigastt",
+                     "/usr/local/bin/gigastt-serve",
+                     ""] {
+            XCTAssertFalse(SidecarProcess.isBundledSidecar(path: path), path)
+        }
+    }
+
     // MARK: - OllamaRetry
 
     /// The failure that actually stranded a download on 2026-07-27: the link

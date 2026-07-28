@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import PropellerPure
 
 /// Owns a local Ollama runtime for dogfood recaps — download official darwin
@@ -88,7 +89,10 @@ final class OllamaSidecar: @unchecked Sendable {
         if proc.isRunning {
             proc.terminate()
             DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-                if proc.isRunning { proc.interrupt() }
+                // SIGKILL, not `interrupt()`: SIGINT is *weaker* than the SIGTERM
+                // we already sent, so a process that ignored the first ignored
+                // the second too and was never actually stopped.
+                if proc.isRunning { kill(proc.processIdentifier, SIGKILL) }
             }
         }
     }
@@ -302,6 +306,21 @@ final class OllamaSidecar: @unchecked Sendable {
         installDir.appendingPathComponent("ollama")
     }
 
+    /// Version of the engine currently unpacked at `binaryURL`.
+    ///
+    /// Without this, `ensureBinaryInstalled` returned early on "a file exists"
+    /// alone, so raising the pinned `releaseTag` in a new app version changed
+    /// nothing for anyone who had already installed — the pin only ever applied
+    /// to fresh installs.
+    private var installedVersionURL: URL {
+        installDir.appendingPathComponent("installed-version.txt")
+    }
+
+    private var installedVersion: String? {
+        try? String(contentsOf: installedVersionURL, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Bundled by `build.sh` into Contents/Resources (~140 MB compressed).
     private var bundledTarballURL: URL? {
         Bundle.main.url(forResource: "ollama-darwin", withExtension: "tgz")
@@ -323,9 +342,18 @@ final class OllamaSidecar: @unchecked Sendable {
         try fm.createDirectory(at: installDir, withIntermediateDirectories: true)
         try fm.createDirectory(at: modelsDir, withIntermediateDirectories: true)
 
-        if fm.isExecutableFile(atPath: binaryURL.path) {
+        if fm.isExecutableFile(atPath: binaryURL.path), installedVersion == Self.releaseTag {
             progress?(1.0)
             return
+        }
+
+        if fm.isExecutableFile(atPath: binaryURL.path) {
+            // Pinned version moved. Replacing the file is not enough: a serve
+            // process started from the old binary keeps running it, and
+            // `adopt-if-present` would happily reuse it forever.
+            NSLog("[OllamaSidecar] engine \(installedVersion ?? "unknown") → \(Self.releaseTag), replacing")
+            statusCallback?("Обновляем движок саммари…")
+            await stopServerRunningOurBinary()
         }
 
         let tarball: URL
@@ -364,8 +392,45 @@ final class OllamaSidecar: @unchecked Sendable {
 
         try makeExecutable(binaryURL)
         stripQuarantine(installDir)
+        try? Self.releaseTag.write(to: installedVersionURL, atomically: true, encoding: .utf8)
         progress?(1.0)
-        NSLog("[OllamaSidecar] binary ready at \(binaryURL.path)")
+        NSLog("[OllamaSidecar] binary ready at \(binaryURL.path) (\(Self.releaseTag))")
+    }
+
+    /// Stop a serve process started from *our* installed binary, so an engine
+    /// upgrade actually takes effect.
+    ///
+    /// Matches on the executable path being exactly `binaryURL`, never on the
+    /// port. This is the one case where we do reach for another process, and it
+    /// stays narrow on purpose: the whole point of `adopt-if-present` is that
+    /// someone else's Ollama — Ollama.app, Homebrew — is none of our business,
+    /// and those live at different paths.
+    private func stopServerRunningOurBinary() async {
+        stop()   // our own tracked child first, if any
+
+        let target = binaryURL.path
+        var victims: [pid_t] = []
+        let capacity = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)
+        guard capacity > 0 else { return }
+        var pids = [pid_t](repeating: 0, count: Int(capacity) / MemoryLayout<pid_t>.size)
+        guard proc_listpids(UInt32(PROC_ALL_PIDS), 0, &pids,
+                            Int32(pids.count * MemoryLayout<pid_t>.size)) > 0 else { return }
+
+        for pid in pids where pid > 1 && pid != getpid() {
+            var buf = [CChar](repeating: 0, count: 4096)
+            guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { continue }
+            if String(cString: buf) == target { victims.append(pid) }
+        }
+        guard !victims.isEmpty else { return }
+
+        NSLog("[OllamaSidecar] stopping old engine \(victims) before replacing it")
+        for pid in victims { kill(pid, SIGTERM) }
+        for _ in 0..<20 {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            if !(await probeAPI()) { return }
+        }
+        for pid in victims { kill(pid, SIGKILL) }
+        try? await Task.sleep(nanoseconds: 300_000_000)
     }
 
     private func findOllamaBinary(under dir: URL) -> URL? {
