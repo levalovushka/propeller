@@ -1,19 +1,19 @@
 # Propeller batch benchmark report
 
 - **Baseline commit:** `40ae070` · machine `MacBook Pro`
-- **Latest commit:** `c25d90f` · machine `MacBook Pro`
+- **Latest commit:** `34ba3f3` · machine `MacBook Pro`
 - **Fixture:** `ru-short-2spk` · audio `27.4394375s` · runs `3`
-- **Verdict:** FAIL
+- **Verdict:** PASS
 
 ## Metrics
 
 | Metric | Baseline | Latest | Δ | Status | Note |
 |--------|---------:|-------:|--:|:------:|------|
-| `asr.rtf` | 0.0315937 | 0.0309455 | -0.000648192 (-2.1%) | OK | improved |
-| `batch.peak_rss_mb` | 112.031 | 173.844 | +61.8125 (+55.2%) | FAIL | beyond +10% (allow +11.2031) |
-| `batch.rss_after_release_mb` | 83.375 | 72.6406 | -10.7344 (-12.9%) | OK | improved |
-| `diarize.rtf` | 0.0178479 | 0.0107273 | -0.00712066 (-39.9%) | OK | improved |
-| `sidecar.spawn_ms` | 3112.92 | 3107.54 | -5.37694 (-0.2%) | OK | improved |
+| `asr.rtf` | 0.0315937 | 0.0323641 | +0.000770384 (+2.4%) | OK | within tol |
+| `batch.peak_rss_mb` | 112.031 | 98.1094 | -13.9219 (-12.4%) | OK | improved |
+| `batch.rss_after_release_mb` | 83.375 | 69.3281 | -14.0469 (-16.8%) | OK | improved |
+| `diarize.rtf` | 0.0178479 | 0.0146406 | -0.00320728 (-18.0%) | OK | improved |
+| `sidecar.spawn_ms` | 3112.92 | 3136.5 | +23.5831 (+0.8%) | OK | within tol |
 
 ## Metric key
 
