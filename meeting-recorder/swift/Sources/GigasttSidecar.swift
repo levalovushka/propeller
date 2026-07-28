@@ -78,18 +78,39 @@ final class GigasttSidecar: @unchecked Sendable {
         ready = false
         lock.unlock()
 
-        guard let proc else { return }
-        if proc.isRunning {
-            proc.terminate()
-            // Give it a moment, then force-kill
-            DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-                if proc.isRunning {
-                    kill(proc.processIdentifier, SIGKILL)
-                }
-            }
+        guard let proc, proc.isRunning else {
+            Self.clearPIDFile()
+            NSLog("[GigasttSidecar] stopped")
+            return
         }
-        Self.clearPIDFile()
-        NSLog("[GigasttSidecar] stopped")
+
+        proc.terminate()
+        // Escalate and clean up off the caller's thread — but keep the PID file
+        // until the process is really gone. Between SIGTERM and exit the port is
+        // still held while `process` is already nil, and clearing the file up
+        // front left that window with no way to identify the owner: a
+        // transcription starting inside it failed with `portOccupied` even
+        // though the app had just stopped the server itself. Reported as "the
+        // port gets taken again while the app is open".
+        DispatchQueue.global().async {
+            if !Self.waitForExit(proc, timeout: 2.0) {
+                kill(proc.processIdentifier, SIGKILL)
+                _ = Self.waitForExit(proc, timeout: 1.0)
+            }
+            Self.clearPIDFile()
+            NSLog("[GigasttSidecar] stopped (pid \(proc.processIdentifier))")
+        }
+    }
+
+    /// Poll until the process exits or `timeout` elapses. `Process.waitUntilExit`
+    /// would block forever on a wedged child.
+    private static func waitForExit(_ proc: Process, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if !proc.isRunning { return true }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        return !proc.isRunning
     }
 
     /// Schedule a graceful stop after `grace` seconds of idle. Cancelled by
@@ -140,11 +161,19 @@ final class GigasttSidecar: @unchecked Sendable {
                 downloadProgress?(1.0)
                 return
             }
-            if await reclaimOrphan() {
-                // Port freed — fall through to a fresh spawn.
-            } else {
+            // A server we just stopped can still be dying. Wait it out before
+            // treating it as someone else's — quieter than signalling a process
+            // already on its way out, and this is the common case: idle-stop
+            // followed by a transcription starting a moment later.
+            var freed = false
+            for _ in 0..<20 {
+                if !(await probeHealth()) { freed = true; break }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            if !freed, !(await reclaimOrphan()) {
                 throw SidecarError.portOccupied(Self.port)
             }
+            // Port is free — fall through to a fresh spawn.
         }
 
         let binary = try resolveBinary()
