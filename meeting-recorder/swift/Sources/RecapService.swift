@@ -137,8 +137,15 @@ actor RecapService {
     }
 
     /// Resolve which backend to use given preferences. Returns nil + reason if skipped.
+    /// A reachable Ollama is not a usable one. We start the server ourselves, so
+    /// it answers whether or not a model was ever pulled — and the recap then
+    /// died on `HTTP 404: model not found` after *every* recording, with the
+    /// backfill re-running it on a timer. The model has to be present for this
+    /// backend to count as available; otherwise the caller gets `.noProvider`
+    /// and the honest "download the model" empty state.
     func resolveBackend(
         kind: RecapProviderKind,
+        ollamaModel: String,
         openAIKey: String?,
         claudeKey: String?
     ) async -> Result<String, RecapSkipReason> {
@@ -146,19 +153,23 @@ actor RecapService {
         case .off:
             return .failure(.disabled)
         case .ollama:
-            await OllamaSidecar.shared.ensureServerRunning()
-            return await probeOllama() ? .success("ollama") : .failure(.noProvider)
+            return await ollamaUsable(model: ollamaModel) ? .success("ollama") : .failure(.noProvider)
         case .openai:
             return (openAIKey?.isEmpty == false) ? .success("openai") : .failure(.noProvider)
         case .claude:
             return (claudeKey?.isEmpty == false) ? .success("claude") : .failure(.noProvider)
         case .auto:
-            await OllamaSidecar.shared.ensureServerRunning()
-            if await probeOllama() { return .success("ollama") }
+            if await ollamaUsable(model: ollamaModel) { return .success("ollama") }
             if openAIKey?.isEmpty == false { return .success("openai") }
             if claudeKey?.isEmpty == false { return .success("claude") }
             return .failure(.noProvider)
         }
+    }
+
+    private func ollamaUsable(model: String) async -> Bool {
+        await OllamaSidecar.shared.ensureServerRunning()
+        guard await probeOllama() else { return false }
+        return await OllamaSidecar.shared.isModelInstalled(model)
     }
 
     func generateRecap(
@@ -176,7 +187,8 @@ actor RecapService {
             guard !trimmed.isEmpty else { return .failure(.emptyTranscript) }
 
             let backend: String
-            switch await resolveBackend(kind: prefs.provider, openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey) {
+            switch await resolveBackend(kind: prefs.provider, ollamaModel: prefs.ollamaModel,
+                                    openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey) {
             case .failure(let reason):
                 return .failure(reason)
             case .success(let name):
@@ -253,7 +265,8 @@ actor RecapService {
         guard !trimmed.isEmpty else { return nil }
 
         let backend: String
-        switch await resolveBackend(kind: prefs.provider, openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey) {
+        switch await resolveBackend(kind: prefs.provider, ollamaModel: prefs.ollamaModel,
+                                    openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey) {
         case .failure: return nil
         case .success(let name): backend = name
         }

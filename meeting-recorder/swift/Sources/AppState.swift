@@ -1152,12 +1152,13 @@ class AppState: ObservableObject {
                         recapSkipHint = nil
                         surfaceMeetingUI(preferSummaryTab: false)
                     case .noProvider:
-                        recapSkipHint = "Нет провайдера саммари — запустите Ollama или добавьте API-ключ в Настройках"
-                        surfacePipelineError(recapSkipHint ?? "Саммари пропущено")
-                        NotificationManager.shared.post(
-                            title: "Propeller",
-                            body: recapSkipHint ?? "Саммари пропущено"
-                        )
+                        // A skip, not a failure. This used to raise "Не удалось
+                        // обработать" plus a system notification after *every*
+                        // successful recording, which read as the recording
+                        // having broken. The meeting card already explains it and
+                        // offers «Скачать»; that is where it belongs.
+                        recapSkipHint = "Саммари пропущено — локальная модель ещё не скачана. Кнопка «Скачать» на вкладке «Саммари»."
+                        localRecapModelReady = false
                     case .emptyTranscript:
                         recapSkipHint = "Саммари пропущено — пустой транскрипт"
                         surfacePipelineError(recapSkipHint ?? "")
