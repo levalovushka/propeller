@@ -11,6 +11,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // ASR sidecar is started lazily on first transcription (plan-optimization E1).
+#if GALLERY
+        // `--gallery-export <dir>`: render every state to PNG and quit. Runs
+        // after launch so SwiftUI is up, and exits without touching the archive.
+        if let dir = GalleryExport.requestedDirectory {
+            Task { @MainActor in
+                // The registry is populated when the main window appears, which
+                // happens after launch — wait for it rather than racing it.
+                var state: AppState?
+                for _ in 0..<50 {
+                    if let s = AppStateRegistry.shared { state = s; break }
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+                guard let state else {
+                    NSLog("[GalleryExport] AppState never appeared — export aborted")
+                    NSApp.terminate(nil)
+                    return
+                }
+                _ = await GalleryExport.exportAll(state: state, to: dir)
+                // exit(), not NSApp.terminate: the terminate path runs the
+                // pipeline-flush delegate, which hangs an export-only launch.
+                exit(0)
+            }
+        }
+#endif
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
