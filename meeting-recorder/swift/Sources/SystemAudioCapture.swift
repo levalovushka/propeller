@@ -325,7 +325,12 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
         if audioFile == nil {
             do {
-                audioFile = try AVAudioFile(forWriting: outputURL, settings: writeBuffer.format.settings)
+                // Converted buffers go to disk as Int16; a native-format fallback
+                // keeps the stream's own settings.
+                let settings = (writeBuffer === pcmBuffer)
+                    ? writeBuffer.format.settings
+                    : Self.stemFileSettings
+                audioFile = try AVAudioFile(forWriting: outputURL, settings: settings)
             } catch {
                 debugLog("[SystemAudioCapture] failed to create AVAudioFile: \(error)")
                 onCaptureIssueDetected?("System audio file could not be created: \(error.localizedDescription)")
@@ -428,14 +433,30 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         return pcm
     }
 
-    /// Target stem format. Matches the mic stem, so the offline mix takes
-    /// `readAndResample`'s no-conversion fast path for both sides.
-    private static let stemFormat = AVAudioFormat(
-        commonFormat: .pcmFormatInt16,
+    /// Format we hand to `AVAudioFile.write(from:)`.
+    ///
+    /// Float32, not Int16, even though the stem lands on disk as Int16:
+    /// `AVAudioFile(forWriting:settings:)` always exposes a Float32
+    /// `processingFormat` and asserts on anything else. Passing an Int16 buffer
+    /// aborted the capture queue inside `ExtAudioFile::WriteInputProc`.
+    /// The Int16 conversion is `AVAudioFile`'s job, driven by `stemFileSettings`.
+    private static let stemProcessingFormat = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32,
         sampleRate: 16_000,
         channels: 1,
-        interleaved: true
+        interleaved: false
     )
+
+    /// What actually gets written: 16 kHz mono Int16, same as the mic stem.
+    private static let stemFileSettings: [String: Any] = [
+        AVFormatIDKey: kAudioFormatLinearPCM,
+        AVSampleRateKey: 16_000.0,
+        AVNumberOfChannelsKey: 1,
+        AVLinearPCMBitDepthKey: 16,
+        AVLinearPCMIsFloatKey: false,
+        AVLinearPCMIsBigEndianKey: false,
+        AVLinearPCMIsNonInterleaved: false,
+    ]
 
     /// Resample one capture buffer to the stem format, or nil to write natively.
     ///
@@ -445,7 +466,7 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// recording to the native format rather than dropping audio — losing the
     /// far side of a call is far worse than a large file.
     private func downsampledStem(_ input: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
-        guard let target = Self.stemFormat else { return nil }
+        guard let target = Self.stemProcessingFormat else { return nil }
         if input.format.sampleRate == target.sampleRate,
            input.format.channelCount == target.channelCount {
             return nil   // already what we want; let AVAudioFile handle bit depth
