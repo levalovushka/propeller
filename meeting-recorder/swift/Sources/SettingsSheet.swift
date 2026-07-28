@@ -183,7 +183,6 @@ private struct GeneralSettingsPane: View {
 
 private struct AudioSettingsPane: View {
     @AppStorage("captureSystemAudio") private var captureSystemAudio = true
-    @AppStorage("voiceProcessingEnabled") private var voiceProcessingEnabled = false
 
     var body: some View {
         Form {
@@ -191,12 +190,6 @@ private struct AudioSettingsPane: View {
                 Toggle("Захватывать системный звук", isOn: $captureSystemAudio)
                     .onChange(of: captureSystemAudio) { _, val in Preferences.shared.captureSystemAudio = val }
                 Text("Нужно разрешение Screen Recording (macOS спросит при первой записи). Если выкл — только микрофон.")
-                    .typo(Tokens.Typography.Label.smRegular)
-                    .foregroundStyle(.secondary)
-
-                Toggle("Подавлять эхо динамика", isOn: $voiceProcessingEnabled)
-                    .onChange(of: voiceProcessingEnabled) { _, val in Preferences.shared.voiceProcessingEnabled = val }
-                Text("Микрофон через Apple voice processing (эхо + шум). Для звонков без наушников. По умолчанию выкл — с наушниками не влияет.")
                     .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
             }

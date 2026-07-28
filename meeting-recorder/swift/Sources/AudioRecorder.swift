@@ -17,10 +17,8 @@ class AudioRecorder: ObservableObject {
 
     // Mic recording (legacy AVAudioRecorder path).
     private var avRecorder: AVAudioRecorder?
-    /// Voice-processed mic capture — used when Preferences.voiceProcessingEnabled
     /// is true. Provides Apple's built-in echo cancellation so speaker-on
     /// meetings don't bleed remote audio back into the mic stem.
-    private var vpCapture: VoiceProcessedMicCapture?
     private(set) var startTime: Date?
     private(set) var recordingID: String?
     private(set) var filePath: URL?
@@ -60,7 +58,7 @@ class AudioRecorder: ObservableObject {
         systemAudioWarning = nil
         micCaptureWarning = nil
         lastStopWasMicOnly = false
-        debugLog("[AudioRecorder] start() called — captureSystemAudio=\(Preferences.shared.captureSystemAudio) voiceProcessing=\(Preferences.shared.voiceProcessingEnabled)")
+        debugLog("[AudioRecorder] start() called — captureSystemAudio=\(Preferences.shared.captureSystemAudio)")
 
         let recordingsDir = URL(fileURLWithPath: Preferences.shared.recordingsPath)
         try FileManager.default.createDirectory(at: recordingsDir, withIntermediateDirectories: true)
@@ -79,29 +77,15 @@ class AudioRecorder: ObservableObject {
             AVLinearPCMIsBigEndianKey: false,
         ]
 
-        if Preferences.shared.voiceProcessingEnabled {
-            // Voice-processed path: AVAudioEngine + AEC + noise suppression.
-            // Falls back to AVAudioRecorder on failure (e.g. another app already
-            // owns the input device with an incompatible voice-processing config).
-            do {
-                let capture = VoiceProcessedMicCapture()
-                try capture.start(outputURL: micURL)
-                vpCapture = capture
-                debugLog("[AudioRecorder] Voice-processed mic capture started")
-            } catch {
-                debugLog("[AudioRecorder] Voice-processing capture failed (\(error)) — using AVAudioRecorder")
-                avRecorder = try AVAudioRecorder(url: micURL, settings: settings)
-                avRecorder?.isMeteringEnabled = true
-                guard let recorder = avRecorder, recorder.record() else {
-                    throw RecorderError.failedToStart
-                }
-            }
-        } else {
-            avRecorder = try AVAudioRecorder(url: micURL, settings: settings)
-            avRecorder?.isMeteringEnabled = true
-            guard let recorder = avRecorder, recorder.record() else {
-                throw RecorderError.failedToStart
-            }
+        // Plain AVAudioRecorder only. Apple's voice processing (VPIO) used to be
+        // offered here as "подавлять эхо динамика", and it reconfigures the shared
+        // input device rather than just our own capture: one tester became almost
+        // inaudible to everyone else on the call. A recorder must never degrade
+        // the meeting it is recording, so the option and its engine are gone.
+        avRecorder = try AVAudioRecorder(url: micURL, settings: settings)
+        avRecorder?.isMeteringEnabled = true
+        guard let recorder = avRecorder, recorder.record() else {
+            throw RecorderError.failedToStart
         }
 
         recordingID = id
@@ -165,13 +149,8 @@ class AudioRecorder: ObservableObject {
     func stop() async throws -> (id: String, url: URL, duration: TimeInterval) {
         stopMetering()
         let recordedDuration: TimeInterval
-        if let vp = vpCapture {
-            recordedDuration = vp.recordedDuration
-            vp.stop()
-        } else {
-            recordedDuration = avRecorder?.currentTime ?? 0
-            avRecorder?.stop()
-        }
+        recordedDuration = avRecorder?.currentTime ?? 0
+        avRecorder?.stop()
         let dur = recordedDuration > 0
             ? recordedDuration
             : Date().timeIntervalSince(startTime ?? Date())
@@ -184,7 +163,6 @@ class AudioRecorder: ObservableObject {
         duration = dur
         isRecording = false
         avRecorder = nil
-        vpCapture = nil
         recordingID = nil
         filePath = nil
         startTime = nil
@@ -227,9 +205,7 @@ class AudioRecorder: ObservableObject {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             guard let self, self.isRecording else { return }
             let progressed: TimeInterval
-            if let vp = self.vpCapture {
-                progressed = vp.recordedDuration
-            } else if let rec = self.avRecorder {
+            if let rec = self.avRecorder {
                 progressed = rec.currentTime
             } else {
                 progressed = 0
@@ -273,9 +249,7 @@ class AudioRecorder: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self, self.isRecording, self.meteringDesired else { return }
                 let normalized: Float
-                if let vp = self.vpCapture {
-                    normalized = vp.currentLevel
-                } else if let rec = self.avRecorder {
+                if let rec = self.avRecorder {
                     rec.updateMeters()
                     let db = rec.averagePower(forChannel: 0)
                     normalized = max(0, min(1, (db + 50) / 50))
@@ -486,154 +460,3 @@ class AudioRecorder: ObservableObject {
 }
 
 // MARK: - Voice-Processed Mic Capture
-
-/// Microphone capture using AVAudioEngine with the voice-processing input
-/// node enabled. Engages Apple's acoustic echo cancellation + noise
-/// suppression — same engine FaceTime/Zoom use internally — so when the
-/// user is on a call without headphones, the remote participants' voices
-/// coming back through the mic are subtracted before reaching the file.
-///
-/// Writes a 16kHz mono int16 PCM WAV at the requested URL, matching the
-/// format produced by the legacy `AVAudioRecorder` path so the rest of the
-/// pipeline (mixer, diarizer, transcriber) doesn't have to know which
-/// backend ran. Lock-protected internally because the tap callback fires
-/// on the audio render thread.
-final class VoiceProcessedMicCapture: @unchecked Sendable {
-    private let engine = AVAudioEngine()
-    private var file: AVAudioFile?
-    private var converter: AVAudioConverter?
-    private let lock = NSLock()
-    private var _level: Float = 0
-    private var _outputFrames: Int64 = 0
-    private let outputSampleRate: Double = 16_000
-
-    var currentLevel: Float {
-        lock.lock(); defer { lock.unlock() }
-        return _level
-    }
-
-    /// Duration of audio committed to disk so far, in seconds. Computed
-    /// from the output sample rate to stay accurate even if the input
-    /// node negotiates a different rate (VPIO often selects 24kHz).
-    var recordedDuration: TimeInterval {
-        lock.lock(); defer { lock.unlock() }
-        return Double(_outputFrames) / outputSampleRate
-    }
-
-    func start(outputURL: URL) throws {
-        let input = engine.inputNode
-        try input.setVoiceProcessingEnabled(true)
-
-        // Clamp the "other audio" ducking to its minimum so VPIO doesn't drop
-        // the system output level just to make AEC easier — that made the
-        // meeting itself inaudible to the user. AGC is left at its default
-        // (enabled) because disabling it produces a near-silent mic capture
-        // on macOS — the input pre-amp is part of how VPIO surfaces audio.
-        if #available(macOS 14.0, *) {
-            input.voiceProcessingOtherAudioDuckingConfiguration =
-                AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
-                    enableAdvancedDucking: false,
-                    duckingLevel: .min
-                )
-        }
-
-        let inputFormat = input.outputFormat(forBus: 0)
-        debugLog("[VoiceProcessedMic] input format: sr=\(inputFormat.sampleRate) ch=\(inputFormat.channelCount)")
-
-        let writeSettings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatLinearPCM),
-            AVSampleRateKey: outputSampleRate,
-            AVNumberOfChannelsKey: 1,
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsFloatKey: false,
-            AVLinearPCMIsBigEndianKey: false,
-        ]
-        let f = try AVAudioFile(forWriting: outputURL, settings: writeSettings)
-        let conv = AVAudioConverter(from: inputFormat, to: f.processingFormat)
-
-        lock.lock()
-        self.file = f
-        self.converter = conv
-        self._outputFrames = 0
-        self._level = 0
-        lock.unlock()
-
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            self?.handle(buffer: buffer)
-        }
-
-        try engine.start()
-    }
-
-    func stop() {
-        engine.inputNode.removeTap(onBus: 0)
-        // Leave VPIO engaged and other-audio ducking can mute headphones
-        // for the rest of the process lifetime — turn it off explicitly.
-        try? engine.inputNode.setVoiceProcessingEnabled(false)
-        engine.stop()
-        engine.reset()
-        lock.lock()
-        file = nil
-        converter = nil
-        lock.unlock()
-    }
-
-    private func handle(buffer: AVAudioPCMBuffer) {
-        let level = Self.normalizedLevel(buffer)
-        let inFormat = buffer.format
-
-        lock.lock()
-        defer { lock.unlock() }
-
-        _level = level
-        guard let f = file, let conv = converter else { return }
-
-        let outFormat = f.processingFormat
-        let ratio = outFormat.sampleRate / inFormat.sampleRate
-        let outCapacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio + 1024)
-        guard let outBuf = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: outCapacity) else { return }
-
-        var consumed = false
-        var convError: NSError?
-        let status = conv.convert(to: outBuf, error: &convError) { _, outStatus in
-            if consumed {
-                outStatus.pointee = .endOfStream
-                return nil
-            }
-            consumed = true
-            outStatus.pointee = .haveData
-            return buffer
-        }
-        if status != .error, outBuf.frameLength > 0 {
-            do {
-                try f.write(from: outBuf)
-                _outputFrames += Int64(outBuf.frameLength)
-            } catch {
-                NSLog("[VoiceProcessedMic] file write error: \(error)")
-            }
-        }
-    }
-
-    /// RMS-based 0–1 level, calibrated against the same -50dB → 0 floor
-    /// AVAudioRecorder uses, so the waveform display behaves identically.
-    private static func normalizedLevel(_ buffer: AVAudioPCMBuffer) -> Float {
-        guard let data = buffer.floatChannelData else { return 0 }
-        let frames = Int(buffer.frameLength)
-        let channels = Int(buffer.format.channelCount)
-        guard frames > 0, channels > 0 else { return 0 }
-        var sumSq: Float = 0
-        var count = 0
-        for c in 0..<channels {
-            let p = data[c]
-            for i in 0..<frames {
-                let v = p[i]
-                sumSq += v * v
-                count += 1
-            }
-        }
-        guard count > 0 else { return 0 }
-        let rms = sqrt(sumSq / Float(count))
-        let db = rms > 0 ? 20 * log10f(rms) : -120
-        return max(0, min(1, (db + 50) / 50))
-    }
-}
