@@ -225,7 +225,14 @@ enum GigasttClient {
     ) throws {
         try? FileManager.default.removeItem(at: url)
         let format = source.processingFormat
-        let dest = try AVAudioFile(forWriting: url, settings: format.settings)
+        // Write in the source's ON-DISK format, not its processing format.
+        // AVAudioFile always decodes to Float32 in memory, so writing with
+        // `processingFormat.settings` re-encoded a 16 kHz Int16 mix as Float32
+        // and doubled every chunk: a 20-minute piece became 73.2 MiB against the
+        // sidecar's 64 MiB body limit, so long meetings failed with HTTP 413
+        // even though chunking had run correctly. `write(from:)` converts from
+        // the buffer's processing format to the file format for us.
+        let dest = try AVAudioFile(forWriting: url, settings: source.fileFormat.settings)
         source.framePosition = startFrame
 
         var remaining = frameCount

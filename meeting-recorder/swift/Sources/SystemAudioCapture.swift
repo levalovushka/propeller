@@ -6,8 +6,9 @@ import ScreenCaptureKit
 
 /// Captures the system audio output (what would be heard through the speakers/headphones)
 /// using ScreenCaptureKit's audio-only stream. Requires macOS 14+ and Screen Recording
-/// permission. Audio is written to a 48kHz stereo WAV. Offline-mixing into the final
-/// recording is done by `AudioRecorder` on stop.
+/// permission. The stream is 48 kHz stereo, but the stem is written as **16 kHz mono
+/// Int16** — the same shape as the mic stem and everything that consumes it.
+/// Offline-mixing into the final recording is done by `AudioRecorder` on stop.
 @available(macOS 14.0, *)
 final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// Meeting apps we scope capture to by default, so we tap only the call's
@@ -16,6 +17,14 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
     private var stream: SCStream?
     private var audioFile: AVAudioFile?
+    /// 48 kHz stereo Float32 → 16 kHz mono Int16, reused across callbacks so the
+    /// resampler keeps its state between buffers. Nil until the first buffer
+    /// establishes the input format, or after a failure downgrades us to native.
+    private var stemConverter: AVAudioConverter?
+    /// Set when conversion failed and we fell back to the stream's own format.
+    /// Capture reliability outweighs stem size: a smaller file is worthless if
+    /// the other side of the call is missing.
+    private var stemConversionDisabled = false
     /// When true, sample callbacks must not recreate the WAV (would truncate — C10).
     private var didStopWriting = false
     private let sampleQueue = DispatchQueue(label: "com.simplyai.meeting-recorder.sck-audio")
@@ -305,16 +314,25 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             sampleWatchdog = nil
         }
         if didStopWriting { return }
+
+        // Everything downstream wants 16 kHz mono: the offline mix resamples to
+        // it, the speaker split only measures energy per window, and the
+        // "usable stem" check only looks at size. Storing ScreenCaptureKit's
+        // native 48 kHz stereo Float32 cost 375 KB/s — a 49-minute meeting left
+        // a 1080 MB stem beside a 90 MB mic stem, 12x for nothing. It also fed
+        // the offline mix a gigabyte-sized read (M1).
+        let writeBuffer = stemConversionDisabled ? pcmBuffer : (downsampledStem(pcmBuffer) ?? pcmBuffer)
+
         if audioFile == nil {
             do {
-                audioFile = try AVAudioFile(forWriting: outputURL, settings: pcmBuffer.format.settings)
+                audioFile = try AVAudioFile(forWriting: outputURL, settings: writeBuffer.format.settings)
             } catch {
                 debugLog("[SystemAudioCapture] failed to create AVAudioFile: \(error)")
                 onCaptureIssueDetected?("System audio file could not be created: \(error.localizedDescription)")
                 return
             }
         }
-        do { try audioFile?.write(from: pcmBuffer) } catch {
+        do { try audioFile?.write(from: writeBuffer) } catch {
             debugLog("[SystemAudioCapture] write error: \(error)")
             onCaptureIssueDetected?("System audio write failed: \(error.localizedDescription)")
         }
@@ -408,6 +426,67 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             return nil
         }
         return pcm
+    }
+
+    /// Target stem format. Matches the mic stem, so the offline mix takes
+    /// `readAndResample`'s no-conversion fast path for both sides.
+    private static let stemFormat = AVAudioFormat(
+        commonFormat: .pcmFormatInt16,
+        sampleRate: 16_000,
+        channels: 1,
+        interleaved: true
+    )
+
+    /// Resample one capture buffer to the stem format, or nil to write natively.
+    ///
+    /// The converter is created once and reused: with sample-rate conversion it
+    /// carries filter state across buffers, and a fresh one per callback would
+    /// click at every boundary. Any failure permanently downgrades this
+    /// recording to the native format rather than dropping audio — losing the
+    /// far side of a call is far worse than a large file.
+    private func downsampledStem(_ input: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        guard let target = Self.stemFormat else { return nil }
+        if input.format.sampleRate == target.sampleRate,
+           input.format.channelCount == target.channelCount {
+            return nil   // already what we want; let AVAudioFile handle bit depth
+        }
+
+        if stemConverter == nil || stemConverter?.inputFormat != input.format {
+            guard let made = AVAudioConverter(from: input.format, to: target) else {
+                debugLog("[SystemAudioCapture] no converter for \(input.format); writing native")
+                stemConversionDisabled = true
+                return nil
+            }
+            stemConverter = made
+        }
+        guard let converter = stemConverter else { return nil }
+
+        let ratio = target.sampleRate / input.format.sampleRate
+        let capacity = AVAudioFrameCount(Double(input.frameLength) * ratio) + 1024
+        guard let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else {
+            stemConversionDisabled = true
+            return nil
+        }
+
+        var supplied = false
+        var convError: NSError?
+        let status = converter.convert(to: output, error: &convError) { _, outStatus in
+            if supplied {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+            supplied = true
+            outStatus.pointee = .haveData
+            return input
+        }
+        guard status != .error, output.frameLength > 0 else {
+            conversionFailureCount += 1
+            debugLog("[SystemAudioCapture] stem downsample failed: \(convError?.localizedDescription ?? "unknown"); writing native")
+            stemConversionDisabled = true
+            stemConverter = nil
+            return nil
+        }
+        return output
     }
 
     static func rmsLevel(_ buffer: AVAudioPCMBuffer) -> Float {
