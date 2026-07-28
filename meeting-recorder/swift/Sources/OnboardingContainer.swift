@@ -92,7 +92,7 @@ struct OnboardingContainer: View {
             ollamaProgress: state.ollamaSetupProgress,
             ollamaStatus: state.ollamaSetupMessage,
             ollamaReady: ollamaReady,
-            ollamaError: state.pipelineError
+            ollamaError: state.ollamaSetupError
         )
         .onAppear {
             refreshGrants()

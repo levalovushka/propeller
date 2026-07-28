@@ -32,6 +32,12 @@ class AppState: ObservableObject {
     /// Ollama engine/model setup (onboarding + Settings). Nil when idle.
     @Published var ollamaSetupProgress: Double? = nil
     @Published var ollamaSetupMessage = ""
+    /// Failure of the summary-model setup specifically. Separate from
+    /// `pipelineError`: onboarding used to show the shared pipeline error, so an
+    /// unrelated ASR failure ("gigastt недоступен") appeared on the screen that
+    /// offers to download the *summary* model, which reads as that download
+    /// having failed.
+    @Published var ollamaSetupError: String? = nil
     /// Is the local summary model on disk? Nil until first checked. Drives the
     /// empty-summary panel: without it the UI offers «Сгенерировать», which can
     /// only fail with `HTTP 404: model not found`.
@@ -1370,10 +1376,13 @@ class AppState: ObservableObject {
     func downloadOllamaRuntime() async -> Bool {
         let okDisk = await checkDiskSpaceForModelDownload(.recap)
         guard okDisk else {
-            surfacePipelineError("Недостаточно места для модели саммари (~3,4 ГБ).")
+            let msg = "Недостаточно места для модели саммари (~3,4 ГБ)."
+            ollamaSetupError = msg
+            surfacePipelineError(msg)
             return false
         }
         pipelineError = nil
+        ollamaSetupError = nil
         ollamaSetupProgress = 0
         ollamaSetupMessage = "Подготовка…"
         let model = Preferences.shared.recapOllamaModel
@@ -1393,6 +1402,7 @@ class AppState: ObservableObject {
             )
             ollamaSetupProgress = nil
             ollamaSetupMessage = "Модель готова"
+            ollamaSetupError = nil
             localRecapModelReady = true
             Analytics.signal("Ollama.setup.ok")
             // Setup is done and nothing needs the server yet. Without this a
@@ -1407,6 +1417,7 @@ class AppState: ObservableObject {
         } catch {
             ollamaSetupProgress = nil
             ollamaSetupMessage = ""
+            ollamaSetupError = error.localizedDescription
             surfacePipelineError(error.localizedDescription)
             Analytics.signal("Ollama.setup.fail")
             return false
