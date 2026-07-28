@@ -131,21 +131,24 @@ struct OnboardingContainer: View {
     }
 
     private func openSettings(_ anchor: String) {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") {
-            NSWorkspace.shared.open(url)
-        }
+        openSystemSettings("x-apple.systempreferences:com.apple.preference.security?\(anchor)")
     }
 
     private func openNotificationSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
-            NSWorkspace.shared.open(url)
-        }
+        openSystemSettings("x-apple.systempreferences:com.apple.preference.notifications")
     }
 
     /// System Settings → Internet Accounts, where a Google account is added.
     private func openInternetAccounts() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preferences.internetaccounts") {
-            NSWorkspace.shared.open(url)
-        }
+        openSystemSettings("x-apple.systempreferences:com.apple.preferences.internetaccounts")
+    }
+
+    /// Always go through the panel controller: the onboarding plate floats above
+    /// ordinary windows, so System Settings would open behind it and the grant
+    /// button would look dead.
+    private func openSystemSettings(_ string: String) {
+        guard let url = URL(string: string) else { return }
+        OnboardingPanelController.shared.yieldToSystemWindow()
+        NSWorkspace.shared.open(url)
     }
 }

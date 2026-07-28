@@ -39,6 +39,47 @@ final class OnboardingPanelController {
         panel?.orderOut(nil)
         panel = nil
         state = nil
+        stopWatchingForReturn()
+    }
+
+    /// Step aside for a system window we just asked macOS to open.
+    ///
+    /// The plate is a floating panel, so it sits above ordinary windows: System
+    /// Settings opened *behind* it and, from the user's side, tapping "grant"
+    /// appeared to do nothing. Dropping to the normal level lets the usual
+    /// window ordering apply; the level is restored as soon as the user comes
+    /// back to us, so the plate still floats over our own windows.
+    func yieldToSystemWindow() {
+        guard let panel else { return }
+        panel.level = .normal
+        watchForReturn()
+        // Hand activation over explicitly — `NSWorkspace.open` alone leaves us
+        // frontmost, and System Settings then opens without focus.
+        NSApp.deactivate()
+    }
+
+    private var returnObserver: NSObjectProtocol?
+
+    private func watchForReturn() {
+        guard returnObserver == nil else { return }
+        returnObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.panel?.level = .floating
+                self.stopWatchingForReturn()
+            }
+        }
+    }
+
+    private func stopWatchingForReturn() {
+        if let returnObserver {
+            NotificationCenter.default.removeObserver(returnObserver)
+        }
+        returnObserver = nil
     }
 
     private func makePanel(state: AppState) -> NSPanel {
