@@ -9,9 +9,23 @@ BUNDLE_ID="com.simplyai.meeting-recorder"
 APP="/Applications/${APP_NAME}.app"
 BUILD_DIR=".build/release"
 
-echo "=== Building Propeller (SPM) ==="
+# --gallery builds the state gallery in (screenshots / redesign reference).
+# Never pass it for anything a user will run: the gallery can pose the pipeline
+# in any state. Without the flag not a byte of it is compiled.
+SWIFT_FLAGS=()
+APP_VARIANT=""
+for arg in "$@"; do
+    case "$arg" in
+        --gallery)
+            SWIFT_FLAGS+=(-Xswiftc -DGALLERY)
+            APP_VARIANT=" + state gallery"
+            ;;
+    esac
+done
 
-swift build -c release 2>&1
+echo "=== Building Propeller (SPM)${APP_VARIANT} ==="
+
+swift build -c release "${SWIFT_FLAGS[@]}" 2>&1
 
 echo "=== Building .app bundle ==="
 

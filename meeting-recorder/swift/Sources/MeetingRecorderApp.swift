@@ -78,6 +78,16 @@ struct MeetingRecorderApp: App {
                 .environmentObject(state)
         }
 
+#if GALLERY
+        // Screenshot/redesign tool. Absent from shipping builds — see StateGallery.
+        // A `Window` scene with a title gets its own entry under the Window menu,
+        // so it needs no command of its own.
+        Window("Галерея состояний", id: "state-gallery") {
+            StateGallery(state: state)
+        }
+        .windowResizability(.contentSize)
+#endif
+
         MenuBarExtra {
             MenuBarContentView(state: state)
         } label: {

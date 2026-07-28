@@ -20,6 +20,13 @@ class AppState: ObservableObject {
     /// `saveStep` / `recapStep` / `busyRecordingID` / `statusMessage` /
     /// `statusIsTransient` — seven fields, ~2000 combinations, one now.
     @Published private(set) var activity: PipelineActivity = .idle
+
+#if GALLERY
+    /// Pose for a screenshot. Compiled out of shipping builds, so it cannot
+    /// become the second source of truth the whole state refactor removed.
+    /// Activity is ephemeral by design — nothing here is persisted.
+    func galleryPose(activity: PipelineActivity) { self.activity = activity }
+#endif
     /// Last pipeline failure shown in the empty transcript / recap panels (and toast).
     /// Cleared when a new ASR/recap attempt starts successfully past the early guards.
     @Published var pipelineError: String? = nil
