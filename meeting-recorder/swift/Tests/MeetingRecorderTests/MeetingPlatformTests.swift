@@ -71,10 +71,22 @@ final class MeetingPlatformTests: XCTestCase {
         // `owns` lowercases its input, not the table — a capital letter in the
         // table would make a platform silently undetectable.
         for platform in MeetingPlatform.all {
-            for value in platform.bundleIDs + platform.windowOwners + platform.meetingTitleMarkers {
+            // Helper process names belong here too: the real one is spelled
+            // `CptHost`, and a table holding it that way would only match on a
+            // system where the kernel agreed about capitals.
+            for value in platform.bundleIDs + platform.windowOwners
+                + platform.meetingTitleMarkers + platform.callHelperProcesses {
                 XCTAssertEqual(value, value.lowercased(), "\(platform.id): \(value)")
             }
         }
+    }
+
+    /// The name Zoom actually spawns for a call. Confirmed on a live meeting
+    /// 2026-07-29: `CptHost` appeared the second the call was joined, while
+    /// `caphost` — one letter apart and idle-safe — had been running for hours.
+    func testZoomCallHelperIsTheProcessThatAppearsWithTheCall() {
+        XCTAssertTrue(MeetingPlatform.zoom.callHelperProcesses.contains("cpthost"))
+        XCTAssertFalse(MeetingPlatform.zoom.callHelperProcesses.contains("caphost"))
     }
 
     // MARK: - Debounce

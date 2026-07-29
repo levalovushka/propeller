@@ -219,7 +219,9 @@ final class MeetingDetector {
         for i in 0..<count {
             let pid = pids[i]
             guard pid > 0 else { continue }
-            if let processName = processName(forPID: pid),
+            // Lowercase the input, not the table — the same rule the rest of
+            // `MeetingPlatform` matching follows. The kernel reports `CptHost`.
+            if let processName = processName(forPID: pid)?.lowercased(),
                processName == name || processName.hasPrefix(name) {
                 return true
             }

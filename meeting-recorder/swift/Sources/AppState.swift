@@ -142,6 +142,11 @@ class AppState: ObservableObject {
 
     func bootstrap() {
         guard !didBootstrap else { return }
+        // A probe run is not a session: the app is up only to answer a question
+        // and quit. Left unguarded, the meeting detector saw the very call being
+        // probed and started recording it — the first probe left a 0-second stub
+        // in the archive, which the pipeline then owed a summary.
+        if #available(macOS 14.0, *), CaptureProbe.isRequested { return }
         didBootstrap = true
 
         // (model migration lives in `Preferences.recapOllamaModel` so it also

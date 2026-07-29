@@ -52,8 +52,12 @@ extension MeetingPlatform {
         displayName: "Zoom",
         bundleIDs: ["us.zoom.xos"],
         windowOwners: ["zoom.us"],
-        // `aomhost` is spawned for calls; `caphost` alone is idle-safe and ignored.
-        callHelperProcesses: ["aomhost"],
+        // Spawned when a call starts; `caphost` alone is idle-safe and ignored —
+        // it sits running from launch. Confirmed on a live call 2026-07-29:
+        // `CptHost` appeared at the exact second the meeting was joined, while
+        // `caphost` had been up for four hours. `aomhost` stays because older
+        // Zoom builds spawned it and the extra comparison costs nothing.
+        callHelperProcesses: ["cpthost", "aomhost"],
         meetingTitleMarkers: [
             "zoom meeting", "webinar", "meeting id", "конференция", "вебинар",
         ],
