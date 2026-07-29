@@ -114,14 +114,16 @@ class AudioRecorder: ObservableObject {
                     // for start() failure so it can't disagree with a live System meter.
                     NSLog("[AudioRecorder] System audio note: \(message)")
                 }
-                sck.onFirstSample = { [weak self] in
+                sck.onFirstSample = { [weak self] sampleAge in
                     // Timestamp here, on the capture queue: the stem started when
                     // this fired, not when the main actor got round to us.
                     let firedAt = Date()
                     Task { @MainActor in
                         guard let self, let recorder = self.avRecorder else { return }
                         let hop = Date().timeIntervalSince(firedAt)
-                        let offset = max(0, recorder.currentTime - hop)
+                        // Две поправки, обе вычитаются: прыжок на этот актор и
+                        // возраст первого сэмпла в момент доставки.
+                        let offset = max(0, recorder.currentTime - hop - sampleAge)
                         // Overwrites on purpose: a scoped→display-wide fallback
                         // starts the stem file over, and then the stem begins
                         // later than it first did.
@@ -130,7 +132,7 @@ class AudioRecorder: ObservableObject {
                         if let previous {
                             NSLog("[AudioRecorder] system stem restarted — offset \(Int(previous * 1000)) → \(Int(offset * 1000)) ms")
                         } else {
-                            NSLog("[AudioRecorder] system stem opens \(Int(offset * 1000)) ms into the mic timeline")
+                            NSLog("[AudioRecorder] system stem opens \(Int(offset * 1000)) ms into the mic timeline (first sample was \(Int(sampleAge * 1000)) ms old)")
                         }
                     }
                 }

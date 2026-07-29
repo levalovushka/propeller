@@ -61,7 +61,13 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// that difference is where this stem starts on the recording's timeline
     /// (see `StemTimeline`). Everything later depends on it: the mix, and one
     /// day the interleaving of two live streams.
-    var onFirstSample: (() -> Void)?
+    ///
+    /// The parameter is how *old* that first sample already was when it reached
+    /// us: ScreenCaptureKit hands over audio it captured a moment earlier, and
+    /// measuring against the moment of delivery pushed the stem too far right —
+    /// 68 ms on one measured recording, which is audible as a distinct echo once
+    /// the microphone is picking the same sound up through the room.
+    var onFirstSample: ((TimeInterval) -> Void)?
     private var reportedFirstSample = false
 
     /// Called when the stream appears to be running but audio capture itself is unhealthy.
@@ -347,7 +353,16 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             reportedFirstSample = true
             // Before the write, not after: the question is when this stem's
             // sample zero was captured, and disk work would only add to it.
-            onFirstSample?()
+            // The buffer says when that was; the difference from now is the
+            // pipeline's own head start, and it must not land in the offset.
+            let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            var age: TimeInterval = 0
+            if pts.isValid {
+                let now = CMClockGetTime(CMClockGetHostTimeClock())
+                let delta = CMTimeGetSeconds(CMTimeSubtract(now, pts))
+                if delta.isFinite, delta > 0, delta < 1 { age = delta }
+            }
+            onFirstSample?(age)
         }
 
         do { try audioFile?.write(from: writeBuffer) } catch {
