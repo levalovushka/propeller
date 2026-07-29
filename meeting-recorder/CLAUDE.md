@@ -28,7 +28,7 @@ Swift Package Manager (`Package.swift`). GigaAM ASR weights (~247 MB, INT8 set) 
 ### Data flow
 
 ```
-AudioRecorder (mic + SCK system stems → 16 kHz mix)   # Process Tap dormant
+AudioRecorder (mic + SCK system stems → 16 kHz mix, стем на своём сдвиге)
   → TranscriptionService
       → gigastt (chunked if large) → ASRSegment[]
       → checkpoint (transcribed_raw)

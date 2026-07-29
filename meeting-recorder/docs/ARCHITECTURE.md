@@ -17,7 +17,7 @@ _Источник правды по архитектурным решениям 
 | ASR | GigaAM-v3 head **`e2e_rnnt`** через локальный `gigastt serve` (HTTP) | Лучше `rnnt` на реальном Zoom (фаза 0); русский only |
 | Доставка ASR | Sidecar `gigastt` внутри `.app`, **ленивый** спаун + idle-stop; длинные файлы — **клиентский чанкинг** (`GigasttChunking`) + `--body-limit-bytes 67108864` | Без внешних зависимостей; обход HTTP 413 / duration cap |
 | Диаризация | FluidAudio (не gigastt diar) | На том же Zoom: FluidAudio ≈ 2 спикера, gigastt diar ≈ 14 |
-| Системный звук | **ScreenCaptureKit primary**; `ProcessTapAudioCapture` dormant (не hot path) | SCK подтверждён на Zoom; Process Tap давал пустые стемы / ложные баннеры |
+| Системный звук | **ScreenCaptureKit — единственный путь.** Область захвата — `CaptureScopePolicy` (по идущему звонку, не по запущенному приложению) | Проверено на живом звонке: SCK отдаёт звук приложения вместе с хелперами. Process Tap удалён 2026-07-29 — давал пустые стемы и остался без сценария |
 | Язык | Только `ru` | Ограничение модели; мультиязычность убита в бэклоге |
 | Вывод markdown | Дефолт **Simple**; Obsidian — опция | Коллеги без Vault |
 | Рекап | Ollama → OpenAI → Claude (Auto), или Off; промпт = конспект договорённостей + `languageLock` | Локально по умолчанию; ключи в Keychain |
@@ -34,8 +34,8 @@ _Источник правды по архитектурным решениям 
 ```
 MeetingDetector (Auto) / menu bar / ⌘R / UI
   → AudioRecorder
-      mic (.mic.wav) + ScreenCaptureKit system (.sys.wav)   # Process Tap dormant
-      → offline mix → {id}.wav (+ stems пока аудио хранится)
+      mic (.mic.wav) + ScreenCaptureKit system (.sys.wav)
+      → offline mix со сдвигом стема (StemTimeline) → {id}.wav (+ stems)
   → одна очередь, один воркер (AppState.kickPipeline → PipelineDrain)
       фазы: transcribing → diarizing → saving → summarizing
 ```
@@ -62,7 +62,7 @@ MeetingDetector (Auto) / menu bar / ⌘R / UI
 | `AppState` | `@MainActor` координатор: запись, воркер пайплайна, детект звонков, переименование спикеров |
 | `AudioRecorder` | Mic (только AVAudioRecorder — VPIO удалён, он трогал общее устройство) + system audio (SCK, стем 16 кГц моно) + офлайн-микс; `lastStopWasMicOnly` |
 | `SystemAudioCapture` | ScreenCaptureKit stem. Область — `CaptureScopePolicy`: сужаемся на приложение той платформы, чей звонок идёт; нет звонка (или он в браузере) — пишем машину целиком. Отката по тишине нет с 2026-07-29 |
-| `ProcessTapAudioCapture` | Dormant — Core Audio Process Taps; не на hot path |
+| `CaptureProbe` | Отладочный `--capture-probe` в релизном бинарнике: сравнивает области захвата на живом звонке. Оставлен сознательно 2026-07-29 — разрешение «Запись экрана» выдано бандлу, отдельная утилита мерила бы другую систему, а идентификаторы платформ ещё не все подтверждены |
 | `MeetingDetector` | Поллинг звонка в любой платформе из `MeetingPlatform.all` (Zoom, Контур.Толк): helper-процесс, заголовок окна, вкладка браузера, display-sleep assertion |
 | `PipelineBoundaries` | `Transcriber` / `RecapBackend` — две подменяемые границы наружу |
 | `CalendarService` | EventKit: Upcoming + `suggestedRecordingTitle` при старте записи |
