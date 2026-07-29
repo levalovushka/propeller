@@ -69,6 +69,9 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     var onCaptureIssueDetected: ((String) -> Void)?
 
     private var sampleWatchdog: Task<Void, Never>?
+    /// Платформа, чей звонок идёт, — решает область захвата. Nil означает «звонка
+    /// нет», и тогда сужать нечего.
+    private var callPlatformID: String?
 
     struct CaptureReport {
         let callbackCount: Int
@@ -120,7 +123,7 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// Start capturing system audio into `url`, scoped to whichever known
     /// meeting apps are running (`CaptureScopePolicy`). Whole-machine capture
     /// happens only when none of them is — never as a reaction to silence.
-    func start(outputURL url: URL) async throws {
+    func start(outputURL url: URL, callPlatformID: String?) async throws {
         guard !isRunning else { throw CaptureError.alreadyRunning }
 
         // Pre-flight: check Screen Recording permission (TCC).
@@ -136,6 +139,7 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         outputURL = url
         didStopWriting = false
         audioFile = nil
+        self.callPlatformID = callPlatformID
         try await startStream()
     }
 
@@ -151,7 +155,10 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         debugLog("[SystemAudioCapture] Selected display \(display.displayID) for capture filter")
 
         let filter: SCContentFilter
-        switch CaptureScopePolicy.scope(runningBundleIDs: content.applications.map(\.bundleIdentifier)) {
+        switch CaptureScopePolicy.scope(
+            runningBundleIDs: content.applications.map(\.bundleIdentifier),
+            callInProgressOn: callPlatformID
+        ) {
         case .applications(let bundleIDs):
             let apps = content.applications.filter { bundleIDs.contains($0.bundleIdentifier) }
             filter = SCContentFilter(display: display, including: apps, exceptingWindows: [])
@@ -160,7 +167,7 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         case .wholeMachine:
             filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
             isAppScoped = false
-            NSLog("[SystemAudioCapture] no known meeting app running — recording the whole machine")
+            NSLog("[SystemAudioCapture] no desktop call detected (platform: \(callPlatformID ?? "none")) — recording the whole machine")
         }
 
         let config = SCStreamConfiguration()

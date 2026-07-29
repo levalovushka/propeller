@@ -18,8 +18,16 @@ import Foundation
 /// там нечего: app-scoped фильтр отдаёт звук звонка вместе с хелперами
 /// (`docs/AUDIO-CAPTURE-CASES.md`).
 ///
-/// Поэтому весь экран остаётся ровно для одного честного случая: **ни одного
-/// знакомого приложения не запущено**, а человек всё равно нажал «записать».
+/// Поэтому весь экран остаётся для честного случая: **звонка нет**, а человек
+/// всё равно нажал «записать» — значит пишет что-то другое, и сужать нечего.
+///
+/// # Почему «запущено» — не то же самое, что «идёт звонок»
+///
+/// Zoom у людей висит открытым весь день. Если целиться в него по факту
+/// запуска, то запись подкаста или вебинара в браузере превратится в тишину
+/// Zoom — мы аккуратно запишем приложение, которое молчит. Поэтому решение
+/// принимается по **идущему звонку** (`MeetingSnapshot.platformID`), а не по
+/// списку запущенного.
 public enum CaptureScope: Equatable {
     /// Пишем звук этих приложений (bundle id в том виде, в каком их вернула
     /// система — сравнение регистронезависимое, а подставлять надо оригинал).
@@ -30,14 +38,26 @@ public enum CaptureScope: Equatable {
 
 public enum CaptureScopePolicy {
 
-    /// `runningBundleIDs` — то, что система показала как запущенное; порядок
-    /// сохраняется, чтобы результат был предсказуем в логах и тестах.
+    /// - Parameters:
+    ///   - runningBundleIDs: что система показала как запущенное; порядок
+    ///     сохраняется, чтобы результат был предсказуем в логах и тестах.
+    ///   - callInProgressOn: платформа, чей звонок идёт прямо сейчас
+    ///     (`MeetingSnapshot.platformID`). Нет звонка — нет и сужения.
     public static func scope(
         runningBundleIDs: [String],
+        callInProgressOn platformID: String?,
         platforms: [MeetingPlatform] = MeetingPlatform.all
     ) -> CaptureScope {
-        let known = Set(platforms.flatMap(\.bundleIDs))
-        let matched = runningBundleIDs.filter { known.contains($0.lowercased()) }
+        guard let platformID,
+              let platform = platforms.first(where: { $0.id == platformID }) else {
+            return .wholeMachine
+        }
+        // Только приложение той платформы, чей звонок идёт: если параллельно
+        // открыт второй мессенджер, писать его разговоры мы не подписывались.
+        let wanted = Set(platform.bundleIDs)
+        let matched = runningBundleIDs.filter { wanted.contains($0.lowercased()) }
+        // Звонок есть, а десктопного приложения нет — это встреча в браузере.
+        // Она вне области (см. AUDIO-CAPTURE-CASES.md), пишем машину целиком.
         return matched.isEmpty ? .wholeMachine : .applications(matched)
     }
 }

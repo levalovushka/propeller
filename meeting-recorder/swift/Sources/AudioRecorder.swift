@@ -154,8 +154,12 @@ class AudioRecorder: ObservableObject {
     private func startSystemAudioCapture(sysURL: URL) async {
         guard #available(macOS 14.0, *),
               let sck = await MainActor.run(body: { self.systemAudio as? SystemAudioCapture }) else { return }
+        // Свежий снимок, а не отладенное состояние детектора: между входом в
+        // звонок и его подтверждением проходит до двух опросов, а область
+        // захвата выбирается один раз и на всю запись.
+        let platformID = MeetingDetector.captureSnapshot().platformID
         do {
-            try await sck.start(outputURL: sysURL)
+            try await sck.start(outputURL: sysURL, callPlatformID: platformID)
             NSLog("[AudioRecorder] SCK system audio started")
             await MainActor.run { self.systemAudioWarning = nil }
         } catch {
