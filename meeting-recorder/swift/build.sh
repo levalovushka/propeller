@@ -257,6 +257,13 @@ ${ICON_PLIST_KEYS}
     <string>${SU_PUBLIC_ED_KEY}</string>
     <key>SUEnableAutomaticChecks</key>
     <true/>
+    <!-- Sparkle's default is a day, and its floor is an hour. A day is the wrong
+         number for us: 1.13 shipped a defect that broke every meeting longer than
+         25 minutes, the fix existed four hours later, and the people carrying it
+         had no way to learn that. An hour costs one HEAD request against the
+         GitHub feed. -->
+    <key>SUScheduledCheckInterval</key>
+    <integer>3600</integer>
     <key>SUAutomaticallyDownloadsUpdates</key>
     <false/>
 </dict>
