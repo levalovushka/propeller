@@ -150,6 +150,9 @@ class TranscriptionService {
     func diarize(
         audioURL: URL,
         asrSegments: [ASRSegment],
+        /// Where the system stem starts on this recording's timeline. Energy is
+        /// compared between the stems, and they do not share an origin.
+        systemStemOffset: Double = 0,
         progressCallback: ((String) -> Void)? = nil
     ) async throws -> MeetingTranscriptionResult {
         if diarizer == nil {
@@ -189,7 +192,8 @@ class TranscriptionService {
         let speakerNameMap = Self.resolveOwnerName(
             mergedSegments: mergedSegments,
             diarizedSegments: diarizedSegments,
-            audioURL: audioURL
+            audioURL: audioURL,
+            systemStemOffset: systemStemOffset
         )
 
         let unmerged = mergedSegments.filter { !$0.text.isEmpty }
@@ -202,7 +206,8 @@ class TranscriptionService {
                 let source = Self.captureSource(
                     audioURL: audioURL,
                     start: Double(seg.startTime),
-                    end: Double(seg.endTime)
+                    end: Double(seg.endTime),
+                    systemStemOffset: systemStemOffset
                 )
                 speaker = SourceAwareSpeaker.resolve(
                     fluidDisplayName: fluidName,
@@ -233,7 +238,8 @@ class TranscriptionService {
     /// Fixes headphone meetings where FluidAudio collapsed everyone into the owner.
     func relabelSegmentsFromStems(
         audioURL: URL,
-        segments: [PersistedSegment]
+        segments: [PersistedSegment],
+        systemStemOffset: Double = 0
     ) -> [PersistedSegment]? {
         guard Self.hasUsableStems(for: audioURL) else { return nil }
         let ownerName = Preferences.shared.userName
@@ -241,7 +247,8 @@ class TranscriptionService {
             let source = Self.captureSource(
                 audioURL: audioURL,
                 start: seg.startTime,
-                end: seg.endTime
+                end: seg.endTime,
+                systemStemOffset: systemStemOffset
             )
             let speaker = SourceAwareSpeaker.resolve(
                 fluidDisplayName: seg.speaker,
@@ -271,7 +278,8 @@ class TranscriptionService {
     private static func captureSource(
         audioURL: URL,
         start: Double,
-        end: Double
+        end: Double,
+        systemStemOffset: Double
     ) -> SourceAwareSpeaker.Source {
         // Short ASR phrases need a minimum window or energy is all noise.
         let mid = (start + end) / 2
@@ -279,7 +287,8 @@ class TranscriptionService {
         let window = max(0, mid - half)...(mid + half)
         let report = AudioSourceEnergyClassifier.analyze(
             finalAudioURL: audioURL,
-            windows: [window]
+            windows: [window],
+            systemStemOffset: systemStemOffset
         )
         switch report.source {
         case .microphone: return .microphone
@@ -299,7 +308,8 @@ class TranscriptionService {
     private static func resolveOwnerName(
         mergedSegments: [MergedSegment],
         diarizedSegments: [DiarizedSegment],
-        audioURL: URL
+        audioURL: URL,
+        systemStemOffset: Double
     ) -> [String: String] {
         let ownerName = Preferences.shared.userName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !ownerName.isEmpty else { return [:] }
@@ -312,7 +322,8 @@ class TranscriptionService {
 
             let report = AudioSourceEnergyClassifier.analyze(
                 finalAudioURL: audioURL,
-                windows: speakerSegs.map { Double($0.startTime)...Double($0.endTime) }
+                windows: speakerSegs.map { Double($0.startTime)...Double($0.endTime) },
+                systemStemOffset: systemStemOffset
             )
             guard report.source == .microphone else { continue }
 

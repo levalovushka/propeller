@@ -1047,6 +1047,7 @@ class AppState: ObservableObject {
             let result = try await transcriptionService.diarize(
                 audioURL: audioURL,
                 asrSegments: asrSegments,
+                systemStemOffset: recordingStore.recording(for: recordingID)?.systemStemOffset ?? 0,
                 progressCallback: progressCb
             )
             recordingStore.update(
@@ -1376,7 +1377,8 @@ class AppState: ObservableObject {
               !segments.isEmpty else { return false }
         guard let relabeled = transcriptionService.relabelSegmentsFromStems(
             audioURL: audioURL,
-            segments: segments
+            segments: segments,
+            systemStemOffset: rec.systemStemOffset ?? 0
         ) else { return false }
 
         let before = Set(segments.map(\.speaker))

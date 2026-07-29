@@ -25,6 +25,7 @@ protocol Transcriber: AnyObject {
     func diarize(
         audioURL: URL,
         asrSegments: [ASRSegment],
+        systemStemOffset: Double,
         progressCallback: ((String) -> Void)?
     ) async throws -> MeetingTranscriptionResult
 
@@ -33,7 +34,11 @@ protocol Transcriber: AnyObject {
 
     /// Re-assign speakers from mic vs system stem energy, or nil when the stems
     /// aren't usable. Not part of the queue — invoked from «Уточнить спикеров».
-    func relabelSegmentsFromStems(audioURL: URL, segments: [PersistedSegment]) -> [PersistedSegment]?
+    func relabelSegmentsFromStems(
+        audioURL: URL,
+        segments: [PersistedSegment],
+        systemStemOffset: Double
+    ) -> [PersistedSegment]?
 }
 
 protocol RecapBackend: Sendable {

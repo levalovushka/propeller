@@ -126,15 +126,41 @@ public enum AudioEnergyAnalyzer {
 }
 
 public enum AudioSourceEnergyClassifier {
+
+    /// The same moment, expressed in the system stem's own timeline.
+    ///
+    /// Windows come from the transcript, which is timed against the mix — and
+    /// the mix runs on the microphone's clock, because that stem starts first.
+    /// The system stem's file begins `offset` seconds later, so reading it with
+    /// unshifted windows compares one speaker's words against a different
+    /// half-second of the other stem. Clamped at zero: a window that starts
+    /// before the system stem existed can only be read from its beginning.
+    public static func systemWindows(
+        _ windows: [ClosedRange<Double>],
+        systemStemOffset: Double
+    ) -> [ClosedRange<Double>] {
+        guard systemStemOffset.isFinite, systemStemOffset > 0 else { return windows }
+        return windows.compactMap { window in
+            let lower = max(0, window.lowerBound - systemStemOffset)
+            let upper = window.upperBound - systemStemOffset
+            guard upper > lower else { return nil }
+            return lower...upper
+        }
+    }
+
     public static func analyze(
         finalAudioURL: URL,
         windows: [ClosedRange<Double>],
+        systemStemOffset: Double = 0,
         dominanceRatio: Double = 1.6,
         energyFloor: Double = 1e-9
     ) -> AudioSourceEnergyReport {
         let stems = AudioSourceStemURLs.expectedSiblings(for: finalAudioURL)
         let micEnergy = stems.existingMicrophoneURL.flatMap { try? AudioEnergyAnalyzer.meanSquare(url: $0, windows: windows) }
-        let systemEnergy = stems.existingSystemURL.flatMap { try? AudioEnergyAnalyzer.meanSquare(url: $0, windows: windows) }
+        let sysWindows = systemWindows(windows, systemStemOffset: systemStemOffset)
+        let systemEnergy = sysWindows.isEmpty
+            ? nil
+            : stems.existingSystemURL.flatMap { try? AudioEnergyAnalyzer.meanSquare(url: $0, windows: sysWindows) }
         let source = classify(
             microphoneEnergy: micEnergy,
             systemEnergy: systemEnergy,

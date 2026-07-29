@@ -79,6 +79,9 @@ let package = Package(
             dependencies: [
                 "PropellerPure",
                 "PropellerUI",
+                // Speaker attribution decides which stem a voice came from, and
+                // that arithmetic is as testable as the rest of the core.
+                "SpeakerMatchingCore",
                 .product(name: "SnapshotTesting", package: "swift-snapshot-testing"),
             ],
             path: "Tests/MeetingRecorderTests",
