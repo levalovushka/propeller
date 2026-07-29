@@ -94,7 +94,10 @@ final class ProcessTapAudioCapture {
             audibleBufferCount: audibleBufferCount,
             maxRMSLevel: maxRMSLevel,
             maxPeakLevel: maxPeakLevel,
-            outputFileSizeBytes: size
+            outputFileSizeBytes: size,
+            // Process taps are per-process by construction — dormant path, but
+            // the answer is still "yes, scoped".
+            appScoped: true
         )
     }
 

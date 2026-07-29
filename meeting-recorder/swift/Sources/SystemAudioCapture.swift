@@ -83,6 +83,13 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         let maxRMSLevel: Float
         let maxPeakLevel: Float
         let outputFileSizeBytes: Int64?
+        /// False when the stem is the whole machine rather than the meeting app —
+        /// either no target app was running, or an app-scoped stream stayed quiet
+        /// for four seconds and we gave up on it. Recorded per meeting because
+        /// «how often does that actually happen» is a question worth answering
+        /// with data before deciding whether app-scoped capture earns its
+        /// complexity.
+        let appScoped: Bool
 
         var capturedAudibleAudio: Bool {
             audibleBufferCount > 0 || maxPeakLevel > 0.0005
@@ -110,7 +117,7 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
 
         var logLine: String {
             let size = outputFileSizeBytes.map(String.init) ?? "missing"
-            return "callbacks=\(callbackCount) pcm=\(pcmBufferCount) conversionFailures=\(conversionFailureCount) frames=\(framesWritten) audibleBuffers=\(audibleBufferCount) maxRMS=\(String(format: "%.5f", maxRMSLevel)) maxPeak=\(String(format: "%.5f", maxPeakLevel)) fileBytes=\(size)"
+            return "scope=\(appScoped ? "app" : "display-wide") callbacks=\(callbackCount) pcm=\(pcmBufferCount) conversionFailures=\(conversionFailureCount) frames=\(framesWritten) audibleBuffers=\(audibleBufferCount) maxRMS=\(String(format: "%.5f", maxRMSLevel)) maxPeak=\(String(format: "%.5f", maxPeakLevel)) fileBytes=\(size)"
         }
     }
 
@@ -311,7 +318,8 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             audibleBufferCount: audibleBufferCount,
             maxRMSLevel: maxRMSLevel,
             maxPeakLevel: maxPeakLevel,
-            outputFileSizeBytes: size
+            outputFileSizeBytes: size,
+            appScoped: isAppScoped
         )
     }
 

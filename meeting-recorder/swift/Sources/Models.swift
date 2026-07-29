@@ -40,6 +40,11 @@ struct RecordingEntry: Identifiable, Codable {
     /// True when this recording finished without a usable system-audio stem.
     /// Per-entry (not a global latch) so the badge doesn't stick on other meetings.
     var micOnlyCaptured: Bool?
+    /// False when system audio was captured from the whole machine instead of
+    /// the meeting app — music and notifications are in the stem too. Recorded
+    /// so «how often does the app-scoped filter actually survive» is answerable
+    /// from the archive rather than by guessing. nil = not recorded (pre-1.14).
+    var systemCaptureAppScoped: Bool?
     /// Where the system stem starts on this recording's timeline, in seconds of
     /// microphone audio (`StemTimeline`). Measured during capture, persisted so a
     /// re-mix after a crash lands the far end in the same place. nil = never

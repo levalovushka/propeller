@@ -136,6 +136,7 @@ class RecordingStore: ObservableObject {
         topics: [String]? = nil,
         tags: [String]? = nil,
         micOnlyCaptured: Bool? = nil,
+        systemCaptureAppScoped: Bool? = nil,
         systemStemOffset: Double? = nil,
         lastFailure: PipelineFailure?? = nil
     ) {
@@ -152,6 +153,7 @@ class RecordingStore: ObservableObject {
         if let tp = topics { recordings[idx].topics = tp }
         if let tg = tags { recordings[idx].tags = tg }
         if let mo = micOnlyCaptured { recordings[idx].micOnlyCaptured = mo }
+        if let sc = systemCaptureAppScoped { recordings[idx].systemCaptureAppScoped = sc }
         if let so = systemStemOffset { recordings[idx].systemStemOffset = so }
         if let lf = lastFailure { recordings[idx].lastFailure = lf }
         scheduleSave()

@@ -41,6 +41,9 @@ class AudioRecorder: ObservableObject {
     /// The same number, kept past `stop()` so the caller can persist it with the
     /// recording: a crash-recovered re-mix must not have to guess it again.
     private(set) var lastStopSystemStemOffset: TimeInterval?
+    /// Whether the finished recording's system stem came from the meeting app or
+    /// from the whole machine.
+    private(set) var lastStopWasAppScoped: Bool?
     /// Non-nil if the mic writer isn't actually producing frames shortly after
     /// start (e.g. input device disappeared). Unlike system audio, the mic is
     /// the essential source — this is surfaced immediately, not tagged post-hoc.
@@ -205,6 +208,7 @@ class AudioRecorder: ObservableObject {
 
         let micOnly = try await Task.detached(priority: .userInitiated) { () -> Bool in
             var stemUnusable = sysURL == nil
+            var appScoped: Bool?
             if #available(macOS 14.0, *), let capture = sysCapture as? SystemAudioCapture {
                 await capture.stop()
                 let report = capture.report()
@@ -215,6 +219,7 @@ class AudioRecorder: ObservableObject {
                     drift.last, drift.min, drift.max
                 ))
                 stemUnusable = !report.capturedUsableStem
+                appScoped = report.appScoped
             } else if let sysURL {
                 let size = (try? FileManager.default.attributesOfItem(atPath: sysURL.path)[.size] as? NSNumber)?.intValue ?? 0
                 stemUnusable = size <= 4096
@@ -224,6 +229,7 @@ class AudioRecorder: ObservableObject {
                 micURL: micURL, sysURL: sysURL, finalURL: finalURL,
                 systemStemOffset: stemOffset
             )
+            await MainActor.run { [appScoped] in self.lastStopWasAppScoped = appScoped }
             return stemUnusable
         }.value
 

@@ -526,6 +526,7 @@ class AppState: ObservableObject {
                 status: .recorded,
                 duration: result.duration,
                 micOnlyCaptured: micOnly,
+                systemCaptureAppScoped: recorder.lastStopWasAppScoped,
                 // Persisted so a re-mix after a crash puts the far end back in
                 // the same place instead of guessing zero.
                 systemStemOffset: recorder.lastStopSystemStemOffset
