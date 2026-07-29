@@ -25,7 +25,7 @@ _Источник правды по архитектурным решениям 
 | Спикеры | Консистентные `Speaker N` + владелец-по-микрофону | Библиотека голосов/матчинг вырезаны (plan-v2 Job 3); «тупо и надёжно» |
 | Календарь | EventKit, read-only (не Google OAuth); title при старте записи | Читает системный Календарь; без облака |
 | Сохранение транскрипта | **Всегда** (сразу после диаризации) | Опроса спикеров и тугла auto-save нет |
-| Дистрибуция v1 | DMG + **Sparkle** (GitHub Releases `appcast.xml`); нотаризация / Developer ID — позже | ad-hoc + ПКМ→Открыть; авто-апдейты с EdDSA |
+| Дистрибуция v1 | DMG + **Sparkle** (GitHub Releases `appcast.xml`); нотаризация / Developer ID — позже | ad-hoc + ПКМ→Открыть; авто-апдейты с EdDSA; проверка фида **раз в час** (`SUScheduledCheckInterval`, минимум Sparkle) |
 | Иконка | `propellericon.icon` → Assets.car + .icns через `actool` | Liquid Glass + fallback |
 | Саммари / заметки | Встреча: табы Transcript / Notes / Summary; sidebar **Summaries** — только summary+notes; заметки якорят LLM | Talat-табы + Granola notes-as-anchors; авто-рекап после save |
 
@@ -68,6 +68,7 @@ MeetingDetector (Auto) / menu bar / ⌘R / UI
 | `CalendarService` | EventKit: Upcoming + `suggestedRecordingTitle` при старте записи |
 | `NoteOverlayController` | Оверлей быстрых заметок ⌃⌥N во время записи |
 | `NotificationManager` | UNUserNotificationCenter: интерактивная отмена авто-записи + баннеры |
+| `StateGallery` · `GalleryExport` · `GalleryFixture` | Только под `-DGALLERY` (`./build.sh --gallery`): окно со всеми состояниями из `UIStateCatalog`, экспорт в PNG, фикстурный архив под съёмку. Архив подменяется через `Preferences.galleryArchiveRoot` — ключа нет в обычной сборке, реальные записи не читаются. См. [design/state-gallery.md](../../design/state-gallery.md) |
 | `TranscriptionService` | ASR → diarize → `Speaker N` + владелец-по-микрофону |
 | `GigasttSidecar` / `GigasttClient` | Жизненный цикл сервера и HTTP (+ chunking) |
 | `PropellerPure` | Чистое ядро (988 строк, 111 тестов): стадии и очередь (`RecordingStage`, `PipelineActivity`, `PipelineDrain`), презентация транскрипта (`TranscriptPresentation`), разбор ответов границ (`BoundaryResponses`), платформы созвонов (`MeetingPlatform`), chunking, парсеры, WAV helpers |
