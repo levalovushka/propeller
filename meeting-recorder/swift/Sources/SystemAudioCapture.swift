@@ -230,6 +230,30 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         stream = nil
         isRunning = false
 
+        // Start the stem over instead of appending the second stream onto the
+        // first. Restarting a capture takes time that nothing records, so
+        // continuing the same file punched a hole into it: everything after the
+        // switch sat earlier than it really happened, and the one offset measured
+        // at the start stopped describing the tail. Nothing is lost by dropping
+        // the prefix — this path only runs when those seconds held no audible
+        // audio, which is what sent us here.
+        sampleQueue.sync {
+            audioFile = nil
+            if let url = outputURL {
+                try? FileManager.default.removeItem(at: url)
+            }
+            framesWritten = 0
+            callbackCount = 0
+            pcmBufferCount = 0
+            firstPTS = nil
+            driftMinFrames = 0
+            driftMaxFrames = 0
+            driftLastFrames = 0
+            // Fires again when the new stream opens the file, so the offset is
+            // re-measured against the stem that actually survives.
+            reportedFirstSample = false
+        }
+
         do {
             try await startStream(targetBundleIdentifiers: [])
         } catch {

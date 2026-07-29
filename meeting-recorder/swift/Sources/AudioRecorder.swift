@@ -117,12 +117,19 @@ class AudioRecorder: ObservableObject {
                     // this fired, not when the main actor got round to us.
                     let firedAt = Date()
                     Task { @MainActor in
-                        guard let self, self.systemStemOffset == nil,
-                              let recorder = self.avRecorder else { return }
+                        guard let self, let recorder = self.avRecorder else { return }
                         let hop = Date().timeIntervalSince(firedAt)
                         let offset = max(0, recorder.currentTime - hop)
+                        // Overwrites on purpose: a scoped→display-wide fallback
+                        // starts the stem file over, and then the stem begins
+                        // later than it first did.
+                        let previous = self.systemStemOffset
                         self.systemStemOffset = offset
-                        NSLog("[AudioRecorder] system stem opens \(Int(offset * 1000)) ms into the mic timeline")
+                        if let previous {
+                            NSLog("[AudioRecorder] system stem restarted — offset \(Int(previous * 1000)) → \(Int(offset * 1000)) ms")
+                        } else {
+                            NSLog("[AudioRecorder] system stem opens \(Int(offset * 1000)) ms into the mic timeline")
+                        }
                     }
                 }
                 systemAudio = sck
