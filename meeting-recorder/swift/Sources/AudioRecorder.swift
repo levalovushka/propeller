@@ -3,7 +3,6 @@ import Foundation
 import os
 import PropellerMetrics
 import PropellerPure
-import SpeakerMatchingCore
 
 /// Unified logging — near-zero cost when unused, no unbounded file growth
 /// (plan-optimization E6). Kept as a free function so existing call sites stay.

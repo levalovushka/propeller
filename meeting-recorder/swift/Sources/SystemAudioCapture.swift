@@ -28,7 +28,6 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     private let sampleQueue = DispatchQueue(label: "com.simplyai.meeting-recorder.sck-audio")
     private(set) var outputURL: URL?
     private(set) var isRunning = false
-    private var didSeeAnySamples = false
     private var pcmBufferCount = 0
     private var conversionFailureCount = 0
     private var framesWritten = 0
@@ -90,28 +89,11 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         /// complexity.
         let appScoped: Bool
 
-        var capturedAudibleAudio: Bool {
-            audibleBufferCount > 0 || maxPeakLevel > 0.0005
-        }
-
         /// True when the stem has real PCM (not a header-only ~4 KB file).
         /// Silence still counts — remote speakers may simply not have talked.
         var capturedUsableStem: Bool {
             if let bytes = outputFileSizeBytes, bytes > 4096 { return true }
             return framesWritten > 8_000
-        }
-
-        var warningMessage: String? {
-            if callbackCount == 0 {
-                return "Поток системного звука запущен, но буферы не приходят. Разрешение «Запись экрана» могло устареть — выключите и включите его в Системных настройках, затем перезапустите приложение."
-            }
-            if pcmBufferCount == 0, conversionFailureCount > 0 {
-                return "Буферы системного звука пришли, но не удалось их декодировать. Удалённая сторона не записана."
-            }
-            if !capturedUsableStem {
-                return "Стем системного звука пуст — удалённая сторона не записана."
-            }
-            return nil
         }
 
         var logLine: String {
@@ -242,9 +224,6 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
-    /// Returns true if at least one audio sample was seen during the capture.
-    var capturedAnyAudio: Bool { didSeeAnySamples }
-
     /// How far the appended stem wandered from what the timestamps asked for,
     /// in milliseconds at the stream's own rate. Logged at stop; the numbers
     /// decide whether placing samples by timestamp is worth doing.
@@ -334,7 +313,6 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         maxPeakLevel = max(maxPeakLevel, peak)
         if Self.hasAudibleContent(pcmBuffer) {
             audibleBufferCount += 1
-            didSeeAnySamples = true
         }
         // Любой буфер — доказательство, что поток жив, а сторож только про это и
         // спрашивает. Раньше здесь ждали именно *громкого* буфера, потому что от
