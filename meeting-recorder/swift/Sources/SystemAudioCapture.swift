@@ -47,6 +47,14 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// Called on the sample queue with the current RMS level (0.0–1.0) each time a buffer arrives.
     var levelCallback: ((Float) -> Void)?
 
+    /// Fired once, from the capture queue, as the first sample reaches the stem
+    /// file. `AudioRecorder` reads the microphone's own clock at that moment —
+    /// that difference is where this stem starts on the recording's timeline
+    /// (see `StemTimeline`). Everything later depends on it: the mix, and one
+    /// day the interleaving of two live streams.
+    var onFirstSample: (() -> Void)?
+    private var reportedFirstSample = false
+
     /// Called when the stream appears to be running but audio capture itself is unhealthy.
     var onCaptureIssueDetected: ((String) -> Void)?
 
@@ -337,6 +345,13 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
                 return
             }
         }
+        if !reportedFirstSample {
+            reportedFirstSample = true
+            // Before the write, not after: the question is when this stem's
+            // sample zero was captured, and disk work would only add to it.
+            onFirstSample?()
+        }
+
         do { try audioFile?.write(from: writeBuffer) } catch {
             debugLog("[SystemAudioCapture] write error: \(error)")
             onCaptureIssueDetected?("System audio write failed: \(error.localizedDescription)")

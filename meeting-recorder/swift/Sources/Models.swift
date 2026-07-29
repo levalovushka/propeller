@@ -40,6 +40,12 @@ struct RecordingEntry: Identifiable, Codable {
     /// True when this recording finished without a usable system-audio stem.
     /// Per-entry (not a global latch) so the badge doesn't stick on other meetings.
     var micOnlyCaptured: Bool?
+    /// Where the system stem starts on this recording's timeline, in seconds of
+    /// microphone audio (`StemTimeline`). Measured during capture, persisted so a
+    /// re-mix after a crash lands the far end in the same place. nil = never
+    /// measured (mic-only, or recorded before 1.14) — treated as zero, which is
+    /// what every build before this one did.
+    var systemStemOffset: Double?
     /// Last pipeline failure for *this* recording. Per-entry so work on another
     /// meeting can't erase it, and persisted so it survives a relaunch. While
     /// set, the worker skips this recording; "Повторить" clears it.

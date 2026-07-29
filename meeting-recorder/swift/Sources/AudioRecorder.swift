@@ -34,6 +34,13 @@ class AudioRecorder: ObservableObject {
     @Published var systemAudioWarning: String?
     /// Set in `stop()` from the actual `.sys.wav` stem (empty / missing).
     private(set) var lastStopWasMicOnly = false
+    /// Seconds of microphone audio already on disk when the system stem opened —
+    /// i.e. where that stem starts on this recording's timeline (`StemTimeline`).
+    /// Nil until the first system buffer lands, and forever on mic-only.
+    private(set) var systemStemOffset: TimeInterval?
+    /// The same number, kept past `stop()` so the caller can persist it with the
+    /// recording: a crash-recovered re-mix must not have to guess it again.
+    private(set) var lastStopSystemStemOffset: TimeInterval?
     /// Non-nil if the mic writer isn't actually producing frames shortly after
     /// start (e.g. input device disappeared). Unlike system audio, the mic is
     /// the essential source — this is surfaced immediately, not tagged post-hoc.
@@ -58,6 +65,7 @@ class AudioRecorder: ObservableObject {
         systemAudioWarning = nil
         micCaptureWarning = nil
         lastStopWasMicOnly = false
+        systemStemOffset = nil
         debugLog("[AudioRecorder] start() called — captureSystemAudio=\(Preferences.shared.captureSystemAudio)")
 
         let recordingsDir = URL(fileURLWithPath: Preferences.shared.recordingsPath)
@@ -103,6 +111,19 @@ class AudioRecorder: ObservableObject {
                     // Soft mid-session issues stay in the log — UI banner is reserved
                     // for start() failure so it can't disagree with a live System meter.
                     NSLog("[AudioRecorder] System audio note: \(message)")
+                }
+                sck.onFirstSample = { [weak self] in
+                    // Timestamp here, on the capture queue: the stem started when
+                    // this fired, not when the main actor got round to us.
+                    let firedAt = Date()
+                    Task { @MainActor in
+                        guard let self, self.systemStemOffset == nil,
+                              let recorder = self.avRecorder else { return }
+                        let hop = Date().timeIntervalSince(firedAt)
+                        let offset = max(0, recorder.currentTime - hop)
+                        self.systemStemOffset = offset
+                        NSLog("[AudioRecorder] system stem opens \(Int(offset * 1000)) ms into the mic timeline")
+                    }
                 }
                 systemAudio = sck
             }
@@ -171,6 +192,9 @@ class AudioRecorder: ObservableObject {
         let sysCapture = systemAudio
         systemAudio = nil
         systemAudioURL = nil
+        let stemOffset = systemStemOffset ?? 0
+        lastStopSystemStemOffset = systemStemOffset
+        systemStemOffset = nil
 
         let micOnly = try await Task.detached(priority: .userInitiated) { () -> Bool in
             var stemUnusable = sysURL == nil
@@ -184,7 +208,10 @@ class AudioRecorder: ObservableObject {
                 stemUnusable = size <= 4096
             }
             try? await Task.sleep(nanoseconds: 150_000_000)
-            await Self.produceFinalMix(micURL: micURL, sysURL: sysURL, finalURL: finalURL)
+            await Self.produceFinalMix(
+                micURL: micURL, sysURL: sysURL, finalURL: finalURL,
+                systemStemOffset: stemOffset
+            )
             return stemUnusable
         }.value
 
@@ -290,7 +317,12 @@ class AudioRecorder: ObservableObject {
     /// infer whether a diarized voice came mostly from mic or system audio.
     /// Offline mix of mic (+ optional system) stems into the final 16 kHz mono WAV.
     /// Also used by crash-recovery when only `.mic.wav` survived (plan-optimization C3).
-    static func produceFinalMix(micURL: URL, sysURL: URL?, finalURL: URL) async {
+    static func produceFinalMix(
+        micURL: URL,
+        sysURL: URL?,
+        finalURL: URL,
+        systemStemOffset: TimeInterval = 0
+    ) async {
         let fm = FileManager.default
         let sysSummary: AudioEnergySummary? = {
             guard let u = sysURL else { return nil }
@@ -316,7 +348,10 @@ class AudioRecorder: ObservableObject {
         // Mix using AVAudioEngine offline rendering.
         do {
             try await PipelineMetrics.interval(PipelineMetrics.pipeline, PipelineMetrics.mix) {
-                try await Self.mix(micURL: micURL, sysURL: sysURL!, finalURL: finalURL)
+                try await Self.mix(
+                    micURL: micURL, sysURL: sysURL!, finalURL: finalURL,
+                    systemStemOffset: systemStemOffset
+                )
             }
         } catch {
             debugLog("[AudioRecorder] offline mix failed, falling back to mic only: \(error)")
@@ -325,7 +360,12 @@ class AudioRecorder: ObservableObject {
         }
     }
 
-    private static func mix(micURL: URL, sysURL: URL, finalURL: URL) async throws {
+    private static func mix(
+        micURL: URL,
+        sysURL: URL,
+        finalURL: URL,
+        systemStemOffset: TimeInterval
+    ) async throws {
         let micFile = try AVAudioFile(forReading: micURL)
         let sysFile = try AVAudioFile(forReading: sysURL)
 
@@ -353,10 +393,25 @@ class AudioRecorder: ObservableObject {
         let sysGain = Self.systemMixGain(mic: micMono, system: sysMono)
         debugLog("[AudioRecorder] Mixing mic + system with systemGain=\(String(format: "%.2f", sysGain))")
 
+        // The system stem does not start when the microphone does — it opens
+        // `systemStemOffset` seconds in, and summing both from index zero is what
+        // put the far end into the recording twice, half a second apart
+        // (`StemTimeline`, docs/ECHO_AND_MIX_EXPERIMENTS.md).
+        let micN = Int(micMono.frameLength)
+        let sysN = Int(sysMono.frameLength)
+        let sysStart = StemTimeline.systemStartFrame(
+            offsetSeconds: systemStemOffset, sampleRate: targetSR
+        )
+        let n = AVAudioFrameCount(
+            StemTimeline.mixedFrameCount(
+                micFrames: micN, systemFrames: sysN, systemStartFrame: sysStart
+            )
+        )
+        debugLog("[AudioRecorder] mixing mic=\(micN) sys=\(sysN) frames, system stem placed at \(sysStart) frames (\(Int(systemStemOffset * 1000)) ms)")
+
         // Sum with soft clamp. System audio can arrive quieter than the mic,
         // so apply a bounded automatic gain before clamping.
-        let n = max(micMono.frameLength, sysMono.frameLength)
-        guard let mixed = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: n) else {
+        guard n > 0, let mixed = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: n) else {
             throw RecorderError.failedToMix
         }
         mixed.frameLength = n
@@ -365,11 +420,10 @@ class AudioRecorder: ObservableObject {
               let sysPtr = sysMono.floatChannelData?[0] else {
             throw RecorderError.failedToMix
         }
-        let micN = Int(micMono.frameLength)
-        let sysN = Int(sysMono.frameLength)
         for i in 0..<Int(n) {
             let m = i < micN ? micPtr[i] : 0
-            let s = i < sysN ? sysPtr[i] * sysGain : 0
+            let j = i - sysStart
+            let s = (j >= 0 && j < sysN) ? sysPtr[j] * sysGain : 0
             var v = m + s
             if v > 1.0 { v = 1.0 } else if v < -1.0 { v = -1.0 }
             mixPtr[i] = v

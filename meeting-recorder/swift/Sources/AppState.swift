@@ -525,7 +525,10 @@ class AppState: ObservableObject {
                 id: result.id,
                 status: .recorded,
                 duration: result.duration,
-                micOnlyCaptured: micOnly
+                micOnlyCaptured: micOnly,
+                // Persisted so a re-mix after a crash puts the far end back in
+                // the same place instead of guessing zero.
+                systemStemOffset: recorder.lastStopSystemStemOffset
             )
             selectedRecordingID = result.id
 

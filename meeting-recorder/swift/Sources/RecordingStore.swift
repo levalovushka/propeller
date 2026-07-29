@@ -136,6 +136,7 @@ class RecordingStore: ObservableObject {
         topics: [String]? = nil,
         tags: [String]? = nil,
         micOnlyCaptured: Bool? = nil,
+        systemStemOffset: Double? = nil,
         lastFailure: PipelineFailure?? = nil
     ) {
         guard let idx = recordings.firstIndex(where: { $0.id == id }) else { return }
@@ -151,6 +152,7 @@ class RecordingStore: ObservableObject {
         if let tp = topics { recordings[idx].topics = tp }
         if let tg = tags { recordings[idx].tags = tg }
         if let mo = micOnlyCaptured { recordings[idx].micOnlyCaptured = mo }
+        if let so = systemStemOffset { recordings[idx].systemStemOffset = so }
         if let lf = lastFailure { recordings[idx].lastFailure = lf }
         scheduleSave()
     }
@@ -321,7 +323,8 @@ class RecordingStore: ObservableObject {
             await AudioRecorder.produceFinalMix(
                 micURL: stems.microphoneURL,
                 sysURL: sysURL,
-                finalURL: finalURL
+                finalURL: finalURL,
+                systemStemOffset: recordings[i].systemStemOffset ?? 0
             )
             if FileManager.default.fileExists(atPath: finalURL.path) {
                 let dur = Self.wavDuration(url: finalURL)
