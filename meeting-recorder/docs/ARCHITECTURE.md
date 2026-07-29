@@ -61,7 +61,7 @@ MeetingDetector (Auto) / menu bar / ⌘R / UI
 |---|---|
 | `AppState` | `@MainActor` координатор: запись, воркер пайплайна, детект звонков, переименование спикеров |
 | `AudioRecorder` | Mic (только AVAudioRecorder — VPIO удалён, он трогал общее устройство) + system audio (SCK, стем 16 кГц моно) + офлайн-микс; `lastStopWasMicOnly` |
-| `SystemAudioCapture` | ScreenCaptureKit stem (app-scoped фильтр + display-wide fallback) |
+| `SystemAudioCapture` | ScreenCaptureKit stem. Область — `CaptureScopePolicy`: сужаемся на приложение той платформы, чей звонок идёт; нет звонка (или он в браузере) — пишем машину целиком. Отката по тишине нет с 2026-07-29 |
 | `ProcessTapAudioCapture` | Dormant — Core Audio Process Taps; не на hot path |
 | `MeetingDetector` | Поллинг звонка в любой платформе из `MeetingPlatform.all` (Zoom, Контур.Толк): helper-процесс, заголовок окна, вкладка браузера, display-sleep assertion |
 | `PipelineBoundaries` | `Transcriber` / `RecapBackend` — две подменяемые границы наружу |
