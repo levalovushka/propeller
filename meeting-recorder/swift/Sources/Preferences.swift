@@ -1,4 +1,5 @@
 import Foundation
+import PropellerPure
 
 class Preferences {
     static let shared = Preferences()
@@ -29,6 +30,22 @@ class Preferences {
         set { defaults.set(newValue, forKey: "captureSystemAudio") }
     }
 
+    /// Подтверждено ли, что на этой машине работает захват на общих часах
+    /// (`ProcessTapCapture`).
+    ///
+    /// Хранится, потому что выяснять это стоит дорого ровно один раз: первое в
+    /// жизни приложения открытие входа Core Audio ждёт решения TCC — замерено,
+    /// шестьдесят секунд. Проверять заново на каждом запуске значило бы ещё и
+    /// зажигать оранжевый индикатор микрофона каждый раз, когда человек просто
+    /// открыл приложение.
+    ///
+    /// Nil — «ещё не проверяли». Разрешение могут отозвать, поэтому значение
+    /// подтверждается заново, если захват не поднялся на живой записи.
+    var sharedClockCaptureWorks: Bool? {
+        get { defaults.object(forKey: "sharedClockCaptureWorks") as? Bool }
+        set { defaults.set(newValue, forKey: "sharedClockCaptureWorks") }
+    }
+
     /// Auto-record on a detected call (any platform in `MeetingPlatform.all`):
     /// off / auto. Default auto: recording starts
     /// automatically and a notification lets the user decline.
@@ -55,14 +72,23 @@ class Preferences {
     static var galleryArchiveRoot: String?
 #endif
 
+    /// Путь из настроек, приведённый к пригодному виду (`ArchivePath`).
+    /// Логика живёт в `PropellerPure`, потому что она решаема без диска, а
+    /// цена ошибки — «все встречи пропали» на экране у живого человека.
+    private func path(forKey key: String, default fallback: String) -> String {
+        ArchivePath.normalized(defaults.string(forKey: key), default: fallback)
+    }
+
     var meetingsPath: String {
         get {
 #if GALLERY
             if let root = Preferences.galleryArchiveRoot { return root + "/meetings" }
 #endif
-            return defaults.string(forKey: "meetingsPath") ?? defaultMeetingsPath
+            return path(forKey: "meetingsPath", default: defaultMeetingsPath)
         }
-        set { defaults.set(newValue, forKey: "meetingsPath") }
+        set {
+            defaults.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "meetingsPath")
+        }
     }
 
     var recordingsPath: String {
@@ -70,9 +96,11 @@ class Preferences {
 #if GALLERY
             if let root = Preferences.galleryArchiveRoot { return root + "/recordings" }
 #endif
-            return defaults.string(forKey: "recordingsPath") ?? defaultRecordingsPath
+            return path(forKey: "recordingsPath", default: defaultRecordingsPath)
         }
-        set { defaults.set(newValue, forKey: "recordingsPath") }
+        set {
+            defaults.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: "recordingsPath")
+        }
     }
 
     /// Path to Obsidian vault directory containing people pages (e.g. wiki/people/).
