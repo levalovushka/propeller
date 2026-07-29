@@ -52,21 +52,18 @@ public enum GalleryScreens {
             card {
                 OnboardingPermissionsView(onNext: {}, onBack: {},
                                           microphoneGranted: false,
-                                          systemAudioGranted: false,
                                           notificationsGranted: false)
             }
         case "onb-04-permissions-partial":
             card {
                 OnboardingPermissionsView(onNext: {}, onBack: {},
                                           microphoneGranted: true,
-                                          systemAudioGranted: false,
                                           notificationsGranted: true)
             }
         case "onb-04-permissions-all":
             card {
                 OnboardingPermissionsView(onNext: {}, onBack: {},
                                           microphoneGranted: true,
-                                          systemAudioGranted: true,
                                           notificationsGranted: true)
             }
         case "onb-05-model":

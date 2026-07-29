@@ -166,7 +166,7 @@ if [ -n "$ICON_SRC" ]; then
         --app-icon "$ICON_NAME" \
         --compile "$ICON_OUT" \
         --output-partial-info-plist "$ICON_OUT/partial.plist" \
-        --minimum-deployment-target 14.0 \
+        --minimum-deployment-target 14.4 \
         --platform macosx \
         --target-device mac \
         --include-all-app-icons \
@@ -235,7 +235,7 @@ cat > "$APP/Contents/Info.plist" << PLIST
     <string>MeetingRecorder</string>
 ${ICON_PLIST_KEYS}
     <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
+    <string>14.4</string>
     <!-- LSUIElement removed: the app launches with a window and dock icon.
          MainView toggles NSApp.activationPolicy between .regular (window open)
          and .accessory (window closed, menu-bar-only). -->
@@ -243,8 +243,6 @@ ${ICON_PLIST_KEYS}
     <string>Propeller needs microphone access to record your meetings.</string>
     <key>NSAudioCaptureUsageDescription</key>
     <string>Propeller captures meeting audio from Zoom and other apps so both sides of the call are recorded.</string>
-    <key>NSScreenCaptureUsageDescription</key>
-    <string>Propeller may use screen-audio capture as a fallback so both sides of video calls are recorded.</string>
     <key>NSCalendarsFullAccessUsageDescription</key>
     <string>Propeller reads your calendar to show upcoming meetings and pre-fill titles and participants.</string>
     <key>NSCalendarsUsageDescription</key>

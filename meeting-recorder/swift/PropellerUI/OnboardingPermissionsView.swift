@@ -3,31 +3,36 @@ import SwiftUI
 /// Permissions step — Figma 642:2291. Centred cells; Next unlocks when ready.
 ///
 /// Deliberately minimal: only what the first recording actually needs.
-/// Mic + system audio (Screen Recording) are required — mic alone loses every
-/// remote speaker. Notifications are how the user declines an auto-started Zoom
-/// recording («Не записывать»), so they are asked here rather than silently at
-/// launch. Accessibility for the ⌃⌥N notes overlay is **not** asked here: it is
-/// deferred to a just-in-time toast on first recording, to keep the start-up
-/// permission count down (decision 2026-07-25).
 ///
-/// Four rows (title 14 medium + subtitle 12 regular, padding 4, divider 16)
-/// ≈ 224pt of the ~276pt available on the 400pt card. Adding a row means
-/// re-checking that budget.
+/// **Запись экрана здесь больше не спрашивается (2026-07-29).** Она стояла тут
+/// под именем «Звук системы» и блокировала кнопку «Далее», потому что звук
+/// собеседников снимался через ScreenCaptureKit. Теперь его снимает тап на
+/// процессы, которому это разрешение не нужно вовсе; сам захват звука система
+/// спросит одним своим диалогом при первом запуске. Шаг был самым дорогим в
+/// онбординге — он требовал перезапуска приложения.
+///
+/// Микрофон остался единственным обязательным: без него записывать нечего.
+/// Уведомления — то, чем человек отказывается от авто-записи («Не записывать»),
+/// поэтому спрашиваются здесь, а не молча при запуске. Accessibility для ⌃⌥N
+/// **не** спрашивается: отложено до тоста в момент первой записи (2026-07-25).
+///
+/// Три ряда (title 14 medium + subtitle 12 regular, padding 4, divider 16)
+/// ≈ 168pt из ~276pt на карточке 400pt. Добавляя ряд, пересчитайте бюджет.
 struct OnboardingPermissionsView: View {
     var onNext: () -> Void
     var onBack: () -> Void
     var microphoneGranted: Bool = false
-    var systemAudioGranted: Bool = false
     var notificationsGranted: Bool = false
     var onGrantMicrophone: () -> Void = {}
-    var onGrantSystemAudio: () -> Void = {}
     var onGrantNotifications: () -> Void = {}
     var onSetLaunchAtLogin: (Bool) -> Void = { _ in }
 
     @State private var launchAtLogin = false
 
-    /// Both sides of the call — mic alone is not enough for remote speakers.
-    private var canProceed: Bool { microphoneGranted && systemAudioGranted }
+    /// Микрофон — единственное, без чего записывать нечего. Дальняя сторона
+    /// зависит от разрешения на захват звука, а его статус спросить нечем
+    /// (API нет), так что блокировать им кнопку было бы гаданием.
+    private var canProceed: Bool { microphoneGranted }
 
     /// Fixed control column so the row doesn't shift when a pill becomes a tick.
     private let controlWidth: CGFloat = 104
@@ -39,10 +44,6 @@ struct OnboardingPermissionsView: View {
             VStack(spacing: 0) {
                 cell("Микрофон", "Ваш голос в звонке") {
                     grantControl(granted: microphoneGranted, action: onGrantMicrophone)
-                }
-                divider
-                cell("Звук системы", "Собеседники в Zoom") {
-                    grantControl(granted: systemAudioGranted, action: onGrantSystemAudio)
                 }
                 divider
                 cell("Уведомления", "Чтобы отказаться от записи") {

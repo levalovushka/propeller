@@ -4,7 +4,7 @@ Guidance for agents working in this repository (Propeller fork of meeting-record
 
 ## Project Overview
 
-**Propeller** is a native macOS menu bar + window app (SwiftUI, macOS 14+, arm64) that records meetings (mic + system audio), transcribes Russian speech locally via **GigaAM-v3 / gigastt**, diarizes with **FluidAudio** into consistent `Speaker N` (no voice library — the mic-dominant speaker is labeled with the owner's name), saves markdown (Simple default / Obsidian optional), and optionally generates an LLM summary (Ollama / OpenAI / Claude) with auto title/topics/tags.
+**Propeller** is a native macOS menu bar + window app (SwiftUI, macOS 14.4+, arm64) that records meetings (mic + system audio), transcribes Russian speech locally via **GigaAM-v3 / gigastt**, diarizes with **FluidAudio** into consistent `Speaker N` (no voice library — the mic-dominant speaker is labeled with the owner's name), saves markdown (Simple default / Obsidian optional), and optionally generates an LLM summary (Ollama / OpenAI / Claude) with auto title/topics/tags.
 
 Canonical architecture decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Product behaviour: [docs/SPEC.md](docs/SPEC.md). **Living status / defects:** [`../../STATE.md`](../STATE.md). Active plan + decisions: [`../../plan-v2.md`](../archive/plan-v2.md). Engineering optimization: [`../../plan-optimization.md`](../archive/plan-optimization.md). UI: [`../../design/propeller-ui.md`](../design/propeller-ui.md). Historical (phases, brief): [`../../archive/`](../archive/).
 
@@ -28,7 +28,9 @@ Swift Package Manager (`Package.swift`). GigaAM ASR weights (~247 MB, INT8 set) 
 ### Data flow
 
 ```
-AudioRecorder (mic + SCK system stems → 16 kHz mix, стем на своём сдвиге)
+AudioRecorder → ProcessTapCapture (тап + агрегат: обе дорожки одной IOProc,
+                кадр в кадр) → 16 kHz стемы + микс с нулевого кадра
+                ↳ запасной путь: AVAudioRecorder + SCK, стем на своём сдвиге
   → TranscriptionService
       → gigastt (chunked if large) → ASRSegment[]
       → checkpoint (transcribed_raw)
@@ -91,6 +93,37 @@ ephemeral, and there is exactly one of it because there is one worker.
   point was to stop having a second source of truth.
 - **Changing what a function *means* means reading every caller first** (`grep` the name). Cheap
   check, expensive miss.
+
+## Audio capture — invariants
+
+Capture runs on **one clock**: a Core Audio process tap and the microphone inside one
+private aggregate device, read by a single IOProc (`ProcessTapCapture`). Sample N of the
+mic stem and sample N of the system stem are the same instant — that is the whole point,
+and it is what makes a live transcript and echo cancellation possible at all.
+
+- **Never guess the channel layout.** Aggregate input channels run subdevices-in-composition-order,
+  then taps; the counts come from the system, and the assembled aggregate is rejected if
+  its actual channel count disagrees (`CaptureChannelLayout`). A wrong guess is silent:
+  the file is the right size and the far side is in the owner's track.
+- **The aggregate must contain a real output device.** Mic + tap alone assembles, reports
+  the right channel count, starts — and delivers a dead microphone channel (measured).
+- **Silence is never a symptom.** Health is "did IOProc callbacks arrive", never "was it loud".
+- **Frames are placed by `mSampleTime`, not appended** (`CaptureCursor`). Appending is what
+  made the two tracks jitter by milliseconds and coherence collapse to 0.04.
+- **Capture never blocks on permission.** The first Core Audio input open waits on a TCC
+  decision — measured at 60 s — so it is paid by a warm-up at launch and remembered
+  (`Preferences.sharedClockCaptureWorks`). Starting a meeting must cost milliseconds.
+- **The ladder always ends somewhere that works** (`CapturePathPolicy`): tap → mic-only. There is
+  no second capture path — the ScreenCaptureKit one was deleted with the 14.4 floor, because two
+  capture branches mean two truths about how the stems relate, and everything downstream has to
+  handle both.
+- **Capture never asks for Screen Recording.** That permission is gone from the bundle. Window
+  titles still feed meeting detection when the grant happens to exist, but nothing requests it and
+  nothing blocks on it.
+- Re-measure with `open -a Propeller --args --tap-probe` (report lands in Application Support)
+  and `tools/echo-probe/` for coherence. Acceptance: **> 0.7** in the speech band; measured
+  0.91–0.97 across runs. Check `maxSys` in the probe report first — a run where the speaker
+  was driven into clipping (`maxSys=1.0`) reads 0.67, and that is the acoustic path, not us.
 
 ## Meeting detection
 

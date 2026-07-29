@@ -17,7 +17,6 @@ struct OnboardingContainer: View {
     @ObservedObject var state: AppState
 
     @State private var microphoneGranted = false
-    @State private var systemAudioGranted = false
     @State private var notificationsGranted = false
     @State private var calendarGranted = false
     @State private var ollamaReady = false
@@ -35,7 +34,6 @@ struct OnboardingContainer: View {
                 Analytics.signal("Onboarding.completed")
             },
             microphoneGranted: microphoneGranted,
-            systemAudioGranted: systemAudioGranted,
             notificationsGranted: notificationsGranted,
             calendarGranted: calendarGranted,
             onConnectCalendar: { provider in
@@ -58,13 +56,6 @@ struct OnboardingContainer: View {
                     openSettings("Privacy_Microphone")
                 default:
                     break
-                }
-            },
-            onGrantSystemAudio: {
-                // First call shows the system prompt; if previously denied, open Settings.
-                if CGPreflightScreenCaptureAccess() { return }
-                if !CGRequestScreenCaptureAccess() {
-                    openSettings("Privacy_ScreenCapture")
                 }
             },
             onGrantNotifications: {
@@ -113,7 +104,6 @@ struct OnboardingContainer: View {
 
     private func refreshGrants() {
         microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        systemAudioGranted = CGPreflightScreenCaptureAccess()
         calendarGranted = Self.calendarAuthorized
 
         UNUserNotificationCenter.current().getNotificationSettings { settings in

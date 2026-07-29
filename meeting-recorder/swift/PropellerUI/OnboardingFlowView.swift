@@ -11,12 +11,10 @@ import AppKit
 public struct OnboardingFlowView: View {
     var onComplete: (String) -> Void
     var microphoneGranted: Bool
-    var systemAudioGranted: Bool
     var notificationsGranted: Bool
     var calendarGranted: Bool
     var onConnectCalendar: (CalendarProvider) -> Void
     var onGrantMicrophone: () -> Void
-    var onGrantSystemAudio: () -> Void
     var onGrantNotifications: () -> Void
     var onSetLaunchAtLogin: (Bool) -> Void
     var onDownloadSummaryModel: () -> Void
@@ -28,12 +26,10 @@ public struct OnboardingFlowView: View {
     public init(
         onComplete: @escaping (String) -> Void,
         microphoneGranted: Bool = false,
-        systemAudioGranted: Bool = false,
         notificationsGranted: Bool = false,
         calendarGranted: Bool = false,
         onConnectCalendar: @escaping (CalendarProvider) -> Void = { _ in },
         onGrantMicrophone: @escaping () -> Void = {},
-        onGrantSystemAudio: @escaping () -> Void = {},
         onGrantNotifications: @escaping () -> Void = {},
         onSetLaunchAtLogin: @escaping (Bool) -> Void = { _ in },
         onDownloadSummaryModel: @escaping () -> Void = {},
@@ -44,12 +40,10 @@ public struct OnboardingFlowView: View {
     ) {
         self.onComplete = onComplete
         self.microphoneGranted = microphoneGranted
-        self.systemAudioGranted = systemAudioGranted
         self.notificationsGranted = notificationsGranted
         self.calendarGranted = calendarGranted
         self.onConnectCalendar = onConnectCalendar
         self.onGrantMicrophone = onGrantMicrophone
-        self.onGrantSystemAudio = onGrantSystemAudio
         self.onGrantNotifications = onGrantNotifications
         self.onSetLaunchAtLogin = onSetLaunchAtLogin
         self.onDownloadSummaryModel = onDownloadSummaryModel
@@ -83,10 +77,8 @@ public struct OnboardingFlowView: View {
                 OnboardingPermissionsView(onNext: { go(.summaryModel) },
                                           onBack: { go(.calendar) },
                                           microphoneGranted: microphoneGranted,
-                                          systemAudioGranted: systemAudioGranted,
                                           notificationsGranted: notificationsGranted,
                                           onGrantMicrophone: onGrantMicrophone,
-                                          onGrantSystemAudio: onGrantSystemAudio,
                                           onGrantNotifications: onGrantNotifications,
                                           onSetLaunchAtLogin: onSetLaunchAtLogin)
             case .summaryModel:

@@ -32,7 +32,6 @@ private struct GeneralSettingsPane: View {
     @AppStorage("analyticsEnabled") private var analyticsEnabled = true
     @AppStorage("autoRecordMode") private var autoRecordMode = AutoRecordMode.auto.rawValue
     @State private var detectionSnapshot = MeetingDetector.shared.snapshot
-    @State private var hasScreenRecordingPermission = true
     @State private var launchAtLogin = LoginItem.isEnabled
     @State private var launchAtLoginError: String?
     @AppStorage("calendarEnabled") private var calendarEnabled = false
@@ -119,24 +118,6 @@ private struct GeneralSettingsPane: View {
                     }
                 }
 
-                if !hasScreenRecordingPermission {
-                    HStack(alignment: .top, spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                            .typo(Tokens.Typography.Label.smRegular)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Обнаружение ограничено — нет разрешения Screen Recording, Propeller не читает заголовки окон. Остаётся сигнал процесса: он медленнее и есть не у всех сервисов.")
-                                .typo(Tokens.Typography.Label.smRegular)
-                                .foregroundStyle(.secondary)
-                            Button("Открыть настройки Screen Recording") {
-                                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                                    NSWorkspace.shared.open(url)
-                                }
-                            }
-                            .controlSize(.small)
-                        }
-                    }
-                }
             }
 
             Section("О программе") {
@@ -153,7 +134,6 @@ private struct GeneralSettingsPane: View {
         .formStyle(.grouped)
         .onAppear {
             detectionSnapshot = MeetingDetector.shared.probe()
-            hasScreenRecordingPermission = MeetingDetector.hasScreenRecordingPermission()
             launchAtLogin = LoginItem.isEnabled
         }
     }

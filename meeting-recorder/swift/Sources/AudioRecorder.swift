@@ -23,13 +23,19 @@ class AudioRecorder: ObservableObject {
     private(set) var filePath: URL?
     private(set) var duration: TimeInterval = 0
 
-    // System-audio side channel via ScreenCaptureKit.
-    // Process Tap was flaky (header-only stems + false "not captured" banners);
-    // onboarding already asks for Screen Recording, so SCK is the single path.
-    private var systemAudio: AnyObject?
+    /// Захват на общих часах: одно агрегатное устройство пишет обе дорожки
+    /// сэмпл в сэмпл (`ProcessTapCapture`). Nil, когда запись идёт запасным
+    /// путём — тогда работает всё, что ниже.
+    private var tapCapture: AnyObject?
+    /// Каким путём пишется текущая запись.
+    private(set) var capturePath: CapturePath = .microphoneOnly
+    /// Каким путём была записана предыдущая — уезжает в отчёт и телеметрию.
+    private(set) var lastStopPath: CapturePath?
+
+    /// Куда пишется системная дорожка текущей записи. Nil на микрофонном пути.
     private var systemAudioURL: URL?
-    /// Hard start failure only (permission / stream won't start). Not used for
-    /// "quiet so far" — live System levels are the truth during recording.
+    /// Осталось ради интерфейса: на общих часах жёсткого отказа старта нет —
+    /// путь либо поднялся, либо запись честно микрофонная.
     @Published var systemAudioWarning: String?
     /// Set in `stop()` from the actual `.sys.wav` stem (empty / missing).
     private(set) var lastStopWasMicOnly = false
@@ -78,6 +84,31 @@ class AudioRecorder: ObservableObject {
         let finalURL = recordingsDir.appendingPathComponent("\(id).wav")
         let sysURL = recordingsDir.appendingPathComponent("\(id).sys.wav")
 
+        // Какой путь захвата берём. Список, а не один ответ: подняться путь
+        // может только на живой системе, и «поднялся» — это факт, а не прогноз
+        // (`CapturePathPolicy`).
+        let ladder = CapturePathPolicy.ladder(CaptureCapabilities(
+            wantsSystemAudio: Preferences.shared.captureSystemAudio,
+            sharedClockReady: ProcessTapCapture.isReady
+        ))
+        debugLog("[AudioRecorder] лестница путей: \(ladder.map(\.rawValue).joined(separator: " → "))")
+
+        if ladder.first == .processTap,
+           startTapCapture(id: id, micURL: micURL, sysURL: sysURL) {
+            capturePath = .processTap
+            recordingID = id
+            filePath = finalURL
+            startTime = Date()
+            isRecording = true
+            armMicIntegrityWatchdog()
+            if meteringDesired { startMetering() }
+            return
+        }
+        // Общие часы не поднялись — остаётся микрофон. Это состояние записи, а
+        // не отказ: человеку про него говорят (`lastStopWasMicOnly`), и звук
+        // его собственного голоса он получит в любом случае.
+        capturePath = .microphoneOnly
+
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatLinearPCM),
             AVSampleRateKey: 16000.0,
@@ -104,71 +135,38 @@ class AudioRecorder: ObservableObject {
         isRecording = true
         armMicIntegrityWatchdog()
 
-        // System audio: ScreenCaptureKit only. Live levels = health; no speculative banners.
-        if Preferences.shared.captureSystemAudio {
-            systemAudioURL = sysURL
-            if #available(macOS 14.0, *) {
-                let sck = SystemAudioCapture()
-                sck.onCaptureIssueDetected = { message in
-                    // Soft mid-session issues stay in the log — UI banner is reserved
-                    // for start() failure so it can't disagree with a live System meter.
-                    NSLog("[AudioRecorder] System audio note: \(message)")
-                }
-                sck.onFirstSample = { [weak self] sampleAge in
-                    // Timestamp here, on the capture queue: the stem started when
-                    // this fired, not when the main actor got round to us.
-                    let firedAt = Date()
-                    Task { @MainActor in
-                        guard let self, let recorder = self.avRecorder else { return }
-                        let hop = Date().timeIntervalSince(firedAt)
-                        // Две поправки, обе вычитаются: прыжок на этот актор и
-                        // возраст первого сэмпла в момент доставки.
-                        let offset = max(0, recorder.currentTime - hop - sampleAge)
-                        // Overwrites on purpose: a scoped→display-wide fallback
-                        // starts the stem file over, and then the stem begins
-                        // later than it first did.
-                        let previous = self.systemStemOffset
-                        self.systemStemOffset = offset
-                        if let previous {
-                            NSLog("[AudioRecorder] system stem restarted — offset \(Int(previous * 1000)) → \(Int(offset * 1000)) ms")
-                        } else {
-                            NSLog("[AudioRecorder] system stem opens \(Int(offset * 1000)) ms into the mic timeline (first sample was \(Int(sampleAge * 1000)) ms old)")
-                        }
-                    }
-                }
-                systemAudio = sck
-            }
-        }
-
         // Metering starts only when the UI asks for it (window open) — E5.
         if meteringDesired {
             startMetering()
         }
-
-        if Preferences.shared.captureSystemAudio {
-            Task.detached { [weak self] in
-                await self?.startSystemAudioCapture(sysURL: sysURL)
-            }
-        }
     }
 
-    private func startSystemAudioCapture(sysURL: URL) async {
-        guard #available(macOS 14.0, *),
-              let sck = await MainActor.run(body: { self.systemAudio as? SystemAudioCapture }) else { return }
+    private func startTapCapture(id: String, micURL: URL, sysURL: URL) -> Bool {
         // Свежий снимок, а не отладенное состояние детектора: между входом в
-        // звонок и его подтверждением проходит до двух опросов, а область
-        // захвата выбирается один раз и на всю запись.
+        // звонок и его подтверждением проходит до двух опросов.
         let platformID = MeetingDetector.captureSnapshot().platformID
-        do {
-            try await sck.start(outputURL: sysURL, callPlatformID: platformID)
-            NSLog("[AudioRecorder] SCK system audio started")
-            await MainActor.run { self.systemAudioWarning = nil }
-        } catch {
-            await MainActor.run {
-                self.systemAudioWarning = error.localizedDescription
-                NSLog("[AudioRecorder] System audio capture FAILED to start: \(error)")
-            }
+        let capture = ProcessTapCapture(micURL: micURL, systemURL: sysURL, callPlatformID: platformID)
+        capture.onIssue = { message in
+            NSLog("[AudioRecorder] tap capture note: \(message)")
         }
+        do {
+            try capture.start()
+        } catch {
+            // Не баннер: запись всё равно будет, просто микрофонная.
+            NSLog("[AudioRecorder] общие часы не поднялись (\(error.localizedDescription)) — иду запасным путём")
+            // Разрешение могли отозвать. Запоминаем отказ, чтобы следующая
+            // запись не тратила на ту же проверку начало встречи.
+            Preferences.shared.sharedClockCaptureWorks = false
+            return false
+        }
+        Preferences.shared.sharedClockCaptureWorks = true
+        tapCapture = capture
+        systemAudioURL = sysURL
+        // Дорожки выровнены по построению: сдвига, который раньше приходилось
+        // измерять и хранить, у этого пути просто нет.
+        systemStemOffset = 0
+        NSLog("[AudioRecorder] запись на общих часах, id=\(id)")
+        return true
     }
 
     /// Enable/pause live level metering. Recording itself is unaffected (E5).
@@ -183,6 +181,9 @@ class AudioRecorder: ObservableObject {
     }
 
     func stop() async throws -> (id: String, url: URL, duration: TimeInterval) {
+        if let capture = tapCapture as? ProcessTapCapture {
+            return try await stopTapCapture(capture)
+        }
         stopMetering()
         let recordedDuration: TimeInterval
         recordedDuration = avRecorder?.currentTime ?? 0
@@ -192,7 +193,6 @@ class AudioRecorder: ObservableObject {
             : Date().timeIntervalSince(startTime ?? Date())
         let id = recordingID ?? ""
         let finalURL = filePath ?? URL(fileURLWithPath: "")
-        let sysURL = systemAudioURL
         let recordingsDir = finalURL.deletingLastPathComponent()
         let micURL = recordingsDir.appendingPathComponent("\(id).mic.wav")
 
@@ -203,45 +203,62 @@ class AudioRecorder: ObservableObject {
         filePath = nil
         startTime = nil
 
-        // Stop capture then mix — awaited so the WAV is fully written before returning.
-        let sysCapture = systemAudio
-        systemAudio = nil
-        systemAudioURL = nil
-        let stemOffset = systemStemOffset ?? 0
-        lastStopSystemStemOffset = systemStemOffset
+        // Системного стема на этом пути нет вовсе: он остался единственно для
+        // случая, когда общие часы не поднялись. Значит и сводить нечего —
+        // микрофон копируется в финал.
+        lastStopSystemStemOffset = nil
         systemStemOffset = nil
+        lastStopWasAppScoped = nil
+        lastStopPath = .microphoneOnly
+        lastStopWasMicOnly = Preferences.shared.captureSystemAudio
 
-        let micOnly = try await Task.detached(priority: .userInitiated) { () -> Bool in
-            var stemUnusable = sysURL == nil
-            var appScoped: Bool?
-            if #available(macOS 14.0, *), let capture = sysCapture as? SystemAudioCapture {
-                await capture.stop()
-                let report = capture.report()
-                NSLog("[AudioRecorder] SCK report: \(report.logLine)")
-                let drift = await capture.timestampDrift()
-                NSLog(String(
-                    format: "[AudioRecorder] SCK timestamp drift: last %.1f ms, range %.1f…%.1f ms",
-                    drift.last, drift.min, drift.max
-                ))
-                stemUnusable = !report.capturedUsableStem
-                appScoped = report.appScoped
-            } else if let sysURL {
-                let size = (try? FileManager.default.attributesOfItem(atPath: sysURL.path)[.size] as? NSNumber)?.intValue ?? 0
-                stemUnusable = size <= 4096
-            }
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            await Self.produceFinalMix(
-                micURL: micURL, sysURL: sysURL, finalURL: finalURL,
-                systemStemOffset: stemOffset
-            )
-            await MainActor.run { [appScoped] in self.lastStopWasAppScoped = appScoped }
-            return stemUnusable
-        }.value
+        await Self.produceFinalMix(
+            micURL: micURL, sysURL: nil, finalURL: finalURL, systemStemOffset: 0
+        )
 
-        lastStopWasMicOnly = Preferences.shared.captureSystemAudio && micOnly
-        // Clear any start-failure banner once recording ends — detail uses mic-only tag.
+        return (id, finalURL, dur)
+    }
+
+    private func stopTapCapture(_ capture: ProcessTapCapture) async throws
+        -> (id: String, url: URL, duration: TimeInterval) {
+        stopMetering()
+        let id = recordingID ?? ""
+        let finalURL = filePath ?? URL(fileURLWithPath: "")
+        let recordingsDir = finalURL.deletingLastPathComponent()
+        let micURL = recordingsDir.appendingPathComponent("\(id).mic.wav")
+        let sysURL = systemAudioURL
+        let wallClock = Date().timeIntervalSince(startTime ?? Date())
+
+        isRecording = false
+        tapCapture = nil
+        systemAudioURL = nil
+        recordingID = nil
+        filePath = nil
+        startTime = nil
+
+        let report = await capture.stop()
+        NSLog("[AudioRecorder] tap report: \(report.logLine)")
+
+        // Длительность берём у часов захвата, а не у стенных: это то же число,
+        // что лежит в файле, и расхождение между ними — как раз то, что раньше
+        // приходилось вылавливать по остаточным признакам.
+        let captured = report.deviceSampleRate > 0
+            ? Double(report.framesCaptured) / report.deviceSampleRate : 0
+        let dur = captured > 0 ? captured : wallClock
+        duration = dur
+
+        // Сдвига нет по построению — стемы складываются с нулевого кадра.
+        lastStopSystemStemOffset = 0
+        systemStemOffset = nil
+        lastStopWasAppScoped = report.hasSystemAudio ? report.scopedToCall : nil
+        lastStopWasMicOnly = Preferences.shared.captureSystemAudio && !report.capturedUsableStem
+        lastStopPath = .processTap
         systemAudioWarning = nil
 
+        await Self.produceFinalMix(
+            micURL: micURL, sysURL: report.hasSystemAudio ? sysURL : nil,
+            finalURL: finalURL, systemStemOffset: 0
+        )
         return (id, finalURL, dur)
     }
 
@@ -255,7 +272,11 @@ class AudioRecorder: ObservableObject {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             guard let self, self.isRecording else { return }
             let progressed: TimeInterval
-            if let rec = self.avRecorder {
+            if let capture = self.tapCapture as? ProcessTapCapture {
+                let report = capture.report()
+                progressed = report.deviceSampleRate > 0
+                    ? Double(report.framesCaptured) / report.deviceSampleRate : 0
+            } else if let rec = self.avRecorder {
                 progressed = rec.currentTime
             } else {
                 progressed = 0
@@ -280,17 +301,18 @@ class AudioRecorder: ObservableObject {
         micLevelHistory = Array(repeating: 0, count: Self.historySize)
         systemLevelHistory = Array(repeating: 0, count: Self.historySize)
 
-        let onLevel: (Float) -> Void = { [weak self] level in
-            Task { @MainActor [weak self] in
-                guard let self, self.isRecording, self.meteringDesired else { return }
-                self.systemLevelHistory.append(level)
-                if self.systemLevelHistory.count > Self.historySize {
-                    self.systemLevelHistory.removeFirst(self.systemLevelHistory.count - Self.historySize)
+        // На общих часах обе шкалы приходят из одного буфера, а значит и в
+        // индикаторе они описывают один и тот же момент — таймер тут не нужен
+        // и врать ему нечем.
+        if let capture = tapCapture as? ProcessTapCapture {
+            capture.levelCallback = { [weak self] mic, system in
+                Task { @MainActor [weak self] in
+                    guard let self, self.isRecording, self.meteringDesired else { return }
+                    self.append(mic, to: &self.micLevelHistory)
+                    self.append(system, to: &self.systemLevelHistory)
                 }
             }
-        }
-        if #available(macOS 14.0, *), let capture = systemAudio as? SystemAudioCapture {
-            capture.levelCallback = onLevel
+            return
         }
 
         // ~10 Hz (was 12.5) — enough for a smooth waveform, less MainActor churn (E5/S6).
@@ -310,8 +332,9 @@ class AudioRecorder: ObservableObject {
                 if self.micLevelHistory.count > Self.historySize {
                     self.micLevelHistory.removeFirst(self.micLevelHistory.count - Self.historySize)
                 }
-                // If no system audio capture, still push zeros so the waveform stays aligned
-                if self.systemAudio == nil || self.systemAudioWarning != nil {
+                // Микрофонный путь: системной дорожки нет, но шкала должна
+                // идти вровень с микрофонной, иначе волна поедет.
+                if true {
                     self.systemLevelHistory.append(0)
                     if self.systemLevelHistory.count > Self.historySize {
                         self.systemLevelHistory.removeFirst(self.systemLevelHistory.count - Self.historySize)
@@ -324,10 +347,17 @@ class AudioRecorder: ObservableObject {
         meterTimer = timer
     }
 
+    private func append(_ level: Float, to history: inout [Float]) {
+        history.append(level)
+        if history.count > Self.historySize {
+            history.removeFirst(history.count - Self.historySize)
+        }
+    }
+
     private func stopMetering() {
         meterTimer?.invalidate()
         meterTimer = nil
-        if #available(macOS 14.0, *), let capture = systemAudio as? SystemAudioCapture {
+        if let capture = tapCapture as? ProcessTapCapture {
             capture.levelCallback = nil
         }
     }

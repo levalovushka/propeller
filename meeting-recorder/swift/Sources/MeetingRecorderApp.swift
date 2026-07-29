@@ -12,17 +12,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // ASR sidecar is started lazily on first transcription (plan-optimization E1).
 
-        // `--capture-probe`: answer where the call's audio actually comes from,
-        // then quit. Lives in the shipping binary rather than a separate tool
-        // because Screen Recording is granted to *this* bundle — a standalone
-        // utility would ask for it again and measure a different system. Reads
-        // only: counts buffers, writes nothing, never touches the archive.
-        if #available(macOS 14.0, *), CaptureProbe.isRequested {
+        // `--tap-probe`: какой состав агрегата система принимает и какой канал
+        // чей. Раскладка каналов ничем не задокументирована, а промах по ней
+        // молчаливый, поэтому она измеряется, а не выводится из рассуждений.
+        // Живёт в релизном бинарнике, а не отдельной утилитой: разрешение на
+        // захват звука выдано **этому** бандлу.
+        if TapProbe.isRequested {
             Task { @MainActor in
-                await CaptureProbe.run()
+                await TapProbe.run()
                 exit(0)
             }
             return
+        }
+
+        // Прогрев захвата на общих часах. Самое первое открытие входа Core
+        // Audio ждёт решения TCC — замерено, шестьдесят секунд, — и заплатить
+        // его на старте записи означает записать встречу без первой минуты.
+        // Платим сейчас, в фоне, когда никто ничего не ждёт.
+        if Preferences.shared.captureSystemAudio {
+            Task.detached(priority: .utility) {
+                await ProcessTapCapture.warmUpIfNeeded()
+            }
         }
 #if GALLERY
         // `--gallery-export <dir>`: render every state to PNG and quit. Runs
