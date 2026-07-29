@@ -34,6 +34,20 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     private var pcmBufferCount = 0
     private var conversionFailureCount = 0
     private var framesWritten = 0
+
+    /// Buffers are appended one after another, as if none were ever late or
+    /// missing. Whether that holds is measurable: every sample buffer carries a
+    /// presentation timestamp, so the frame it *should* land on is known.
+    ///
+    /// Measuring before fixing, because the fix (padding gaps with silence)
+    /// makes things worse if the timestamps turn out to be delivery times rather
+    /// than capture times. The drift this reports is what decides that — and the
+    /// same drift is why an echo canceller cannot lock onto our stems today
+    /// (coherence 0.04, docs/ECHO_AND_MIX_EXPERIMENTS.md).
+    private var firstPTS: CMTime?
+    private var driftMinFrames = 0
+    private var driftMaxFrames = 0
+    private var driftLastFrames = 0
     private var audibleBufferCount = 0
     private var maxRMSLevel: Float = 0
     private var maxPeakLevel: Float = 0
@@ -251,6 +265,14 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// Returns true if at least one audio sample was seen during the capture.
     var capturedAnyAudio: Bool { didSeeAnySamples }
 
+    /// How far the appended stem wandered from what the timestamps asked for,
+    /// in milliseconds at the stream's own rate. Logged at stop; the numbers
+    /// decide whether placing samples by timestamp is worth doing.
+    func timestampDrift(sampleRate: Double = 48_000) -> (last: Double, min: Double, max: Double) {
+        let ms = { (frames: Int) in Double(frames) / sampleRate * 1000 }
+        return (ms(driftLastFrames), ms(driftMinFrames), ms(driftMaxFrames))
+    }
+
     func report() -> CaptureReport {
         let size: Int64? = outputURL.flatMap { url in
             guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
@@ -302,6 +324,23 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             return
         }
         pcmBufferCount += 1
+
+        // Where this buffer says it belongs, against where appending put it.
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        if pts.isValid {
+            if firstPTS == nil { firstPTS = pts }
+            if let first = firstPTS {
+                let elapsed = CMTimeGetSeconds(CMTimeSubtract(pts, first))
+                let rate = pcmBuffer.format.sampleRate
+                if elapsed.isFinite, rate > 0 {
+                    let drift = Int(elapsed * rate) - framesWritten
+                    driftLastFrames = drift
+                    driftMinFrames = min(driftMinFrames, drift)
+                    driftMaxFrames = max(driftMaxFrames, drift)
+                }
+            }
+        }
+
         framesWritten += Int(pcmBuffer.frameLength)
         #if DEBUG
         if callbackCount <= 3 {

@@ -202,6 +202,11 @@ class AudioRecorder: ObservableObject {
                 await capture.stop()
                 let report = capture.report()
                 NSLog("[AudioRecorder] SCK report: \(report.logLine)")
+                let drift = await capture.timestampDrift()
+                NSLog(String(
+                    format: "[AudioRecorder] SCK timestamp drift: last %.1f ms, range %.1f…%.1f ms",
+                    drift.last, drift.min, drift.max
+                ))
                 stemUnusable = !report.capturedUsableStem
             } else if let sysURL {
                 let size = (try? FileManager.default.attributesOfItem(atPath: sysURL.path)[.size] as? NSNumber)?.intValue ?? 0
