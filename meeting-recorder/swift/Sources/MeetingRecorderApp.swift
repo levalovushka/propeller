@@ -11,6 +11,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // ASR sidecar is started lazily on first transcription (plan-optimization E1).
+
+        // `--capture-probe`: answer where the call's audio actually comes from,
+        // then quit. Lives in the shipping binary rather than a separate tool
+        // because Screen Recording is granted to *this* bundle — a standalone
+        // utility would ask for it again and measure a different system. Reads
+        // only: counts buffers, writes nothing, never touches the archive.
+        if #available(macOS 14.0, *), CaptureProbe.isRequested {
+            Task { @MainActor in
+                await CaptureProbe.run()
+                exit(0)
+            }
+            return
+        }
 #if GALLERY
         // `--gallery-export <dir>`: render every state to PNG and quit. Runs
         // after launch so SwiftUI is up, and exits without touching the archive.
