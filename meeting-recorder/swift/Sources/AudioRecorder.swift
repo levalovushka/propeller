@@ -342,20 +342,21 @@ class AudioRecorder: ObservableObject {
         systemStemOffset: TimeInterval = 0
     ) async {
         let fm = FileManager.default
-        let sysSummary: AudioEnergySummary? = {
-            guard let u = sysURL else { return nil }
+        // Есть стем — микшуем. Здесь стоял третий по счёту порог «слышимости»
+        // (`hasAudibleContent`), и он отвечал на вопрос, которого не задавали:
+        // тишину микшировать не вредно — `MixGain` на тихом стеме возвращает 1,
+        // то есть складывает тишину с микрофоном и ничего не усиливает. Зато
+        // порог мог выбросить настоящую, но тихую дальнюю сторону целиком.
+        // Заодно ушло чтение всего стема ради одной строки в лог.
+        let hasSys: Bool = {
+            guard let u = sysURL else { return false }
             guard let attrs = try? fm.attributesOfItem(atPath: u.path),
-                  let size = attrs[.size] as? NSNumber else { return nil }
-            guard size.intValue > 4096 else { return nil }
-            return try? AudioEnergyAnalyzer.summarize(url: u)
+                  let size = attrs[.size] as? NSNumber else { return false }
+            return size.intValue > 4096
         }()
-        if let sysSummary {
-            debugLog("[AudioRecorder] System stem energy: duration=\(String(format: "%.2f", sysSummary.duration))s rms=\(String(format: "%.6f", sysSummary.rms)) peak=\(String(format: "%.6f", sysSummary.peak)) active=\(String(format: "%.3f", sysSummary.activeRatio))")
-        }
-        let hasSys = sysSummary?.hasAudibleContent ?? false
 
         if !hasSys {
-            // No system audio — copy mic.wav → final.wav and keep the stem.
+            // Стема нет вовсе (mic-only) — копируем микрофон в финал.
             _ = try? fm.removeItem(at: finalURL)
             do { try fm.copyItem(at: micURL, to: finalURL) } catch {
                 debugLog("[AudioRecorder] copy mic → final failed: \(error)")

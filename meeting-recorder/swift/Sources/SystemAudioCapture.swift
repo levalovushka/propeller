@@ -2,6 +2,7 @@ import AppKit
 import AVFoundation
 import CoreGraphics
 import Foundation
+import PropellerPure
 import ScreenCaptureKit
 
 /// Captures the system audio output (what would be heard through the speakers/headphones)
@@ -11,9 +12,6 @@ import ScreenCaptureKit
 /// Offline-mixing into the final recording is done by `AudioRecorder` on stop.
 @available(macOS 14.0, *)
 final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
-    /// Meeting apps we scope capture to by default, so we tap only the call's
-    /// audio instead of the whole system mix (music, other calls, notifications).
-    static let meetingAppBundleIDs = ["us.zoom.xos"]
 
     private var stream: SCStream?
     private var audioFile: AVAudioFile?
@@ -55,8 +53,6 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     /// True while the active stream is scoped to specific meeting apps rather
     /// than the whole display.
     private(set) var isAppScoped = false
-    /// Guards against a fallback restart loop — only try display-wide once.
-    private var didFallBackToDisplayWide = false
 
     /// Called on the sample queue with the current RMS level (0.0–1.0) each time a buffer arrives.
     var levelCallback: ((Float) -> Void)?
@@ -121,11 +117,10 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         }
     }
 
-    /// Start capturing system audio into `url`, scoped to `targetBundleIdentifiers`
-    /// when any of those apps is running (default: known meeting apps). Falls
-    /// back to whole-display capture if none of them are running, or — via the
-    /// watchdog — if the app-scoped stream produces no audio at all.
-    func start(outputURL url: URL, targetBundleIdentifiers: [String] = SystemAudioCapture.meetingAppBundleIDs) async throws {
+    /// Start capturing system audio into `url`, scoped to whichever known
+    /// meeting apps are running (`CaptureScopePolicy`). Whole-machine capture
+    /// happens only when none of them is — never as a reaction to silence.
+    func start(outputURL url: URL) async throws {
         guard !isRunning else { throw CaptureError.alreadyRunning }
 
         // Pre-flight: check Screen Recording permission (TCC).
@@ -141,13 +136,12 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         outputURL = url
         didStopWriting = false
         audioFile = nil
-        try await startStream(targetBundleIdentifiers: targetBundleIdentifiers)
+        try await startStream()
     }
 
-    /// Builds the content filter (app-scoped if possible), starts the SCStream,
-    /// and arms the watchdog. Shared by the initial start and the display-wide
-    /// fallback restart, both of which use the same `outputURL`.
-    private func startStream(targetBundleIdentifiers: [String]) async throws {
+    /// Builds the content filter from `CaptureScopePolicy`, starts the SCStream
+    /// and arms the watchdog.
+    private func startStream() async throws {
         debugLog("[SystemAudioCapture] Starting — requesting shareable content...")
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         debugLog("[SystemAudioCapture] Got content: \(content.displays.count) displays, \(content.applications.count) apps")
@@ -156,16 +150,17 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         }
         debugLog("[SystemAudioCapture] Selected display \(display.displayID) for capture filter")
 
-        let targetApps = content.applications.filter { targetBundleIdentifiers.contains($0.bundleIdentifier) }
         let filter: SCContentFilter
-        if !targetApps.isEmpty {
-            filter = SCContentFilter(display: display, including: targetApps, exceptingWindows: [])
+        switch CaptureScopePolicy.scope(runningBundleIDs: content.applications.map(\.bundleIdentifier)) {
+        case .applications(let bundleIDs):
+            let apps = content.applications.filter { bundleIDs.contains($0.bundleIdentifier) }
+            filter = SCContentFilter(display: display, including: apps, exceptingWindows: [])
             isAppScoped = true
-            debugLog("[SystemAudioCapture] App-scoped filter: \(targetApps.map(\.bundleIdentifier))")
-        } else {
+            NSLog("[SystemAudioCapture] scoped to \(bundleIDs.joined(separator: ", "))")
+        case .wholeMachine:
             filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
             isAppScoped = false
-            debugLog("[SystemAudioCapture] No target meeting app running — using display-wide filter")
+            NSLog("[SystemAudioCapture] no known meeting app running — recording the whole machine")
         }
 
         let config = SCStreamConfiguration()
@@ -192,21 +187,20 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         armWatchdog()
     }
 
-    /// If no audio samples arrive within 4 seconds, the stream is silently
-    /// failing (common with stale TCC grants, or an app-scoped filter whose
-    /// app isn't actually emitting audio yet). App-scoped failures get one
-    /// automatic retry against the whole display before surfacing a warning.
+    /// Четыре секунды без единого буфера означают, что поток не работает —
+    /// обычно протухшее разрешение на запись экрана. Тишина при идущих буферах
+    /// ничего не означает и предупреждения не заслуживает: встречи так и
+    /// начинаются.
+    ///
+    /// Раньше отсюда же уходили на захват всей машины, если за те же четыре
+    /// секунды не услышали ничего громкого. Замер на живом звонке показал, что
+    /// компенсировать нечего — app-scoped фильтр отдаёт звук звонка вместе с
+    /// хелперами, — а цена была высокой: молча подменялся смысл записи.
     private func armWatchdog() {
         sampleWatchdog = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             guard let self, self.isRunning else { return }
             if self.callbackCount == 0 {
-                if self.isAppScoped, !self.didFallBackToDisplayWide {
-                    self.didFallBackToDisplayWide = true
-                    debugLog("[SystemAudioCapture] App-scoped capture produced no audio after 4s — falling back to display-wide")
-                    await self.fallBackToDisplayWide()
-                    return
-                }
                 let message = "System audio stream started but no audio buffers arrived after 4 seconds"
                 debugLog("[SystemAudioCapture] WARNING: \(message)")
                 self.onCaptureIssueDetected?(message)
@@ -214,59 +208,7 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
                 let message = "System audio buffers arrived but PCM conversion is failing"
                 debugLog("[SystemAudioCapture] WARNING: \(message)")
                 self.onCaptureIssueDetected?(message)
-            } else if self.audibleBufferCount == 0, self.isAppScoped, !self.didFallBackToDisplayWide {
-                // Silent app-scoped stream → try display-wide, but do NOT warn:
-                // meetings often start with no remote audio yet.
-                self.didFallBackToDisplayWide = true
-                debugLog("[SystemAudioCapture] App-scoped capture is silent after 4s — falling back to display-wide")
-                await self.fallBackToDisplayWide()
             }
-            // Digital silence with buffers flowing is healthy — no warning.
-        }
-    }
-
-    /// Restart the stream with a whole-display filter after an app-scoped
-    /// stream produced zero audio. Best-effort: if this also fails, surface
-    /// the same "no audio" warning callers would have gotten anyway.
-    private func fallBackToDisplayWide() async {
-        if let stream {
-            do { try await stream.stopCapture() } catch {
-                debugLog("[SystemAudioCapture] fallback stopCapture error: \(error)")
-            }
-        }
-        stream = nil
-        isRunning = false
-
-        // Start the stem over instead of appending the second stream onto the
-        // first. Restarting a capture takes time that nothing records, so
-        // continuing the same file punched a hole into it: everything after the
-        // switch sat earlier than it really happened, and the one offset measured
-        // at the start stopped describing the tail. Nothing is lost by dropping
-        // the prefix — this path only runs when those seconds held no audible
-        // audio, which is what sent us here.
-        sampleQueue.sync {
-            audioFile = nil
-            if let url = outputURL {
-                try? FileManager.default.removeItem(at: url)
-            }
-            framesWritten = 0
-            callbackCount = 0
-            pcmBufferCount = 0
-            firstPTS = nil
-            driftMinFrames = 0
-            driftMaxFrames = 0
-            driftLastFrames = 0
-            // Fires again when the new stream opens the file, so the offset is
-            // re-measured against the stem that actually survives.
-            reportedFirstSample = false
-        }
-
-        do {
-            try await startStream(targetBundleIdentifiers: [])
-        } catch {
-            let message = "System audio fallback to display-wide capture failed: \(error.localizedDescription)"
-            debugLog("[SystemAudioCapture] \(message)")
-            onCaptureIssueDetected?(message)
         }
     }
 
@@ -386,12 +328,12 @@ final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         if Self.hasAudibleContent(pcmBuffer) {
             audibleBufferCount += 1
             didSeeAnySamples = true
-            // Audible audio ends the start-up watchdog. Silence alone must not —
-            // scoped→display-wide fallback still needs to run when Zoom is quiet
-            // but another app is the real output source.
-            sampleWatchdog?.cancel()
-            sampleWatchdog = nil
         }
+        // Любой буфер — доказательство, что поток жив, а сторож только про это и
+        // спрашивает. Раньше здесь ждали именно *громкого* буфера, потому что от
+        // тишины уходили на захват всей машины; этой ветки больше нет.
+        sampleWatchdog?.cancel()
+        sampleWatchdog = nil
         if didStopWriting { return }
 
         // Everything downstream wants 16 kHz mono: the offline mix resamples to
