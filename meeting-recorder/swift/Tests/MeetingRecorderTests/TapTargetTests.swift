@@ -57,11 +57,12 @@ final class TapTargetTests: XCTestCase {
         )
     }
 
-    /// Префикс без точки — это другое приложение. `ru.kontur.talkative` не Толк.
+    /// Префикс без точки — это другое приложение. `kontur.talkative` не Толк,
+    /// хотя и начинается с того же `kontur.talk`.
     func testAPrefixWithoutADotIsADifferentApp() {
         XCTAssertEqual(
             TapTargetPolicy.target(
-                processes: [proc(4, "ru.kontur.talkative")],
+                processes: [proc(4, "kontur.talkative")],
                 callInProgressOn: "kontur-talk"
             ),
             .everythingExceptOurselves
@@ -108,7 +109,7 @@ final class TapTargetTests: XCTestCase {
     func testOnlyTheAppWhoseCallIsUpIsTapped() {
         XCTAssertEqual(
             TapTargetPolicy.target(
-                processes: [proc(1, "us.zoom.xos"), proc(2, "ru.kontur.talk")],
+                processes: [proc(1, "us.zoom.xos"), proc(2, "kontur.talk")],
                 callInProgressOn: "kontur-talk"
             ),
             .processes([2])
