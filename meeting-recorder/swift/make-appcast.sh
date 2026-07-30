@@ -46,7 +46,7 @@ cat > "$OUT" << XML
       <pubDate>${PUB_DATE}</pubDate>
       <sparkle:version>${BUILD}</sparkle:version>
       <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
-      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <sparkle:minimumSystemVersion>14.4</sparkle:minimumSystemVersion>
       <enclosure url="${DOWNLOAD_URL}" type="application/octet-stream" ${ED_ATTRS} />
     </item>
   </channel>
