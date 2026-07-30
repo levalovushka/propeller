@@ -97,7 +97,20 @@ struct RecordingEntry: Identifiable, Codable {
 
 /// Everything the scheduler needs is already here — `id`, `date`, `status`,
 /// `lastFailure` — so the queue is a pure function over the archive.
-extension RecordingEntry: PipelineCandidate {}
+extension RecordingEntry: PipelineCandidate {
+    /// Deliberately spelled out rather than left to the protocol's `true`
+    /// default: a meeting whose audio the user deleted owes no ASR, and the
+    /// scheduler is the only place that can know that without inventing a
+    /// failure for it. Costs one `stat`, and only for the two stages that could
+    /// still need audio.
+    var audioAvailable: Bool { audioFileExists }
+
+    /// The pipeline has run out of its own options on this meeting, so the UI
+    /// may offer a button. A meeting merely waiting out a retry is *not* this:
+    /// showing it would turn the catch-up the user is not supposed to notice
+    /// into an error they have to think about.
+    var needsAttention: Bool { lastFailure?.needsAttention == true }
+}
 
 // MARK: - Meeting tag vocabulary
 

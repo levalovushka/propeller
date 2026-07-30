@@ -396,14 +396,17 @@ struct RecordingDetailView: View {
                 Spacer(minLength: 0)
                 if entry.status == .transcribedRaw, !state.activity.concerns(entry.id) {
                     Button("Завершить") {
-                        Task { await state.completeDiarization() }
+                        state.requestProcessing(entry)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.mini)
                 } else if entry.audioFileExists,
-                          (entry.status == .recorded || entry.lastFailure != nil),
+                          (entry.status == .recorded || entry.needsAttention),
                           !state.activity.concerns(entry.id) {
-                    Button(entry.lastFailure != nil ? "Повтор" : "Расшифровать") {
+                    // `needsAttention`, not "has a failure": a meeting waiting out
+                    // a retry is being handled, and offering a button for it would
+                    // be the app telling on itself for no reason.
+                    Button(entry.needsAttention ? "Повтор" : "Расшифровать") {
                         Task { await state.reprocess() }
                     }
                     .buttonStyle(.bordered)
@@ -1257,7 +1260,7 @@ struct RecordingDetailView: View {
                         }
                         if entry.status == .transcribedRaw {
                             Button {
-                                Task { await state.completeDiarization() }
+                                state.requestProcessing(entry)
                             } label: {
                                 Label("Завершить", systemImage: "person.wave.2")
                             }
@@ -1266,12 +1269,12 @@ struct RecordingDetailView: View {
                             .disabled(state.activity.concerns(entry.id))
                         } else if entry.audioFileExists,
                                   [.recorded, .transcribing].contains(entry.status)
-                                    || entry.lastFailure != nil {
+                                    || entry.needsAttention {
                             Button {
                                 Task { await state.reprocess() }
                             } label: {
                                 Label(
-                                    entry.lastFailure != nil ? "Повторить" : "Расшифровать",
+                                    entry.needsAttention ? "Повторить" : "Расшифровать",
                                     systemImage: "waveform"
                                 )
                             }

@@ -277,9 +277,14 @@ enum GalleryFixture {
             // would draw a row that cannot exist.
             topics: meeting.stage >= .summarized ? ["интеграция", "вебхуки"] : nil,
             segments: meeting.stage >= .transcribed,
+            // `kind` is stated, not inferred: this screen only exists for a
+            // failure the app has stopped retrying, and a fixture that leaves it
+            // to classification would quietly stop posing that screen the day the
+            // message changes.
             failure: meeting.hasFailure
                 ? PipelineFailure(phase: .diarizing,
-                                  message: "gigastt HTTP 413: тело запроса слишком большое")
+                                  message: "gigastt HTTP 413: тело запроса слишком большое",
+                                  kind: .permanent)
                 : nil
         )
     }
@@ -299,8 +304,12 @@ enum GalleryFixture {
         case "tab-transcript-failed":
             return make(id: "gal-transcript-failed", title: "Созвон по интеграции",
                         at: today(16, 5), duration: 1_705, stage: .recorded,
+                        // Posed as the state after the retries ran out — in the
+                        // running app a sidecar that died is retried first, and
+                        // this screen is what is left when that did not help.
                         failure: PipelineFailure(phase: .transcribing,
-                                                 message: "gigastt завершился до готовности"))
+                                                 message: "gigastt завершился до готовности",
+                                                 kind: .permanent))
         default:
             // Summary content / editing, letter, notes, transcript — the one
             // meeting with files behind it.

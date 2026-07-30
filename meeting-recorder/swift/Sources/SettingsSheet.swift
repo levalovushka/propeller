@@ -259,6 +259,9 @@ private struct RecapSettingsPane: View {
                 .onChange(of: recapProvider) { _, val in
                     Preferences.shared.recapProvider =
                         RecapProviderKind(rawValue: val) ?? .auto
+                    // Meetings that were waiting on a summary can go now — and
+                    // ones that gave up waiting are un-parked.
+                    appState.summaryProviderChanged()
                 }
 
                 LabeledContent("Ollama") {
@@ -269,7 +272,9 @@ private struct RecapSettingsPane: View {
                             Task {
                                 await OllamaSidecar.shared.ensureServerRunning()
                                 ollamaReachable = await RecapService.shared.probeOllama()
-                                appState.refreshLocalRecapModelState()
+                                // Pressed by hand, so it applies at once rather
+                                // than through the keystroke debounce.
+                                appState.applySummaryProviderChange()
                             }
                         }
                         .controlSize(.small)
@@ -317,6 +322,7 @@ private struct RecapSettingsPane: View {
                     TextField("Модель", text: $recapOllamaModel, prompt: Text(Preferences.defaultRecapModel))
                         .onChange(of: recapOllamaModel) { _, val in
                             Preferences.shared.recapOllamaModel = val
+                            appState.summaryProviderChanged()
                         }
                     Text("Propeller сам скачивает движок Ollama и модель в Application Support — ставить Ollama.app не нужно.")
                         .typo(Tokens.Typography.Label.smRegular)
@@ -330,6 +336,7 @@ private struct RecapSettingsPane: View {
                     SecureField("API-ключ", text: $openAIKey, prompt: Text("sk-…"))
                         .onChange(of: openAIKey) { _, val in
                             Preferences.shared.openAIAPIKey = val
+                            appState.summaryProviderChanged()
                         }
                     TextField("Модель", text: $recapOpenAIModel, prompt: Text("gpt-4o-mini"))
                         .onChange(of: recapOpenAIModel) { _, val in
@@ -347,6 +354,7 @@ private struct RecapSettingsPane: View {
                     SecureField("API-ключ", text: $claudeKey, prompt: Text("sk-ant-…"))
                         .onChange(of: claudeKey) { _, val in
                             Preferences.shared.claudeAPIKey = val
+                            appState.summaryProviderChanged()
                         }
                     TextField("Модель", text: $recapClaudeModel, prompt: Text("claude-sonnet-4-5"))
                         .onChange(of: recapClaudeModel) { _, val in

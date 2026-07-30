@@ -153,7 +153,7 @@ struct MainView: View {
                 onDismiss: { state.snoozeStorageNudge() }
             )
         } else if let err = state.pipelineError, !err.isEmpty {
-            let canRetryASR = state.selectedRecording?.lastFailure != nil
+            let canRetryASR = state.selectedRecording?.needsAttention == true
                 || (state.selectedRecording?.status == .recorded
                     && (state.selectedRecording?.transcript?.isEmpty ?? true))
             PropellerToast(

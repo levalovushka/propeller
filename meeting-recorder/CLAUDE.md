@@ -80,15 +80,29 @@ ephemeral, and there is exactly one of it because there is one worker.
 - **`.summarized` ⟺ recap file **and** metadata exist** (I9), reconciled both ways in
   `RecordingStore.reconcileSummarizedStage()`. A 1.11 meeting with a summary but no topics is *not*
   done: marking it done strands it, because the worker skips terminal stages.
-- **A failure belongs to its recording** (`entry.lastFailure`), never to the app. While set, the
-  recording is out of the queue until an explicit retry clears it (I7). Cancellation is *not* a
-  failure — parking a superseded job would need a manual retry to undo.
-- **Phases never call each other.** Each ends with `kickPipeline()`; `nextJob` derives what is next
-  from stages on disk. A phase that returns `.advanced` **must** have moved the stage or parked the
-  recording, or the loop asks for the same job forever (caught as `.stalled`, I11).
-- **Newest unfinished meeting wins.** The one that just ended is the one someone is waiting to read;
-  the backlog is catch-up. Prioritising transcripts over summaries looks equivalent and is not — it
-  drops the fresh meeting to the back of the queue right after `.saved`.
+- **A failure belongs to its recording** (`entry.lastFailure`), never to the app. It carries its own
+  recovery plan: `kind` (transient / permanent), `attempt`, and `nextAttemptAt`. A transient failure
+  is retried on a backoff **silently**; only a failure with `needsAttention` (permanent, or attempts
+  spent) is ever shown, and that is what the UI must read — `lastFailure != nil` is not a user-facing
+  condition (I7). Cancellation is not a failure at all: a call starting mid-ASR must not need a manual
+  retry afterwards.
+- **Owed work always has a way back.** `pipelineOutlook` answers what to run *and* when to look
+  again; `PipelineDrain.plan` turns every stop into a deadline. Anything that adds a way for the
+  pipeline to stop must go through them — "stop and hope something kicks us" is how meetings sat at
+  `.saved` for a week (I12). Wake sources are the events that change the answer: heat, sleep, app
+  activation, a provider appearing, a finished call.
+- **Nothing owed ⇒ no timers, no sidecars, no probes.** The app spends most of its life with a fully
+  processed archive; that state must cost one pass over an array.
+- **Phases never call each other.** Each ends with `kickPipeline()`; the scheduler derives what is
+  next from stages on disk. A phase that returns `.advanced` **must** have moved the stage or parked
+  the recording, or the loop asks for the same job forever (caught as `.stalled`, I11).
+- **Newest unfinished meeting wins**, except one the user asked for by hand. The meeting that just
+  ended is the one someone is waiting to read; the backlog is catch-up. Prioritising transcripts over
+  summaries looks equivalent and is not — it drops the fresh meeting to the back of the queue right
+  after `.saved`.
+- **Catch-up is silent.** Notifications and window activation are for meetings recorded this session
+  (`isAwaited`); a launch that owes twenty summaries must not post twenty notifications, steal focus
+  twenty times, or open a modal. A modal is worse than noise — awaiting one suspends the worker.
 - Do not add `@Published` flags to `AppState` for pipeline state. Seven of them were removed; the
   point was to stop having a second source of truth.
 - **Changing what a function *means* means reading every caller first** (`grep` the name). Cheap

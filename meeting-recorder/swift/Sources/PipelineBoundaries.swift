@@ -42,6 +42,12 @@ protocol Transcriber: AnyObject {
 }
 
 protocol RecapBackend: Sendable {
+    /// Can a summary be generated at all right now — is there a model on disk or
+    /// a key in Settings? Asked before the short metadata-only pass, which
+    /// otherwise cannot tell "the provider is missing" (wait, keep the meeting
+    /// queued) from "the model answered nonsense" (retry on a backoff).
+    func summaryProviderReady(prefs: RecapPreferences) async -> Bool
+
     func generateRecap(
         title: String,
         transcriptMarkdown: String,

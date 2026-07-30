@@ -60,6 +60,12 @@ final class OllamaSidecar: @unchecked Sendable {
     /// Start serve only if our binary exists and nothing is on :11434.
     /// Does not download binary or pull models (cheap path for recap).
     func ensureServerRunning() async {
+        // Asking for the server is a declaration that something needs it, so any
+        // pending idle-stop is off. Without this, a backlog of summaries killed
+        // its own server: meeting one armed a 30-second stop on success, meeting
+        // two started generating immediately, and the timer fired straight through
+        // the middle of it — a lost minute of GPU and a retry, per meeting.
+        cancelIdleStop()
         if await probeAPI() { return }
         if !FileManager.default.isExecutableFile(atPath: binaryURL.path) {
             do {

@@ -166,10 +166,31 @@ actor RecapService {
         }
     }
 
+    /// Cheapest question first: nothing to serve if the weights are not on disk.
+    ///
+    /// The old order started `ollama serve` — unpacking the ~0.5 GB runtime if
+    /// that had not happened yet — and only then discovered there was no model
+    /// and gave up. On a Mac where the user never installed one, every catch-up
+    /// pass paid for that. `isModelInstalled` reads the manifest (or asks a
+    /// server that already happens to be up) and spawns nothing.
     private func ollamaUsable(model: String) async -> Bool {
+        guard await OllamaSidecar.shared.isModelInstalled(model) else { return false }
         await OllamaSidecar.shared.ensureServerRunning()
-        guard await probeOllama() else { return false }
-        return await OllamaSidecar.shared.isModelInstalled(model)
+        return await probeOllama()
+    }
+
+    /// Is there any way to make a summary right now? Same resolution the recap
+    /// itself uses, without generating anything.
+    func summaryProviderReady(prefs: RecapPreferences) async -> Bool {
+        switch await resolveBackend(
+            kind: prefs.provider,
+            ollamaModel: prefs.ollamaModel,
+            openAIKey: prefs.openAIKey,
+            claudeKey: prefs.claudeKey
+        ) {
+        case .success: return true
+        case .failure: return false
+        }
     }
 
     func generateRecap(

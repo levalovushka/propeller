@@ -51,7 +51,8 @@ struct MenuBarPanelView: View {
                 if state.isRecording {
                     Task {
                         // Quit path: keep the WAV, don't start gigastt mid-terminate.
-                        // Next launch picks it up via reconcilePendingPipeline.
+                        // The recording lands at `.recorded`, so the next launch's
+                        // first `kickPipeline` owes it a transcript and picks it up.
                         await state.stopRecordingAndWait(runPipeline: false)
                         state.recordingStore.flush()
                         await MainActor.run { NSApplication.shared.terminate(nil) }

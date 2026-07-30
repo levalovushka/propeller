@@ -163,8 +163,11 @@ final class PipelineActivityTests: XCTestCase {
         XCTAssertEqual(job, PipelineJob(recordingID: "A", phase: .summarizing))
     }
 
-    // MARK: - I7: a failure is never retried on its own
+    // MARK: - I7: an unfixable failure is never retried on its own
 
+    /// `candidate(failed:)` uses "нет аудиофайла" — the archetypal *permanent*
+    /// failure. Transient ones behave differently on purpose, and that is
+    /// `PipelineRetryTests` / `PipelineCatchUpTests`.
     func testFailedRecordingIsSkippedForever() {
         let failed = candidate("A", .recorded, minutesAgo: 5, failed: true)
         XCTAssertNil(nextJob(from: [failed]))

@@ -61,6 +61,28 @@ extension RecordingStage {
     }
 }
 
+/// What the summary phase actually owes a meeting, given what is already on
+/// disk. The difference is minutes of GPU per meeting: an archive that has
+/// summaries but no topics — every calendar-named meeting from 1.11 — needs one
+/// short pass over text that already exists, not a fresh summary of the whole
+/// transcript.
+public enum SummaryWork: Equatable, Sendable {
+    /// No summary yet: generate one, then its metadata.
+    case fullRecap
+    /// Summary is there, topics and tags are not.
+    case metadataOnly
+    /// Both are there; the stage is simply behind.
+    case nothing
+
+    public static func needed(hasRecapFile: Bool, hasMetadata: Bool) -> SummaryWork {
+        switch (hasRecapFile, hasMetadata) {
+        case (false, _):    return .fullRecap
+        case (true, false): return .metadataOnly
+        case (true, true):  return .nothing
+        }
+    }
+}
+
 /// Keeps `.summarized` honest against what is actually on disk.
 ///
 /// `.summarized` means *recap **and** metadata* — a 1.11 meeting that got a

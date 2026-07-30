@@ -233,6 +233,24 @@ class RecordingStore: ObservableObject {
         }
     }
 
+    /// Drop parked failures for one phase across the archive, returning how many
+    /// meetings went back into the queue.
+    ///
+    /// For when the world changed in a way that makes those failures stale: a
+    /// summary model finishing its download invalidates every "Ollama
+    /// недоступен" in the index. Without this, installing the model would fix
+    /// everything except the meetings that were waiting for it.
+    @discardableResult
+    func clearFailures(phase: PipelineActivity.Phase) -> Int {
+        var cleared = 0
+        for i in recordings.indices where recordings[i].lastFailure?.phase == phase.rawValue {
+            recordings[i].lastFailure = nil
+            cleared += 1
+        }
+        if cleared > 0 { scheduleSave() }
+        return cleared
+    }
+
     // MARK: - Summary stage reconciliation
 
     /// Bring `.saved` / `.summarized` in line with the recap files actually on

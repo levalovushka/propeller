@@ -178,16 +178,18 @@ class AppState: ObservableObject {
 
         // Everything unfinished — recovered recordings, meetings still owed a
         // transcript, and past meetings still owed a summary — is one queue now.
-        kickPipeline()
+        observeTheWorld()
+        kickPipeline("launch")
 
         // Finish a summary-model download that a quit (or a dropped connection
         // that outlived the in-session retries) left half-done. No-op when the
-        // model is already there; delayed so launch stays quiet.
+        // model is already there; delayed so launch stays quiet. Needed even with
+        // nothing owed — someone who consented in onboarding and quit should come
+        // back to a working app, not to a download waiting for its first meeting.
         if Preferences.shared.localRecapModelRequested {
             Task {
                 try? await Task.sleep(nanoseconds: 20_000_000_000)
-                guard !isRecording, !isTranscribing, !meetingDetected else { return }
-                startOllamaRuntimeDownload()
+                resumeLocalModelDownloadIfRequested()
             }
         }
 
@@ -307,6 +309,17 @@ class AppState: ObservableObject {
             case .recap: return "~3,9 ГБ"
             }
         }
+    }
+
+    /// Room for a model, answered without a dialog.
+    ///
+    /// What the worker uses. The interactive version suspends its caller on a
+    /// continuation until someone dismisses an alert — during catch-up that is a
+    /// modal appearing out of nowhere *and* a worker stopped dead until it is
+    /// answered, which is the one stall no timer can recover from.
+    func hasRoomForModelDownload(_ kind: ModelDownload = .transcription) -> Bool {
+        guard let bytes = availableBytes(at: NSHomeDirectory()) else { return true }
+        return bytes >= kind.requiredBytes
     }
 
     /// Check disk space before a model download. Returns true if OK to proceed.
@@ -537,6 +550,9 @@ class AppState: ObservableObject {
                 systemStemOffset: recorder.lastStopSystemStemOffset
             )
             selectedRecordingID = result.id
+            // This is a meeting the user is waiting for, so it is allowed to
+            // announce itself when it is done.
+            awaitedRecordingIDs.insert(result.id)
 
             // Keep for live detail of *this* stop; badge itself reads entry.micOnlyCaptured.
             Analytics.recordingFinished(duration: result.duration, micOnly: micOnly)
@@ -724,8 +740,12 @@ class AppState: ObservableObject {
             speakers: speakers,
             notes: rec.notes,
             recordingID: rec.id,
-            duration: duration
+            duration: duration,
+            byHand: true
         )
+        // A hand-made summary can leave the meeting one metadata pass short of
+        // `.summarized`; the worker finishes the job.
+        kickPipeline("regenerated")
     }
 
     /// Refresh `localRecapModelReady`. Cheap: reads the manifest off disk unless
@@ -829,8 +849,8 @@ class AppState: ObservableObject {
 
     // MARK: - Pipeline
 
-    /// Guard against concurrent ASR/diarization. Cleared before save/recap so a
-    /// second Stop can queue (BUG-PIPE-01 / G1).
+    /// Guard against two ASR passes at once. Released as soon as the pass ends,
+    /// so save and summary — separate phases now — never sit behind it.
     private var isTranscribing = false
 
     // MARK: - Worker
@@ -846,21 +866,172 @@ class AppState: ObservableObject {
         return WorkerPolicy(
             isRecording: isRecording,
             inCall: meetingDetected,
-            isThermallyStressed: thermal == .serious || thermal == .critical
+            isThermallyStressed: thermal == .serious || thermal == .critical,
+            summariesEnabled: Preferences.shared.recapProvider != .off
+        )
+    }
+
+    /// The meeting the user asked for by hand. Outranks recency for as long as
+    /// it owes work, then stops mattering — pressing «Повторить» on a meeting
+    /// from March should not mean waiting for the whole backlog first.
+    private var userRequestedID: String?
+
+    /// Meetings recorded in this session — the ones somebody is sitting there
+    /// waiting to read. Everything else the worker touches is catch-up.
+    ///
+    /// The distinction buys the quiet: a launch that owes summaries for twenty
+    /// meetings used to post twenty notifications and pull the window forward
+    /// twenty times. Catch-up gets neither.
+    private var awaitedRecordingIDs: Set<String> = []
+
+    /// Is this the meeting the user is actually waiting on?
+    private func isAwaited(_ recordingID: String) -> Bool {
+        awaitedRecordingIDs.contains(recordingID) || recordingID == userRequestedID
+    }
+
+    /// What to do now and what to wait for. Recomputed rather than stored: it is
+    /// a pure function of the archive, so there is no second copy to go stale.
+    private var outlook: PipelineOutlook {
+        pipelineOutlook(
+            from: recordingStore.recordings,
+            policy: workerPolicy,
+            preferring: userRequestedID
         )
     }
 
     /// Ask the worker to look for work. Safe to call from anywhere, any number
     /// of times — a loop is already running or one gets started, never two.
-    func kickPipeline() {
+    ///
+    /// `reason` is for the log only, and it earns its keep: "why did my Mac just
+    /// start summarising" is otherwise unanswerable after the fact.
+    func kickPipeline(_ reason: String = "kick") {
 #if GALLERY
         if galleryFrozen { return }
 #endif
         guard workerTask == nil else { return }
+        // The common case at launch is an archive with nothing owed. It should
+        // cost one pass over an array — no task, no sidecar, no timer left over.
+        let now = outlook
+        guard now.job != nil else {
+            if now.owed > 0 {
+                debugLog("[pipeline] \(reason): \(now.owed) owed, nothing runnable"
+                    + (now.pausedByPolicy ? " (paused: \(workerPolicy))" : ""))
+            }
+            scheduleWake(at: now.wakeAt)
+            return
+        }
+        debugLog("[pipeline] \(reason): starting, \(now.owed) owed")
         workerTask = Task { [weak self] in
             await self?.runPipelineLoop()
             await MainActor.run { self?.workerTask = nil }
         }
+    }
+
+    // MARK: - Waking up
+
+    /// Fires at the earliest deadline the pipeline set for itself. One timer,
+    /// non-repeating, and invalidated whenever nothing is owed: a live timer
+    /// with nothing to do is the single easiest way for a Mac app to waste
+    /// power (Apple's energy guide), and this app spends most of its life with a
+    /// fully processed archive.
+    private var wakeTimer: Timer?
+
+    /// Consecutive drains that ended blocked on a missing summary provider.
+    /// Walks the re-check interval out to half an hour so a user who never
+    /// installs a model costs nothing.
+    private var providerBlockedStreak = 0
+
+    /// Observers for the things that change the answer without anyone asking:
+    /// heat, sleep, the app coming forward.
+    private var worldObservers: [NSObjectProtocol] = []
+
+    private func scheduleWake(at date: Date?) {
+        wakeTimer?.invalidate()
+        wakeTimer = nil
+        guard let date else { return }
+        let delay = max(1, date.timeIntervalSinceNow)
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.kickPipeline("deadline") }
+        }
+        // Well over Apple's 10%-of-interval guidance, capped so a 20-second
+        // retry still feels immediate. Lets the system fold this wakeup into
+        // whatever else it was going to do anyway.
+        timer.tolerance = min(30, delay * 0.25)
+        RunLoop.main.add(timer, forMode: .common)
+        wakeTimer = timer
+        debugLog("[pipeline] next look in \(Int(delay))s")
+    }
+
+    /// Everything that can make owed work runnable without a user action. Each
+    /// one used to be a way for the archive to stay unfinished until the next
+    /// launch: a Mac that got hot mid-backlog stayed paused, a laptop closed
+    /// over the weekend slept through its own retry deadline (`Timer` stops
+    /// counting while the machine does), and a blocked provider had exactly one
+    /// wake source — our own download finishing.
+    private func observeTheWorld() {
+        guard worldObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        worldObservers.append(center.addObserver(
+            forName: ProcessInfo.thermalStateDidChangeNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.thermalStateChanged() }
+        })
+        worldObservers.append(center.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.kickPipeline("app active") }
+        })
+        worldObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.kickPipeline("machine woke") }
+        })
+    }
+
+    private func thermalStateChanged() {
+        let thermal = ProcessInfo.processInfo.thermalState
+        if thermal == .serious || thermal == .critical {
+            // Let the current phase finish — cancelling ASR to save heat throws
+            // away the minutes it already spent. The loop stops at the next
+            // phase boundary because the policy says so.
+            debugLog("[pipeline] thermal \(thermal.rawValue): no new phases")
+        } else {
+            kickPipeline("cooled down")
+        }
+    }
+
+    private var providerChangeDebounce: Task<Void, Never>?
+
+    /// Summary settings changed — a provider picked, a key typed, a model name
+    /// edited. Debounced, because these arrive per keystroke from Settings and
+    /// each one would otherwise probe a provider and start a drain.
+    func summaryProviderChanged() {
+        providerChangeDebounce?.cancel()
+        providerChangeDebounce = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.applySummaryProviderChange() }
+        }
+    }
+
+    /// A summary provider may now exist where none did: a model finished
+    /// downloading, a key was pasted, the provider setting changed.
+    ///
+    /// Clears summary failures across the archive, including ones that ran out of
+    /// attempts. Those failures were about the environment, not about the
+    /// meeting — leaving them parked would mean installing the model fixed
+    /// everything except the meetings that were waiting for it.
+    func applySummaryProviderChange() {
+        providerBlockedStreak = 0
+        let cleared = recordingStore.clearFailures(phase: .summarizing)
+        if cleared > 0 {
+            debugLog("[pipeline] provider changed: \(cleared) meeting(s) back in the queue")
+        }
+        refreshLocalRecapModelState()
+        kickPipeline("provider changed")
     }
 
     /// Stop after the current phase. Called when the policy closes — a call
@@ -869,66 +1040,85 @@ class AppState: ObservableObject {
         workerTask?.cancel()
     }
 
-    /// Throw away work in flight and start over. Used when an edit invalidates
-    /// what is being generated right now: a second edit while the first summary
-    /// is still running must supersede it, not queue behind it.
-    func restartPipeline() {
-        guard let running = workerTask else {
-            kickPipeline()
-            return
-        }
-        running.cancel()
-        Task { [weak self] in
-            _ = await running.value      // clears `workerTask` on the way out
-            self?.kickPipeline()
-        }
-    }
-
     /// Drains the queue one phase at a time. The loop's rules live in
     /// `PipelineDrain` so they can be tested without an ASR sidecar or an LLM;
     /// this supplies the three things only the app knows.
     private func runPipelineLoop() async {
         let stop = await PipelineDrain.run(
-            nextJob: { [weak self] in
-                guard let self else { return nil }
-                return PropellerPure.nextJob(
-                    from: self.recordingStore.recordings,
-                    policy: self.workerPolicy
-                )
-            },
+            nextJob: { [weak self] in self?.outlook.job },
             perform: { [weak self] job in
                 guard let self else { return .blocked }
                 debugLog("[pipeline] → \(job.recordingID) \(job.phase)")
                 return await self.run(job)
             }
         )
-        switch stop {
-        case .finished:
-            break
-        case .blocked(let job):
-            debugLog("[pipeline] blocked on \(job.phase) — waiting for a kick")
-        case .cancelled:
-            debugLog("[pipeline] paused: \(workerPolicy)")
-        case .stalled(let job):
+
+        // A hand-requested meeting stops jumping the queue once it is done.
+        if let requested = userRequestedID,
+           recordingStore.recording(for: requested)?.status.nextPhase == nil {
+            userRequestedID = nil
+        }
+
+        // Whatever stopped the drain, the same question follows: is anything
+        // still owed, and what would make it runnable? The answer is a pure
+        // function (`PipelineDrain.plan`) because this is the decision that used
+        // to be missing: every branch ended with "wait for something to kick us",
+        // and three of the four never got kicked.
+        let plan = PipelineDrain.plan(
+            after: stop, outlook: outlook, blockedStreak: providerBlockedStreak
+        )
+        providerBlockedStreak = plan.blockedStreak
+        if let job = plan.parkStalled {
             // A phase claimed progress and made none. Loud, because the loop
             // would otherwise ask for this same job forever.
             checkInvariant("i11.no-stall", false)
             NSLog("[AppState] pipeline stalled on \(job.recordingID) \(job.phase)")
+            recordFailure(
+                job.recordingID,
+                phase: job.phase,
+                message: "Обработка не продвинулась — попробуйте ещё раз",
+                kind: .permanent
+            )
         }
+        if case .blocked = stop { resumeLocalModelDownloadIfRequested() }
+        debugLog("[pipeline] stopped: \(stop)")
+        scheduleWake(at: plan.wakeAt)
+    }
+
+    /// The pipeline is blocked for want of a summary model the user already said
+    /// yes to. Resume that download — this is the moment it matters.
+    ///
+    /// The launch-time resume runs once, twenty seconds in, and skips itself if a
+    /// recording or a call happens to be going on. That is a whole session with
+    /// no model and no second chance; here the retry rides the same ladder as
+    /// everything else waiting on a provider.
+    private func resumeLocalModelDownloadIfRequested() {
+        guard Preferences.shared.localRecapModelRequested else { return }
+        switch Preferences.shared.recapProvider {
+        case .ollama, .auto:      break
+        case .off, .openai, .claude: return   // a local model is not the blocker
+        }
+        guard ollamaDownloadTask == nil, ollamaSetupProgress == nil else { return }
+        guard !isRecording, !meetingDetected, !isTranscribing else { return }
+        debugLog("[pipeline] resuming the summary-model download")
+        startOllamaRuntimeDownload()
     }
 
     /// Runs exactly one phase. Phases never call each other — the loop decides
     /// what comes next, from the stage on disk.
     private func run(_ job: PipelineJob) async -> PhaseOutcome {
         switch job.phase {
-        case .transcribing:
-            await runTranscribe(recordingID: job.recordingID)
-        case .diarizing:
-            await completeDiarization(recordingID: job.recordingID)
+        case .transcribing, .diarizing:
+            // One pass, two entry points: `.transcribing` runs ASR then speakers,
+            // `.diarizing` resumes from the checkpoint a crash left behind.
+            await runASR(recordingID: job.recordingID, phase: job.phase)
         case .saving:
             guard let rec = recordingStore.recording(for: job.recordingID),
                   let text = rec.transcript, !text.isEmpty else {
-                recordFailure(job.recordingID, phase: .saving, message: "Нет транскрипта для сохранения")
+                recordFailure(
+                    job.recordingID, phase: .saving,
+                    message: "Нет транскрипта для сохранения", kind: .permanent
+                )
                 return .advanced
             }
             await runSave(recordingID: rec.id, transcriptText: text, duration: rec.duration)
@@ -942,7 +1132,37 @@ class AppState: ObservableObject {
     /// written next to, then runs the one recap path there is.
     private func runSummarize(recordingID: String) async -> PhaseOutcome {
         guard let rec = recordingStore.recording(for: recordingID) else { return .advanced }
-        guard let mdURL = transcriptMarkdownURL(for: rec) else {
+        // What is already on disk decides how much work this is. A meeting with a
+        // summary but no topics — every calendar-named meeting from 1.11 — needs
+        // one short pass over text that exists, not minutes of GPU rewriting a
+        // file that is already correct.
+        switch SummaryWork.needed(hasRecapFile: hasRecap(for: rec), hasMetadata: !needsMetadata(rec)) {
+        case .metadataOnly:
+            // The pass reads the summary off disk. If it turns out to be
+            // unreadable after all, fall through and make a new one.
+            if let summary = Self.loadRecapText(for: rec), !summary.isEmpty {
+                return await runMetadataBackfill(rec, summary: summary)
+            }
+        case .nothing:
+            // Recap and metadata are both there and only the stage disagrees.
+            // Catch it up rather than regenerating a summary to prove it.
+            advanceStage(rec.id, to: .summarized)
+            clearFailure(rec.id)
+            return .advanced
+        case .fullRecap:
+            break
+        }
+
+        var transcriptURL = transcriptMarkdownURL(for: rec)
+        if transcriptURL == nil, let text = rec.transcript, !text.isEmpty {
+            // The markdown was deleted outside the app — an Obsidian vault
+            // tidy-up. The text is still in the index and the summary is written
+            // next to the transcript, so rewrite it instead of failing. Done
+            // inside this phase, so the loop still sees the stage move.
+            await runSave(recordingID: rec.id, transcriptText: text, duration: rec.duration)
+            transcriptURL = transcriptMarkdownURL(for: rec)
+        }
+        guard let mdURL = transcriptURL else {
             recordFailure(recordingID, phase: .summarizing, message: "Транскрипт не найден на диске")
             return .advanced
         }
@@ -956,45 +1176,88 @@ class AppState: ObservableObject {
         )
     }
 
+    /// The short half of the summary phase: topics and tags for a meeting that
+    /// already has its summary on disk. One prompt over the finished summary,
+    /// where the full path would regenerate the summary itself.
+    private func runMetadataBackfill(_ rec: RecordingEntry, summary: String) async -> PhaseOutcome {
+        // Nothing to generate with — the same "wait for a provider" state a fresh
+        // summary lands in, not a failure on the meeting.
+        guard await recapBackend.summaryProviderReady(prefs: RecapPreferences.fromShared()) else {
+            return .blocked
+        }
+        beginPipelineWork(rec.id, phase: .summarizing)
+        defer { endPipelineWork(rec.id) }
+        setActivityDetail("Определяем темы…")
+
+        await generateMeetingMetadata(recordingID: rec.id, summary: summary)
+        return finishMetadata(rec.id)
+    }
+
+    /// Close out the metadata pass, whichever way it went.
+    ///
+    /// The provider was there and still gave us nothing usable: retried on the
+    /// ladder, and then *accepted*. Topics are a nicety on top of a summary that
+    /// is already written and already readable — a meeting parked with «не
+    /// удалось определить темы» would be the app reporting a cosmetic gap as a
+    /// broken meeting, which is the opposite of the point. Empty topics mean
+    /// "ran, found nothing", so the meeting is done and stops being asked about.
+    private func finishMetadata(_ recordingID: String) -> PhaseOutcome {
+        guard recordingStore.recording(for: recordingID)?.topics == nil else {
+            clearFailure(recordingID)
+            advanceStage(recordingID, to: .summarized)
+            return .advanced
+        }
+        let failure = recordFailure(
+            recordingID, phase: .summarizing,
+            message: "Не удалось определить темы встречи", kind: .transient
+        )
+        guard failure.needsAttention else { return .advanced }   // a retry is due
+        clearFailure(recordingID)
+        recordingStore.update(
+            id: recordingID,
+            topics: [],
+            tags: recordingStore.recording(for: recordingID)?.tags ?? []
+        )
+        advanceStage(recordingID, to: .summarized)
+        return .advanced
+    }
+
     /// ASR + diarization. Both phases live here because they share everything
     /// except where they start: `.transcribing` runs the full pass, `.diarizing`
     /// resumes from the checkpoint a crash left behind. Keeping them apart meant
     /// ~90 duplicated lines of orchestration (D6).
-    func runTranscribe(recordingID explicitID: String? = nil) async {
-        await runASR(recordingID: explicitID, phase: .transcribing)
-    }
-
-    /// Resume diarization for a recording that finished ASR but crashed before
-    /// speakers were assigned — the expensive pass is not repeated.
-    func completeDiarization(recordingID explicitID: String? = nil) async {
-        await runASR(recordingID: explicitID, phase: .diarizing)
-    }
-
-    private func runASR(recordingID explicitID: String?, phase: PipelineActivity.Phase) async {
+    ///
+    /// Only the worker calls this. The user-facing buttons ask the queue instead
+    /// (`reprocess`, `requestProcessing`) — a direct call while a phase was in
+    /// flight used to hit the guard below and vanish, leaving a button that did
+    /// nothing.
+    private func runASR(recordingID: String, phase: PipelineActivity.Phase) async {
         if isTranscribing {
-            // Only the user-facing path complains; the worker just moves on.
-            if phase == .transcribing {
-                surfacePipelineError(explicitID != nil ? "В очереди на расшифровку…" : "Расшифровка уже идёт")
-            }
+            // One worker, one ASR — belt and braces rather than a queueing
+            // decision, and silent, because nothing is wrong.
+            debugLog("[pipeline] ASR already running — ignoring \(recordingID)")
             return
         }
-        guard let rec = explicitID.flatMap({ recordingStore.recording(for: $0) }) ?? selectedRecording else {
-            if phase == .transcribing { surfacePipelineError("Запись не выбрана") }
-            return
-        }
-        let recordingID = rec.id
+        guard let rec = recordingStore.recording(for: recordingID) else { return }
         let durationAtStart = rec.duration
         guard let audioURL = recordingStore.audioURL(for: rec) else {
-            let msg = "Аудиофайл не найден — нельзя расшифровать."
-            surfacePipelineError(msg)
-            recordFailure(recordingID, phase: phase, message: msg)
+            // The scheduler keeps meetings without audio out of the queue, so
+            // this is the race where it went away mid-flight. Parked on the
+            // meeting's own card; not worth a toast on whatever is open.
+            recordFailure(
+                recordingID, phase: phase,
+                message: "Аудиофайл не найден — нельзя расшифровать.", kind: .permanent
+            )
             return
         }
 
         // Only a full pass can need the ASR model on disk.
         if phase == .transcribing {
-            guard await checkDiskSpaceForModelDownload() else {
-                surfacePipelineError("Расшифровка отменена — мало места на диске.")
+            guard hasRoomForModelDownload() else {
+                recordFailure(
+                    recordingID, phase: phase,
+                    message: "Расшифровка отменена — мало места на диске.", kind: .permanent
+                )
                 return
             }
         }
@@ -1063,35 +1326,62 @@ class AppState: ObservableObject {
                 rawSegmentsJSON: .some(nil),
                 mergedSegmentsJSON: .some(encodePersistedSegments(result.mergedSegments))
             )
-            if selectedRecordingID == recordingID { transcript = result.transcript }
+            if selectedRecordingID == recordingID {
+                transcript = result.transcript
+                pipelineError = nil
+            }
+            // The transcript is in, so whatever went wrong on earlier attempts is
+            // history. Cleared here rather than when the attempt starts: the
+            // failure is what carries the attempt count, and wiping it up front
+            // would make every retry look like the first one — a 20-second loop
+            // that never gives up and never reports.
+            clearFailure(recordingID)
             Analytics.transcriptionFinished(
                 ok: true,
                 reason: phase == .diarizing ? "diarize_resume" : nil
             )
             _ = durationAtStart
+        } catch is CancellationError {
+            // A call started, or the app is quitting. Not a failure: parking the
+            // meeting here would mean every interrupted catch-up needed a manual
+            // retry afterwards. The stage below keeps the checkpoint.
+            restoreStageAfterInterruptedASR(recordingID, phase: phase)
+            debugLog("[pipeline] \(phase) cancelled for \(recordingID)")
+        } catch let error as URLError where error.code == .cancelled {
+            // Same thing, seen through URLSession — the sidecar request was the
+            // thing holding the cancellation.
+            restoreStageAfterInterruptedASR(recordingID, phase: phase)
+            debugLog("[pipeline] \(phase) cancelled (transport) for \(recordingID)")
         } catch {
             modelDownloadProgress = nil
             let msg = error.localizedDescription
             Analytics.transcriptionFinished(ok: false, reason: phase == .diarizing ? "diarize" : "error")
-            if selectedRecordingID == recordingID {
-                surfacePipelineError(msg)
-            } else {
-                // Keep it for when they open this meeting later.
-                pipelineError = msg
-            }
-            // Never fall below the checkpoint (I4).
-            let current = recordingStore.recording(for: recordingID)?.status
-            if current != .transcribedRaw {
-                recordingStore.update(id: recordingID, status: phase == .diarizing ? .transcribedRaw : .recorded)
-            }
-            recordFailure(recordingID, phase: phase, message: msg)
-            NSLog("[AppState] \(phase) FAILED: \(error)")
+            restoreStageAfterInterruptedASR(recordingID, phase: phase)
+            let failure = recordFailure(recordingID, phase: phase, message: msg)
+            report(failure, for: recordingID)
+            NSLog("[AppState] \(phase) FAILED (attempt \(failure.attempt), \(failure.kind)): \(error)")
         }
 
         isTranscribing = false
         endPipelineWork(recordingID)
         transcriptionService.releaseHeavyResources()
-        kickPipeline()
+        kickPipeline("asr done")
+    }
+
+    /// Put the stage back where an unfinished ASR pass leaves it — never below
+    /// the checkpoint a completed ASR wrote (I4), because that difference is an
+    /// hour of GPU on the next attempt.
+    private func restoreStageAfterInterruptedASR(
+        _ recordingID: String,
+        phase: PipelineActivity.Phase
+    ) {
+        modelDownloadProgress = nil
+        let current = recordingStore.recording(for: recordingID)?.status
+        guard current != .transcribedRaw else { return }
+        recordingStore.update(
+            id: recordingID,
+            status: phase == .diarizing ? .transcribedRaw : .recorded
+        )
     }
 
     private static func encodeASRSegments(_ segments: [ASRSegment]) -> String? {
@@ -1122,15 +1412,27 @@ class AppState: ObservableObject {
                 notes: rec.notes
             )
             advanceStage(recordingID, to: .saved)
-            NotificationManager.shared.post(title: "Propeller", body: "Сохранено: \(URL(fileURLWithPath: path).lastPathComponent)")
-            kickPipeline()
+            clearFailure(recordingID)
+            if isAwaited(recordingID) {
+                NotificationManager.shared.post(
+                    title: "Propeller",
+                    body: "Сохранено: \(URL(fileURLWithPath: path).lastPathComponent)"
+                )
+            }
+            kickPipeline("saved")
         } catch {
-            recordFailure(recordingID, phase: .saving, message: error.localizedDescription)
-            surfacePipelineError(error.localizedDescription)
+            let failure = recordFailure(
+                recordingID, phase: .saving, message: error.localizedDescription
+            )
+            report(failure, for: recordingID)
         }
     }
 
     /// Generate LLM recap next to the saved transcript. Skips quietly when no provider is configured.
+    ///
+    /// `byHand` marks the user pressing «Сгенерировать»: they are watching, so a
+    /// failure is told to them at once instead of being retried in the
+    /// background like the worker's own attempts.
     @discardableResult
     func runRecap(
         title: String,
@@ -1138,7 +1440,8 @@ class AppState: ObservableObject {
         speakers: [String],
         notes: String?,
         recordingID: String,
-        duration: TimeInterval
+        duration: TimeInterval,
+        byHand: Bool = false
     ) async -> PhaseOutcome {
         beginPipelineWork(recordingID, phase: .summarizing)
         defer { endPipelineWork(recordingID) }
@@ -1152,19 +1455,23 @@ class AppState: ObservableObject {
             md = try String(contentsOfFile: transcriptPath, encoding: .utf8)
         } catch {
             Analytics.recapFinished(ok: false, skip: "read_error")
-            recordFailure(recordingID, phase: .summarizing, message: "Не удалось прочитать транскрипт")
-            if selectedRecordingID == recordingID {
-            }
+            let failure = recordFailure(
+                recordingID, phase: .summarizing,
+                message: "Не удалось прочитать транскрипт", kind: .permanent
+            )
+            report(failure, for: recordingID, force: byHand)
             return .advanced
         }
 
         // Assume progress; the no-provider branch downgrades this.
         var outcome = PhaseOutcome.advanced
-        // A summary appearing for the first time is news — the window comes
-        // forward and a notification is posted. Regenerating one after an edit
-        // is not: it happens quietly, wherever the user happens to be.
-        let isFirstSummary = recordingStore.recording(for: recordingID)
-            .map { !hasRecap(for: $0) } ?? true
+        // A first summary for the meeting that just happened is news — the window
+        // comes forward and a notification is posted. Regenerating one after an
+        // edit is not, and neither is catch-up on the archive: twenty backlog
+        // summaries used to mean twenty notifications and twenty attempts to grab
+        // focus, which is precisely how a user finds out the app has a backfill.
+        let isNews = (recordingStore.recording(for: recordingID)
+            .map { !hasRecap(for: $0) } ?? true) && isAwaited(recordingID)
         do {
             let result = try await recapBackend.generateRecap(
                 title: title,
@@ -1189,7 +1496,10 @@ class AppState: ObservableObject {
                 // one, would fail identically until a provider shows up.
                 if reason != .emptyTranscript { outcome = .blocked }
                 if reason == .emptyTranscript {
-                    recordFailure(recordingID, phase: .summarizing, message: "Пустой транскрипт")
+                    recordFailure(
+                        recordingID, phase: .summarizing,
+                        message: "Пустой транскрипт", kind: .permanent
+                    )
                 }
                 if selectedRecordingID == recordingID {
                     switch reason {
@@ -1216,7 +1526,7 @@ class AppState: ObservableObject {
                     lastRecapPath = recap.path
                     recapSkipHint = nil
                 }
-                if isFirstSummary {
+                if isNews {
                     surfaceSummaryUI(for: recordingID)
                     NotificationManager.shared.post(
                         title: "Propeller",
@@ -1224,26 +1534,40 @@ class AppState: ObservableObject {
                     )
                 }
                 await generateMeetingMetadata(recordingID: recordingID, summary: recap.body)
-                // Recap + metadata are both in — this is what `.summarized`
-                // means, and it is what takes the meeting out of the queue.
-                advanceStage(recordingID, to: .summarized)
-                OllamaSidecar.shared.stopAfterIdle(30)
+                // `.summarized` means recap *and* metadata, so the stage only
+                // moves when both are in. A summary that landed without topics
+                // stays at `.saved` and comes back through the short metadata
+                // pass — not through a second full summary.
+                outcome = finishMetadata(recordingID)
+                providerBlockedStreak = 0
+                if selectedRecordingID == recordingID { pipelineError = nil }
             }
         } catch is CancellationError {
-            // Superseded by a newer edit: leave the stage and the entry alone so
-            // the restarted loop picks it straight back up.
+            // Superseded by a newer edit, or a call started: leave the stage and
+            // the entry alone so the restarted loop picks it straight back up.
             debugLog("[pipeline] recap cancelled for \(recordingID)")
             return .advanced
+        } catch let error as URLError where error.code == .cancelled {
+            debugLog("[pipeline] recap cancelled (transport) for \(recordingID)")
+            return .advanced
         } catch {
-            recordFailure(recordingID, phase: .summarizing, message: error.localizedDescription)
             Analytics.recapFinished(ok: false)
-            // "model ... not found" means the pull never finished — flip the flag
-            // so the panel offers «Скачать» instead of a retry that cannot work.
+            // "model ... not found" means the pull never finished. That is the
+            // provider missing, not this meeting failing — treated as `.blocked`
+            // so the meeting keeps its place in the queue and the panel offers
+            // «Скачать» instead of a retry that cannot work.
             if error.localizedDescription.lowercased().contains("not found") {
                 localRecapModelReady = false
+                if selectedRecordingID == recordingID {
+                    recapSkipHint = "Саммари пропущено — локальная модель ещё не скачана. Кнопка «Скачать» на вкладке «Саммари»."
+                }
+                return .blocked
             }
-            surfacePipelineError(error.localizedDescription)
-            if selectedRecordingID == recordingID {
+            let failure = recordFailure(
+                recordingID, phase: .summarizing, message: error.localizedDescription
+            )
+            report(failure, for: recordingID, force: byHand)
+            if selectedRecordingID == recordingID, failure.needsAttention || byHand {
                 recapSkipHint = error.localizedDescription
             }
         }
@@ -1262,12 +1586,11 @@ class AppState: ObservableObject {
     private func beginPipelineWork(_ recordingID: String, phase: PipelineActivity.Phase) {
         pipelineWorkDepth += 1
         activity = .working(recordingID: recordingID, phase: phase, detail: nil)
-        // A new attempt is starting, so the previous failure is history. The
-        // worker never reaches here for a blocked recording, so this only ever
-        // fires on an explicit retry.
-        if recordingStore.recording(for: recordingID)?.lastFailure != nil {
-            clearFailure(recordingID)
-        }
+        // The previous failure is deliberately *not* cleared here. It carries the
+        // attempt count, and clearing it at the start of every attempt made each
+        // retry look like the first — a 20-second loop that never escalated and
+        // never gave up. It is cleared where it stops being true: on success, or
+        // when the user asks for a fresh start.
     }
 
     private func endPipelineWork(_ recordingID: String) {
@@ -1275,6 +1598,12 @@ class AppState: ObservableObject {
         if pipelineWorkDepth == 0 {
             activity = .idle
             // Nothing is running any more — a progress line here would be a lie.
+            // And nothing needs a 4 GB model resident: one rule, applied wherever
+            // the pipeline goes quiet, instead of a `stopAfterIdle` remembered at
+            // each of the call sites that finish work. `ensureServerRunning`
+            // cancels it again the moment something does need the server, so a
+            // backlog drains on one warm server rather than one per meeting.
+            OllamaSidecar.shared.stopAfterIdle(30)
         }
         // I1: nothing running ⇒ nothing claiming to run.
         checkInvariant("i1.idle-after-work", pipelineWorkDepth > 0 || activity.isIdle)
@@ -1290,22 +1619,50 @@ class AppState: ObservableObject {
         Analytics.signal("Invariant.\(name)")
     }
 
-    /// Record a failure on the recording it happened to. Persisted, so it
-    /// outlives other work and a relaunch — and takes the recording out of the
-    /// queue until the user retries (I7).
+    /// Record a failure on the recording it happened to, with its own retry plan.
+    /// Persisted, so it outlives other work and a relaunch.
+    ///
+    /// The returned failure is what tells the caller whether to say anything: a
+    /// transient one with attempts left is the pipeline's business, not the
+    /// user's (I7).
+    @discardableResult
     private func recordFailure(
         _ recordingID: String,
         phase: PipelineActivity.Phase,
-        message: String
-    ) {
-        recordingStore.update(
-            id: recordingID,
-            lastFailure: .some(PipelineFailure(phase: phase, message: message))
+        message: String,
+        kind: FailureKind? = nil
+    ) -> PipelineFailure {
+        let failure = PipelineFailure(
+            phase: phase,
+            message: message,
+            previous: recordingStore.recording(for: recordingID)?.lastFailure,
+            kind: kind
         )
+        recordingStore.update(id: recordingID, lastFailure: .some(failure))
+        if let due = failure.nextAttemptAt {
+            debugLog("[pipeline] \(recordingID) \(phase) failed (attempt \(failure.attempt)) — retry in \(Int(due.timeIntervalSinceNow))s")
+        }
+        return failure
     }
 
-    /// Clear the block so the worker can pick this recording up again.
+    /// Show a failure only when it has become the user's problem: the app has
+    /// stopped retrying, and they are looking at the meeting it happened to (or
+    /// asked for it by hand). Anything else is the pipeline doing its job, and
+    /// announcing it is what made a working catch-up look broken.
+    private func report(_ failure: PipelineFailure, for recordingID: String, force: Bool = false) {
+        guard force || failure.needsAttention else { return }
+        guard force || selectedRecordingID == recordingID || userRequestedID == recordingID else {
+            // Still visible where it belongs: the meeting's own card offers
+            // «Повторить» while `lastFailure` needs attention.
+            return
+        }
+        surfacePipelineError(failure.message)
+    }
+
+    /// Clear the block so the worker can pick this recording up again. No-op when
+    /// there is nothing to clear, so a successful phase doesn't rewrite the index.
     func clearFailure(_ recordingID: String) {
+        guard recordingStore.recording(for: recordingID)?.lastFailure != nil else { return }
         recordingStore.update(id: recordingID, lastFailure: .some(nil))
     }
 
@@ -1353,6 +1710,13 @@ class AppState: ObservableObject {
         title.hasPrefix("Запись ") || title.hasPrefix("Recording ")
     }
 
+    /// «Расшифровать» / «Повторить» on the open meeting.
+    ///
+    /// Goes through the queue instead of calling ASR directly. A direct call
+    /// while the worker happened to be mid-phase hit the re-entrancy guard and
+    /// returned — the button did nothing at all, and nothing re-queued the
+    /// meeting afterwards. Hand-requested meetings jump the queue, so "through
+    /// the queue" does not mean "behind the backlog".
     func reprocess() async {
         guard let id = selectedRecordingID else {
             surfacePipelineError("Запись не выбрана")
@@ -1360,6 +1724,7 @@ class AppState: ObservableObject {
         }
         pipelineError = nil
         clearFailure(id)
+        userRequestedID = id
         // Headphones on a call: FluidAudio often collapses everyone into the owner.
         // If we already have segments + mic/sys stems, re-split by energy — no ASR.
         if recordingStore.recording(for: id)?.mergedSegmentsJSON != nil {
@@ -1368,9 +1733,30 @@ class AppState: ObservableObject {
             beginPipelineWork(id, phase: .diarizing)
             let repaired = await repairSpeakerAttribution(recordingID: id)
             endPipelineWork(id)
-            if repaired { return }
+            if repaired {
+                kickPipeline("relabelled")
+                return
+            }
         }
-        await runTranscribe(recordingID: id)
+        // A finished meeting owes nothing, so asking for it again has to walk the
+        // stage back — the one thing only an explicit user action may do (I3).
+        // Guarded on audio: rewinding a meeting whose audio was deleted would
+        // strand it at `.recorded` and lose the summary it already has.
+        if let rec = recordingStore.recording(for: id),
+           rec.status == .summarized, rec.audioAvailable {
+            recordingStore.update(id: id, status: .recorded)
+        }
+        kickPipeline("user asked")
+    }
+
+    /// «Завершить» — resume diarization on a meeting whose ASR finished. The
+    /// queue already owes exactly that phase for a `.transcribedRaw` meeting, so
+    /// the button only has to ask to be next in line.
+    func requestProcessing(_ entry: RecordingEntry) {
+        pipelineError = nil
+        clearFailure(entry.id)
+        userRequestedID = entry.id
+        kickPipeline("user asked")
     }
 
     /// Re-assign speakers from mic vs system stem energy. Returns false when
@@ -1458,8 +1844,9 @@ class AppState: ObservableObject {
             // (backfill's own idle-stop is skipped when it has no candidates).
             OllamaSidecar.shared.stopAfterIdle(30)
             // A provider just appeared, which is exactly the condition that
-            // parks the loop — everything waiting on a summary can go now.
-            kickPipeline()
+            // parks the loop — everything waiting on a summary can go now,
+            // including meetings that ran out of attempts while it was missing.
+            applySummaryProviderChange()
             return true
         } catch {
             ollamaSetupProgress = nil
