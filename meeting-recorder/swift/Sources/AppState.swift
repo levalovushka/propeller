@@ -436,6 +436,9 @@ class AppState: ObservableObject {
             }
             let placeholder = "Запись \(DateFormatter.localizedString(from: now, dateStyle: .short, timeStyle: .short))"
             let title = CalendarService.shared.suggestedRecordingTitle(at: now) ?? placeholder
+            // Same matched event the title comes from. Taken now because the
+            // calendar is only in reach while the meeting is happening.
+            let calendarMeta = CalendarService.shared.suggestedRecordingMeta(at: now)
             let entry = RecordingEntry(
                 id: recorder.recordingID ?? "",
                 filename: (recorder.recordingID ?? "") + ".wav",
@@ -443,7 +446,8 @@ class AppState: ObservableObject {
                 duration: 0,
                 title: title,
                 status: .recording,
-                transcript: nil
+                transcript: nil,
+                calendarMeta: calendarMeta
             )
             recordingStore.add(entry)
             refreshStorageNudge(presentAlert: true)
@@ -1409,7 +1413,8 @@ class AppState: ObservableObject {
                 recordingID: recordingID,
                 duration: duration,
                 speakers: speakers,
-                notes: rec.notes
+                notes: rec.notes,
+                calendarMeta: rec.calendarMeta
             )
             advanceStage(recordingID, to: .saved)
             clearFailure(recordingID)
@@ -1793,7 +1798,8 @@ class AppState: ObservableObject {
             recordingID: recordingID,
             duration: rec.duration,
             speakers: speakers,
-            notes: rec.notes
+            notes: rec.notes,
+            calendarMeta: rec.calendarMeta
         )
         let msg = before == after
             ? "Спикеры без изменений"
@@ -1978,7 +1984,8 @@ class AppState: ObservableObject {
             recordingID: id,
             duration: rec.duration,
             speakers: MarkdownWriter.extractSpeakers(from: text),
-            notes: rec.notes
+            notes: rec.notes,
+            calendarMeta: rec.calendarMeta
         )
     }
 

@@ -55,6 +55,14 @@ struct RecordingEntry: Identifiable, Codable {
     /// meeting can't erase it, and persisted so it survives a relaunch. While
     /// set, the worker skips this recording; "Повторить" clears it.
     var lastFailure: PipelineFailure?
+    /// What the calendar knew about this meeting when recording started: series
+    /// and event identifiers, invitees, call link. Written once, at start, and
+    /// never revised — the calendar entry may change or vanish afterwards, and
+    /// what we want on record is what was true at the time. Nothing reads it
+    /// yet; it is here so the archive can answer "which meetings are the same
+    /// weekly?" later without a second guess. nil = no calendar match, calendar
+    /// access off, or recorded before 1.15.
+    var calendarMeta: CalendarMeta?
 
     /// Topics joined for subtitle display ("Ретро, ресурсы команды, планирование").
     var subtitleText: String { (topics ?? []).joined(separator: ", ") }

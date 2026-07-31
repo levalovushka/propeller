@@ -25,6 +25,7 @@ struct MarkdownWriter {
         duration: TimeInterval,
         speakers: [String] = [],
         notes: String? = nil,
+        calendarMeta: CalendarMeta? = nil,
         format: MarkdownOutputFormat = Preferences.shared.markdownOutputFormat
     ) throws -> String {
         let prefs = Preferences.shared
@@ -53,6 +54,7 @@ struct MarkdownWriter {
             duration: duration,
             speakers: speakers,
             notes: notes,
+            calendarMeta: calendarMeta,
             format: format
         )
         try content.write(to: filepath, atomically: true, encoding: .utf8)
@@ -67,6 +69,7 @@ struct MarkdownWriter {
         duration: TimeInterval = 0,
         speakers: [String] = [],
         notes: String? = nil,
+        calendarMeta: CalendarMeta? = nil,
         format: MarkdownOutputFormat = Preferences.shared.markdownOutputFormat
     ) -> String {
         PipelineMetrics.interval(PipelineMetrics.pipeline, PipelineMetrics.markdown) {
@@ -77,7 +80,8 @@ struct MarkdownWriter {
                     transcript: transcript,
                     duration: duration,
                     speakers: speakers,
-                    notes: notes
+                    notes: notes,
+                    calendarMeta: calendarMeta
                 )
             case .obsidian:
                 return renderObsidian(
@@ -86,7 +90,8 @@ struct MarkdownWriter {
                     recordingID: recordingID,
                     duration: duration,
                     speakers: speakers,
-                    notes: notes
+                    notes: notes,
+                    calendarMeta: calendarMeta
                 )
             }
         }
@@ -116,7 +121,8 @@ struct MarkdownWriter {
         transcript: String,
         duration: TimeInterval,
         speakers: [String],
-        notes: String?
+        notes: String?,
+        calendarMeta: CalendarMeta? = nil
     ) -> String {
         let heading = title.isEmpty ? "Meeting" : title
         let durationStr = duration > 0 ? "\(Int(duration / 60)) min" : ""
@@ -130,6 +136,9 @@ struct MarkdownWriter {
         }
         if !speakers.isEmpty {
             lines.append("**Participants:** \(speakers.joined(separator: ", "))")
+        }
+        if let calendarMeta, !calendarMeta.isEmpty {
+            lines.append(contentsOf: calendarMeta.plainHeaderLines)
         }
         lines.append("")
 
@@ -189,7 +198,8 @@ struct MarkdownWriter {
         recordingID: String,
         duration: TimeInterval,
         speakers: [String],
-        notes: String?
+        notes: String?,
+        calendarMeta: CalendarMeta? = nil
     ) -> String {
         let linkedSpeakers = resolveLinkedSpeakers(speakers)
 
@@ -221,6 +231,9 @@ struct MarkdownWriter {
             lines.append("speakers: [\(speakerEntries.joined(separator: ", "))]")
         }
         lines.append("audio_file: \"\(audioFile)\"")
+        if let calendarMeta, !calendarMeta.isEmpty {
+            lines.append(contentsOf: calendarMeta.yamlFrontmatterLines)
+        }
         lines.append("tags: [meeting]")
         lines.append("---")
         lines.append("")
