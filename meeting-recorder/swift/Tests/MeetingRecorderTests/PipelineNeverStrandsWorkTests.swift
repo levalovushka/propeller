@@ -31,8 +31,9 @@ final class PipelineNeverStrandsWorkTests: XCTestCase {
         }
         let stages = RecordingStage.allCases
         let messages = [
-            "Ollama недоступен",                        // transient
-            "Аудиофайл не найден — нельзя расшифровать.", // permanent
+            "Ollama недоступен",            // переживаемое
+            "gigastt HTTP 413",             // наш баг
+            "Аудио удалено",                // терминал (объявляется явно, ниже)
         ]
         return (0..<count).map { _ in
             (0..<next(6)).map { i in
@@ -40,10 +41,15 @@ final class PipelineNeverStrandsWorkTests: XCTestCase {
                     switch next(3) {
                     case 0: return nil
                     default:
+                        let pick = next(3)
                         var f = PipelineFailure(
                             phase: PipelineActivity.Phase.allCases[next(4)],
-                            message: messages[next(2)],
-                            at: t0.addingTimeInterval(-Double(next(600)))
+                            message: messages[pick],
+                            at: t0.addingTimeInterval(-Double(next(600))),
+                            // Терминал объявляет вызывающий, а не текст — как в
+                            // приложении.
+                            kind: pick == 2 ? .terminal : nil,
+                            terminalReason: pick == 2 ? .audioDeleted : nil
                         )
                         // Sometimes escalate it a few times, to reach the
                         // attempts-exhausted shape too.
@@ -139,18 +145,35 @@ final class PipelineNeverStrandsWorkTests: XCTestCase {
         }
     }
 
-    /// A meeting parked for the user is not owed — otherwise a single broken
-    /// meeting would keep the app waking up about it forever.
-    func testAMeetingParkedForTheUserKeepsNoTimers() {
+    /// Встреча, которой уже нечего дать, не держит таймеров.
+    ///
+    /// Раньше сюда приходили и «кончились попытки»: цикл `while !isTerminal`
+    /// повторял отказ, пока приложение не сдастся. Лестница больше не кончается,
+    /// поэтому такого цикла не существует — и это ровно то, ради чего всё
+    /// делалось. Терминал остался один: входа нет.
+    func testВстречеБезВходаТаймерыНеНужны() {
+        let failure = PipelineFailure(
+            phase: .transcribing, message: "Аудио удалено — расшифровывать нечего",
+            at: t0, kind: .terminal
+        )
+        let archive = [Row(id: "a", date: t0, status: .recorded, lastFailure: failure, audioAvailable: false)]
+        let outlook = pipelineOutlook(from: archive, policy: .unrestricted, now: t0)
+        XCTAssertEqual(outlook, .nothingToDo)
+    }
+
+    /// А сколько бы раз ни падало переживаемое — работа остаётся причитающейся.
+    func testСтоПопытокПодрядНеДелаютВстречуБезнадёжной() {
         var failure = PipelineFailure(phase: .summarizing, message: "Ollama недоступен", at: t0)
-        while !failure.needsAttention {
+        for _ in 0..<100 {
             failure = PipelineFailure(
                 phase: .summarizing, message: "Ollama недоступен", at: t0, previous: failure
             )
         }
+        XCTAssertEqual(failure.attempt, 101)
+        XCTAssertFalse(failure.isTerminal)
         let archive = [Row(id: "a", date: t0, status: .saved, lastFailure: failure, audioAvailable: true)]
         let outlook = pipelineOutlook(from: archive, policy: .unrestricted, now: t0)
-        XCTAssertEqual(outlook, .nothingToDo)
+        XCTAssertNotEqual(outlook, .nothingToDo, "приложение всё ещё должно это саммари")
     }
 
     // MARK: - The provider ladder
@@ -246,5 +269,151 @@ final class PipelineNeverStrandsWorkTests: XCTestCase {
         XCTAssertEqual(
             SummaryWork.needed(hasRecapFile: false, hasMetadata: false), .fullRecap
         )
+    }
+}
+
+// MARK: - I13. Ни один отказ не требует человека
+
+/// Продолжение I12 («есть работа ⇒ есть дедлайн») и главное обещание
+/// `design/no-dead-ends.md`: у встречи не бывает состояния, из которого путь
+/// только через клик. Проверяется свойством на случайных отказах — по той же
+/// причине, по которой I12: каждая застрявшая встреча в истории этого приложения
+/// была дыркой ровно в одном предложении.
+final class NoDeadEndInvariantTests: XCTestCase {
+
+    private let t0 = Date(timeIntervalSince1970: 1_000_000)
+
+    private func failures(count: Int) -> [PipelineFailure] {
+        var seed: UInt64 = 0xA1B2C3D4
+        func next(_ bound: Int) -> Int {
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            return Int((seed >> 33) % UInt64(bound))
+        }
+        let messages = ["Ollama недоступен", "gigastt HTTP 413", "NSXPCConnectionInterrupted",
+                        "timed out", "Аудио удалено", "В записи не нашлось речи"]
+        return (0..<count).map { _ in
+            let terminal = next(4) == 0
+            let reason = MeetingRest.TerminalReason.allCases[next(MeetingRest.TerminalReason.allCases.count)]
+            var f = PipelineFailure(
+                phase: PipelineActivity.Phase.allCases[next(4)],
+                message: messages[next(messages.count)],
+                at: t0.addingTimeInterval(-Double(next(6000))),
+                kind: terminal ? .terminal : nil,
+                terminalReason: terminal ? reason : nil
+            )
+            for _ in 0..<next(20) {
+                f = PipelineFailure(
+                    phase: PipelineActivity.Phase(rawValue: f.phase) ?? .summarizing,
+                    message: f.message, at: f.at, previous: f,
+                    kind: terminal ? .terminal : nil,
+                    terminalReason: terminal ? reason : nil
+                )
+            }
+            return f
+        }
+    }
+
+    func testВстречаВсегдаЛибоЖдётЛибоЗакончена() {
+        // Третьего состояния нет — тип не даёт его выразить, а этот тест проверяет,
+        // что и выводится оно всегда одним из двух, на любом входе.
+        for failure in failures(count: 300) {
+            for stage in RecordingStage.allCases {
+                for working in [false, true] {
+                    for summaries in [false, true] {
+                        for modelReady in [false, true] {
+                            let rest = MeetingRest.of(
+                                stage: stage, failure: failure, isWorkingOnIt: working,
+                                summariesEnabled: summaries, summaryModelReady: modelReady
+                            )
+                            switch rest {
+                            case .waiting: XCTAssertTrue(rest.owesWork)
+                            case .done:    XCTAssertFalse(rest.owesWork)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func testОжиданиеВсегдаПодкрепленоЗапланированнойПопыткой() {
+        // «Ждём» без назначенной попытки — это тупик, только вежливо
+        // сформулированный.
+        for failure in failures(count: 300) where !failure.isTerminal {
+            XCTAssertNotNil(failure.nextAttemptAt, failure.message)
+        }
+    }
+
+    func testТерминалВсегдаНазываетПричину() {
+        // Иначе карточке нечего сказать, и «дальше нечего делать» превращается в
+        // молчание, которое человек прочитает как поломку.
+        for failure in failures(count: 300) where failure.isTerminal {
+            XCTAssertNotNil(failure.terminalReason)
+            let rest = MeetingRest.of(
+                stage: .recorded, failure: failure, isWorkingOnIt: false,
+                summariesEnabled: true, summaryModelReady: true
+            )
+            if case .done(let reason) = rest {
+                XCTAssertEqual(reason, failure.terminalReason)
+            } else {
+                XCTFail("терминальный отказ обязан читаться как законченная встреча")
+            }
+        }
+    }
+
+    func testНиОдноСостояниеПокояНеПроситНажатий() {
+        // Раскрытие — утверждение о глубине. Ни одно из них не имеет права быть
+        // просьбой: ни «Повторить», ни «Попробуйте», ни «Не удалось».
+        let forbidden = ["Повтор", "Попроб", "Не удалось", "Ошибка", "ажмите"]
+        var seen: Set<String> = []
+        for wait in MeetingRest.WaitReason.allCases {
+            if let text = MeetingRest.waiting(wait).disclosure { seen.insert(text) }
+        }
+        for done in MeetingRest.TerminalReason.allCases {
+            if let text = MeetingRest.done(done).disclosure { seen.insert(text) }
+        }
+        XCTAssertFalse(seen.isEmpty)
+        for text in seen {
+            for word in forbidden {
+                XCTAssertFalse(text.contains(word), "«\(text)» содержит «\(word)»")
+            }
+        }
+    }
+
+    func testЗаконченнаяВстречаМолчитАНеОбъявляетУспех() {
+        // «Готово!» — такой же шум, как «Ошибка»: об этом говорит сам факт, что
+        // саммари есть.
+        XCTAssertNil(MeetingRest.done(.complete).disclosure)
+        XCTAssertNil(MeetingRest.waiting(.queued).disclosure)
+        XCTAssertNil(MeetingRest.waiting(.working).disclosure)
+    }
+
+    func testСВыключеннымСаммариВстречаЗаканчиваетсяНаТранскрипте() {
+        // Это не «недоделано»: дно лестницы просто другое.
+        let rest = MeetingRest.of(
+            stage: .saved, failure: nil, isWorkingOnIt: false,
+            summariesEnabled: false, summaryModelReady: false
+        )
+        XCTAssertEqual(rest, .done(.summariesOff))
+        XCTAssertFalse(rest.owesWork)
+    }
+
+    func testБезМоделиВстречаЖдётМодельАНеЧеловека() {
+        let rest = MeetingRest.of(
+            stage: .saved, failure: nil, isWorkingOnIt: false,
+            summariesEnabled: true, summaryModelReady: false
+        )
+        XCTAssertEqual(rest, .waiting(.model))
+        XCTAssertTrue(rest.owesWork)
+    }
+
+    func testДоТранскриптаМодельНикогоНеДержит() {
+        // Модель нужна только саммари: свежая запись без модели ждёт очереди, а
+        // не загрузки — иначе строка врёт о том, чего она ждёт.
+        let rest = MeetingRest.of(
+            stage: .recorded, failure: nil, isWorkingOnIt: false,
+            summariesEnabled: true, summaryModelReady: false
+        )
+        XCTAssertEqual(rest, .waiting(.queued))
     }
 }

@@ -59,16 +59,16 @@ extension PipelineActivity.Phase {
 /// A pipeline failure, kept on the recording so it survives other work and a
 /// relaunch.
 ///
-/// A failure carries its own recovery plan. `kind` says whether waiting could
-/// possibly help, `attempt` counts how many tries this phase has had, and
-/// `nextAttemptAt` is the moment the worker may try again by itself — nil when
-/// it may not, which is the only case a person is ever shown.
+/// A failure carries its own recovery plan. `kind` says whose problem it is,
+/// `attempt` counts how many tries this phase has had, and `nextAttemptAt` is the
+/// moment the worker tries again by itself — nil **only** when the input is gone,
+/// which is the one case where no attempt could ever help.
 ///
-/// The distinction is the whole point. Every failure used to park a meeting
-/// until someone found the retry button, so an `ollama serve` that was half a
-/// second late, or a laptop that slept mid-summary, left a meeting unfinished
-/// with a red button on it. Unfinishable failures (audio deleted, disk full)
-/// still park immediately — retrying them forever is the other way to be wrong.
+/// Nothing here is a way to ask the user for anything. Every failure used to park
+/// a meeting until someone found the retry button, so an `ollama serve` half a
+/// second late left a meeting unfinished with a red button on it; then the button
+/// went away but the attempt counter stayed, which is the same dead end with
+/// fewer words. Now the ladder has no end (`PipelineRetry.steps`).
 public struct PipelineFailure: Codable, Equatable, Sendable {
     public let phase: String
     public let message: String
@@ -76,9 +76,14 @@ public struct PipelineFailure: Codable, Equatable, Sendable {
     /// Consecutive failures of this phase on this recording, first one = 1.
     public let attempt: Int
     public let kind: FailureKind
-    /// When the worker may try again unprompted. Nil = never; the user is the
-    /// only way forward from here.
+    /// When the worker tries again unprompted. Nil = there is nothing to try:
+    /// the audio is gone, or there was no speech in it.
     public let nextAttemptAt: Date?
+    /// Why there is nothing left to do — set only with `kind == .terminal`, by the
+    /// call site that looked at the input. The card states this; deriving it from
+    /// the message text would be guessing at meaning from a substring, which is
+    /// exactly what `PipelineRetry.classify` no longer does.
+    public let terminalReason: MeetingRest.TerminalReason?
 
     /// Records a failure and schedules its own next attempt.
     ///
@@ -91,7 +96,8 @@ public struct PipelineFailure: Codable, Equatable, Sendable {
         message: String,
         at: Date = Date(),
         previous: PipelineFailure? = nil,
-        kind: FailureKind? = nil
+        kind: FailureKind? = nil,
+        terminalReason: MeetingRest.TerminalReason? = nil
     ) {
         let resolved = kind ?? PipelineRetry.classify(message)
         // Only a repeat of the *same* phase escalates: a meeting that failed ASR
@@ -106,11 +112,16 @@ public struct PipelineFailure: Codable, Equatable, Sendable {
         self.nextAttemptAt = PipelineRetry.nextAttempt(
             kind: resolved, attempt: attempt, phase: phase, after: at
         )
+        self.terminalReason = resolved == .terminal ? (terminalReason ?? .noSpeech) : nil
     }
 
-    /// Nothing more happens on its own. The one failure state worth a button,
-    /// a toast or a notification — everything else the app is still handling.
-    public var needsAttention: Bool { nextAttemptAt == nil }
+    /// Nothing more will happen — the input is gone or there was nothing in it.
+    ///
+    /// Was «worth showing a person»; it is not that any more, and nothing in the
+    /// interface reads it (`design/no-dead-ends.md`). It answers one question, for
+    /// the scheduler: is any work still owed here? A recording whose audio the user
+    /// deleted owes none.
+    public var isTerminal: Bool { nextAttemptAt == nil }
 
     /// Waiting out a backoff: owed work, just not yet.
     public func isWaiting(at now: Date) -> Bool {
@@ -119,19 +130,43 @@ public struct PipelineFailure: Codable, Equatable, Sendable {
     }
 
     /// Whether this failure keeps the recording out of the queue right now.
-    public func blocks(at now: Date) -> Bool { needsAttention || isWaiting(at: now) }
+    public func blocks(at now: Date) -> Bool { isTerminal || isWaiting(at: now) }
 
-    /// Indexes written before failures carried a recovery plan decode as
-    /// parked-for-the-user — exactly how that build behaved. An old archive must
-    /// never wake up and re-run ASR on a meeting the user already gave up on.
+    /// Reads archives from every build before this one, and **un-parks them**.
+    ///
+    /// Two older shapes arrive here: entries with no `kind` at all (before
+    /// failures carried a recovery plan) and entries with `kind: "permanent"`
+    /// (parked until someone found the retry button). Both are read as
+    /// `.transient` with no scheduled attempt, which puts them straight back in
+    /// the queue — the button is gone, so the only honest reading of "waiting for
+    /// a human" is "we still owe this work". This *is* the migration for meetings
+    /// that went red in an earlier version; it needs no separate pass.
+    ///
+    /// A meeting whose audio the user really did delete comes back for one cheap
+    /// attempt, gets classified `.terminal` by the call site that looks at the
+    /// disk, and rests there for good.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         phase = try c.decode(String.self, forKey: .phase)
         message = try c.decode(String.self, forKey: .message)
         at = try c.decode(Date.self, forKey: .at)
         attempt = try c.decodeIfPresent(Int.self, forKey: .attempt) ?? 1
-        kind = try c.decodeIfPresent(FailureKind.self, forKey: .kind) ?? .permanent
-        nextAttemptAt = try c.decodeIfPresent(Date.self, forKey: .nextAttemptAt)
+        if let decoded = try? c.decodeIfPresent(FailureKind.self, forKey: .kind) {
+            kind = decoded
+        } else {
+            kind = .transient
+        }
+        terminalReason = try? c.decodeIfPresent(
+            MeetingRest.TerminalReason.self, forKey: .terminalReason
+        ) ?? nil
+        let storedNext = try c.decodeIfPresent(Date.self, forKey: .nextAttemptAt)
+        // A stored `nil` used to mean «parked forever»: that is what old builds
+        // wrote when they gave up. Read together with a retryable kind it now
+        // means the opposite — nobody ever scheduled the next attempt — so it is
+        // scheduled for the moment the failure happened, which is in the past and
+        // therefore due at once. Without this the meeting decodes as terminal and
+        // the un-parking never happens.
+        nextAttemptAt = (storedNext == nil && kind.isRetryable) ? at : storedNext
     }
 }
 
@@ -302,7 +337,7 @@ public func pipelineOutlook(
         if let failure = candidate.lastFailure {
             // Parked for the user: not owed, because nobody is going to pick it
             // up until they say so.
-            if failure.needsAttention { continue }
+            if failure.isTerminal { continue }
             if failure.isWaiting(at: now) {
                 owed += 1
                 if let due = failure.nextAttemptAt {

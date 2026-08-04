@@ -8,8 +8,18 @@ enum AppWindowRole: String {
 
 @MainActor
 enum AppWindowRegistry {
-    /// Figma 640:1859 artboard.
-    static let mainSize = CGSize(width: 664, height: 674)
+    /// Figma `sidebar` artboard (31:4580) — a 300 pt rail plus an 800 pt pane.
+    /// What the window *opens* at.
+    static let mainSize = CGSize(width: Tokens.Sidebar.width + 800, height: 640)
+
+    /// The smallest the window may be dragged to — a different question, and
+    /// using `mainSize` for both is what pinned the window at its opening width.
+    /// The comps go down to a 601 pt pane (`thin`), which is where the notes
+    /// collapse; below the pane's own minimum there is nothing left to show.
+    static let minSize = CGSize(
+        width: Tokens.Sidebar.width + Tokens.Window.contentPaneMinWidth,
+        height: 480
+    )
 
     static func mainWindow() -> NSWindow? {
         let onboarding = OnboardingPanelController.shared.panel
@@ -100,25 +110,23 @@ struct SceneWindowChrome: NSViewRepresentable {
         }
     }
 
-    /// Figma 640:1863 — discs Ø12 at (24,22) / (44,22) / (64,22) from window top-leading.
+    /// Figma 31:4584 — discs Ø12 at (24,18) / (44,18) / (64,18) from window
+    /// top-leading, i.e. centred on the rail header's 48 pt row. They sit four
+    /// points higher than they did on the old 56 pt bar; the header shrank.
     private static func positionTrafficLights(on window: NSWindow) {
         let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
         guard let close = window.standardWindowButton(.closeButton),
               let container = close.superview
         else { return }
 
-        let leading = Tokens.Window.trafficLightLeading
-        let spacing = Tokens.Window.trafficLightSpacing
-        // Slot at (12,12), discs inset y=10 inside the 32pt slot → 22 from window.
-        let discTop = Tokens.Window.chromePadding + 10
         for (index, type) in types.enumerated() {
             guard let button = window.standardWindowButton(type) else { continue }
-            // Titlebar coords: y grows up from the bottom of the container.
-            let y = container.bounds.height - discTop - button.bounds.height
-            button.setFrameOrigin(NSPoint(
-                x: leading + CGFloat(index) * spacing,
-                y: y
-            ))
+            let origin = SidebarTrafficLightLayout.origin(
+                index: index,
+                containerHeight: container.bounds.height,
+                buttonHeight: button.bounds.height
+            )
+            button.setFrameOrigin(NSPoint(x: origin.x, y: origin.y))
         }
     }
 }

@@ -77,9 +77,6 @@ struct OnboardingContainer: View {
                     else { try SMAppService.mainApp.unregister() }
                 } catch { NSLog("[Onboarding] launch-at-login failed: \(error)") }
             },
-            onDownloadSummaryModel: {
-                state.startOllamaRuntimeDownload()
-            },
             ollamaProgress: state.ollamaSetupProgress,
             ollamaStatus: state.ollamaSetupMessage,
             ollamaReady: ollamaReady,
@@ -87,6 +84,10 @@ struct OnboardingContainer: View {
         )
         .onAppear {
             refreshGrants()
+            // The model is fetched because the app needs one, not because this
+            // screen was reached — but reaching it is a fine moment to make sure
+            // the fetch is under way (`design/no-dead-ends.md` §5).
+            Task { await state.ensureSummaryModel() }
             Task {
                 let model = Preferences.shared.recapOllamaModel
                 let name = model.isEmpty ? OllamaSidecar.defaultModel : model

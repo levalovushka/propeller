@@ -73,7 +73,7 @@ public enum UIStateCatalog {
               stage: .summarized,     involvement: .idle),
         .init(id: "10-other-busy",     label: "Работа идёт над другой встречей — здесь спиннера нет",
               stage: .saved,          involvement: .elsewhere(.summarizing)),
-        .init(id: "11-failed",         label: "Ошибка + кнопка «Повторить»",
+        .init(id: "11-failed",         label: "Дальше нечего делать — аудио удалено",
               stage: .transcribedRaw, involvement: .idle, hasFailure: true),
     ]
 
@@ -104,7 +104,7 @@ public enum UIStateCatalog {
         .init(id: "onb-04-permissions",        label: "Разрешения — ничего не выдано"),
         .init(id: "onb-04-permissions-partial", label: "Разрешения — микрофон есть, экрана нет"),
         .init(id: "onb-04-permissions-all",    label: "Разрешения — всё выдано"),
-        .init(id: "onb-05-model",              label: "Модель саммари — предложение"),
+        .init(id: "onb-05-model",              label: "Модель саммари — состояние"),
         .init(id: "onb-05-model-downloading",  label: "Модель саммари — качается"),
         .init(id: "onb-05-model-ready",        label: "Модель саммари — готова"),
         .init(id: "onb-05-model-error",        label: "Модель саммари — ошибка установки"),
@@ -121,7 +121,7 @@ public enum UIStateCatalog {
         .init(id: "tab-notes-content",         label: "Заметки — есть"),
         .init(id: "tab-transcript-empty",      label: "Транскрипт — пусто"),
         .init(id: "tab-transcript-content",    label: "Транскрипт — есть"),
-        .init(id: "tab-transcript-failed",     label: "Транскрипт — ошибка + «Повторить»"),
+        .init(id: "tab-transcript-failed",     label: "Транскрипт — дальше нечего делать"),
     ]
 
     public static let library: [Screen] = [
@@ -129,17 +129,14 @@ public enum UIStateCatalog {
         .init(id: "lib-populated", label: "Список встреч — записи по секциям"),
         .init(id: "lib-upcoming",  label: "Список встреч — с блоком Upcoming"),
         .init(id: "lib-search",    label: "Поиск ⌘K"),
-    ]
-
-    public static let toasts: [Screen] = [
-        .init(id: "toast-mic",     label: "Нужен микрофон"),
-        .init(id: "toast-disk",    label: "Мало места на диске"),
-        .init(id: "toast-storage", label: "Библиотека разрослась"),
-        .init(id: "toast-failure", label: "Не удалось обработать + «Повторить»"),
+        // The undo lives on the row now, which makes it a state of the list and
+        // not of a floating bar. Photographed in the window for that reason: the
+        // question it answers is «видно ли её среди остальных».
+        .init(id: "lib-deleted",   label: "Список встреч — удалённая с\u{00A0}«Вернуть»"),
     ]
 
     /// Everything the gallery has to be able to show, in shooting order.
     public static var allScreenIDs: [String] {
-        meetingStates.map(\.id) + (onboarding + detailTabs + library + toasts).map(\.id)
+        meetingStates.map(\.id) + (onboarding + detailTabs + library).map(\.id)
     }
 }

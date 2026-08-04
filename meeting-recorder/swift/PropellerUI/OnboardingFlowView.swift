@@ -17,7 +17,6 @@ public struct OnboardingFlowView: View {
     var onGrantMicrophone: () -> Void
     var onGrantNotifications: () -> Void
     var onSetLaunchAtLogin: (Bool) -> Void
-    var onDownloadSummaryModel: () -> Void
     var ollamaProgress: Double?
     var ollamaStatus: String
     var ollamaReady: Bool
@@ -32,7 +31,6 @@ public struct OnboardingFlowView: View {
         onGrantMicrophone: @escaping () -> Void = {},
         onGrantNotifications: @escaping () -> Void = {},
         onSetLaunchAtLogin: @escaping (Bool) -> Void = { _ in },
-        onDownloadSummaryModel: @escaping () -> Void = {},
         ollamaProgress: Double? = nil,
         ollamaStatus: String = "",
         ollamaReady: Bool = false,
@@ -46,7 +44,6 @@ public struct OnboardingFlowView: View {
         self.onGrantMicrophone = onGrantMicrophone
         self.onGrantNotifications = onGrantNotifications
         self.onSetLaunchAtLogin = onSetLaunchAtLogin
-        self.onDownloadSummaryModel = onDownloadSummaryModel
         self.ollamaProgress = ollamaProgress
         self.ollamaStatus = ollamaStatus
         self.ollamaReady = ollamaReady
@@ -56,7 +53,6 @@ public struct OnboardingFlowView: View {
     private enum Step { case welcome, name, calendar, permissions, summaryModel, end }
     @State private var step: Step = .welcome
     @State private var name = NSFullUserName()
-    @State private var summarySkipped = false
 
     public var body: some View {
         Group {
@@ -84,12 +80,7 @@ public struct OnboardingFlowView: View {
             case .summaryModel:
                 OnboardingSummaryModelView(
                     onNext: { go(.end) },
-                    onSkip: {
-                        summarySkipped = true
-                        go(.end)
-                    },
                     onBack: { go(.permissions) },
-                    onStartDownload: onDownloadSummaryModel,
                     isReady: ollamaReady,
                     errorMessage: ollamaError
                 )

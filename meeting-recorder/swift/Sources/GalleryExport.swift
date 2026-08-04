@@ -57,13 +57,17 @@ enum GalleryExport {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var written: [URL] = []
 
-        for id in UIStateCatalog.allScreenIDs {
+        // Screens, then the component boards. The rail's states are not screens
+        // and are not in `UIStateCatalog` — they are one component's axes, drawn
+        // whole (see `SidebarGallery`).
+        let ids = UIStateCatalog.allScreenIDs + SidebarGallery.ids
+        for id in ids {
             GalleryScreenFactory.pose(id: id, state: state)
             if let url = await capture(id: id, state: state, into: directory) {
                 written.append(url)
             }
         }
-        NSLog("[GalleryExport] wrote \(written.count)/\(UIStateCatalog.allScreenIDs.count) screens to \(directory.path)")
+        NSLog("[GalleryExport] wrote \(written.count)/\(ids.count) screens to \(directory.path)")
         reportDuplicates(in: written)
         return written
     }

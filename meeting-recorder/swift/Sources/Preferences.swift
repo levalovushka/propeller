@@ -220,23 +220,6 @@ class Preferences {
         }
     }
 
-    // MARK: - Storage nudge (plan-v2 6.1 — never auto-deletes)
-
-    /// Soft library-size threshold. Default 5 GB (DECIDE-4).
-    var storageNudgeThresholdBytes: Int64 {
-        get {
-            let v = defaults.object(forKey: "storageNudgeThresholdBytes") as? Int64
-            return v ?? (5 * 1024 * 1024 * 1024)
-        }
-        set { defaults.set(newValue, forKey: "storageNudgeThresholdBytes") }
-    }
-
-    /// User tapped "Later" — don't re-alert until they clear the snooze (Settings) or shrink below threshold.
-    var storageNudgeSnoozed: Bool {
-        get { defaults.bool(forKey: "storageNudgeSnoozed") }
-        set { defaults.set(newValue, forKey: "storageNudgeSnoozed") }
-    }
-
     // MARK: - Analytics (TelemetryDeck)
 
     /// Product signals for dogfood iteration. Default on; Settings can opt out.

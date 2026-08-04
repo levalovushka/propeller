@@ -400,13 +400,14 @@ struct RecordingDetailView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.mini)
-                } else if entry.audioFileExists,
-                          (entry.status == .recorded || entry.needsAttention),
+                } else if entry.audioFileExists, entry.status == .recorded,
                           !state.activity.concerns(entry.id) {
-                    // `needsAttention`, not "has a failure": a meeting waiting out
-                    // a retry is being handled, and offering a button for it would
-                    // be the app telling on itself for no reason.
-                    Button(entry.needsAttention ? "Повтор" : "Расшифровать") {
+                    // No «Повтор» branch any more: a meeting that failed is either
+                    // being retried by the pipeline — forever, on its own — or has
+                    // nothing left to try, and neither state has a button
+                    // (`design/no-dead-ends.md`). What is left here is the one
+                    // honest hand action: transcribe a recording nobody has yet.
+                    Button("Расшифровать") {
                         Task { await state.reprocess() }
                     }
                     .buttonStyle(.bordered)
@@ -842,30 +843,22 @@ struct RecordingDetailView: View {
                             return msg.isEmpty ? "Загружаем модель саммари…" : msg
                         }
                         if needsModel {
-                            return "Для саммари нужно загрузить модель. Это займет около 10 минут — записывать встречи можно и без неё."
+                            // Not a request and not a problem: the model is on its
+                            // way because the app fetches one, and this meeting is
+                            // resting at the depth it reached until then
+                            // (`design/no-dead-ends.md` §5).
+                            return "Саммари появится, когда докачается модель. Расшифровка уже готова."
                         }
                         if let hint = state.recapSkipHint { return hint }
                         return "Саммари появляется после обработки."
                     }()
                 )
                 HStack(spacing: 10) {
-                    if needsModel && !noTranscript {
-                        // Offering «Сгенерировать» here could only ever produce
-                        // `HTTP 404: model not found` — the honest action is to
-                        // fetch the model.
-                        Button {
-                            state.startOllamaRuntimeDownload()
-                        } label: {
-                            Text(downloading ? "Загружается…" : "Скачать")
-                                .typo(Tokens.Typography.Label.mdMedium)
-                                .foregroundStyle(Tokens.Ink.primary)
-                                .padding(.horizontal, 14)
-                                .frame(height: 32)
-                                .background(Tokens.Neutral.aw10, in: Capsule())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(downloading)
-                    } else {
+                    // No «Скачать» here any more. Fetching the model is the app's
+                    // job, on launch and whenever it goes missing, so a button for
+                    // it was asking the user to do the app's work — and it was the
+                    // most frequent patch-button in the whole interface.
+                    if !needsModel {
                         Button {
                             Task { await state.regenerateRecap() }
                         } label: {
@@ -880,9 +873,10 @@ struct RecordingDetailView: View {
                         .disabled(noTranscript)
                     }
 
-                    // Settings only when it can actually change the outcome —
-                    // with the model in place everything is already configured.
-                    if needsModel || state.localRecapModelReady == nil {
+                    // Settings only when it can actually change the outcome: a
+                    // cloud key or turning summaries off. With the model on its
+                    // way there is nothing here to configure.
+                    if state.localRecapModelReady == nil {
                         SettingsLink {
                             Text("Открыть настройки")
                                 .typo(Tokens.Typography.Label.mdMedium)
@@ -1268,15 +1262,12 @@ struct RecordingDetailView: View {
                             .controlSize(.small)
                             .disabled(state.activity.concerns(entry.id))
                         } else if entry.audioFileExists,
-                                  [.recorded, .transcribing].contains(entry.status)
-                                    || entry.needsAttention {
+                                  [.recorded, .transcribing].contains(entry.status),
+                                  !entry.hasTerminalFailure {
                             Button {
                                 Task { await state.reprocess() }
                             } label: {
-                                Label(
-                                    entry.needsAttention ? "Повторить" : "Расшифровать",
-                                    systemImage: "waveform"
-                                )
+                                Label("Расшифровать", systemImage: "waveform")
                             }
                             .buttonStyle(.borderedProminent)
                             .controlSize(.small)

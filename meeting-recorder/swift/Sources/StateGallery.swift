@@ -43,12 +43,15 @@ struct StateGallery: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $selected) {
+                // The rail is a component, not a screen — its boards put a whole
+                // axis in one frame instead of nine near-identical windows.
+                section("Сайдбар",
+                        SidebarGallery.ids.map { ($0, SidebarGallery.label(for: $0), $0) })
                 section("Встреча — состояния пайплайна",
                         UIStateCatalog.meetingStates.map { ($0.id, $0.label, Self.caption(for: $0)) })
                 section("Онбординг", UIStateCatalog.onboarding.map { ($0.id, $0.label, $0.id) })
                 section("Вкладки карточки", UIStateCatalog.detailTabs.map { ($0.id, $0.label, $0.id) })
                 section("Библиотека", UIStateCatalog.library.map { ($0.id, $0.label, $0.id) })
-                section("Тосты", UIStateCatalog.toasts.map { ($0.id, $0.label, $0.id) })
             }
             .navigationSplitViewColumnWidth(min: 280, ideal: 320)
         } detail: {
@@ -115,8 +118,13 @@ enum GalleryScreenFactory {
 
     @ViewBuilder
     static func view(id: String, state: AppState) -> some View {
-        if GalleryScreens.ownedIDs.contains(id) {
-            // Onboarding and toasts are PropellerUI's own screens — its step
+        if SidebarGallery.ids.contains(id) {
+            // Component boards need no posed pipeline — they are drawn straight
+            // from `SidebarStateCatalog`, which is the point of keeping the
+            // rail's states as data rather than as app state.
+            SidebarGallery.view(for: id)
+        } else if GalleryScreens.ownedIDs.contains(id) {
+            // Onboarding screens are PropellerUI's own — its step
             // views are internal to that module, so it draws them itself.
             GalleryScreens.view(for: id)
         } else if id == "lib-search" {

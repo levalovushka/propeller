@@ -78,6 +78,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        // Finish any «Удалить» whose undo was still on offer: the entry is
+        // already out of the index, so leaving it would strand the audio with
+        // nothing pointing at it.
+        AppStateRegistry.shared?.commitPendingDeletion()
         Analytics.flush()
         GigasttSidecar.shared.stop()
         OllamaSidecar.shared.stop()
@@ -165,8 +169,11 @@ private struct RootWindow: View {
 
     var body: some View {
         MainView(state: state, recordingStore: state.recordingStore)
-            .frame(minWidth: AppWindowRegistry.mainSize.width,
-                   minHeight: AppWindowRegistry.mainSize.height)
+            // Height only. The width minimum is whatever the content needs —
+            // rail plus pane when the rail is out, pane alone when it is away —
+            // and stating it here would keep reserving the rail's 300 after the
+            // user has put it away.
+            .frame(minHeight: AppWindowRegistry.minSize.height)
             // Same GlassBackground / Tokens.Glass stack as the onboarding panel.
             .background(VisualEffectBackground().ignoresSafeArea())
             .background(SceneWindowChrome(role: .main, startHidden: state.showOnboarding))

@@ -1,5 +1,6 @@
 #if GALLERY
 import SwiftUI
+import PropellerPure
 
 /// PropellerUI's half of the state gallery.
 ///
@@ -55,10 +56,13 @@ public enum GalleryScreens {
                                           notificationsGranted: false)
             }
         case "onb-04-permissions-partial":
+            // Partial means *partial*: the microphone granted and notifications
+            // not. Both were passed as `true`, so this frame was a duplicate of
+            // «всё выдано» and the state it names was never photographed.
             card {
                 OnboardingPermissionsView(onNext: {}, onBack: {},
                                           microphoneGranted: true,
-                                          notificationsGranted: true)
+                                          notificationsGranted: false)
             }
         case "onb-04-permissions-all":
             card {
@@ -68,57 +72,26 @@ public enum GalleryScreens {
             }
         case "onb-05-model":
             card {
-                OnboardingSummaryModelView(onNext: {}, onSkip: {}, onBack: {},
-                                           onStartDownload: {}, isReady: false)
+                OnboardingSummaryModelView(onNext: {}, onBack: {}, isReady: false)
             }
         case "onb-05-model-downloading":
             // The screen deliberately shows no progress bar — tapping «Скачать»
             // advances immediately. Captured so that decision is visible in the
             // reference rather than looking like an omission.
             card {
-                OnboardingSummaryModelView(onNext: {}, onSkip: {}, onBack: {},
-                                           onStartDownload: {}, isReady: false)
+                OnboardingSummaryModelView(onNext: {}, onBack: {}, isReady: false)
             }
         case "onb-05-model-ready":
             card {
-                OnboardingSummaryModelView(onNext: {}, onSkip: {}, onBack: {},
-                                           onStartDownload: {}, isReady: true)
+                OnboardingSummaryModelView(onNext: {}, onBack: {}, isReady: true)
             }
         case "onb-05-model-error":
             card {
-                OnboardingSummaryModelView(onNext: {}, onSkip: {}, onBack: {},
-                                           onStartDownload: {}, isReady: false,
+                OnboardingSummaryModelView(onNext: {}, onBack: {}, isReady: false,
                                            errorMessage: "Не удалось скачать модель: нет соединения")
             }
         case "onb-06-end":
             card { OnboardingEndView(onFinish: {}) }
-
-        // MARK: Toasts
-
-        case "toast-mic":
-            toast(PropellerToast(
-                title: "Нужен микрофон",
-                subtitle: "Разрешите доступ в Системных настройках, чтобы записывать встречи.",
-                primary: .init("Настройки") {}, secondary: .init("ОК") {}, onDismiss: {}
-            ))
-        case "toast-disk":
-            toast(PropellerToast(
-                title: "Мало места на диске",
-                subtitle: "Свободно только 1,4 ГБ. Для загрузки нужно ~3,9 ГБ плюс запас.",
-                primary: .init("Всё равно записать") {}, secondary: .init("Отмена") {}, onDismiss: {}
-            ))
-        case "toast-storage":
-            toast(PropellerToast(
-                title: "Библиотека разрослась",
-                subtitle: "Записи занимают около 5,2 ГБ. Propeller сам ничего не удаляет.",
-                primary: .init("Настройки") {}, secondary: .init("Позже") {}, onDismiss: {}
-            ))
-        case "toast-failure":
-            toast(PropellerToast(
-                title: "Не удалось обработать",
-                subtitle: "gigastt HTTP 413: тело запроса слишком большое",
-                primary: .init("Повторить") {}, secondary: .init("Закрыть") {}, onDismiss: {}
-            ))
 
         default:
             EmptyView()
@@ -133,7 +106,6 @@ public enum GalleryScreens {
         "onb-04-permissions", "onb-04-permissions-partial", "onb-04-permissions-all",
         "onb-05-model", "onb-05-model-downloading", "onb-05-model-ready", "onb-05-model-error",
         "onb-06-end",
-        "toast-mic", "toast-disk", "toast-storage", "toast-failure",
     ]
 
     // MARK: - Framing
@@ -150,11 +122,5 @@ public enum GalleryScreens {
             .background(Color.black)
     }
 
-    @ViewBuilder
-    private static func toast(_ content: some View) -> some View {
-        content
-            .padding(Tokens.Toast.cornerInset)
-            .background(Color.black)
-    }
 }
 #endif

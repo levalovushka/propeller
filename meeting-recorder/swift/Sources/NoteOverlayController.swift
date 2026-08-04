@@ -25,6 +25,7 @@ final class NoteOverlayController {
     private var panel: KeyablePanel?
     private var globalMonitor: Any?
     private var localMonitor: Any?
+    private var confirmTask: Task<Void, Never>?
 
     /// Ctrl+Opt+N — keyCode 45 is "n".
     private let noteKeyCode: UInt16 = 45
@@ -98,13 +99,53 @@ final class NoteOverlayController {
     }
 
     private func hide() {
+        confirmTask?.cancel()
+        confirmTask = nil
         panel?.orderOut(nil)
         panel = nil
     }
 
     private func commit(_ text: String) {
-        state?.appendTimestampedNote(text)
-        hide()
+        if state?.appendTimestampedNote(text) == true { confirmSaved() } else { hide() }
+    }
+
+    /// Confirm the save where the typing happened: the field becomes a tick for a
+    /// beat, then the panel goes by itself.
+    ///
+    /// This replaced a system notification — one that arrived with a sound, in
+    /// the middle of a recording, about something the user had just done. A
+    /// recorder that beeps into its own microphone is the one notification that
+    /// damages the thing it is reporting on.
+    private func confirmSaved() {
+        guard let panel else { return }
+        panel.contentView = NSHostingView(rootView: NoteSavedView())
+        confirmTask?.cancel()
+        confirmTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(700))
+            guard !Task.isCancelled else { return }
+            self?.hide()
+        }
+    }
+}
+
+/// The same 440×58 plate as the input, so nothing jumps when it swaps.
+private struct NoteSavedView: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.secondary)
+            Text("Заметка сохранена")
+                .typo(Tokens.Typography.Label.mdRegular)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .frame(width: 440, height: 58)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Tokens.Radius.lg))
+        .overlay(
+            RoundedRectangle(cornerRadius: Tokens.Radius.lg)
+                .strokeBorder(Tokens.Neutral.aw7, lineWidth: 1)
+        )
     }
 }
 

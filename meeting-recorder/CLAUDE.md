@@ -16,7 +16,10 @@ cd swift
 open -a Propeller
 ```
 
-Swift Package Manager (`Package.swift`). GigaAM ASR weights (~247 MB, INT8 set) ship **inside the .app** and are copied to Application Support on first use — no download, transcription works offline. Only the summary model (`qwen3.5:4b`, ~3.4 GB) is fetched over the network.
+Swift Package Manager (`Package.swift`). GigaAM ASR weights (~247 MB, INT8 set) ship **inside the .app** and are copied to Application Support on first use — no download, transcription works offline. Only the summary model (`qwen3.5:4b`, ~3.4 GB) is fetched over the network — automatically, on first
+launch and whenever it goes missing (`AppState.ensureSummaryModel`, decision in
+`PropellerPure/ModelProvisioning`). «Саммари нет» is a legal depth for one meeting; «нет LLM» is not a
+legal state for the app, so there is no consent gate and no «Скачать» button to press.
 
 ## Architecture (short)
 
@@ -44,7 +47,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full table. Coordinator
 
 ### UI
 
-- `MainView` — sidebar sections (Meetings / Summaries / Search / Settings) + list + detail. Upcoming (calendar) via `CalendarService`.
+- `MainView` — левый рельс (`PropellerSidebar`) + контентная панель. Upcoming (calendar) via `CalendarService`.
+- `PropellerUI/Sidebar.swift` — рельс редизайна (Figma 31:4581): 300 pt, заголовок окна 48 pt со светофором, меню, список встреч по дням. Чистая презентация: принимает `SidebarModel`, отдаёт id. Какой вид получает встреча — `PropellerPure/SidebarRowState.swift` (`SidebarRowMachine`), и это единственное место, где решение принимается; `Sources/SidebarPresenter.swift` только читает поля.
+- Все токены цвета — пары «тёмная / светлая» (`Tokens.dual`), тема разрешается AppKit'ом в момент отрисовки. Светлые значения выведены, а не нарисованы: правятся в одном месте, в `Tokens.Paint` / `Tokens.Sidebar`.
 - `RecordingDetailView` / `RecordingInProgressView` — tabs Transcript / Notes / Summary
 - `NoteOverlayController` — ⌃⌥N quick-note overlay during recording
 - `MenuBarPanelView` — record/stop, recent, quit
@@ -80,12 +85,20 @@ ephemeral, and there is exactly one of it because there is one worker.
 - **`.summarized` ⟺ recap file **and** metadata exist** (I9), reconciled both ways in
   `RecordingStore.reconcileSummarizedStage()`. A 1.11 meeting with a summary but no topics is *not*
   done: marking it done strands it, because the worker skips terminal stages.
-- **A failure belongs to its recording** (`entry.lastFailure`), never to the app. It carries its own
-  recovery plan: `kind` (transient / permanent), `attempt`, and `nextAttemptAt`. A transient failure
-  is retried on a backoff **silently**; only a failure with `needsAttention` (permanent, or attempts
-  spent) is ever shown, and that is what the UI must read — `lastFailure != nil` is not a user-facing
-  condition (I7). Cancellation is not a failure at all: a call starting mid-ASR must not need a manual
-  retry afterwards.
+- **A failure belongs to its recording** (`entry.lastFailure`), never to the app — and to the
+  *machine*, not to the user. It carries its own recovery plan: `kind`
+  (`transient` / `ourFault` / `terminal`), `attempt`, `nextAttemptAt`. Retries are **silent and
+  endless**: the ladder walks out to an hour and stays there, because a count of attempts belongs to a
+  request somebody is waiting on with a dialogue open, and this is a background obligation. The one
+  kind that stops is `.terminal` — the input is gone (audio deleted) or was never there (no speech) —
+  and it is **declared by the call site that looked at the input**, never inferred from an error
+  string (`PipelineRetry.classify` can no longer return it). Cancellation is not a failure at all.
+- **Nothing in the interface reads a failure.** Views ask `AppState.rest(of:)` →
+  `MeetingRest` (`waiting` / `done`, and there is deliberately no third branch for "needs a human").
+  There is no «Повторить» button, no ⚠ mark and no "Не удалось обработать" anywhere — a meeting is at
+  the depth it reached, and says why it stopped if it stopped. Invariant **I13** is a property test
+  over random failures. Read `design/no-dead-ends.md` before adding anything that could park a
+  meeting.
 - **Owed work always has a way back.** `pipelineOutlook` answers what to run *and* when to look
   again; `PipelineDrain.plan` turns every stop into a deadline. Anything that adds a way for the
   pipeline to stop must go through them — "stop and hope something kicks us" is how meetings sat at
@@ -153,6 +166,13 @@ Which apps count as a call, and which window titles mean "in one", is **data** i
   them during a real call with `./tools/detect-meeting-signals.sh толк talk kontur`, then update the row
   and its tests.
 
+## Principles
+
+All of them in one place: [`../design/principles.md`](../design/principles.md) —
+product framing, notifications, «no dead ends», the engineering order below, the
+studio's form canon (`pgcorpus`) and the grep-checkable typography rules. Read the
+relevant section before a decision; run §6 before a commit.
+
 ## How to work in this repo
 
 The order that pays off here, learned the expensive way:
@@ -176,6 +196,24 @@ left in a view is logic nobody can check. That is where every hand-found bug in 
 Boundaries (`Transcriber`, `RecapBackend`) exist so recorded fixtures can stand in for a live ASR
 sidecar and a live model — see `Tests/Fixtures/boundaries/`. Add a fixture when a real service
 surprises you; each file there cost a real incident.
+
+## Build & Verify
+
+- ALWAYS build with the project's `./build.sh` (or documented build script), never raw `swift build` / `xcodebuild` directly — raw builds put artifacts in `.build/` and the user sees no updated app.
+- After any code change, run the project's test suite and typecheck/lint before reporting done.
+- Never claim a fix works without empirical verification (run it, screenshot it, or measure it).
+
+## Scope Discipline
+
+- Implement ONLY what was asked. Do not add extra packages, prototype apps, docs sites, or abstractions that were not requested.
+- If you believe extra work is needed, propose it in one sentence and wait for approval before writing code.
+- Prefer the smallest diff that satisfies the request.
+
+## Regression Guard (Swift/React refactors)
+
+- Before refactoring shared state (pipeline state machines, markDirty/dirty flags, editor snapshots), list every consumer of that state and confirm each is still correct after the change.
+- After each refactor step, re-run the full test suite AND manually exercise the affected UI path (playback, karaoke click, transcript edit) before moving to the next step.
+- Never leave a refactor half-applied across a commit boundary.
 
 ## Development practices
 

@@ -39,6 +39,9 @@ let package = Package(
         // ENABLE_DEBUG_DYLIB, which SPM manifests can't set.
         .target(
             name: "PropellerUI",
+            // The sidebar draws `SidebarRowState`; the rule that produces one
+            // lives in PropellerPure so a test can reach it.
+            dependencies: ["PropellerPure"],
             path: "PropellerUI"
         ),
         .executableTarget(

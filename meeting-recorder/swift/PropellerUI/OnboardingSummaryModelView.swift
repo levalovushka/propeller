@@ -1,18 +1,20 @@
 import SwiftUI
 
-/// Onboarding step: offer the local summary model, then get out of the way.
+/// Onboarding step: say that the summary model is being fetched, and move on.
 ///
-/// Both buttons advance immediately. The screen used to hold the user on a
-/// progress bar after «Скачать», which bought them nothing — there is no
-/// decision left and nothing to react to, so watching 3.4 GB tick up is pure
-/// waiting. The download reports into the status bar instead, and recaps
-/// backfill on their own once the model lands.
+/// **Not a question.** It used to offer «Скачать» / «Позже», which made the app
+/// work or not work depending on whether someone understood the fifth screen of
+/// an onboarding — and «Позже» had no way back except finding a button in
+/// Settings. The model is part of the installation now: it is fetched on launch
+/// and repaired whenever it goes missing (`design/no-dead-ends.md` §5), so there
+/// is nothing here to decide and nothing to press but «Далее».
+///
+/// There is no progress bar either, for the reason there never was one: watching
+/// 3.4 GB tick up buys nothing, recording works without it, and summaries
+/// backfill on their own once the weights land.
 struct OnboardingSummaryModelView: View {
     var onNext: () -> Void
-    var onSkip: () -> Void
     var onBack: () -> Void
-    /// Starts the download in the background (must not await completion).
-    var onStartDownload: () -> Void
     var isReady: Bool
     var errorMessage: String? = nil
 
@@ -27,14 +29,14 @@ struct OnboardingSummaryModelView: View {
                 )
                 .fixedSize(horizontal: false, vertical: true)
 
-                Text("Локальная модель для саммари и рекапа.\n\nСкачается в фоне, записывать можно без неё.")
+                Text("Уже качаем в\u{00A0}фоне. Записывать и\u{00A0}расшифровывать\nможно прямо сейчас — саммари появятся,\nкогда модель докачается.")
                     .typo(Tokens.Typography.Label.mdRegular)
                     .foregroundStyle(Tokens.Ink.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
 
                 if isReady {
-                    Label("Модель готова", systemImage: "checkmark.circle.fill")
+                    Label("Модель на месте", systemImage: "checkmark.circle.fill")
                         .typo(Tokens.Typography.Label.mdMedium)
                         .foregroundStyle(.green)
                         .padding(.top, 8)
@@ -50,31 +52,13 @@ struct OnboardingSummaryModelView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         } actions: {
-            HStack(spacing: 10) {
-                if isReady {
-                    PillButton(title: "Далее", kind: .primary, action: onNext)
-                } else {
-                    // Ghost is the tertiary step of the prominence scale: declining
-                    // stays a real choice without competing with the recommended one.
-                    PillButton(title: "Позже", kind: .ghost, action: onSkip)
-                    PillButton(title: "Скачать", kind: .primary, action: {
-                        onStartDownload()
-                        onNext()
-                    })
-                }
-            }
-            .frame(maxWidth: .infinity)
+            PillButton(title: "Далее", kind: .primary, action: onNext)
+                .frame(maxWidth: .infinity)
         }
     }
 }
 
 #Preview("Summary model") {
-    OnboardingSummaryModelView(
-        onNext: {},
-        onSkip: {},
-        onBack: {},
-        onStartDownload: {},
-        isReady: false
-    )
+    OnboardingSummaryModelView(onNext: {}, onBack: {}, isReady: false)
     .background(GlassBackground())
 }

@@ -1,19 +1,30 @@
 import Foundation
 
-/// Whether a failure is worth trying again on its own.
+/// Who a failure belongs to, and therefore what happens next.
 ///
-/// This is the whole difference between "the app quietly caught up" and "the
-/// user found a red button in their archive three days later". A missing model,
-/// a sidecar that had not finished starting, a laptop that went to sleep
-/// mid-summary — all of those fix themselves, and the recording should be
-/// picked back up without anyone being told about it. A deleted audio file or
-/// an empty transcript never fixes itself, and pretending otherwise burns CPU
-/// on a loop the user cannot see.
-public enum FailureKind: String, Codable, Sendable {
-    /// The world was briefly wrong. Retried on a backoff, silently.
+/// Three cases, and **none of them is "ask the user"** — that is the whole point
+/// (`design/no-dead-ends.md`). A missing model, a sidecar mid-spawn, a laptop
+/// that slept: the world was briefly wrong, so wait and try again. A 413 from our
+/// own chunker or a phase that claimed progress and made none: our bug, so try
+/// again *and* tell ourselves through telemetry. Audio the user deleted, a
+/// recording with no speech in it: nothing to do, ever, by anyone — a result, not
+/// an error.
+///
+/// The old two-case version had `permanent`, which meant "parked until someone
+/// finds the retry button". There is no button any more, and archives written by
+/// those builds migrate through `PipelineFailure.init(from:)`.
+public enum FailureKind: String, Codable, Sendable, CaseIterable {
+    /// The world was briefly wrong. Retried on a backoff, silently, forever.
     case transient
-    /// Nothing changes without the user. Parked, and *shown*.
-    case permanent
+    /// Ours. Retried the same way — and counted, because a bug that only shows up
+    /// on someone else's machine is one we never hear about otherwise.
+    case ourFault = "our_fault"
+    /// Nothing further is possible: the input is gone or was never there. The one
+    /// kind that owes no more work, and the only legitimate end of the line.
+    case terminal
+
+    /// Does the worker owe this recording another attempt?
+    public var isRetryable: Bool { self != .terminal }
 }
 
 /// How often the worker tries again, and how it decides whether to.
@@ -24,41 +35,33 @@ public enum FailureKind: String, Codable, Sendable {
 /// behaviour untestable.
 public enum PipelineRetry {
 
-    /// Backoff between attempts: 20 s, 1 min, 5 min, 20 min.
+    /// Backoff between attempts: 20 s, 1 min, 5 min, 20 min, then an hour — and
+    /// an hour from then on, without end.
     ///
-    /// The first step is short because the overwhelming majority of real
-    /// failures here are "not up yet" — `ollama serve` still loading, the ASR
-    /// sidecar mid-spawn, a model being written to disk. The tail is long
-    /// because anything that survives four attempts is an environment problem,
-    /// and hammering it costs battery for nothing.
-    public static let steps: [TimeInterval] = [20, 60, 300, 1200]
-
-    /// Total attempts a phase gets, first one included.
+    /// The first step is short because the overwhelming majority of real failures
+    /// here are "not up yet" — `ollama serve` still loading, the ASR sidecar
+    /// mid-spawn, a model being written to disk. The tail is long because anything
+    /// that survives that is an environment problem, and hammering it costs
+    /// battery for nothing.
     ///
-    /// ASR gets fewer than the summary on purpose: re-running it can mean
-    /// minutes of CPU on a long meeting, while its cheap failure mode (sidecar
-    /// not listening) shows up in the first second. A summary is the phase that
-    /// waits on a model download or a rate limit, so it is the one that
-    /// benefits from a long, patient tail.
-    public static func maxAttempts(for phase: PipelineActivity.Phase) -> Int {
-        switch phase {
-        case .transcribing, .diarizing: return 3
-        case .saving:                   return 3
-        case .summarizing:              return 5
-        }
-    }
+    /// **There is no last step.** A count of attempts belongs to a request
+    /// somebody is waiting on with a dialogue open; this is a background
+    /// obligation, and the moment it gives up, a person has to be told and asked
+    /// to press something. That was the single largest source of dead ends in the
+    /// app: not the failures, the counter.
+    public static let steps: [TimeInterval] = [20, 60, 300, 1200, 3600]
 
-    /// When the worker may try this phase again by itself, or nil when it may
-    /// not — either the failure is permanent or the attempts are spent.
+    /// When the worker tries this phase again — nil only for a terminal failure,
+    /// because that is the only case where there is nothing left to try.
     public static func nextAttempt(
         kind: FailureKind,
         attempt: Int,
         phase: PipelineActivity.Phase,
         after now: Date
     ) -> Date? {
-        guard kind == .transient else { return nil }
-        guard attempt >= 1, attempt < maxAttempts(for: phase) else { return nil }
-        return now.addingTimeInterval(steps[min(attempt - 1, steps.count - 1)])
+        guard kind.isRetryable else { return nil }
+        let step = steps[min(max(attempt, 1) - 1, steps.count - 1)]
+        return now.addingTimeInterval(step)
     }
 
     /// How long to wait before asking again whether a summary provider showed
@@ -75,36 +78,37 @@ public enum PipelineRetry {
 
     // MARK: - Classification
 
-    /// Read a failure message and decide whether waiting could help.
+    /// Read a failure message and decide whose problem it is.
     ///
     /// Text matching, because that is what the pipeline actually has: most of
     /// these errors arrive as `localizedDescription` from a sidecar, URLSession
-    /// or Foundation. Call sites that know better pass the kind explicitly.
+    /// or Foundation.
     ///
-    /// Permanent patterns are checked first: "gigastt недоступен — файл не
-    /// найден" must not be read as a transport problem.
+    /// **This function never returns `.terminal`.** A terminal is a claim about
+    /// the *input* — the audio is gone, there was no speech — and no error string
+    /// is good enough evidence for that. "gigastt недоступен — файл не найден" is
+    /// a broken install, not a missing recording, and parking a meeting forever on
+    /// a substring match is exactly the kind of dead end this file now exists to
+    /// prevent. Terminals are declared by the call site that checked the input
+    /// itself, and only there.
     public static func classify(_ message: String) -> FailureKind {
         let text = message.lowercased()
-        for marker in permanentMarkers where text.contains(marker) { return .permanent }
-        for marker in transientMarkers where text.contains(marker) { return .transient }
-        // Unknown errors are treated as transient: the common unknown on this
-        // pipeline is an environment hiccup, and `maxAttempts` bounds the cost
-        // of being wrong at two extra tries.
+        for marker in ourFaultMarkers where text.contains(marker) { return .ourFault }
+        // Everything else — known transient markers *and* unknowns — waits and
+        // tries again. There is no longer a cost to being wrong about an unknown:
+        // the ladder walks out to an hour and nobody is told either way.
         return .transient
     }
 
-    /// Data, not code, so a new case is one string and one test.
-    static let permanentMarkers: [String] = [
-        // The input is gone or unusable.
-        "не найден", "не найдено", "not found", "no such file", "нет аудио",
-        "нет транскрипта", "пуст", "empty", "0 байт",
-        // The request can never fit as built (client chunking bug, not weather).
+    /// Ours, and knowable from the message alone. Data, not code, so a new case is
+    /// one string and one test.
+    static let ourFaultMarkers: [String] = [
+        // The request can never fit as built: the chunker miscounted. Retrying is
+        // still right (Э4 makes the retry divide the chunk instead of repeating
+        // it), and the signal goes to telemetry rather than to a person.
         "413", "too large", "слишком велик", "слишком больш",
-        // Needs a person: disk, permissions, settings.
-        "мало места", "недостаточно места", "no space", "disk full",
-        "permission", "denied", "разрешени", "доступ запрещ",
         // A reasoning model that spent the whole window thinking will spend it
-        // again on the next identical call.
+        // again on the next identical call — our prompt handling, not the weather.
         "ушла в рассуждения",
     ]
 

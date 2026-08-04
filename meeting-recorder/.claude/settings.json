@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // empty' | { read -r f; case \"$f\" in *.swift) (cd \"${CLAUDE_PROJECT_DIR:-/Users/levonlobanov/Desktop/Propeller/meeting-recorder}/swift\" && swift build -c release 2>&1 | tail -20) ;; esac; }"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command' | grep -Eq 'swift build|pkill .*(vite|next|dev)' && { echo 'BLOCKED: use ./build.sh; do not kill the dev server'; exit 2; } || exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}

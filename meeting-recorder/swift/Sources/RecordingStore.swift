@@ -138,6 +138,7 @@ class RecordingStore: ObservableObject {
         micOnlyCaptured: Bool? = nil,
         systemCaptureAppScoped: Bool? = nil,
         systemStemOffset: Double? = nil,
+        speakerAttribution: SpeakerAttribution? = nil,
         lastFailure: PipelineFailure?? = nil
     ) {
         guard let idx = recordings.firstIndex(where: { $0.id == id }) else { return }
@@ -145,7 +146,13 @@ class RecordingStore: ObservableObject {
         if let s = status { recordings[idx].status = s }
         if let d = duration { recordings[idx].duration = d }
         if let l = language { recordings[idx].language = l }
-        if let n = notes { recordings[idx].notes = n }
+        if let n = notes {
+            recordings[idx].notes = n
+            // The blob was written directly (legacy editors, the overlay's own
+            // path). Drop the records so they are re-derived from it rather than
+            // drifting away from what every other reader sees.
+            recordings[idx].noteItems = nil
+        }
         if let r = rawSegmentsJSON { recordings[idx].rawSegmentsJSON = r }
         if let m = mergedSegmentsJSON { recordings[idx].mergedSegmentsJSON = m }
         // Auto-title path: sets the title WITHOUT marking it manual (unlike rename()).
@@ -155,7 +162,25 @@ class RecordingStore: ObservableObject {
         if let mo = micOnlyCaptured { recordings[idx].micOnlyCaptured = mo }
         if let sc = systemCaptureAppScoped { recordings[idx].systemCaptureAppScoped = sc }
         if let so = systemStemOffset { recordings[idx].systemStemOffset = so }
+        if let sa = speakerAttribution { recordings[idx].speakerAttribution = sa }
         if let lf = lastFailure { recordings[idx].lastFailure = lf }
+        scheduleSave()
+    }
+
+    /// Append one note, keeping the records and the legacy blob in step.
+    ///
+    /// Both are written on purpose: the records are what the pane draws, the
+    /// blob is what the overlay, the markdown writer, the recap prompt and
+    /// search have always read.
+    func appendNote(id: String, text: String, at date: Date = Date()) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let idx = recordings.firstIndex(where: { $0.id == id }) else { return }
+        var items = MeetingNotes.resolved(
+            items: recordings[idx].noteItems, blob: recordings[idx].notes
+        )
+        items.append(MeetingNoteRecord(text: trimmed, createdAt: date))
+        recordings[idx].noteItems = items
+        recordings[idx].notes = MeetingNotes.blob(from: items)
         scheduleSave()
     }
 
@@ -177,11 +202,32 @@ class RecordingStore: ObservableObject {
     }
 
     /// Remove the recording entirely (audio files + index entry)
+    /// Delete for good: the audio goes, then the entry.
     func remove(_ entry: RecordingEntry) {
         for url in audioFileURLs(for: entry) {
             try? FileManager.default.removeItem(at: url)
         }
         recordings.removeAll { $0.id == entry.id }
+        scheduleSave()
+    }
+
+    /// Take a meeting out of the list but leave its audio alone.
+    ///
+    /// This is what «Удалить» does now, because the row that stays behind offers
+    /// «Вернуть» — and an undo that cannot bring the audio back is not an undo.
+    /// Every deferred removal is finished by `remove` sooner or later:
+    /// `AppState` commits it when the offer expires, when another meeting is
+    /// deleted, and on quit.
+    func removeDeferred(_ entry: RecordingEntry) {
+        recordings.removeAll { $0.id == entry.id }
+        scheduleSave()
+    }
+
+    /// Put a deferred removal back, newest-first like the rest of the list.
+    func restore(_ entry: RecordingEntry) {
+        guard !recordings.contains(where: { $0.id == entry.id }) else { return }
+        recordings.append(entry)
+        recordings.sort { $0.date > $1.date }
         scheduleSave()
     }
 

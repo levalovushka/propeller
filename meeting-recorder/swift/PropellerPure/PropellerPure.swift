@@ -154,6 +154,63 @@ public enum SourceAwareSpeaker {
             return fluidDisplayName
         }
     }
+
+    /// Labels when there was no diarization at all — the stems are the only
+    /// evidence there is.
+    ///
+    /// This is the plan B that keeps a transcript from being held hostage: the
+    /// diarizer's models are fetched over the network, so a first run offline
+    /// used to lose an ASR pass that had already succeeded
+    /// (`design/no-dead-ends.md`, Э1).
+    ///
+    /// Only one thing can be *proved* from the stems: speech that arrived on the
+    /// microphone is the owner's. Everything else came from the far side, and how
+    /// many people are over there is exactly what we cannot know without
+    /// clustering — so they are one name, not a guessed count. Overlap counts as
+    /// the far side too: when both stems carry energy, someone over there is
+    /// certainly talking, and «everyone is me» is the failure mode this whole
+    /// file exists to avoid.
+    public static func stemsOnly(
+        source: Source,
+        ownerName: String,
+        remoteName: String = defaultRemoteName,
+        ownerFallback: String = defaultOwnerName
+    ) -> String {
+        let owner = ownerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch source {
+        case .microphone:
+            return owner.isEmpty ? ownerFallback : owner
+        case .system, .mixed, .unknown:
+            return remoteName
+        }
+    }
+
+    /// «Собеседник», singular: without clustering we cannot count the far side,
+    /// and «Speaker 1» promises a numbering that has nothing behind it.
+    public static let defaultRemoteName = "Собеседник"
+    /// When the owner never entered a name in onboarding.
+    public static let defaultOwnerName = "Я"
+}
+
+/// How the speaker names in a transcript were arrived at.
+///
+/// Persisted on the recording, because it is a property of *that* transcript and
+/// the card has to be able to say so: a dialogue split by stems is honest and
+/// useful, and pretending it is the same thing as clustered speakers would be
+/// the quiet kind of lying (`design/no-dead-ends.md` §7).
+public enum SpeakerAttribution: String, Codable, Equatable, Sendable, CaseIterable {
+    /// FluidAudio clustered the speech; names are per person.
+    case diarized
+    /// No clustering — owner by microphone, everyone else as one.
+    case stems
+
+    /// Shown in the meeting's card. Nil when there is nothing to disclose.
+    public var disclosure: String? {
+        switch self {
+        case .diarized: return nil
+        case .stems:    return "Спикеры не разделены — только «я» и\u{00A0}собеседник"
+        }
+    }
 }
 
 public enum MixGain {
@@ -333,6 +390,29 @@ public enum GigasttChunking {
 
     public static func needsChunking(fileBytes: Int64, durationSeconds: Double) -> Bool {
         fileBytes > maxSingleShotBytes || durationSeconds > maxSingleShotSeconds
+    }
+
+    /// Shortest piece worth sending on its own.
+    ///
+    /// Halving stops here rather than at zero: below about half a minute the
+    /// sidecar's own duration floor and the cost of a request per phrase start to
+    /// dominate, and a 413 on a 30-second chunk is not a size problem any more —
+    /// it is a broken sidecar, which the ladder handles.
+    public static let minChunkSeconds: Double = 30
+
+    /// What to do when the sidecar says a piece is too large.
+    ///
+    /// «Слишком большой кусок» is not a failure, it is an instruction: divide.
+    /// The chunker sizes pieces from what it can measure, and it has been wrong
+    /// before (a 16 kHz Int16 mix written back out as Float32 doubled every chunk
+    /// and tripped the 64 MiB limit) — so the reply to 413 is to halve and go
+    /// again, not to park a meeting with a red button on it
+    /// (`design/no-dead-ends.md`, Э4).
+    ///
+    /// Returns the length to try next, or nil when halving has run out of room.
+    public static func smallerChunk(after seconds: Double) -> Double? {
+        let half = seconds / 2
+        return half >= minChunkSeconds ? half : nil
     }
 
     public struct Segment: Equatable {

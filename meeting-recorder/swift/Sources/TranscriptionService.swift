@@ -10,6 +10,9 @@ struct MeetingTranscriptionResult {
     /// Per-segment view of the transcript with resolved speaker names.
     /// Persisted on RecordingEntry to power per-segment reassignment.
     var mergedSegments: [PersistedSegment]
+    /// How those names were arrived at — clustered, or the stems alone.
+    /// Persisted with the meeting so its card can disclose the difference.
+    var attribution: SpeakerAttribution = .diarized
 }
 
 /// Intermediate result after the ASR pass but before diarization.
@@ -155,9 +158,20 @@ class TranscriptionService {
         systemStemOffset: Double = 0,
         progressCallback: ((String) -> Void)? = nil
     ) async throws -> MeetingTranscriptionResult {
+        // A diarizer we cannot load is not a reason to lose an ASR pass that has
+        // already succeeded. Its models come over the network, so a first run
+        // offline used to throw here — and three attempts later the meeting was
+        // parked red with a finished transcript sitting in the checkpoint beside
+        // it. Now it degrades: no clustering, speakers by stem
+        // (`design/no-dead-ends.md`, Э1).
         if diarizer == nil {
             progressCallback?("Загрузка диаризатора…")
-            _ = try await prepareDiarizer()
+            do {
+                _ = try await prepareDiarizer()
+            } catch {
+                NSLog("[TranscriptionService] diarizer unavailable, splitting by stems: \(error)")
+                Analytics.signal("Diarize.unavailable")
+            }
         }
 
         progressCallback?("Определяем спикеров…")
@@ -199,6 +213,9 @@ class TranscriptionService {
         let unmerged = mergedSegments.filter { !$0.text.isEmpty }
         let ownerName = Preferences.shared.userName
         let useSourceSplit = Self.hasUsableStems(for: audioURL)
+        // Clustering happened at all? Nothing downstream can tell from the
+        // labels alone — one speaker is a legitimate diarization of a monologue.
+        let attribution: SpeakerAttribution = diarizedSegments.isEmpty ? .stems : .diarized
         let persisted: [PersistedSegment] = unmerged.enumerated().map { idx, seg in
             let fluidName = speakerNameMap[seg.speakerLabel] ?? seg.speakerLabel
             let speaker: String
@@ -209,11 +226,17 @@ class TranscriptionService {
                     end: Double(seg.endTime),
                     systemStemOffset: systemStemOffset
                 )
-                speaker = SourceAwareSpeaker.resolve(
-                    fluidDisplayName: fluidName,
-                    source: source,
-                    ownerName: ownerName
-                )
+                speaker = attribution == .stems
+                    ? SourceAwareSpeaker.stemsOnly(source: source, ownerName: ownerName)
+                    : SourceAwareSpeaker.resolve(
+                        fluidDisplayName: fluidName,
+                        source: source,
+                        ownerName: ownerName
+                    )
+            } else if attribution == .stems {
+                // No clustering *and* no stems to compare (mic-only capture):
+                // one voice is all we can honestly claim, and it is the owner's.
+                speaker = SourceAwareSpeaker.stemsOnly(source: .microphone, ownerName: ownerName)
             } else {
                 speaker = fluidName
             }
@@ -230,7 +253,8 @@ class TranscriptionService {
 
         return MeetingTranscriptionResult(
             transcript: transcript,
-            mergedSegments: persisted
+            mergedSegments: persisted,
+            attribution: attribution
         )
     }
 

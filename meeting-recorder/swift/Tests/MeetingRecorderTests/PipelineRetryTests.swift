@@ -31,74 +31,78 @@ final class PipelineRetryTests: XCTestCase {
         }
     }
 
-    func testThingsOnlyAPersonCanFixArePermanent() {
-        let hopeless = [
-            "Аудиофайл не найден — нельзя расшифровать.",
-            "Транскрипт не найден на диске",
-            "Нет транскрипта для сохранения",
-            "Саммари пропущено — пустой транскрипт",
+    func testОшибкиНашегоЖеКодаПомечаютсяКакНаши() {
+        // Их всё равно повторяем — но считаем: баг, который воспроизводится
+        // только на чужой машине, иначе до нас не доходит.
+        let ours = [
             "LLM HTTP 413: body too large",
-            "Расшифровка отменена — мало места на диске.",
+            "gigastt HTTP 413: тело запроса слишком большое",
             "qwen3.5:4b — модель ушла в рассуждения и не выдала конспект",
-            "You don't have permission to save the file",
         ]
-        for message in hopeless {
-            XCTAssertEqual(PipelineRetry.classify(message), .permanent, message)
+        for message in ours {
+            XCTAssertEqual(PipelineRetry.classify(message), .ourFault, message)
         }
     }
 
-    /// "недоступен" appears in both worlds, so order decides. A missing file
-    /// must not read as a transport problem just because the sentence mentions
-    /// the sidecar.
-    func testAMissingFileWinsOverAnUnavailableService() {
-        XCTAssertEqual(
-            PipelineRetry.classify("gigastt недоступен: файл не найден"),
-            .permanent
-        )
-    }
-
-    /// An error nobody has seen yet gets the benefit of the doubt — but only
-    /// two extra tries' worth of it.
-    func testAnUnrecognisedErrorIsRetriedButNotForever() {
-        XCTAssertEqual(PipelineRetry.classify("NSXPCConnectionInterrupted (4097)"), .transient)
+    func testПоТекстуОшибкиТерминалНеОбъявляетсяНикогда() {
+        // «gigastt недоступен: файл не найден» — это сломанная установка, а не
+        // пропавшая запись. Припарковать встречу навсегда по подстроке — ровно
+        // тот тупик, который мы и убираем: терминал объявляет только тот, кто
+        // сам посмотрел на вход.
+        let temptations = [
+            "gigastt недоступен: файл не найден",
+            "Аудиофайл не найден — нельзя расшифровать.",
+            "Транскрипт не найден на диске",
+            "You don't have permission to save the file",
+            "no space left on device",
+            "NSXPCConnectionInterrupted (4097)",
+        ]
+        for message in temptations {
+            XCTAssertNotEqual(PipelineRetry.classify(message), .terminal, message)
+        }
     }
 
     // MARK: - The schedule
 
-    func testTheFirstRetryIsAlmostImmediateAndTheLastIsPatient() {
+    func testПервыйПовторПочтиСразуАДальшеВсёТерпеливее() {
         let phase = PipelineActivity.Phase.summarizing
-        let delays = (1...4).map {
+        let delays = (1...5).map {
             PipelineRetry.nextAttempt(kind: .transient, attempt: $0, phase: phase, after: t0)?
                 .timeIntervalSince(t0)
         }
-        XCTAssertEqual(delays, [20, 60, 300, 1200])
+        XCTAssertEqual(delays, [20, 60, 300, 1200, 3600])
     }
 
-    func testAttemptsRunOutAndTheMeetingBecomesTheUsersProblem() {
+    func testПопыткиНеКончаютсяНикогда() {
+        // Счётчик попыток и был главным источником тупиков: пока он есть, у
+        // приложения существует момент, когда оно сдаётся и просит человека.
         let phase = PipelineActivity.Phase.summarizing
-        XCTAssertNotNil(PipelineRetry.nextAttempt(kind: .transient, attempt: 4, phase: phase, after: t0))
-        XCTAssertNil(
-            PipelineRetry.nextAttempt(kind: .transient, attempt: 5, phase: phase, after: t0),
-            "the fifth failure is the one worth telling someone about"
-        )
+        for attempt in [6, 42, 1000] {
+            XCTAssertEqual(
+                PipelineRetry.nextAttempt(kind: .transient, attempt: attempt, phase: phase, after: t0)?
+                    .timeIntervalSince(t0),
+                3600,
+                "попытка \(attempt) должна быть назначена — через час, но назначена"
+            )
+        }
     }
 
-    /// Re-running ASR is minutes of CPU; re-asking a model that was still
-    /// loading is seconds. They should not get the same patience.
-    func testTranscriptionGivesUpSoonerThanTheSummary() {
-        XCTAssertLessThan(
-            PipelineRetry.maxAttempts(for: .transcribing),
-            PipelineRetry.maxAttempts(for: .summarizing)
-        )
-        XCTAssertNil(
-            PipelineRetry.nextAttempt(kind: .transient, attempt: 3, phase: .transcribing, after: t0)
-        )
+    func testВсеФазыОдинаковоНеСдаются() {
+        for phase in PipelineActivity.Phase.allCases {
+            for kind in [FailureKind.transient, .ourFault] {
+                XCTAssertNotNil(
+                    PipelineRetry.nextAttempt(kind: kind, attempt: 9, phase: phase, after: t0),
+                    "\(phase) / \(kind)"
+                )
+            }
+        }
     }
 
-    func testPermanentFailuresAreNeverRescheduled() {
+    func testТолькоТерминалНеПланируетсяЗаново() {
+        // Единственный случай, когда работы больше нет: входа не существует.
         for phase in PipelineActivity.Phase.allCases {
             XCTAssertNil(
-                PipelineRetry.nextAttempt(kind: .permanent, attempt: 1, phase: phase, after: t0),
+                PipelineRetry.nextAttempt(kind: .terminal, attempt: 1, phase: phase, after: t0),
                 "\(phase)"
             )
         }
@@ -111,24 +115,19 @@ final class PipelineRetryTests: XCTestCase {
 
     // MARK: - Failures escalate on the recording
 
-    func testRepeatedFailuresOfTheSamePhaseEscalate() {
+    func testПовторыОднойФазыКопятсяНоНикогдаНеСтановятсяЗаботойЧеловека() {
         var failure = PipelineFailure(phase: .summarizing, message: "Ollama недоступен", at: t0)
-        XCTAssertEqual(failure.attempt, 1)
         XCTAssertEqual(failure.kind, .transient)
-        XCTAssertFalse(failure.needsAttention)
-
-        for attempt in 2...4 {
+        for attempt in 2...12 {
             failure = PipelineFailure(
                 phase: .summarizing, message: "Ollama недоступен", at: t0, previous: failure
             )
             XCTAssertEqual(failure.attempt, attempt)
-            XCTAssertFalse(failure.needsAttention, "attempt \(attempt) should still be ours to fix")
+            XCTAssertFalse(
+                failure.isTerminal,
+                "попытка \(attempt): пайплайн всё ещё должен эту работу"
+            )
         }
-        failure = PipelineFailure(
-            phase: .summarizing, message: "Ollama недоступен", at: t0, previous: failure
-        )
-        XCTAssertEqual(failure.attempt, 5)
-        XCTAssertTrue(failure.needsAttention, "after five tries the user gets to know")
     }
 
     /// A meeting that failed ASR last week and its summary today is not on its
@@ -141,36 +140,48 @@ final class PipelineRetryTests: XCTestCase {
         XCTAssertEqual(recap.attempt, 1)
     }
 
-    func testAPermanentFailureIsShownOnTheFirstTry() {
+    func testТерминалОбъявляетТотКтоПосмотрелНаВход() {
+        // Не текст сообщения, а вызывающий: он единственный знает, что аудио
+        // действительно нет.
         let failure = PipelineFailure(
-            phase: .transcribing, message: "Аудиофайл не найден — нельзя расшифровать.", at: t0
+            phase: .transcribing, message: "Аудио удалено — расшифровывать нечего",
+            at: t0, kind: .terminal
         )
-        XCTAssertEqual(failure.attempt, 1)
-        XCTAssertTrue(failure.needsAttention)
+        XCTAssertTrue(failure.isTerminal)
         XCTAssertTrue(failure.blocks(at: t0.addingTimeInterval(86_400)))
+        // А та же строка без явного `kind` — просто повод попробовать ещё раз.
+        XCTAssertFalse(
+            PipelineFailure(phase: .transcribing, message: "Аудио удалено", at: t0).isTerminal
+        )
     }
 
     func testWaitingIsNotTheSameAsBroken() {
         let failure = PipelineFailure(phase: .summarizing, message: "HTTP 503", at: t0)
         XCTAssertTrue(failure.blocks(at: t0.addingTimeInterval(5)))
         XCTAssertFalse(failure.blocks(at: t0.addingTimeInterval(25)), "the deadline passed")
-        XCTAssertFalse(failure.needsAttention, "a wait is not something to report")
+        XCTAssertFalse(failure.isTerminal, "ожидание — это не конец")
     }
 
     // MARK: - Old archives
 
-    /// An index written by a build that had no retry plan must decode as
-    /// "parked, waiting for the user" — the behaviour that build had. Waking up
-    /// and re-running ASR on a meeting someone already gave up on is worse than
-    /// leaving it alone.
-    func testAnIndexFromAnOlderBuildDecodesAsParked() throws {
-        let json = """
+    /// Индекс от старой сборки распарковывается: кнопки «Повторить» больше нет,
+    /// значит «ждёт человека» читается единственным честным способом — «мы всё
+    /// ещё должны эту работу». Это и есть миграция красных встреч.
+    func testАрхивСтаройСборкиРаспарковывается() throws {
+        let noKind = """
         {"phase":"transcribing","message":"gigastt недоступен","at":760000000}
         """.data(using: .utf8)!
-        let failure = try JSONDecoder().decode(PipelineFailure.self, from: json)
-        XCTAssertEqual(failure.attempt, 1)
-        XCTAssertEqual(failure.kind, .permanent)
-        XCTAssertTrue(failure.needsAttention)
+        let old = try JSONDecoder().decode(PipelineFailure.self, from: noKind)
+        XCTAssertEqual(old.kind, .transient)
+        XCTAssertFalse(old.isTerminal, "красная встреча из 1.15 обязана вернуться в очередь")
+
+        let parked = """
+        {"phase":"summarizing","message":"LLM недоступен","at":760000000,"attempt":5,"kind":"permanent"}
+        """.data(using: .utf8)!
+        let migrated = try JSONDecoder().decode(PipelineFailure.self, from: parked)
+        XCTAssertEqual(migrated.kind, .transient)
+        XCTAssertFalse(migrated.isTerminal)
+        XCTAssertEqual(migrated.attempt, 5, "счётчик читается, просто больше ничем не грозит")
     }
 
     func testAFailureSurvivesARoundTrip() throws {

@@ -15,6 +15,13 @@ struct RecordingEntry: Identifiable, Codable {
     var status: RecordingStage
     var transcript: String?
     var notes: String?
+    /// Notes as separate records — the shape the pane draws.
+    ///
+    /// `notes` stays as their joined rendering, because the ⌃⌥N overlay, the
+    /// markdown writer, the recap prompt and search all read it, and a build
+    /// from before this field has to keep working on the same archive. nil means
+    /// "never split" and is read through `MeetingNotes.resolved`.
+    var noteItems: [MeetingNoteRecord]?
     var language: String?     // ISO code ("da", "en") or nil = use default
     /// JSON-serialized [ASRSegment] array, stored after the ASR pass
     /// completes. Allows diarization to resume after a crash without re-running ASR.
@@ -40,6 +47,13 @@ struct RecordingEntry: Identifiable, Codable {
     /// True when this recording finished without a usable system-audio stem.
     /// Per-entry (not a global latch) so the badge doesn't stick on other meetings.
     var micOnlyCaptured: Bool?
+    /// How the speaker names in this transcript were arrived at — clustered, or
+    /// the stems alone (`design/no-dead-ends.md`, Э1).
+    ///
+    /// nil for everything transcribed before this field existed, and that is read
+    /// as `.diarized`: those transcripts *were* clustered, because a build without
+    /// this field had no other way to finish one.
+    var speakerAttribution: SpeakerAttribution?
     /// False when system audio was captured from the whole machine instead of
     /// the meeting app — music and notifications are in the stem too. Recorded
     /// so «how often does the app-scoped filter actually survive» is answerable
@@ -52,8 +66,12 @@ struct RecordingEntry: Identifiable, Codable {
     /// what every build before this one did.
     var systemStemOffset: Double?
     /// Last pipeline failure for *this* recording. Per-entry so work on another
-    /// meeting can't erase it, and persisted so it survives a relaunch. While
-    /// set, the worker skips this recording; "Повторить" clears it.
+    /// meeting can't erase it, and persisted so it survives a relaunch.
+    ///
+    /// It no longer means «stopped»: while it is set the worker skips this
+    /// recording *until its next attempt is due*, and only a terminal failure
+    /// stops the work for good (`design/no-dead-ends.md`). Nothing in the
+    /// interface reads it directly — `MeetingRest` is the answer views ask for.
     var lastFailure: PipelineFailure?
     /// What the calendar knew about this meeting when recording started: series
     /// and event identifiers, invitees, call link. Written once, at start, and
@@ -66,6 +84,16 @@ struct RecordingEntry: Identifiable, Codable {
 
     /// Topics joined for subtitle display ("Ретро, ресурсы команды, планирование").
     var subtitleText: String { (topics ?? []).joined(separator: ", ") }
+
+    /// What this meeting's card has to disclose about its own depth, if anything.
+    ///
+    /// Not a warning and not an error: a statement of what the transcript is. It
+    /// exists so «ошибок не бывает» does not become «мы врём»
+    /// (`design/no-dead-ends.md` §7).
+    var depthDisclosure: String? {
+        guard transcript?.isEmpty == false else { return nil }
+        return (speakerAttribution ?? .diarized).disclosure
+    }
 
     var dateFormatted: String {
         let f = DateFormatter()
@@ -117,7 +145,9 @@ extension RecordingEntry: PipelineCandidate {
     /// may offer a button. A meeting merely waiting out a retry is *not* this:
     /// showing it would turn the catch-up the user is not supposed to notice
     /// into an error they have to think about.
-    var needsAttention: Bool { lastFailure?.needsAttention == true }
+    /// Nothing further will happen to this meeting: its audio is gone, or there
+    /// was no speech in it. Not «нужно вмешаться» — there is nothing to do.
+    var hasTerminalFailure: Bool { lastFailure?.isTerminal == true }
 }
 
 // MARK: - Meeting tag vocabulary

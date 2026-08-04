@@ -41,8 +41,15 @@ class AppState: ObservableObject {
     /// rendered recap, i.e. through private `@State` no poser can reach —
     /// without this, "Саммари — правка" photographed the read view.
     var galleryEditingRecap = false
+
+    /// Pose a deletion that has not landed, so the row can be photographed with
+    /// «Вернуть» on it. Nothing is actually deleted — the poser's archive is
+    /// fiction, and `removeRecording` would take a real entry out of a real index.
+    func galleryPoseDeletion(_ entry: RecordingEntry?) { pendingDeletion = entry }
+
+    func galleryPoseMicDenied(_ denied: Bool) { micAccessDenied = denied }
 #endif
-    /// Last pipeline failure shown in the empty transcript / recap panels (and toast).
+    /// Last pipeline failure shown in the empty transcript / recap panels.
     /// Cleared when a new ASR/recap attempt starts successfully past the early guards.
     @Published var pipelineError: String? = nil
     /// Hint when recap was skipped (no Ollama / no API key). Cleared on next successful recap.
@@ -68,8 +75,13 @@ class AppState: ObservableObject {
     // Selection
     @Published var selectedRecordingID: String?
 
-    // Recovery
-    @Published var recoveredCount = 0
+    /// Recording was asked for and the microphone is not ours to open.
+    ///
+    /// An attribute of recording, not a message about it: the row that starts a
+    /// recording says so itself, and clicking it goes where the permission is.
+    /// A message would have to be read at the moment it appeared — which is the
+    /// moment the user is in a call and not looking at this window.
+    @Published private(set) var micAccessDenied = false
 
     // Window
     @Published var isWindowOpen = false {
@@ -84,18 +96,12 @@ class AppState: ObservableObject {
     /// onboarding card vs main UI from this flag alone.
     @Published var showOnboarding = !Preferences.shared.onboardingCompleted
     private var didBootstrap = false
-    @Published var showMicPermissionAlert = false
     @Published var meetingDetected = false
-    @Published var diskSpaceWarning: String?
-    @Published var showDiskSpaceAlert = false
-    /// Library size exceeded the nudge threshold (plan-v2 6.1 / GROW-11). Never auto-deletes.
-    @Published var showStorageNudgeAlert = false
     @Published var storageLibraryBytes: Int64 = 0
     /// When set, MainView switches to this sidebar section (e.g. after pipeline).
     @Published var preferredSidebarSection: String?
     /// When set, RecordingDetailView selects this tab (`transcript` / `notes` / `recap`).
     @Published var preferredDetailTab: String?
-    private var diskSpaceContinuation: CheckedContinuation<Bool, Never>?
 
     /// True when this recording was started by a detected call (any platform),
     /// so hanging up can stop it.
@@ -153,9 +159,14 @@ class AppState: ObservableObject {
         // covers launches that read the pref before bootstrap runs)
 
         recordingStore.load()
-        recoveredCount = recordingStore.recoverInterruptedRecordings()
+        // Interrupted recordings are repaired silently. The count used to be
+        // announced — a modal, then a floating bar — and it told the user that *their*
+        // recordings had been interrupted, about a crash that was ours, with
+        // nothing to do about it. Each of those meetings is in the list with its
+        // own state; that is where it belongs.
+        _ = recordingStore.recoverInterruptedRecordings()
         Task { _ = await recordingStore.recoverMissingFinalMixes() }
-        refreshStorageNudge(presentAlert: true)
+        refreshStorageUsage()
         NotificationManager.shared.configure()
         NotificationManager.shared.onCancelRecording = { [weak self] in
             self?.cancelRecording()
@@ -181,16 +192,17 @@ class AppState: ObservableObject {
         observeTheWorld()
         kickPipeline("launch")
 
-        // Finish a summary-model download that a quit (or a dropped connection
-        // that outlived the in-session retries) left half-done. No-op when the
-        // model is already there; delayed so launch stays quiet. Needed even with
-        // nothing owed — someone who consented in onboarding and quit should come
-        // back to a working app, not to a download waiting for its first meeting.
-        if Preferences.shared.localRecapModelRequested {
-            Task {
-                try? await Task.sleep(nanoseconds: 20_000_000_000)
-                resumeLocalModelDownloadIfRequested()
-            }
+        // The summary model is part of the installation, not a choice offered on
+        // the fifth onboarding screen. Checked on **every** launch and restored
+        // when it is missing — models get deleted by disk cleaners, runtimes break
+        // after a system update, and the pinned version moves in a new build.
+        //
+        // «Саммари нет» is a legal depth for one meeting; «нет LLM» is not a legal
+        // state for the app (`design/no-dead-ends.md` §5). Delayed so the launch
+        // itself stays quiet, and skipped while a recording or a call is going on.
+        Task {
+            try? await Task.sleep(nanoseconds: 20_000_000_000)
+            await ensureSummaryModel()
         }
 
         // ASR sidecar starts lazily on first transcription (plan-optimization E1).
@@ -238,7 +250,7 @@ class AppState: ObservableObject {
     private func handleCallEnded() {
         meetingDetected = false
         if isRecording && recordingLinkedToCall {
-            stopRecording()
+            stopRecording(auto: true)
         }
         recordingLinkedToCall = false
         // Sticky ignore clears only once the conferencing app is gone (not on brief detector flaps).
@@ -265,6 +277,53 @@ class AppState: ObservableObject {
         startRecording()
     }
 
+    // MARK: - Pushes
+
+    /// Everything that reaches the system notification centre goes through here.
+    /// Whether it is sent at all, and whether it makes a sound, is `PushPolicy`.
+    private func notify(
+        _ kind: PushPolicy.Kind,
+        title: String = "Propeller",
+        body: String,
+        isAwaited: Bool = true,
+        recapExpected: Bool = false
+    ) {
+        let context = PushPolicy.Context(
+            isRecording: isRecording,
+            windowVisible: isWindowOpen,
+            appActive: NSApp.isActive,
+            isAwaited: isAwaited,
+            authorized: NotificationManager.shared.isAuthorized,
+            recapExpected: recapExpected
+        )
+        let surface = PushPolicy.surface(for: kind, in: context)
+        switch surface {
+        case .none:
+            break
+        case .banner:
+            NotificationManager.shared.post(title: title, body: body, sound: false)
+        case .bannerWithSound:
+            NotificationManager.shared.post(title: title, body: body, sound: true)
+        case .window:
+            // No notification channel left, and the state that would have said
+            // this lives in the window: bring the window (R8's one exception).
+            surfaceMeetingUI(preferSummaryTab: false)
+            bringWindowForward()
+        }
+        // Both halves are measured: a rule nobody counts is a rule nobody keeps
+        // (design/notifications.md §7).
+        Analytics.signal("Notice.\(kind.rawValue).\(surface.signalName)")
+    }
+
+    /// Put the main window in front. Only for a level-3 notice with nowhere else
+    /// to go — never for good news, and never during a recording.
+    private func bringWindowForward() {
+        NSApp.activate(ignoringOtherApps: true)
+        for window in NSApp.windows where window.frame.width > 400 {
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+
     // MARK: - Disk Space Pre-flight
 
     /// Check available disk space at `path`. Returns bytes available, or nil on error.
@@ -275,92 +334,36 @@ class AppState: ObservableObject {
         return capacity
     }
 
-    /// Check disk space before recording. Returns true if OK to proceed (enough space or user chose to continue).
-    func checkDiskSpaceForRecording() async -> Bool {
-        let path = Preferences.shared.recordingsPath
-        if let bytes = availableBytes(at: path), bytes < 500_000_000 {
-            let mbFree = bytes / 1_000_000
-            diskSpaceWarning = "На диске свободно только \(mbFree) МБ. Запись может прерваться, если место закончится."
-            return await presentDiskSpaceAlert()
-        }
-        return true
-    }
-
-    /// The two model downloads are very different sizes, and one gate for both
-    /// was wrong in both directions: it demanded 4 GB before a 1.1 GB ASR
-    /// download, and waved through a 3.4 GB recap model with 4 GB free — the
-    /// user passed the check and then ran out mid-pull. Measured 2026-07-27.
-    enum ModelDownload {
-        /// GigaAM ASR weights (~1.1 GB on disk) + working room.
-        case transcription
-        /// qwen3.5:4b (~3.4 GB) plus the unpacked Ollama runtime (~0.5 GB).
-        case recap
-
-        var requiredBytes: Int64 {
-            switch self {
-            case .transcription: return 2_000_000_000
-            case .recap: return 5_000_000_000
-            }
-        }
-
-        var humanSize: String {
-            switch self {
-            case .transcription: return "~1,1 ГБ"
-            case .recap: return "~3,9 ГБ"
-            }
-        }
-    }
-
-    /// Room for a model, answered without a dialog.
+    /// Note a nearly-full disk in the log, and record anyway.
     ///
-    /// What the worker uses. The interactive version suspends its caller on a
-    /// continuation until someone dismisses an alert — during catch-up that is a
-    /// modal appearing out of nowhere *and* a worker stopped dead until it is
-    /// answered, which is the one stall no timer can recover from.
-    func hasRoomForModelDownload(_ kind: ModelDownload = .transcription) -> Bool {
+    /// Nothing is shown. This was a gate that suspended the start on a
+    /// continuation until someone answered «Всё равно записать» — on the
+    /// auto-record path, a question parked in a window nobody is looking at, with
+    /// no timer to resume it, so a detected meeting simply never began. Then it
+    /// was a warning, which is not much better: it names a problem the app cannot
+    /// solve and the user cannot act on mid-call. If the disk really does fill,
+    /// the write fails and *that* failure belongs to the recording, with its own
+    /// row and its own «Повторить».
+    private func noteDiskSpace() {
+        guard let bytes = availableBytes(at: Preferences.shared.recordingsPath),
+              bytes < 500_000_000 else { return }
+        NSLog("[AppState] starting a recording with \(bytes / 1_000_000) MB free")
+    }
+
+    /// Room for the one model still fetched over the network.
+    ///
+    /// There were two, with one gate for both, and it was wrong in both directions
+    /// (4 GB demanded before a 1.1 GB ASR download; a 3.4 GB summary model waved
+    /// through with 4 GB free, then running out mid-pull — measured 2026-07-27).
+    /// The ASR half is gone entirely: GigaAM's weights ship inside the .app, so
+    /// there is nothing to make room for. What is left is 3.4 GB of summary weights
+    /// plus the unpacked runtime.
+    ///
+    /// Answered without asking anyone, and it must stay that way: an answer the
+    /// worker waits for is a stall no timer recovers from.
+    func hasRoomForSummaryModel() -> Bool {
         guard let bytes = availableBytes(at: NSHomeDirectory()) else { return true }
-        return bytes >= kind.requiredBytes
-    }
-
-    /// Check disk space before a model download. Returns true if OK to proceed.
-    func checkDiskSpaceForModelDownload(_ kind: ModelDownload = .transcription) async -> Bool {
-        let path = NSHomeDirectory()
-        if let bytes = availableBytes(at: path), bytes < kind.requiredBytes {
-            let gbFree = Double(bytes) / 1_000_000_000
-            diskSpaceWarning = String(
-                format: "Свободно только %.1f ГБ. Для загрузки нужно %@ плюс запас.",
-                gbFree, kind.humanSize
-            )
-            return await presentDiskSpaceAlert()
-        }
-        return true
-    }
-
-    /// Presents the disk-space alert and awaits the user's choice.
-    /// Resolves any in-flight continuation first to avoid leaks on rapid re-entry.
-    private func presentDiskSpaceAlert() async -> Bool {
-        // If a prior alert is still in-flight, cancel it cleanly (resume with false)
-        // before presenting a new one.
-        if let pending = diskSpaceContinuation {
-            diskSpaceContinuation = nil
-            pending.resume(returning: false)
-        }
-        showDiskSpaceAlert = true
-        return await withCheckedContinuation { continuation in
-            diskSpaceContinuation = continuation
-        }
-    }
-
-    func diskSpaceAlertContinue() {
-        showDiskSpaceAlert = false
-        diskSpaceContinuation?.resume(returning: true)
-        diskSpaceContinuation = nil
-    }
-
-    func diskSpaceAlertCancel() {
-        showDiskSpaceAlert = false
-        diskSpaceContinuation?.resume(returning: false)
-        diskSpaceContinuation = nil
+        return bytes >= 5_000_000_000
     }
 
     // MARK: - Recording Lifecycle
@@ -374,16 +377,16 @@ class AppState: ObservableObject {
                     if granted {
                         self?.startRecordingAfterPermission()
                     } else {
-                        self?.showMicPermissionAlert = true
+                        self?.refuseForMicrophone()
                     }
                 }
             }
             return
         case .denied, .restricted:
-            showMicPermissionAlert = true
+            refuseForMicrophone()
             return
         case .authorized:
-            break
+            micAccessDenied = false
         @unknown default:
             break
         }
@@ -391,12 +394,22 @@ class AppState: ObservableObject {
         startRecordingAfterPermission()
     }
 
+    /// Recording was asked for and cannot happen.
+    ///
+    /// The state goes on the app, not into a message: from here on the rail's
+    /// «Начать запись» row *is* the notice, and it stays one until the permission
+    /// changes. The push exists because the window is usually closed at this
+    /// moment — the user is in the call that asked for the recording.
+    private func refuseForMicrophone() {
+        autoStartedFromMeeting = false
+        recordingLinkedToCall = false
+        micAccessDenied = true
+        notify(.micDenied, body: "Нет доступа к\u{00A0}микрофону — встреча не записывается")
+    }
+
     private func startRecordingAfterPermission() {
-        Task {
-            let ok = await checkDiskSpaceForRecording()
-            guard ok else { return }
-            beginRecording()
-        }
+        noteDiskSpace()
+        beginRecording()
     }
 
     private func beginRecording() {
@@ -450,7 +463,7 @@ class AppState: ObservableObject {
                 calendarMeta: calendarMeta
             )
             recordingStore.add(entry)
-            refreshStorageNudge(presentAlert: true)
+            refreshStorageUsage()
             selectedRecordingID = entry.id
             Analytics.recordingStarted(source: recordingSource)
             if title != placeholder {
@@ -458,16 +471,23 @@ class AppState: ObservableObject {
             }
 
             // Auto-started from a detected meeting: notify so the user can decline.
-            // If notifications are denied, surface the window so Discard is reachable (BUG-REC-05).
+            // The one alarm this app has, and the one that is allowed a sound
+            // while recording — the recording is a second old, and an alarm
+            // nobody hears is not an alarm.
+            //
+            // If notifications are denied, surface the window so Discard is
+            // reachable (BUG-REC-05): the decline lives in the notification, so
+            // without one there is no channel left.
             if autoStartedFromMeeting {
                 NotificationManager.shared.notifyRecordingStarted { [weak self] authorized in
                     Task { @MainActor in
-                        guard let self, !authorized, self.isRecording else { return }
+                        guard let self, self.isRecording else { return }
+                        Analytics.signal(
+                            "Notice.recordingStarted.\(authorized ? "sound" : "window")"
+                        )
+                        guard !authorized else { return }
                         self.surfaceMeetingUI(preferSummaryTab: false)
-                        NSApp.activate(ignoringOtherApps: true)
-                        for window in NSApp.windows where window.frame.width > 400 {
-                            window.makeKeyAndOrderFront(nil)
-                        }
+                        self.bringWindowForward()
                     }
                 }
             }
@@ -517,14 +537,17 @@ class AppState: ObservableObject {
         }
     }
 
-    func stopRecording() {
-        Task { await stopRecordingAndWait(runPipeline: true) }
+    /// `auto: true` when nobody pressed anything — the call ended, or the 8-hour
+    /// ceiling did. That is the difference between news and telling someone what
+    /// they just did themselves.
+    func stopRecording(auto: Bool = false) {
+        Task { await stopRecordingAndWait(runPipeline: true, auto: auto) }
     }
 
     /// Stop recording and await final WAV write. Safe to call from quit handlers.
     /// `runPipeline: false` only for app quit — otherwise ASR → save → recap always starts
     /// (gigastt downloads/spawns inside `runTranscribe` on first need).
-    func stopRecordingAndWait(runPipeline: Bool = true) async {
+    func stopRecordingAndWait(runPipeline: Bool = true, auto: Bool = false) async {
         guard isRecording else { return }
         guard !isTerminalRecordingAction else { return }
         isTerminalRecordingAction = true
@@ -562,10 +585,17 @@ class AppState: ObservableObject {
             Analytics.recordingFinished(duration: result.duration, micOnly: micOnly)
 
             if runPipeline {
-                let body = wasLinkedToCall
-                    ? "Запись звонка остановлена. Расшифровка…"
-                    : "Запись остановлена. Расшифровка…"
-                NotificationManager.shared.post(title: "Propeller", body: body)
+                // Only an automatic stop is news. Telling someone that they
+                // pressed «Стоп» is the textbook nuisance alarm — there is
+                // nothing to do about it, and the window already says so.
+                if auto {
+                    notify(
+                        .recordingAutoStopped,
+                        body: wasLinkedToCall
+                            ? "Звонок закончился — расшифровываем"
+                            : "Запись остановлена — расшифровываем"
+                    )
+                }
                 kickPipeline()
             }
         } catch {
@@ -591,7 +621,7 @@ class AppState: ObservableObject {
 
                 if secs >= Self.maxRecordingSeconds, self.isRecording {
                     NSLog("[AppState] 8h recording ceiling reached — stopping")
-                    self.stopRecording()
+                    self.stopRecording(auto: true)
                 }
             }
         }
@@ -670,37 +700,29 @@ class AppState: ObservableObject {
         Self.resolvedRecapURL(for: entry) != nil
     }
 
-    /// Recompute library audio size; optionally surface the one-shot nudge alert.
-    func refreshStorageNudge(presentAlert: Bool = false) {
+    /// Recompute how much audio is on disk. Read by Settings, which is where the
+    /// archive is actually managed.
+    ///
+    /// There is no nudge any more. «Библиотека разрослась» named a number and
+    /// offered a button to the screen the user was already able to open, on a
+    /// schedule of the app's choosing rather than theirs — and Settings shows the
+    /// same number, the threshold and a list of the biggest meetings with their
+    /// own delete buttons.
+    func refreshStorageUsage() {
         storageLibraryBytes = recordingStore.totalLibraryBytes()
-        let threshold = Preferences.shared.storageNudgeThresholdBytes
-        guard storageLibraryBytes > threshold else {
-            showStorageNudgeAlert = false
-            return
-        }
-        if presentAlert, !Preferences.shared.storageNudgeSnoozed {
-            showStorageNudgeAlert = true
-        }
     }
 
-    func snoozeStorageNudge() {
-        Preferences.shared.storageNudgeSnoozed = true
-        showStorageNudgeAlert = false
-    }
-
-    /// Bring the main window forward and open the Summary tab after auto-pipeline.
-    /// Skipped while another recording is live so we don't steal focus mid-call (BUG-PIPE-04).
+    /// Open the Summary tab for a finished meeting — without taking the front.
+    ///
+    /// It used to call `NSApp.activate`, so a summary landing while the user was
+    /// writing somewhere else pulled the window over their work. Good news has no
+    /// claim on anyone's attention (`design/notifications.md`, R8): the tab is
+    /// selected, the notification says it is ready, and opening it is their move.
     private func surfaceSummaryUI(for recordingID: String) {
         guard !isRecording else { return }
         guard selectedRecordingID == recordingID || selectedRecordingID == nil else { return }
         preferredSidebarSection = "meetings"
         preferredDetailTab = "recap"
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        isWindowOpen = true
-        for window in NSApp.windows where window.frame.width > 400 {
-            window.makeKeyAndOrderFront(nil)
-        }
     }
 
     private func surfaceMeetingUI(preferSummaryTab: Bool) {
@@ -752,6 +774,25 @@ class AppState: ObservableObject {
         kickPipeline("regenerated")
     }
 
+    /// Where this meeting stands, and why — the one answer the interface reads.
+    ///
+    /// Composed here because the inputs are the app's (what the worker is on, what
+    /// the preferences say, whether the model landed) and decided in
+    /// `MeetingRest.of`, where a test can reach it.
+    func rest(of entry: RecordingEntry) -> MeetingRest {
+        MeetingRest.of(
+            stage: entry.status,
+            failure: entry.lastFailure,
+            isWorkingOnIt: activity.concerns(entry.id),
+            summariesEnabled: Preferences.shared.recapProvider != .off,
+            // `needsLocalRecapModel`, not `localRecapModelReady == true`: the
+            // question is «is the model the thing we are waiting for», and with a
+            // cloud key it never is. It also answers «not asked yet» as ready,
+            // which keeps «ждём модель» off a meeting that is merely queued.
+            summaryModelReady: !needsLocalRecapModel
+        )
+    }
+
     /// Refresh `localRecapModelReady`. Cheap: reads the manifest off disk unless
     /// a server is already up, so it is safe to call whenever the summary tab
     /// is shown.
@@ -783,7 +824,12 @@ class AppState: ObservableObject {
         }
     }
 
-    /// Persist a user-visible pipeline error (detail panel + toast).
+    /// The technical line, for the panel that has room for it.
+    ///
+    /// `HTTP 413: body too large` tells the person who can fix it exactly what
+    /// happened, and tells everyone else nothing — so it goes where there is room
+    /// for it and nobody has to read it in passing. What a person sees is the mark
+    /// on the meeting's row and «Не удалось обработать» beside its title.
     func surfacePipelineError(_ message: String) {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -802,13 +848,21 @@ class AppState: ObservableObject {
 
     /// Append a note tagged with the current recording timecode (used by the
     /// quick-note overlay). No-op unless a recording is in progress.
-    func appendTimestampedNote(_ text: String) {
-        guard isRecording, let id = recorder.recordingID else { return }
+    ///
+    /// Returns whether the note landed, so the overlay knows whether it has
+    /// something to confirm.
+    @discardableResult
+    func appendTimestampedNote(_ text: String) -> Bool {
+        guard isRecording, let id = recorder.recordingID else { return false }
         let line = "[\(AppState.formatElapsed(elapsedSeconds))] \(text)"
-        let existing = recordingStore.recording(for: id)?.notes ?? ""
-        let combined = existing.isEmpty ? line : existing + "\n" + line
-        recordingStore.update(id: id, notes: .some(combined))
-        NotificationManager.shared.post(title: "Propeller", body: "Заметка сохранена")
+        // Through `appendNote` so the overlay's notes arrive as records with
+        // their own time, same as the ones typed in the pane.
+        recordingStore.appendNote(id: id, text: line)
+        // No notification here on purpose. It used to post one — with a sound,
+        // during a recording, about something the user had just done themselves,
+        // with nothing to do about it. The overlay confirms it where the typing
+        // happened (`NoteOverlayController.confirmSaved`).
+        return true
     }
 
     // MARK: - Transcript markdown lookup
@@ -838,17 +892,63 @@ class AppState: ObservableObject {
         recordingStore.deleteAudioFile(for: entry)
     }
 
+    /// A meeting that has been deleted but can still be brought back.
+    ///
+    /// Deletion is offered as undo rather than as a confirmation dialogue: a
+    /// dialogue asks before every delete, an undo interrupts none of them and
+    /// still saves the one that was a mistake.
+    @Published var pendingDeletion: RecordingEntry?
+    private var pendingDeletionTask: Task<Void, Never>?
+    /// How long «Вернуть» stays on offer, and therefore how long the row keeps
+    /// its `deletedUndoable` look. One constant, so the two cannot disagree.
+    static let undoWindow: Duration = .seconds(8)
+
+    /// Bring back the last deleted meeting.
+    func undoDeletion() {
+        pendingDeletionTask?.cancel()
+        pendingDeletionTask = nil
+        guard let entry = pendingDeletion else { return }
+        pendingDeletion = nil
+        recordingStore.restore(entry)
+        selectRecording(entry)
+    }
+
+    /// Finish a deferred deletion — the audio goes now.
+    ///
+    /// Called when the offer expires, when another meeting is deleted, and on
+    /// quit. Leaving it uncommitted would strand the audio: the entry is already
+    /// out of the index, so nothing would ever point at those files again.
+    func commitPendingDeletion() {
+        pendingDeletionTask?.cancel()
+        pendingDeletionTask = nil
+        guard let entry = pendingDeletion else { return }
+        pendingDeletion = nil
+        recordingStore.remove(entry)
+    }
+
     func removeRecording(_ entry: RecordingEntry) {
         player.stop()
-        recordingStore.remove(entry)
+        // One offer at a time: deleting a second meeting finishes the first.
+        commitPendingDeletion()
+        recordingStore.removeDeferred(entry)
         if selectedRecordingID == entry.id { selectedRecordingID = nil }
-        refreshStorageNudge(presentAlert: false)
+        pendingDeletion = entry
+        // The row itself now carries the offer (`SidebarRowActivity.deletedUndoable`);
+        // this task is the deadline behind it. It has to exist independently of
+        // any view: an entry already out of the index, with files nobody points
+        // at, is the one leak here that cannot be noticed.
+        pendingDeletionTask = Task { [weak self] in
+            try? await Task.sleep(for: AppState.undoWindow)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.commitPendingDeletion() }
+        }
+        refreshStorageUsage()
     }
 
     func deleteAudioKeepingMeeting(_ entry: RecordingEntry) {
         player.stop()
         recordingStore.deleteAudioKeepingMeeting(entry)
-        refreshStorageNudge(presentAlert: false)
+        refreshStorageUsage()
     }
 
     // MARK: - Pipeline
@@ -1080,31 +1180,69 @@ class AppState: ObservableObject {
             recordFailure(
                 job.recordingID,
                 phase: job.phase,
-                message: "Обработка не продвинулась — попробуйте ещё раз",
-                kind: .permanent
+                // Ours: a phase claimed progress and made none. Retried like
+                // everything else, and counted — this is the shape of bug that
+                // only ever shows up on someone else's machine.
+                message: "Фаза не продвинула стадию",
+                kind: .ourFault
             )
         }
-        if case .blocked = stop { resumeLocalModelDownloadIfRequested() }
+        // Blocked for want of a provider is the other moment the answer can have
+        // changed since launch.
+        if case .blocked = stop { Task { await ensureSummaryModel() } }
         debugLog("[pipeline] stopped: \(stop)")
         scheduleWake(at: plan.wakeAt)
     }
 
-    /// The pipeline is blocked for want of a summary model the user already said
-    /// yes to. Resume that download — this is the moment it matters.
+    /// Make sure the app *has* a summary model, and get it if it does not.
     ///
-    /// The launch-time resume runs once, twenty seconds in, and skips itself if a
-    /// recording or a call happens to be going on. That is a whole session with
-    /// no model and no second chance; here the retry rides the same ladder as
-    /// everything else waiting on a provider.
-    private func resumeLocalModelDownloadIfRequested() {
-        guard Preferences.shared.localRecapModelRequested else { return }
-        switch Preferences.shared.recapProvider {
-        case .ollama, .auto:      break
-        case .off, .openai, .claude: return   // a local model is not the blocker
+    /// The invariant: «саммари нет» is a legal depth for one meeting, «нет LLM» is
+    /// not a legal state for the app (`design/no-dead-ends.md` §5). So this runs on
+    /// every launch and every time the pipeline blocks for want of a provider — the
+    /// two moments where the answer can have changed — and it neither asks nor
+    /// announces anything.
+    ///
+    /// It used to be gated on `localRecapModelRequested`: nothing was fetched until
+    /// someone pressed «Скачать» on the fifth onboarding screen, which made the app
+    /// work or not work depending on whether they understood that screen. The flag
+    /// stays written for older builds reading the same preferences, and is no longer
+    /// read here.
+    ///
+    /// Cheap when healthy: one manifest check on disk, or one request to a server
+    /// that is already up. Nothing is downloaded twice — `startOllamaRuntimeDownload`
+    /// is idempotent while a download is in flight.
+    func ensureSummaryModel() async {
+        // Two of the four inputs are known without touching the disk, so ask them
+        // first: a cloud key or summaries turned off means this is not our job at
+        // all, and 3.4 GB is not something to fetch on a maybe.
+        let provider = Preferences.shared.recapProvider.rawValue
+        let quickAnswer = ModelProvisioning.decide(.init(
+            usesLocalModel: ModelProvisioning.usesLocalModel(providerRawValue: provider),
+            modelInstalled: false,                    // not asked yet
+            busyWithAudio: isRecording || meetingDetected || isTranscribing,
+            downloadInFlight: ollamaDownloadTask != nil || ollamaSetupProgress != nil
+        ))
+        switch quickAnswer {
+        case .notOurs, .inFlight, .waitForQuiet:
+            return
+        case .fetch, .alreadyThere:
+            break
         }
-        guard ollamaDownloadTask == nil, ollamaSetupProgress == nil else { return }
-        guard !isRecording, !meetingDetected, !isTranscribing else { return }
-        debugLog("[pipeline] resuming the summary-model download")
+
+        let model = Preferences.shared.recapOllamaModel
+        let installed = await OllamaSidecar.shared.isModelInstalled(
+            model.isEmpty ? OllamaSidecar.defaultModel : model
+        )
+        localRecapModelReady = installed
+        guard installed == false else { return }
+
+        // Distinguishes «первая выдача» from «починка» in telemetry only — the code
+        // path is deliberately the same one, because a missing model is a missing
+        // model whatever the reason.
+        Analytics.signal(
+            Preferences.shared.localRecapModelRequested ? "Model.repair" : "Model.provision"
+        )
+        NSLog("[AppState] summary model missing — fetching it")
         startOllamaRuntimeDownload()
     }
 
@@ -1119,10 +1257,9 @@ class AppState: ObservableObject {
         case .saving:
             guard let rec = recordingStore.recording(for: job.recordingID),
                   let text = rec.transcript, !text.isEmpty else {
-                recordFailure(
-                    job.recordingID, phase: .saving,
-                    message: "Нет транскрипта для сохранения", kind: .permanent
-                )
+                // ASR ran and produced nothing: there was no speech. A result,
+                // not a failure — and no attempt could change it.
+                recordTerminal(job.recordingID, phase: .saving, reason: .noSpeech)
                 return .advanced
             }
             await runSave(recordingID: rec.id, transcriptText: text, duration: rec.duration)
@@ -1215,7 +1352,7 @@ class AppState: ObservableObject {
             recordingID, phase: .summarizing,
             message: "Не удалось определить темы встречи", kind: .transient
         )
-        guard failure.needsAttention else { return .advanced }   // a retry is due
+        guard failure.isTerminal else { return .advanced }   // a retry is due
         clearFailure(recordingID)
         recordingStore.update(
             id: recordingID,
@@ -1247,24 +1384,18 @@ class AppState: ObservableObject {
         guard let audioURL = recordingStore.audioURL(for: rec) else {
             // The scheduler keeps meetings without audio out of the queue, so
             // this is the race where it went away mid-flight. Parked on the
-            // meeting's own card; not worth a toast on whatever is open.
-            recordFailure(
-                recordingID, phase: phase,
-                message: "Аудиофайл не найден — нельзя расшифровать.", kind: .permanent
-            )
+            // meeting's own card; not worth announcing over whatever is open.
+            // The user reclaimed the space. Nothing to transcribe, ever.
+            recordTerminal(recordingID, phase: phase, reason: .audioDeleted)
             return
         }
 
-        // Only a full pass can need the ASR model on disk.
-        if phase == .transcribing {
-            guard hasRoomForModelDownload() else {
-                recordFailure(
-                    recordingID, phase: phase,
-                    message: "Расшифровка отменена — мало места на диске.", kind: .permanent
-                )
-                return
-            }
-        }
+        // The ASR check that used to be here demanded 2 GB free before a
+        // transcription — from the days when GigaAM's weights were downloaded. They
+        // ship inside the .app now (247 MB, copied to Application Support once), so
+        // the gate was refusing to transcribe over a download that does not happen.
+        // If the disk really is full, the write fails and *that* failure belongs to
+        // the recording, on the same endless ladder as everything else.
 
         // Resuming needs the checkpoint the earlier pass wrote.
         var checkpoint: [ASRSegment]?
@@ -1272,7 +1403,21 @@ class AppState: ObservableObject {
             guard let json = rec.rawSegmentsJSON,
                   let data = json.data(using: .utf8),
                   let decoded = try? JSONDecoder().decode([ASRSegment].self, from: data) else {
-                recordFailure(recordingID, phase: phase, message: "Сегменты не найдены — запустите расшифровку заново")
+                // The stage says «ASR is done», the disk says otherwise. Retrying
+                // *this* phase would ask for the same missing bytes forever, and
+                // parking it used to ask the user to press «Повторить» for a
+                // decision only we could make. So the stage is put back to what is
+                // actually on disk and the queue re-runs ASR by itself.
+                //
+                // This walks a stage backwards, which a phase must never do (I3) —
+                // deliberately, and only here: `.transcribedRaw` was a claim about
+                // a checkpoint that does not exist, and correcting a false claim is
+                // not the same as losing progress.
+                NSLog("[AppState] checkpoint gone for \(recordingID) — re-running ASR")
+                Analytics.signal("Pipeline.checkpointLost")
+                recordingStore.update(id: recordingID, status: .recorded, rawSegmentsJSON: .some(nil))
+                clearFailure(recordingID)
+                kickPipeline("checkpoint repaired")
                 return
             }
             checkpoint = decoded
@@ -1328,7 +1473,8 @@ class AppState: ObservableObject {
                 transcript: result.transcript,
                 status: .transcribed,
                 rawSegmentsJSON: .some(nil),
-                mergedSegmentsJSON: .some(encodePersistedSegments(result.mergedSegments))
+                mergedSegmentsJSON: .some(encodePersistedSegments(result.mergedSegments)),
+                speakerAttribution: result.attribution
             )
             if selectedRecordingID == recordingID {
                 transcript = result.transcript
@@ -1407,7 +1553,7 @@ class AppState: ObservableObject {
 
         do {
             let speakers = MarkdownWriter.extractSpeakers(from: transcriptText)
-            let path = try MarkdownWriter.save(
+            _ = try MarkdownWriter.save(
                 title: rec.title,
                 transcript: transcriptText,
                 recordingID: recordingID,
@@ -1418,12 +1564,15 @@ class AppState: ObservableObject {
             )
             advanceStage(recordingID, to: .saved)
             clearFailure(recordingID)
-            if isAwaited(recordingID) {
-                NotificationManager.shared.post(
-                    title: "Propeller",
-                    body: "Сохранено: \(URL(fileURLWithPath: path).lastPathComponent)"
-                )
-            }
+            // A file name is not news, and with a summary still to come this is
+            // not even the end of the meeting — the policy folds it into the one
+            // «готово» per meeting. It only speaks when nothing follows it.
+            notify(
+                .transcriptSaved,
+                body: "Расшифровка готова",
+                isAwaited: isAwaited(recordingID),
+                recapExpected: Preferences.shared.recapProvider != .off
+            )
             kickPipeline("saved")
         } catch {
             let failure = recordFailure(
@@ -1462,7 +1611,7 @@ class AppState: ObservableObject {
             Analytics.recapFinished(ok: false, skip: "read_error")
             let failure = recordFailure(
                 recordingID, phase: .summarizing,
-                message: "Не удалось прочитать транскрипт", kind: .permanent
+                message: "Не удалось прочитать транскрипт", kind: .transient
             )
             report(failure, for: recordingID, force: byHand)
             return .advanced
@@ -1503,7 +1652,8 @@ class AppState: ObservableObject {
                 if reason == .emptyTranscript {
                     recordFailure(
                         recordingID, phase: .summarizing,
-                        message: "Пустой транскрипт", kind: .permanent
+                        message: "В записи не нашлось речи",
+                        kind: .terminal, terminalReason: .noSpeech
                     )
                 }
                 if selectedRecordingID == recordingID {
@@ -1512,16 +1662,17 @@ class AppState: ObservableObject {
                         recapSkipHint = nil
                         surfaceMeetingUI(preferSummaryTab: false)
                     case .noProvider:
-                        // A skip, not a failure. This used to raise "Не удалось
-                        // обработать" plus a system notification after *every*
-                        // successful recording, which read as the recording
-                        // having broken. The meeting card already explains it and
-                        // offers «Скачать»; that is where it belongs.
-                        recapSkipHint = "Саммари пропущено — локальная модель ещё не скачана. Кнопка «Скачать» на вкладке «Саммари»."
+                        // A skip, not a failure — and no longer a request either:
+                        // the model comes on its own (`ensureSummaryModel`), so the
+                        // meeting is simply resting at «расшифрована» until it
+                        // lands. `MeetingRest.waiting(.model)` is what says so.
+                        recapSkipHint = nil
                         localRecapModelReady = false
                     case .emptyTranscript:
-                        recapSkipHint = "Саммари пропущено — пустой транскрипт"
-                        surfacePipelineError(recapSkipHint ?? "")
+                        // Terminal, and stated as depth rather than as an error:
+                        // there was no speech, and no attempt changes that.
+                        recapSkipHint = nil
+                        recordTerminal(recordingID, phase: .summarizing, reason: .noSpeech)
                     }
                     surfaceMeetingUI(preferSummaryTab: false)
                 }
@@ -1533,9 +1684,10 @@ class AppState: ObservableObject {
                 }
                 if isNews {
                     surfaceSummaryUI(for: recordingID)
-                    NotificationManager.shared.post(
-                        title: "Propeller",
-                        body: "Саммари готово — в карточке встречи."
+                    notify(
+                        .meetingReady,
+                        body: "Саммари готово — в\u{00A0}карточке встречи",
+                        isAwaited: isAwaited(recordingID)
                     )
                 }
                 await generateMeetingMetadata(recordingID: recordingID, summary: recap.body)
@@ -1572,7 +1724,7 @@ class AppState: ObservableObject {
                 recordingID, phase: .summarizing, message: error.localizedDescription
             )
             report(failure, for: recordingID, force: byHand)
-            if selectedRecordingID == recordingID, failure.needsAttention || byHand {
+            if selectedRecordingID == recordingID, failure.isTerminal || byHand {
                 recapSkipHint = error.localizedDescription
             }
         }
@@ -1624,24 +1776,40 @@ class AppState: ObservableObject {
         Analytics.signal("Invariant.\(name)")
     }
 
+    /// A failure with nothing left to try. The log line comes from the reason, so
+    /// the same sentence is not hand-copied at three call sites — that is exactly
+    /// how the toast copy drifted from the gallery's before it was centralised.
+    @discardableResult
+    private func recordTerminal(
+        _ recordingID: String,
+        phase: PipelineActivity.Phase,
+        reason: MeetingRest.TerminalReason
+    ) -> PipelineFailure {
+        recordFailure(
+            recordingID, phase: phase,
+            message: reason.logMessage, kind: .terminal, terminalReason: reason
+        )
+    }
+
     /// Record a failure on the recording it happened to, with its own retry plan.
     /// Persisted, so it outlives other work and a relaunch.
     ///
-    /// The returned failure is what tells the caller whether to say anything: a
-    /// transient one with attempts left is the pipeline's business, not the
-    /// user's (I7).
+    /// The plan is the whole point: nothing here asks a person for anything, and
+    /// only `.terminal` stops the work (`design/no-dead-ends.md`).
     @discardableResult
     private func recordFailure(
         _ recordingID: String,
         phase: PipelineActivity.Phase,
         message: String,
-        kind: FailureKind? = nil
+        kind: FailureKind? = nil,
+        terminalReason: MeetingRest.TerminalReason? = nil
     ) -> PipelineFailure {
         let failure = PipelineFailure(
             phase: phase,
             message: message,
             previous: recordingStore.recording(for: recordingID)?.lastFailure,
-            kind: kind
+            kind: kind,
+            terminalReason: terminalReason
         )
         recordingStore.update(id: recordingID, lastFailure: .some(failure))
         if let due = failure.nextAttemptAt {
@@ -1650,18 +1818,33 @@ class AppState: ObservableObject {
         return failure
     }
 
-    /// Show a failure only when it has become the user's problem: the app has
-    /// stopped retrying, and they are looking at the meeting it happened to (or
+    /// Kept for the log and telemetry only — see below.
+    ///
+    /// Historical note that used to live here: «show a failure only when it has
+    /// become the user's problem: the app has stopped retrying». The app does not
+    /// stop retrying any more, so that moment no longer exists (or
     /// asked for it by hand). Anything else is the pipeline doing its job, and
     /// announcing it is what made a working catch-up look broken.
+    /// Record a failure where it belongs — the log and telemetry — and nowhere else.
+    ///
+    /// This used to be the path into the interface: it wrote `pipelineError`, which
+    /// became a toast and a red row with «Повторить» on it. There is nothing for a
+    /// person to do with any of it (`design/no-dead-ends.md`): the ladder retries
+    /// forever, and the only failures that stop are the ones where the input is
+    /// gone — which the meeting states as a resting reason, not as an error.
+    ///
+    /// `byHand` is kept by the callers and no longer changes anything here. It used
+    /// to mean «the user asked for this, so they get to see it fail»; a hand-made
+    /// request that fails now waits on the same ladder as everything else.
     private func report(_ failure: PipelineFailure, for recordingID: String, force: Bool = false) {
-        guard force || failure.needsAttention else { return }
-        guard force || selectedRecordingID == recordingID || userRequestedID == recordingID else {
-            // Still visible where it belongs: the meeting's own card offers
-            // «Повторить» while `lastFailure` needs attention.
-            return
+        Analytics.signal("Pipeline.failed.\(failure.phase).\(failure.kind.rawValue)")
+        NSLog("[AppState] \(failure.phase) failed on \(recordingID) "
+              + "(attempt \(failure.attempt), \(failure.kind.rawValue)): \(failure.message)")
+        if failure.kind == .ourFault {
+            // Loud locally, counted in release: a bug that only reproduces on
+            // someone else's machine is one we never hear about otherwise.
+            checkInvariant("pipeline.our-fault", false)
         }
-        surfacePipelineError(failure.message)
     }
 
     /// Clear the block so the worker can pick this recording up again. No-op when
@@ -1813,11 +1996,15 @@ class AppState: ObservableObject {
     /// On success, kicks the pipeline so meetings recorded meanwhile get recaps.
     @discardableResult
     func downloadOllamaRuntime() async -> Bool {
-        let okDisk = await checkDiskSpaceForModelDownload(.recap)
-        guard okDisk else {
-            let msg = "Недостаточно места для модели саммари (~3,4 ГБ)."
-            ollamaSetupError = msg
-            surfacePipelineError(msg)
+        // Answered, not asked. The old gate put the question on screen and
+        // suspended this call on a continuation until someone answered — and
+        // «Всё равно скачать» with 2 GB free only moved the failure to the middle
+        // of a 3.4 GB pull. The refusal says so where the download was started.
+        guard hasRoomForSummaryModel() else {
+            // Стоит в настройках, где этим управляют, и больше нигде: встреча к
+            // нехватке места на диске отношения не имеет, а сделать с этим
+            // человек может только одно — освободить место, когда захочет.
+            ollamaSetupError = "Недостаточно места для модели саммари (~3,4\u{00A0}ГБ)."
             return false
         }
         pipelineError = nil
@@ -1857,8 +2044,10 @@ class AppState: ObservableObject {
         } catch {
             ollamaSetupProgress = nil
             ollamaSetupMessage = ""
+            // Тоже только в настройках. Загрузка сама поедет снова — на каждом
+            // запуске и на каждой остановке пайплайна из-за провайдера
+            // (`ensureSummaryModel`), поэтому это состояние, а не событие.
             ollamaSetupError = error.localizedDescription
-            surfacePipelineError(error.localizedDescription)
             Analytics.signal("Ollama.setup.fail")
             return false
         }

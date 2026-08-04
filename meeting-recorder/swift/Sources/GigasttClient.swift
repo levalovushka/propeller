@@ -177,23 +177,23 @@ enum GigasttClient {
         while startFrame < totalFrames {
             let frames = AVAudioFrameCount(min(AVAudioFramePosition(chunkFrames), totalFrames - startFrame))
             let offsetSec = Float(Double(startFrame) / rate)
-            let chunkURL = tmpDir.appendingPathComponent(String(format: "chunk-%02d.wav", index))
 
             progressCallback?("Расшифровка \(index + 1)/\(chunkCount)…")
-            do {
-                try writeWAVChunk(from: source, startFrame: startFrame, frameCount: frames, to: chunkURL)
-            } catch {
-                throw ClientError.chunkFailed(error.localizedDescription)
-            }
 
             // Per-chunk timeout scales with audio length; floor at caller timeout.
             let chunkDur = Double(frames) / rate
             let chunkTimeout = max(timeout, chunkDur * 2.0 + 120)
 
-            let (segs, raw) = try await transcribeSingle(
-                audioURL: chunkURL,
+            let (segs, raw) = try await transcribeChunkDividingOnTooLarge(
+                source: source,
+                startFrame: startFrame,
+                frameCount: frames,
+                rate: rate,
+                into: tmpDir,
+                index: index,
                 baseURL: baseURL,
-                timeout: chunkTimeout
+                timeout: chunkTimeout,
+                progressCallback: progressCallback
             )
             merged.append((
                 offset: offsetSec,
@@ -215,6 +215,83 @@ enum GigasttClient {
             chunkCount, segments.count, duration
         )
         return (segments, rawText.isEmpty ? segments.map(\.text).joined(separator: " ") : rawText)
+    }
+
+    /// Send one piece — and if the sidecar says it is too large, send it as two.
+    ///
+    /// A 413 means the chunker's arithmetic was wrong about this file, not that the
+    /// meeting cannot be transcribed. Halving is tried down to
+    /// `GigasttChunking.minChunkSeconds`; past that the ladder in `PipelineRetry`
+    /// takes over, because a 413 on half a minute of audio is a broken sidecar
+    /// rather than a size (`design/no-dead-ends.md`, Э4).
+    private static func transcribeChunkDividingOnTooLarge(
+        source: AVAudioFile,
+        startFrame: AVAudioFramePosition,
+        frameCount: AVAudioFrameCount,
+        rate: Double,
+        into tmpDir: URL,
+        index: Int,
+        baseURL: URL,
+        timeout: TimeInterval,
+        progressCallback: ((String) -> Void)?
+    ) async throws -> (segments: [ASRSegment], rawText: String) {
+        let seconds = Double(frameCount) / rate
+        let url = tmpDir.appendingPathComponent(
+            String(format: "chunk-%02d-%.0f.wav", index, seconds)
+        )
+        do {
+            try writeWAVChunk(from: source, startFrame: startFrame, frameCount: frameCount, to: url)
+        } catch {
+            throw ClientError.chunkFailed(error.localizedDescription)
+        }
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        do {
+            return try await transcribeSingle(audioURL: url, baseURL: baseURL, timeout: timeout)
+        } catch ClientError.badStatus(413, _) {
+            guard let smaller = GigasttChunking.smallerChunk(after: seconds) else {
+                NSLog("[GigasttClient] 413 at the %.0fs floor — not a size problem", seconds)
+                throw ClientError.badStatus(413, "тело запроса слишком большое")
+            }
+            NSLog("[GigasttClient] 413 on a %.0fs chunk — dividing to %.0fs", seconds, smaller)
+            let half = AVAudioFrameCount(max(1, Double(frameCount) / 2))
+            var pieces: [(offset: Float, segments: [GigasttChunking.Segment])] = []
+            var texts: [String] = []
+            var cursor = startFrame
+            var part = 0
+            while cursor < startFrame + AVAudioFramePosition(frameCount) {
+                let remaining = startFrame + AVAudioFramePosition(frameCount) - cursor
+                let take = AVAudioFrameCount(min(AVAudioFramePosition(half), remaining))
+                let (segs, raw) = try await transcribeChunkDividingOnTooLarge(
+                    source: source,
+                    startFrame: cursor,
+                    frameCount: take,
+                    rate: rate,
+                    into: tmpDir,
+                    index: index * 100 + part,
+                    baseURL: baseURL,
+                    timeout: timeout,
+                    progressCallback: progressCallback
+                )
+                // Each half reports times from its own start, so it merges at the
+                // distance between the two starts — not at zero, and not at the
+                // absolute position in the file, which the caller adds later.
+                pieces.append((
+                    offset: Float(Double(cursor - startFrame) / rate),
+                    segments: segs.map {
+                        GigasttChunking.Segment(start: $0.start, end: $0.end, text: $0.text)
+                    }
+                ))
+                if !raw.isEmpty { texts.append(raw) }
+                cursor += AVAudioFramePosition(take)
+                part += 1
+            }
+            let merged = GigasttChunking.merge(pieces)
+            return (
+                merged.map { ASRSegment(start: $0.start, end: $0.end, text: $0.text) },
+                texts.joined(separator: " ")
+            )
+        }
     }
 
     private static func writeWAVChunk(

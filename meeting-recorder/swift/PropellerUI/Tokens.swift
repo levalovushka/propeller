@@ -7,13 +7,42 @@ import CoreText
 /// Radius). Off-scale literals snap to the nearest step instead of inventing new ones.
 ///
 /// Typography stays SF Pro (macOS-native). System Settings / alerts are out of scope.
+///
+/// # Two themes, one call site
+///
+/// Every semantic colour is a *pair* — one value for dark, one for light —
+/// resolved by AppKit at draw time (`Tokens.dual`). A view never asks which
+/// theme is on, and there is no second set of components for light mode. The
+/// dark values are the ones drawn in Figma; the light ones are derived by the
+/// rule in `Primitive.ink` and are the only place to touch when the light
+/// design lands.
 public enum Tokens {
+
+    // MARK: - 0. Scheme
+
+    /// A colour with two values, one per appearance.
+    ///
+    /// Resolution happens inside AppKit, so a `Tokens.Paint.*` constant can stay
+    /// a plain `Color` and every existing call site keeps working — switching
+    /// the app to light mode changes no view code at all.
+    public static func dual(dark: NSColor, light: NSColor) -> SwiftUI.Color {
+        SwiftUI.Color(nsColor: dualNSColor(dark: dark, light: light))
+    }
+
+    /// `dual` for the places that need AppKit (window backgrounds, glass tint).
+    public static func dualNSColor(dark: NSColor, light: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+        }
+    }
 
     // MARK: - 1. Primitives
 
     public enum Primitive {
         public enum AlphaWhite {
             public static let a0: Double = 0
+            public static let a3: Double = 0.03
+            public static let a5: Double = 0.05
             public static let a7: Double = 0.07
             public static let a10: Double = 0.10
             public static let a12: Double = 0.12
@@ -22,7 +51,9 @@ public enum Tokens {
             public static let a30: Double = 0.30
             public static let a40: Double = 0.40 // snap for legacy 0.40 UI chrome
             public static let a50: Double = 0.50
+            public static let a55: Double = 0.55
             public static let a70: Double = 0.70
+            public static let a75: Double = 0.75
             public static let a95: Double = 0.95
             public static let a100: Double = 1.0
 
@@ -34,14 +65,26 @@ public enum Tokens {
 
         public enum AlphaBlack {
             public static let a0: Double = 0
+            public static let a3: Double = 0.03
+            public static let a5: Double = 0.05
+            public static let a6: Double = 0.06
             public static let a7: Double = 0.07
+            public static let a8: Double = 0.08
+            public static let a9: Double = 0.09
             public static let a10: Double = 0.10
             public static let a12: Double = 0.12
             public static let a15: Double = 0.15
+            public static let a28: Double = 0.28
             public static let a30: Double = 0.30
+            public static let a42: Double = 0.42
+            public static let a48: Double = 0.48
             public static let a50: Double = 0.50
+            public static let a55: Double = 0.55
+            public static let a58: Double = 0.58
+            public static let a68: Double = 0.68
             public static let a70: Double = 0.70
             public static let a80: Double = 0.80 // glass wash
+            public static let a92: Double = 0.92
             public static let a95: Double = 0.95
             public static let a100: Double = 1.0
 
@@ -53,6 +96,27 @@ public enum Tokens {
 
         /// Near-black used under glass (#0A0A0A).
         public static let inkWashWhite: CGFloat = 10.0 / 255.0
+        /// Its light-theme twin (#F5F5F5).
+        public static let inkWashWhiteLight: CGFloat = 245.0 / 255.0
+
+        /// An ink pair: white over dark, black over light.
+        ///
+        /// The two alphas are rarely equal. Black at 30 % on a near-white rail
+        /// reads fainter than white at 30 % on a near-black one — the eye is not
+        /// symmetric about mid-grey — so the quiet end of the light ramp carries
+        /// more alpha than its dark counterpart. The loud end carries slightly
+        /// less: black at 95 % is heavier than white at 95 %.
+        public static func ink(dark: Double, light: Double) -> SwiftUI.Color {
+            Tokens.dual(dark: AlphaWhite.nsColor(dark), light: AlphaBlack.nsColor(light))
+        }
+
+        /// A solid pair given as calibrated whites (0…1).
+        public static func surface(dark: CGFloat, light: CGFloat, alpha: CGFloat = 1) -> SwiftUI.Color {
+            Tokens.dual(
+                dark: NSColor(calibratedWhite: dark, alpha: alpha),
+                light: NSColor(calibratedWhite: light, alpha: alpha)
+            )
+        }
     }
 
     // MARK: - 2. Tokens (aliases over primitives)
@@ -80,46 +144,73 @@ public enum Tokens {
 
     // MARK: - 3. Semantic (what components use)
 
+    /// Each constant is a dark/light pair. Dark is what Figma draws; light is
+    /// derived (see `Primitive.ink`) and is the single place to revise when the
+    /// light comps arrive.
     public enum Paint {
         public enum Bg {
-            public static let page = Neutral.black
-            public static let surface = Neutral.aw7
-            public static let selected = Neutral.aw12
-            public static let overlay = Neutral.ab70
-            public static let inverted = Neutral.white
-            /// `#0A0A0A @ 80%` wash over `.thickMaterial`.
+            public static let page = Primitive.surface(dark: 0, light: 1)
+            public static let surface = Primitive.ink(dark: Primitive.AlphaWhite.a7,
+                                                      light: Primitive.AlphaBlack.a6)
+            public static let selected = Primitive.ink(dark: Primitive.AlphaWhite.a12,
+                                                       light: Primitive.AlphaBlack.a10)
+            /// Scrim under sheets. Light needs far less of it — the sheet already
+            /// separates itself by being brighter than the page.
+            public static let overlay = Tokens.dual(
+                dark: Primitive.AlphaBlack.nsColor(Primitive.AlphaBlack.a70),
+                light: Primitive.AlphaBlack.nsColor(Primitive.AlphaBlack.a30)
+            )
+            public static let inverted = Primitive.surface(dark: 1, light: 0)
+            /// `#0A0A0A @ 80%` wash over `.thickMaterial` (light: `#F5F5F5 @ 80%`).
             public static var glassWash: NSColor {
-                NSColor(calibratedWhite: Primitive.inkWashWhite, alpha: Primitive.AlphaBlack.a80)
+                Tokens.dualNSColor(
+                    dark: NSColor(calibratedWhite: Primitive.inkWashWhite, alpha: Primitive.AlphaBlack.a80),
+                    light: NSColor(calibratedWhite: Primitive.inkWashWhiteLight, alpha: Primitive.AlphaBlack.a80)
+                )
             }
         }
 
         public enum Text {
-            public static let primary = Neutral.aw95
-            public static let secondary = Neutral.aw70
-            public static let tertiary = Neutral.aw30
-            public static let quaternary = Neutral.aw40
-            public static let disabled = Neutral.aw20
-            public static let primaryInverse = Neutral.ab95
-            public static let secondaryInverse = Neutral.ab70
+            public static let primary = Primitive.ink(dark: Primitive.AlphaWhite.a95,
+                                                      light: Primitive.AlphaBlack.a92)
+            public static let secondary = Primitive.ink(dark: Primitive.AlphaWhite.a70,
+                                                        light: Primitive.AlphaBlack.a68)
+            public static let tertiary = Primitive.ink(dark: Primitive.AlphaWhite.a30,
+                                                       light: Primitive.AlphaBlack.a42)
+            public static let quaternary = Primitive.ink(dark: Primitive.AlphaWhite.a40,
+                                                         light: Primitive.AlphaBlack.a50)
+            public static let disabled = Primitive.ink(dark: Primitive.AlphaWhite.a20,
+                                                       light: Primitive.AlphaBlack.a28)
+            /// Ink *on* an inverted fill — flips with the theme like everything else.
+            public static let primaryInverse = Tokens.dual(
+                dark: Primitive.AlphaBlack.nsColor(Primitive.AlphaBlack.a95),
+                light: Primitive.AlphaWhite.nsColor(Primitive.AlphaWhite.a95)
+            )
+            public static let secondaryInverse = Tokens.dual(
+                dark: Primitive.AlphaBlack.nsColor(Primitive.AlphaBlack.a70),
+                light: Primitive.AlphaWhite.nsColor(Primitive.AlphaWhite.a70)
+            )
         }
 
         public enum Interactive {
             public enum Primary {
-                public static let rest = Neutral.aw95
-                public static let hover = Neutral.white
-                public static let disabled = Neutral.aw7
+                public static let rest = Text.primary
+                public static let hover = Primitive.surface(dark: 1, light: 0)
+                public static let disabled = Bg.surface
             }
             public enum Secondary {
-                public static let rest = Neutral.aw7
-                public static let hover = Neutral.aw12
-                public static let active = Neutral.aw10
-                public static let disabled = Neutral.aw7
+                public static let rest = Bg.surface
+                public static let hover = Bg.selected
+                public static let active = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                         light: Primitive.AlphaBlack.a8)
+                public static let disabled = Bg.surface
             }
             public enum Ghost {
-                public static let rest = Primitive.AlphaWhite.color(Primitive.AlphaWhite.a0)
-                public static let hover = Neutral.aw7
-                public static let active = Neutral.aw10
-                public static let disabled = Primitive.AlphaWhite.color(Primitive.AlphaWhite.a0)
+                public static let rest = SwiftUI.Color.clear
+                public static let hover = Bg.surface
+                public static let active = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                         light: Primitive.AlphaBlack.a8)
+                public static let disabled = SwiftUI.Color.clear
             }
             /// No fill ever — content only brightens (Propeller-specific).
             public enum Minimal {
@@ -130,8 +221,9 @@ public enum Tokens {
         }
 
         public enum Status {
-            public static let record = SwiftUI.Color.red
-            public static let warning = SwiftUI.Color.orange
+            /// System reds/oranges already carry their own light/dark values.
+            public static let record = SwiftUI.Color(nsColor: .systemRed)
+            public static let warning = SwiftUI.Color(nsColor: .systemOrange)
             public static let accent = SwiftUI.Color.accentColor
         }
     }
@@ -140,16 +232,16 @@ public enum Tokens {
 
     public enum Radius {
         public static let none: CGFloat = 0
-        public static let xxxxs: CGFloat = 2
-        public static let xxxs: CGFloat = 4
-        public static let xxs: CGFloat = 6
-        public static let xs: CGFloat = 8
-        public static let sm: CGFloat = 10
-        public static let md: CGFloat = 12
-        public static let lg: CGFloat = 14
-        public static let xl: CGFloat = 26
-        public static let x2l: CGFloat = 34
-        public static let x3l: CGFloat = 42
+        public static let xxxxs: CGFloat = 6
+        public static let xxxs: CGFloat = 8
+        public static let xxs: CGFloat = 10
+        public static let xs: CGFloat = 12
+        public static let sm: CGFloat = 14
+        public static let md: CGFloat = 16
+        public static let lg: CGFloat = 18
+        public static let xl: CGFloat = 30
+        public static let x2l: CGFloat = 38
+        public static let x3l: CGFloat = 46
         public static let full: CGFloat = 9999
     }
 
@@ -190,6 +282,9 @@ public enum Tokens {
 
     public enum Window {
         public static let contentWidth: CGFloat = 640
+        /// Narrowest the content pane may get. The rail adds its own 300 on top
+        /// — the window minimum is the sum, derived rather than restated.
+        public static let contentPaneMinWidth: CGFloat = 480
         public static let chromePadding: CGFloat = Space.s12
         public static let trafficLightSlotWidth: CGFloat = 76
         public static let trafficLightLeading: CGFloat = Space.s24
@@ -203,11 +298,388 @@ public enum Tokens {
         public static let updatePillHPadding: CGFloat = Space.s10
     }
 
-    public enum Toast {
-        public static let radius: CGFloat = Radius.lg
-        public static let maxWidth: CGFloat = 280
-        public static let fill = Paint.Bg.surface
-        public static let cornerInset: CGFloat = Space.s16
+    /// The left rail — Figma `sidebar / Frame 127` (31:4581).
+    ///
+    /// Every number here was measured off that frame; the comment on each says
+    /// where it comes from, because "300" and "11" are the kind of value that
+    /// gets rounded to something tidier by the next person who reads it.
+    public enum Sidebar {
+
+        // MARK: Layout
+
+        /// Rail width. The content pane is whatever is left.
+        public static let width: CGFloat = 300
+        public static let minWidth: CGFloat = 240
+        public static let maxWidth: CGFloat = 420
+        /// Titlebar row: traffic lights on the left, collapse toggle on the right.
+        public static let headerHeight: CGFloat = 48
+        /// Body inset — `px-12 py-10` on Frame 123.
+        public static let bodyHPadding = Space.s12
+        public static let bodyVPadding = Space.s10
+        /// Between the nav block and the meeting list (`gap-20`).
+        ///
+        /// There used to be a rule between them; it is gone from the comps, and
+        /// the gap grew to carry the separation on its own. Whitespace does the
+        /// job a hairline was doing, which is why the number moved rather than
+        /// the line simply disappearing.
+        public static let blockGap = Space.s20
+        /// Between dated meeting groups (`gap-24`).
+        public static let groupGap = Space.s24
+        /// Soft alpha fade at the foot of the meeting list — mask height, not a
+        /// painted wash. Keeps rows from shearing against the window's corner.
+        public static let listEdgeFade = Space.s24
+
+        /// Nav rows — `list-item`, h-32 rounded-8.
+        public static let navRowHeight = Space.s32
+        /// `px-11`, not 12: the SF Symbol sits about a point inside its 16 pt
+        /// box, so 11 puts the *glyph* on the same 12 pt margin as the meeting
+        /// titles below. Snapping this to the 12 of the scale visibly stairsteps
+        /// the two blocks against each other.
+        public static let navRowHPadding: CGFloat = 11
+        public static let navRowGap = Space.s4
+        public static let navIconSide = Space.s16
+        /// Point size of the SF Symbol inside that 16 pt box — the *ink*, not
+        /// the box. Measured against the comps: 12 puts the magnifier at 12 × 12.
+        public static let navIconSize: CGFloat = 12
+        /// Same, for the collapse toggle (`sidebar.left` inks 14 × 11).
+        public static let chromeIconSize: CGFloat = 12
+        /// `Button text` wrapper — px-2 inside the row.
+        public static let navLabelInset = Space.s2
+
+        /// Micro-actions revealed on a meeting row's hover — `state=hover`
+        /// (14:3174). Two 16 pt slots, 8 apart, at the trailing end of the time
+        /// line. The comps drew `square.and.arrow.down` and `trash`; only the
+        /// trash is left — revealing a file is not a routine act on a row.
+        public static let rowActionSlot = Space.s16
+        public static let rowActionGap = Space.s8
+        public static let rowActionIconSize: CGFloat = 12
+
+        /// Meeting rows — `meetingitem`, px-12 py-10 rounded-8, 4 pt between lines.
+        public static let meetingHPadding = Space.s12
+        public static let meetingVPadding = Space.s10
+        public static let meetingLineGap = Space.s4
+        /// Date header block — `px-12`, 22 pt from the top of the date to the
+        /// top of the first meeting under it.
+        public static let sectionHeaderBlockHeight: CGFloat = 22
+        /// What is left of that block once the line has taken its share.
+        ///
+        /// Derived rather than stated as 8, so changing the header's type moves
+        /// the gap instead of growing the group — which is how a one-point line
+        /// box turns into a one-point shift of every dated section below it.
+        public static var sectionHeaderBottomGap: CGFloat {
+            max(0, sectionHeaderBlockHeight - Typo.sectionHeader.lineHeight)
+        }
+
+        public static let rowRadius = Radius.xs
+        /// Meeting rows keep a fuller corner than nav / chrome — one step above
+        /// `rowRadius`, so the list item reads softer than the controls around it.
+        public static let meetingRadius = Radius.md
+        /// Collapse toggle — 32×32 rounded-8, icon 16.
+        public static let toggleSide = Space.s32
+        public static let toggleIconSide = Space.s16
+
+        /// Traffic-light slot: 76×32 at (12, 8); discs Ø12 at x 24/44/64,
+        /// centred on y 24. `SceneWindowChrome` moves the real window buttons here.
+        public static let trafficLightSlotWidth: CGFloat = 76
+        public static let trafficLightLeading = Space.s24
+        public static let trafficLightSpacing = Space.s20
+        public static let trafficLightDiameter = Space.s12
+        /// Top of the discs, from the top of the window.
+        public static let trafficLightTop: CGFloat = 18
+
+        // MARK: Paint
+
+        /// The rail is the window's own background, lifted a hair.
+        ///
+        /// The comps say `#101010 @ 92 %`, which reads as "a plate" and is not:
+        /// measured against the pane beside it, the rail is 20/255 and the pane
+        /// 17.5 — the *same* ink, the rail simply 92 % opaque where the pane is
+        /// 97 %, so a little more of the canvas shows through. One per cent of
+        /// separation, and the hairline border does the rest.
+        ///
+        /// Painting the literal 92 % here was wrong: over Propeller's glass it
+        /// covers the material and turns the rail into a slab, which is the one
+        /// thing the design is not. What the rail owns is the *difference* — a
+        /// wash thin enough that the window still shows through it.
+        public static let surface = Primitive.ink(dark: 0.02, light: 0.02)
+        /// Hairline on the trailing edge, and the rule under the nav block.
+        public static let border = Primitive.ink(dark: Primitive.AlphaWhite.a7,
+                                                 light: Primitive.AlphaBlack.a9)
+        /// Selected row wash — white 5 % in Figma.
+        public static let rowSelected = Primitive.ink(dark: Primitive.AlphaWhite.a5,
+                                                      light: Primitive.AlphaBlack.a5)
+        /// Hover. Not in the comps — half of `rowSelected`, so that pointing at a
+        /// row can never be mistaken for having chosen it.
+        public static let rowHover = Primitive.ink(dark: Primitive.AlphaWhite.a3,
+                                                   light: Primitive.AlphaBlack.a3)
+
+        /// Nav label and its icon — one colour, they always move together.
+        public static let navLabel = Primitive.ink(dark: Primitive.AlphaWhite.a55,
+                                                   light: Primitive.AlphaBlack.a58)
+        public static let navLabelSelected = Primitive.ink(dark: Primitive.AlphaWhite.a95,
+                                                           light: Primitive.AlphaBlack.a92)
+        /// Shortcut hint, revealed on hover.
+        public static let navShortcut = Primitive.ink(dark: Primitive.AlphaWhite.a30,
+                                                      light: Primitive.AlphaBlack.a42)
+
+        /// «17:30 · 45 мин».
+        public static let meetingMeta = Primitive.ink(dark: Primitive.AlphaWhite.a55,
+                                                      light: Primitive.AlphaBlack.a55)
+        /// The meeting's name — the loud half of the title line.
+        public static let meetingTitle = Primitive.ink(dark: Primitive.AlphaWhite.a95,
+                                                       light: Primitive.AlphaBlack.a92)
+        /// What it was about — the quiet half.
+        public static let meetingPreview = Primitive.ink(dark: Primitive.AlphaWhite.a55,
+                                                         light: Primitive.AlphaBlack.a55)
+        /// «Вчера, 24 августа».
+        public static let sectionHeader = Primitive.ink(dark: Primitive.AlphaWhite.a30,
+                                                        light: Primitive.AlphaBlack.a42)
+        /// Collapse toggle glyph.
+        public static let chromeIcon = Primitive.ink(dark: Primitive.AlphaWhite.a40,
+                                                     light: Primitive.AlphaBlack.a48)
+        /// Brightest point of the processing sweep, painted over `meetingPreview`.
+        public static let shimmerPeak = Primitive.ink(dark: Primitive.AlphaWhite.a75,
+                                                      light: Primitive.AlphaBlack.a55)
+
+        // MARK: Type
+
+        /// Not `Type` — that spelling collides with metatype syntax at every use site.
+        public enum Typo {
+            /// 13 / 16 regular — nav row label.
+            ///
+            /// Same size and weight as the meeting titles below it. The rail
+            /// therefore has one text size and one weight, and everything is
+            /// said with colour.
+            public static let navLabel = Typography.Style(
+                size: 13, lineHeight: 16, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
+            /// 11 / 14 regular — time line, shortcut hint.
+            ///
+            /// Eleven, not the 10 of the label scale: the component sheet says
+            /// `text-[11px]`, and it is the one size in the rail that is off the
+            /// scale on purpose — 10 is legible but the times sit next to a
+            /// 13 pt title and read as a footnote at that size.
+            public static let meta = Typography.Style(
+                size: 11, lineHeight: 14, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
+            /// 13 / 16 regular — meeting title + preview, wraps to three lines.
+            ///
+            /// 13 is off the 14 / 12 / 10 label scale on purpose: the rail is the
+            /// one place where a 12 pt line has to carry a whole sentence, and
+            /// 13 buys legibility without moving the 16 pt line box the rows are
+            /// built on. It also happens to be the size at which SF Pro's laid-out
+            /// line is exactly 16, so the block needs no leading correction at all.
+            public static let meetingTitle = Typography.Style(
+                size: 13, lineHeight: 16, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
+            /// 11 / 14 regular — date header. The same face and size as the
+            /// time line; only the colour separates them (30 % against 55 %).
+            public static let sectionHeader = meta
+        }
+
+        // MARK: Motion
+
+        /// One pass of the processing sweep, end to end.
+        public static let shimmerPeriod: Double = 1.6
+        /// Angle of the sweep, in CSS degrees (0 = up, 90 = right).
+        public static let shimmerAngle: Double = 113.913
+        /// Half the band's width as a fraction of the gradient line — Figma's
+        /// stops are 29.643 % / 43.876 % / 58.108 %.
+        public static let shimmerHalfWidth: Double = 0.14232
+        public static let shimmerCenter: Double = 0.43876
+    }
+
+    
+    /// The bar that docks at the foot of the rail — Figma 53:2664.
+    ///
+    /// Its own group rather than a `Sidebar.*` prefix: a toast is an app-wide
+    /// idea that happens to be drawn here first. The older 280 pt card that the
+    /// four content-pane alerts used (`Tokens.Toast`, `PropellerToast`) is gone —
+    /// they all dock here now, one at a time, out of one queue.
+    public enum ToastBar {
+        /// Inset from the rail's edges — `left 12, bottom 16` in the comps.
+        public static let inset = Space.s12
+        public static let bottomInset = Space.s16
+        public static let radius = Radius.sm
+        /// `pl-12 pr-8` — the trailing side is tighter because a 32 pt
+        /// button already carries its own optical margin.
+        public static let leadingPadding = Space.s12
+        public static let trailingPadding = Space.s8
+        public static let vPadding = Space.s10
+        /// Text block's own inset inside the bar.
+        public static let textInset = Space.s8
+        public static let lineGap = Space.s2
+        public static let actionGap = Space.s4
+        public static let leadingSlot = Space.s16
+        /// Blur behind the bar, so the list reads through it as texture.
+        public static let backdropBlur: CGFloat = 16
+
+        public static let actionHeight = Space.s32
+        public static let actionHPadding = Space.s10
+        public static let actionRadius = Radius.xxs
+        public static let closeSide = Space.s32
+        public static let closeRadius = Radius.xs
+
+        public static let fill = Primitive.ink(dark: Primitive.AlphaWhite.a5,
+                                               light: Primitive.AlphaBlack.a5)
+        public static let border = Sidebar.border
+        public static let title = Sidebar.meetingTitle
+        public static let subtitle = Sidebar.meetingPreview
+        public static let actionFill = Primitive.ink(dark: Primitive.AlphaWhite.a7,
+                                                     light: Primitive.AlphaBlack.a7)
+        public static let actionHoverFill = Primitive.ink(dark: Primitive.AlphaWhite.a12,
+                                                          light: Primitive.AlphaBlack.a10)
+        public static let actionLabel = Sidebar.navLabelSelected
+        public static let closeIcon = Sidebar.chromeIcon
+
+        /// 13 / 16 regular — the message.
+        public static let titleType = Sidebar.Typo.meetingTitle
+        /// 12 / 16 regular — the supporting line, when there is one.
+        public static let subtitleType = Typography.Label.smRegular.lineHeight(16)
+        /// 12 / 16 medium — the action's label. The one place in the rail
+        /// that still uses medium: it is a button, and it has to out-weigh
+        /// the sentence it sits beside.
+        public static let actionType = Typography.Label.smMedium.lineHeight(16)
+    }
+
+    /// The content pane beside the rail — Figma 31:4624.
+    ///
+    /// Two columns that both flex: the summary takes the room it can up to a
+    /// comfortable measure, the notes take the rest. Neither is a fixed width,
+    /// which is what lets the same pane work at 800 pt and at 500.
+    public enum Pane {
+
+        // MARK: Header (31:4625) — the rail's 48 pt row, continued
+
+        public static let headerHeight = Sidebar.headerHeight
+        /// Title block: `w-430 px-16 py-8`.
+        public static let headerTitleWidth: CGFloat = 430
+        public static let headerHPadding = Space.s16
+        public static let headerVPadding = Space.s8
+        /// Between the time and the participant count.
+        public static let headerMetaGap = Space.s16
+        /// Between the count and its chevron.
+        public static let headerChevronGap = Space.s4
+        /// Trailing cluster: `px-8 gap-6`.
+        public static let headerActionsPadding = Space.s8
+        public static let headerActionsGap = Space.s6
+        public static let headerButtonSide = Space.s32
+        public static let headerButtonRadius = Radius.xs
+        public static let headerIconSize: CGFloat = 13
+        /// The one filled button up there.
+        public static let shareRadius = Radius.xxs
+        public static let shareHPadding = Space.s10
+
+        // MARK: Summary column (31:4645)
+
+        public static let summaryHPadding = Space.s40
+        public static let summaryVPadding = Space.s24
+        /// Between the lead block and each section.
+        public static let summaryBlockGap = Space.s24
+        /// Inside a block: heading to body. Off the scale, and from the comps —
+        /// 8 would let a 22 pt line breathe just enough to look like a gap.
+        public static let summaryLineGap: CGFloat = 7
+        public static let summaryMinWidth: CGFloat = 520
+        /// A measure, not a container: past ~640 pt a 14 pt line stops being
+        /// comfortable to read, however much room the window has.
+        public static let summaryMaxWidth: CGFloat = 640
+        /// Bullet indent and the space between list items.
+        public static let bulletIndent: CGFloat = 21
+        public static let bulletGap = Space.s16
+
+        // MARK: Transcript column (32:5278)
+
+        /// Between remarks. Generous on purpose — a transcript is scanned for
+        /// who said what, and the gap is what makes the turns findable.
+        public static let transcriptTurnGap = Space.s24
+        /// Speaker line to its text.
+        public static let transcriptLineGap = Space.s2
+        /// Speaker to timecode.
+        public static let transcriptMetaGap = Space.s8
+        /// Fixed, so the timecodes form a column instead of drifting with names.
+        public static let transcriptTimeWidth: CGFloat = 40
+
+        // MARK: Notes column (31:4652)
+
+        public static let notesHPadding = Space.s8
+        public static let notesVPadding = Space.s10
+        public static let notesMinWidth: CGFloat = 240
+        /// And a ceiling. The comps give the notes 268 at a 788 pt pane and 280
+        /// at 800 — they take the leftover *up to a point*. Without the cap a
+        /// wide window hands the notes everything and leaves the summary in its
+        /// 520 against the left edge, which is not "centred" by any reading.
+        public static let notesMaxWidth: CGFloat = 280
+        /// What the notes shrink to when there is no room for the column —
+        /// `notes-block` state `*-hidden`, a 52 × 52 button.
+        public static let notesCollapsedSide: CGFloat = 52
+        /// The summary keeps this much while the notes are open. Measured
+        /// across the comps: the column is 520 at both 788 and 800 pt of pane,
+        /// and the notes take whatever is left (268 and 280). Below
+        /// `summaryMinWidth + notesMinWidth` the notes collapse instead of
+        /// squeezing the text — at 601 the comps give the summary 549 and the
+        /// notes a button.
+        public static let notesCollapseBelow: CGFloat = summaryMinWidth + notesMinWidth
+        /// One note: `px-12 py-8 rounded-6`.
+        public static let noteHPadding = Space.s12
+        public static let noteVPadding = Space.s8
+        public static let noteRadius = Radius.xxs
+
+        // MARK: Paint
+
+        public static let title = Sidebar.navLabelSelected
+        public static let meta = Sidebar.meetingMeta
+        public static let body = Sidebar.navLabelSelected
+        public static let placeholder = Sidebar.sectionHeader
+        public static let buttonIcon = Sidebar.chromeIcon
+        public static let shareFill = ToastBar.actionFill
+        public static let shareHoverFill = ToastBar.actionHoverFill
+        public static let shareLabel = Sidebar.navLabelSelected
+        public static let noteHoverFill = Sidebar.rowHover
+
+        // MARK: Type
+
+        public enum Typo {
+            /// 11 / 14 regular — the meeting's name and the line under it. The
+            /// header is chrome, and chrome in this app is 11 pt.
+            public static let headerTitle = Sidebar.Typo.meta
+            /// 12 / 16 medium — «Поделиться».
+            public static let shareLabel = ToastBar.actionType
+            /// 18 / 22 semibold, −0.18 tracking — the one-sentence summary.
+            public static let lead = Typography.Style(
+                size: 18, lineHeight: 22, weight: .semibold,
+                weightTrim: Typography.railWeightTrim
+            )
+            public static let leadTracking: CGFloat = -0.18
+            /// 14 / 22 regular — everything that is read rather than scanned.
+            public static let body = Typography.Style(
+                size: 14, lineHeight: 22, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
+            /// 14 / 22 bold, −0.14 — a section heading inside the summary.
+            public static let sectionTitle = Typography.Style(
+                size: 14, lineHeight: 22, weight: .bold,
+                weightTrim: Typography.railWeightTrim
+            )
+            public static let sectionTracking: CGFloat = -0.14
+            /// 13 / 16 regular — a note.
+            public static let note = Sidebar.Typo.meetingTitle
+            /// 11 / 14 regular — the speaker and timecode over a remark.
+            public static let transcriptMeta = Sidebar.Typo.meta
+            /// 12 / 18 regular — the remark itself. Tighter than the summary's
+            /// 14 / 22: a transcript is long, and it is skimmed, not studied.
+            public static let transcriptBody = Typography.Style(
+                size: 12, lineHeight: 18, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
+            /// 12 / 16 regular — «Добавьте заметку...».
+            public static let notePlaceholder = Typography.Style(
+                size: 12, lineHeight: 16, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
+        }
     }
 
     public enum Card {
@@ -241,61 +713,133 @@ public enum Tokens {
     // Three roles: Heading (titles), Label (UI), Body (reading: summary / transcript).
 
     public enum Typography {
-        /// SF Pro opsz axis ends at 28 (Display). Headings lock there.
-        public static let opszMax: CGFloat = 28
-        /// Labels sit above Text default (17), below full Display.
-        public static let opszElevated: CGFloat = 20
-        /// Body stays on the Text end of the axis.
-        public static let opszText: CGFloat = 17
+        /// How much to take off the weight axis so AppKit's stem darkening
+        /// stops out-inking the comps. See `Style.weightTrim`.
+        ///
+        /// Measured, not guessed, and it is worth knowing how little it buys:
+        /// at identical size and glyph width, AppKit lays down **1.29×** the ink
+        /// Figma does. This trim takes that to 1.25. The rest is not weight — it
+        /// is grayscale antialiasing with stem darkening, which is what macOS
+        /// does for light text in a transparent window and what every native app
+        /// looks like. (Editors that look thinner — Cursor, VS Code — are
+        /// Electron and rasterise text themselves.)
+        ///
+        /// Closing the remaining gap on this axis would need roughly −0.5, which
+        /// is not a correction but a different face. Set this to 0 to see the
+        /// system untouched.
+        public static let railWeightTrim: CGFloat = -0.08
 
         public struct Style: Equatable, Sendable {
             public let size: CGFloat
             public let lineHeight: CGFloat
             public let weight: Font.Weight
-            public let opticalSize: CGFloat
+
+            /// A nudge along SF Pro's continuous weight axis, on AppKit's
+            /// −1…1 scale where regular is 0 and medium is 0.23.
+            ///
+            /// This is a *rasterisation* correction, not a type decision. Drawn
+            /// at the same size and the same weight, AppKit lays down about 29 %
+            /// more ink than Figma does — measured, at identical glyph widths —
+            /// because light-on-dark text in a transparent window gets grayscale
+            /// antialiasing with stem darkening, and Figma's rasteriser does
+            /// not. The metrics are right and the colour is right; the strokes
+            /// are simply fatter.
+            ///
+            /// Trimming the axis is the only lever that does not lie about the
+            /// type: the style still says «regular», and a hair comes off the
+            /// stems to land where the design does. Set it to 0 to see exactly
+            /// what the system would draw.
+            public var weightTrim: CGFloat = 0
+
+            public init(
+                size: CGFloat,
+                lineHeight: CGFloat,
+                weight: Font.Weight,
+                weightTrim: CGFloat = 0
+            ) {
+                self.size = size
+                self.lineHeight = lineHeight
+                self.weight = weight
+                self.weightTrim = weightTrim
+            }
 
             public var nsWeight: NSFont.Weight {
                 switch weight {
                 case .semibold: return .semibold
                 case .medium: return .medium
+                case .bold: return .bold
                 default: return .regular
                 }
             }
 
             public var nsFont: NSFont {
-                Typography.systemFont(size: size, weight: nsWeight, opticalSize: opticalSize)
+                Typography.systemFont(
+                    size: size, weight: nsWeight, weightTrim: weightTrim
+                )
             }
 
             public var font: Font { Font(nsFont) }
 
+            /// The line height text actually gets laid out at.
+            ///
+            /// CoreText rounds ascent and descent away from zero *before* adding
+            /// them, so SF Pro at 12 pt draws a 15 pt line (⌈11.60⌉ + ⌈2.53⌉),
+            /// not the 14.13 its raw metrics suggest. Deriving leading from the
+            /// raw numbers overshoots by up to a point on every line — which is
+            /// invisible on one label and a row and a half of drift down a list.
+            public var renderedLineHeight: CGFloat {
+                ceil(nsFont.ascender) + ceil(-nsFont.descender) + ceil(nsFont.leading)
+            }
+
             /// Extra for SwiftUI `.lineSpacing` (may be negative when LH is tight).
-            public var lineSpacingExtra: CGFloat {
-                let used = nsFont.ascender - nsFont.descender + nsFont.leading
-                return lineHeight - used
+            public var lineSpacingExtra: CGFloat { lineHeight - renderedLineHeight }
+
+            /// Same face and size, more (or less) room between lines.
+            ///
+            /// A wrapping label needs a taller line box than the single-line one
+            /// it shares a size with — the sidebar's 12 pt meeting titles run to
+            /// three lines at 16 pt leading, the 12 pt nav labels never wrap.
+            /// Re-leading beats minting `smMediumTall` next to `smMedium`.
+            public func lineHeight(_ value: CGFloat) -> Style {
+                Style(size: size, lineHeight: value, weight: weight, weightTrim: weightTrim)
+            }
+
+            /// Same size and leading, a different face weight. For the one place
+            /// a label has to out-read its neighbour without changing size —
+            /// «Вернуть» beside the time it replaces.
+            public func weight(_ value: Font.Weight) -> Style {
+                Style(size: size, lineHeight: lineHeight, weight: value,
+                      weightTrim: weightTrim)
+            }
+
+            /// Same style, a nudge off the weight axis. See `weightTrim`.
+            public func trimmed(_ trim: CGFloat) -> Style {
+                Style(size: size, lineHeight: lineHeight, weight: weight,
+                      weightTrim: trim)
             }
         }
 
-        /// Titles. Semibold, max opsz. LH% 95→105 as size drops.
+        /// Titles. Semibold. LH% 95→105 as size drops.
         public enum Heading {
             /// 36 / 34 (95%)
-            public static let lg = Style(size: 36, lineHeight: 34, weight: .semibold, opticalSize: opszMax)
+            public static let lg = Style(size: 36, lineHeight: 34, weight: .semibold)
             /// 28 / 28 (~100%)
-            public static let md = Style(size: 28, lineHeight: 28, weight: .semibold, opticalSize: opszMax)
+            public static let md = Style(size: 28, lineHeight: 28, weight: .semibold)
             /// 22 / 23 (105%)
-            public static let sm = Style(size: 22, lineHeight: 23, weight: .semibold, opticalSize: opszMax)
+            public static let sm = Style(size: 22, lineHeight: 23, weight: .semibold)
         }
 
-        /// UI copy — mostly single-line. Regular or medium, elevated opsz.
+        /// UI copy — mostly single-line. Regular or medium.
         public enum Label {
             /// 14 / 18
-            public static let mdRegular = Style(size: 14, lineHeight: 18, weight: .regular, opticalSize: opszElevated)
-            public static let mdMedium = Style(size: 14, lineHeight: 18, weight: .medium, opticalSize: opszElevated)
+            public static let mdRegular = Style(size: 14, lineHeight: 18, weight: .regular)
+            public static let mdMedium = Style(size: 14, lineHeight: 18, weight: .medium)
             /// 12 / 14
-            public static let smRegular = Style(size: 12, lineHeight: 14, weight: .regular, opticalSize: opszElevated)
-            public static let smMedium = Style(size: 12, lineHeight: 14, weight: .medium, opticalSize: opszElevated)
+            public static let smRegular = Style(size: 12, lineHeight: 14, weight: .regular)
+            public static let smMedium = Style(size: 12, lineHeight: 14, weight: .medium)
             /// 10 / 12
-            public static let xsRegular = Style(size: 10, lineHeight: 12, weight: .regular, opticalSize: opszElevated)
-            public static let xsMedium = Style(size: 10, lineHeight: 12, weight: .medium, opticalSize: opszElevated)
+            public static let xsRegular = Style(size: 10, lineHeight: 12, weight: .regular)
+            public static let xsMedium = Style(size: 10, lineHeight: 12, weight: .medium)
 
             /// Pill / CTA label — medium 14/18 (no semibold in Label).
             public static let pill = mdMedium
@@ -303,15 +847,19 @@ public enum Tokens {
 
         /// Long-form reading: summary, transcript, notes. 14 / 22.
         public enum Body {
-            public static let md = Style(size: 14, lineHeight: 22, weight: .regular, opticalSize: opszText)
+            public static let md = Style(size: 14, lineHeight: 22, weight: .regular)
         }
 
         fileprivate static func systemFont(
-            size: CGFloat, weight: NSFont.Weight, opticalSize: CGFloat
+            size: CGFloat, weight: NSFont.Weight, weightTrim: CGFloat = 0
         ) -> NSFont {
             let base = NSFont.systemFont(ofSize: size, weight: weight)
-            let key = NSFontDescriptor.AttributeName(rawValue: kCTFontOpticalSizeAttribute as String)
-            let desc = base.fontDescriptor.addingAttributes([key: opticalSize])
+            guard weightTrim != 0 else { return base }
+            // The weight trait is continuous on −1…1, so the axis can be
+            // moved by less than the gap between two named weights.
+            let desc = base.fontDescriptor.addingAttributes([
+                .traits: [NSFontDescriptor.TraitKey.weight: weight.rawValue + weightTrim]
+            ])
             return NSFont(descriptor: desc, size: size) ?? base
         }
     }
@@ -327,6 +875,29 @@ extension View {
         return self
             .font(font)
             .lineSpacing(style.lineSpacingExtra)
+    }
+
+    /// `typo`, plus the height the style actually asks for.
+    ///
+    /// `.lineSpacing` puts space *between* lines and nothing around the block,
+    /// so a label styled 12 / 16 measures 15 pt tall on one line and 47 on
+    /// three — every block is short by exactly one `lineSpacingExtra`, whatever
+    /// its line count. Left uncorrected, a meeting row comes out 50 pt instead
+    /// of the designed 52, and eight of them drift the list by a row and a half.
+    ///
+    /// Splitting the shortfall above and below is what CSS calls half-leading,
+    /// and it is what Figma's `leading-[16px]` does — so the first baseline
+    /// lands where the comps put it, not two points high.
+    ///
+    /// Use this wherever the *box* matters: rows, list items, anything whose
+    /// height is designed. Plain `typo` is still right for text that simply
+    /// flows.
+    public func typoBlock(
+        _ style: Tokens.Typography.Style,
+        monospacedDigit: Bool = false
+    ) -> some View {
+        typo(style, monospacedDigit: monospacedDigit)
+            .padding(.vertical, max(0, style.lineSpacingExtra) / 2)
     }
 }
 

@@ -186,7 +186,7 @@ final class PipelineActivityTests: XCTestCase {
     func testClearingTheFailureRequeues() {
         var entry = candidate("A", .recorded, minutesAgo: 5, failed: true)
         XCTAssertNil(nextJob(from: [entry]))
-        entry.lastFailure = nil          // what the "Повторить" button does
+        entry.lastFailure = nil          // what `clearFailure` does on success
         XCTAssertNotNil(nextJob(from: [entry]))
     }
 

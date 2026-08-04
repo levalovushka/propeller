@@ -278,13 +278,14 @@ private struct RecapSettingsPane: View {
                             }
                         }
                         .controlSize(.small)
-                        // Offered only while it can do something. A permanent
-                        // "Скачать модель" beside a working setup reads as "the
-                        // model is missing", which is how a stale status line
-                        // got mistaken for a hung download.
+                        // The one place the fetch is still pressable by hand, and
+                        // deliberately phrased as what it is: the app already does
+                        // this on every launch, so this is for the case where
+                        // somebody wants it *now* rather than in twenty seconds.
                         if appState.localRecapModelReady != true {
-                            Button(appState.ollamaSetupProgress != nil ? "Скачиваем…" : "Скачать модель") {
-                                appState.startOllamaRuntimeDownload()
+                            Button(appState.ollamaSetupProgress != nil
+                                   ? "Скачиваем…" : "Проверить и починить") {
+                                Task { await appState.ensureSummaryModel() }
                                 isInstalling = true
                             }
                             .controlSize(.small)
@@ -456,21 +457,13 @@ private struct ExportSettingsPane: View {
                     fromByteCount: appState.storageLibraryBytes,
                     countStyle: .file
                 )
-                let limit = ByteCountFormatter.string(
-                    fromByteCount: Preferences.shared.storageNudgeThresholdBytes,
-                    countStyle: .file
-                )
                 LabeledContent("Аудио на диске", value: used)
-                LabeledContent("Порог напоминания", value: limit)
-                Text("Propeller никогда не удаляет сам. При превышении порога — напоминание. Удаление аудио сохраняет расшифровки и саммари.")
+                // No threshold and no reminder any more: the app does not decide
+                // when this becomes a problem. The list below is the tool — it is
+                // here, it is sorted, and it is only ever opened on purpose.
+                Text("Propeller никогда не удаляет сам. Удаление аудио сохраняет расшифровки и\u{00A0}саммари.")
                     .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
-                if Preferences.shared.storageNudgeSnoozed {
-                    Button("Сбросить отложку «Позже»") {
-                        Preferences.shared.storageNudgeSnoozed = false
-                        appState.refreshStorageNudge(presentAlert: true)
-                    }
-                }
                 ForEach(appState.recordingStore.storageNudgeCandidates(limit: 8)) { entry in
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
@@ -497,7 +490,7 @@ private struct ExportSettingsPane: View {
         .onAppear {
             if meetingsPath.isEmpty { meetingsPath = Preferences.shared.meetingsPath }
             if recordingsPath.isEmpty { recordingsPath = Preferences.shared.recordingsPath }
-            appState.refreshStorageNudge(presentAlert: false)
+            appState.refreshStorageUsage()
         }
     }
 

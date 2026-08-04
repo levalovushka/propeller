@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import PropellerPure
 import PropellerUI
 
 /// Meetings home — Figma 640:1859.
@@ -35,36 +36,45 @@ struct MainView: View {
     }
     private var canGoForward: Bool { navIndex + 1 < navStack.count }
 
+    /// The rail can be put away — Figma has a `nosidebar` frame for it, where the
+    /// collapse toggle and the traffic lights move into the content header.
+    @AppStorage("sidebarVisible") private var sidebarVisible = true
+
+    /// Which column the pane is showing. The comps switch this from the action
+    /// bar; until that is built it lives in the header's «ещё» menu.
+    @State private var paneMode: MeetingPaneMode = .summary
+    /// What is being typed into the notes composer.
+    @State private var draftNote = ""
+    /// Raised by «Поделиться»; the anchor lowers it once the sheet is up.
+    @State private var showShareSheet = false
+
+
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            VStack(spacing: 0) {
-                topBar
-                    .zIndex(2)
-                mainArea
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+        HStack(spacing: 0) {
+            if sidebarVisible {
+                sidebar
+                    .transition(.move(edge: .leading))
             }
-
-            if state.isRecording {
-                recordingEdgeGlow
-                    .allowsHitTesting(false)
-                    .zIndex(1)
-            }
-
-            if !toastIdentity.isEmpty {
-                activeToastContent
-                    .padding(.trailing, Tokens.Toast.cornerInset)
-                    .padding(.bottom, Tokens.Toast.cornerInset)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .zIndex(3)
-            }
+            contentPane
         }
-        .animation(.easeOut(duration: 0.2), value: toastIdentity)
-        .frame(minWidth: Tokens.Window.contentWidth + Tokens.Window.chromePadding * 2,
-               minHeight: 560)
+        .animation(.easeOut(duration: 0.18), value: sidebarVisible)
+        // Both columns start at the top of the window, not under the titlebar.
+        // This has to be here rather than on the pane alone: the traffic lights
+        // are AppKit's and sit where we put them regardless, so a rail that
+        // still honours the safe area drops its own 48 pt header below them —
+        // the toggle ends up on a second line under the discs.
         .ignoresSafeArea(.container, edges: .top)
+        // Keyboard, sheets and lifecycle belong to the window, not the pane —
+        // ⌘K has to open the palette with the pointer over the rail too.
         .onAppear {
             state.isWindowOpen = true
             NSApp.setActivationPolicy(.regular)
+            selectNewestIfNothingChosen()
+        }
+        .onChange(of: recordingStore.recordings.count) { _, _ in
+            // The first meeting to arrive in an empty archive opens itself; so
+            // does the one that just finished recording.
+            selectNewestIfNothingChosen()
         }
         .onDisappear {
             state.isWindowOpen = false
@@ -73,6 +83,12 @@ struct MainView: View {
         .onChange(of: state.selectedRecordingID) { _, newID in
             recordNav(to: newID)
         }
+        // The pipeline asks for a column when it finishes something («саммари
+        // готово» → the summary). Nothing honoured that after the redesign: the
+        // request was written and dropped, because the pane's mode is local
+        // `@State` and the old detail view was the only reader.
+        .onChange(of: state.preferredDetailTab) { _, _ in adoptPreferredColumn() }
+        .onAppear { adoptPreferredColumn() }
         .sheet(isPresented: $showSearchPalette) {
             SearchPalette(
                 state: state,
@@ -95,89 +111,227 @@ struct MainView: View {
                 showSearchPalette = true
                 Analytics.signal("Search.opened")
             }
-                .keyboardShortcut("k", modifiers: .command)
-                .hidden()
+            .keyboardShortcut("k", modifiers: .command)
+            .hidden()
         }
-        .alert("Запись восстановлена", isPresented: Binding(
-            get: { state.recoveredCount > 0 },
-            set: { if !$0 { state.recoveredCount = 0 } }
-        )) {
-            Button("ОК") { state.recoveredCount = 0 }
-        } message: {
-            Text(state.recoveredCount == 1
-                 ? "1 запись прервана — возможно, нужна повторная расшифровка."
-                 : "\(state.recoveredCount) записей прервано — возможно, нужна повторная расшифровка.")
+        // No launch-time alert here any more, and nothing replaced it. A modal
+        // for catch-up is the one thing the app promised never to do — it also
+        // suspends the worker until answered — and the news itself was worse than
+        // useless: it told the user their recordings had been interrupted, about a
+        // crash of ours, with nothing to do about it. Each of those meetings is in
+        // the list, wearing its own state.
+    }
+
+    /// There is no list screen any more, so "nothing selected" is not a state
+    /// the pane can usefully show — the newest meeting stands in for it.
+    private func selectNewestIfNothingChosen() {
+        guard !state.isRecording else { return }
+        // Also re-run when the chosen meeting has left the list, so the pane
+        // never shows something the rail does not. Nothing is filtered out of
+        // the rail any more — short recordings are easy enough to delete that
+        // hiding them only made the app open meetings nobody could see.
+        if let id = state.selectedRecordingID,
+           recordingStore.recordings.contains(where: { $0.id == id }) {
+            return
+        }
+        guard let newest = recordingStore.recordings.max(by: { $0.date < $1.date }) else {
+            state.selectedRecordingID = nil
+            return
+        }
+        state.selectRecording(newest)
+    }
+
+    /// Switch the pane to the column the app asked for, then forget the request —
+    /// a sticky one would drag the user back every time the view re-appeared.
+    private func adoptPreferredColumn() {
+        guard let raw = state.preferredDetailTab else { return }
+        switch raw {
+        case "recap":      paneMode = .summary
+        case "transcript": paneMode = .transcript
+        default:           break
+        }
+        state.preferredDetailTab = nil
+    }
+
+    // MARK: - Rail
+
+    private var sidebar: some View {
+        PropellerSidebar(
+            model: SidebarPresenter.model(state: state, store: recordingStore),
+            onNav: performNav,
+            onSelectMeeting: { id in
+                guard let entry = recordingStore.recordings.first(where: { $0.id == id }) else { return }
+                state.selectRecording(entry)
+            },
+            onDeleteMeeting: { id in
+                guard let entry = recordingStore.recordings.first(where: { $0.id == id }) else { return }
+                state.removeRecording(entry)
+            },
+            onRestoreMeeting: { _ in state.undoDeletion() },
+            onToggle: { sidebarVisible = false }
+        )
+    }
+
+    private func performNav(_ id: String) {
+        switch SidebarPresenter.NavAction(rawValue: id) {
+        case .record:
+            if state.isRecording { state.stopRecording() } else { state.startRecording() }
+        case .search:
+            showSearchPalette = true
+            Analytics.signal("Search.opened")
+        case .settings:
+            // Handled by the row itself — it is a `SettingsLink`, because
+            // nothing callable opens the Settings scene from an accessory app.
+            break
+        case .feedback:
+            NSWorkspace.shared.open(Self.issuesURL)
+        case .micAccess:
+            state.openMicrophoneSettings()
+        case nil:
+            break
         }
     }
 
-    /// One toast at a time — mic / disk / storage / pipeline error.
-    private var toastIdentity: String {
-        if state.showMicPermissionAlert { return "mic" }
-        if state.showDiskSpaceAlert { return "disk" }
-        if state.showStorageNudgeAlert { return "storage" }
-        if let err = state.pipelineError, !err.isEmpty { return "pipeline:\(err.prefix(40))" }
-        return ""
+    /// Where «Сообщить о проблеме» goes. Same repository the updater pulls its
+    /// appcast from (`build.sh`, `SU_FEED_URL`).
+    private static let issuesURL = URL(string: "https://github.com/levalovushka/propeller/issues/new")!
+
+    // MARK: - Content pane
+
+    private var contentPane: some View {
+        ZStack(alignment: .bottomTrailing) {
+            VStack(spacing: 0) {
+                topBar
+                    .zIndex(2)
+                mainArea
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
+            if state.isRecording {
+                recordingEdgeGlow
+                    .allowsHitTesting(false)
+                    .zIndex(1)
+            }
+
+        }
+        // Nothing floats over the pane. What the app has to say about a meeting
+        // is said by that meeting's row.
+        // The rail carries its own 300; the pane only has to stay readable.
+        .frame(minWidth: Tokens.Window.contentPaneMinWidth, minHeight: 560)
     }
 
+    // MARK: - Top bar — Figma 31:4625 (48 tall, same row as the rail's header)
+
+    /// With the rail up, the traffic lights live in *its* header and this bar
+    /// starts at the pane's own edge. With the rail away (Figma `nosidebar`,
+    /// 31:5083) the lights and the re-open toggle move here instead — the window
+    /// buttons never move, so something has to be beside them.
+    /// With a meeting open the pane's own header takes this row — Figma
+    /// 31:4625. The list has no such header in the comps, so it keeps the
+    /// navigation bar it already had.
     @ViewBuilder
-    private var activeToastContent: some View {
-        if state.showMicPermissionAlert {
-            PropellerToast(
-                title: "Нужен микрофон",
-                subtitle: "Разрешите доступ в Системных настройках, чтобы записывать встречи.",
-                primary: .init("Настройки") {
-                    state.openMicrophoneSettings()
-                    state.showMicPermissionAlert = false
-                },
-                secondary: .init("ОК") { state.showMicPermissionAlert = false },
-                onDismiss: { state.showMicPermissionAlert = false }
-            )
-        } else if state.showDiskSpaceAlert {
-            PropellerToast(
-                title: "Мало места на диске",
-                subtitle: state.diskSpaceWarning ?? "На диске заканчивается место для записей.",
-                primary: .init("Всё равно записать") { state.diskSpaceAlertContinue() },
-                secondary: .init("Отмена") { state.diskSpaceAlertCancel() },
-                onDismiss: { state.diskSpaceAlertCancel() }
-            )
-        } else if state.showStorageNudgeAlert {
-            let used = ByteCountFormatter.string(fromByteCount: state.storageLibraryBytes, countStyle: .file)
-            PropellerToast(
-                title: "Библиотека разрослась",
-                subtitle: "Записи занимают около \(used). Propeller сам ничего не удаляет.",
-                primary: .init("Настройки") {
-                    state.showStorageNudgeAlert = false
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-                },
-                secondary: .init("Позже") { state.snoozeStorageNudge() },
-                onDismiss: { state.snoozeStorageNudge() }
-            )
-        } else if let err = state.pipelineError, !err.isEmpty {
-            let canRetryASR = state.selectedRecording?.needsAttention == true
-                || (state.selectedRecording?.status == .recorded
-                    && (state.selectedRecording?.transcript?.isEmpty ?? true))
-            PropellerToast(
-                title: "Не удалось обработать",
-                subtitle: err,
-                primary: canRetryASR
-                    ? .init("Повторить") {
-                        state.clearPipelineError()
-                        Task { await state.reprocess() }
+    private var topBar: some View {
+        if let entry = state.selectedRecording, !state.isRecording {
+            HStack(spacing: 0) {
+                if !sidebarVisible {
+                    collapsedChrome
+                }
+                MeetingPaneHeader(
+                    title: entry.title.isEmpty ? "Без названия" : entry.title,
+                    time: Self.headerTime(for: entry),
+                    participants: participantsLabel(for: entry),
+                    onCopy: { copyPaneText(for: entry) },
+                    share: .init("Поделиться") { showShareSheet = true }
+                ) {
+                    Picker("Показать", selection: $paneMode) {
+                        ForEach(MeetingPaneMode.allCases, id: \.self) { mode in
+                            Text(mode.title).tag(mode)
+                        }
                     }
-                    : nil,
-                secondary: .init("Закрыть") { state.clearPipelineError() },
-                onDismiss: { state.clearPipelineError() }
-            )
+                    Divider()
+                    Button("Показать в Finder") { revealInFinder(entry) }
+                    Button("Удалить аудио") { state.deleteAudioFile(entry) }
+                        .disabled(!entry.audioFileExists)
+                    Divider()
+                    Button("Удалить встречу", role: .destructive) { state.removeRecording(entry) }
+                }
+            }
+            .frame(height: Tokens.Sidebar.headerHeight)
+            .overlay(alignment: .trailing) {
+                ShareAnchor(isPresented: $showShareSheet) { shareItems(for: entry) }
+                    .frame(width: 1, height: 1)
+                    .padding(.trailing, Tokens.Pane.headerActionsPadding)
+            }
+        } else {
+            listTopBar
         }
     }
 
-    // MARK: - Top bar — Figma 640:1861 (slot 76 | back/forward | status+gear)
+    /// Copies what the pane is currently showing — the summary or the
+    /// transcript. The button sits next to that column, so copying the *other*
+    /// one would be a surprise.
+    private func copyPaneText(for entry: RecordingEntry) {
+        let text: String
+        switch paneMode {
+        case .summary:
+            text = Self.recapMarkdown(for: entry)
+        case .transcript:
+            text = transcriptTurns(for: entry)
+                .map { "\($0.speaker) \($0.time)\n\($0.text)" }
+                .joined(separator: "\n\n")
+        }
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
 
-    private var topBar: some View {
+    /// The markdown file when there is one — sharing a file lets the receiving
+    /// app decide what to do with it — otherwise the text itself.
+    private func shareItems(for entry: RecordingEntry) -> [Any] {
+        if paneMode == .summary, let url = AppState.resolvedRecapURL(for: entry) {
+            return [url]
+        }
+        if let url = markdownURL(for: entry) { return [url] }
+        let text = Self.recapMarkdown(for: entry)
+        return text.isEmpty ? [] : [text]
+    }
+
+    /// Traffic-light slot and the re-open toggle, for when the rail is away.
+    private var collapsedChrome: some View {
+        HStack(spacing: 8) {
+            Color.clear
+                .frame(width: Tokens.Sidebar.trafficLightSlotWidth, height: 32)
+            SidebarChromeButton(symbol: "sidebar.left", help: "Показать список") {
+                sidebarVisible = true
+            }
+        }
+        .padding(.leading, Tokens.Window.chromePadding)
+    }
+
+    private static func headerTime(for entry: RecordingEntry) -> String {
+        let f = DateFormatter()
+        f.locale = SidebarDayGrouping.locale
+        f.dateFormat = "HH:mm, d MMMM"
+        return f.string(from: entry.date)
+    }
+
+    private func participantsLabel(for entry: RecordingEntry) -> String? {
+        let names = state.distinctSpeakerNames(for: entry)
+        guard !names.isEmpty else { return nil }
+        return "\(names.count) участников"
+    }
+
+    private var listTopBar: some View {
         HStack(spacing: 0) {
             HStack(spacing: 8) {
-                Color.clear
-                    .frame(width: Tokens.Window.trafficLightSlotWidth, height: 32)
+                if !sidebarVisible {
+                    Color.clear
+                        .frame(width: Tokens.Sidebar.trafficLightSlotWidth, height: 32)
+
+                    SidebarChromeButton(symbol: "sidebar.left", help: "Показать список") {
+                        sidebarVisible = true
+                    }
+                }
 
                 HStack(spacing: 0) {
                     IconButton(
@@ -226,8 +380,8 @@ struct MainView: View {
             }
         }
         .frame(height: 32)
-        .padding(Tokens.Window.chromePadding)
-        .frame(height: Tokens.Window.topBarHeight, alignment: .center)
+        .padding(.horizontal, Tokens.Window.chromePadding)
+        .frame(height: Tokens.Sidebar.headerHeight, alignment: .center)
     }
 
     // MARK: - History navigation
@@ -326,20 +480,89 @@ struct MainView: View {
 
     // MARK: - Main area
 
+    /// The pane's two columns — Figma 31:4644.
+    ///
+    /// There is no meetings list here any more: the rail is the list, and the
+    /// newest meeting is chosen on launch. The only reason this can be empty is
+    /// an archive with nothing in it yet.
     @ViewBuilder
     private var mainArea: some View {
-        Group {
-            if state.isRecording {
-                RecordingInProgressView(state: state, recorder: state.recorder)
-            } else if let entry = state.selectedRecording {
-                RecordingDetailView(state: state, entry: entry, presentation: .meeting)
-            } else {
-                meetingsHome
-            }
+        if state.isRecording {
+            RecordingInProgressView(state: state, recorder: state.recorder)
+                .padding(.horizontal, Tokens.Window.chromePadding)
+                .frame(maxWidth: .infinity)
+        } else if let entry = state.selectedRecording {
+            MeetingPaneBody(
+                mode: paneMode,
+                summary: RecapPresentation.summary(fromMarkdown: Self.recapMarkdown(for: entry)),
+                turns: transcriptTurns(for: entry),
+                notes: noteModels(for: entry),
+                composer: .init(text: $draftNote) { commitNote(for: entry) },
+                // Two facts, two homes: what the transcript is, and why the
+                // summary is not here yet. Joined into one line they read as one
+                // thought and neither was legible.
+                summaryPlaceholder: state.rest(of: entry).disclosure ?? "Саммари пока нет",
+                transcriptDisclosure: entry.depthDisclosure
+            )
+            .frame(maxWidth: .infinity)
+        } else {
+            Text("Пока нет встреч")
+                .typoBlock(Tokens.Pane.Typo.body)
+                .foregroundStyle(Tokens.Pane.placeholder)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        // Figma Frame 87: px-12, then centred 640 column.
-        .padding(.horizontal, Tokens.Window.chromePadding)
-        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Pane content
+
+    private func noteModels(for entry: RecordingEntry) -> [MeetingNote] {
+        MeetingNotes.resolved(items: entry.noteItems, blob: entry.notes)
+            .map { MeetingNote(id: $0.id, text: $0.text) }
+    }
+
+    /// Diarised segments when they exist, the plain transcript when they do not
+    /// — same fallback the detail view has always used.
+    private func transcriptTurns(for entry: RecordingEntry) -> [MeetingTranscriptColumn.Turn] {
+        let turns: [TranscriptPresentation.Turn]
+        if let json = entry.mergedSegmentsJSON,
+           let data = json.data(using: .utf8),
+           let segments = try? JSONDecoder().decode([PersistedSegment].self, from: data),
+           !segments.isEmpty {
+            turns = TranscriptPresentation.turns(from: segments)
+        } else if let transcript = entry.transcript, !transcript.isEmpty {
+            turns = TranscriptPresentation.turns(parsing: transcript, duration: entry.duration)
+        } else {
+            turns = []
+        }
+        return turns.enumerated().map { index, turn in
+            MeetingTranscriptColumn.Turn(
+                id: "t\(index)",
+                speaker: turn.speaker,
+                time: turn.timestamp,
+                text: turn.phrases.map(\.text).joined(separator: " ")
+            )
+        }
+    }
+
+    /// The recap markdown on disk, or empty when the model has not run yet.
+    /// `resolvedRecapURL`, never `recapURL`.
+    ///
+    /// The filename embeds a slug of the title, and the pipeline auto-titles a
+    /// meeting *after* writing its recap — so the expected name stops existing
+    /// the moment a meeting is named. That is what made the summary vanish from
+    /// the newest meeting after the redesign: the file was there all along, the
+    /// lookup was asking for the name it used to have.
+    private static func recapMarkdown(for entry: RecordingEntry) -> String {
+        guard let url = AppState.resolvedRecapURL(for: entry),
+              let text = try? String(contentsOf: url, encoding: .utf8)
+        else { return "" }
+        return text
+    }
+
+    private func commitNote(for entry: RecordingEntry) {
+        let text = draftNote
+        draftNote = ""
+        recordingStore.appendNote(id: entry.id, text: text)
     }
 
     private var meetingsHome: some View {

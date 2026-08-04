@@ -18,6 +18,12 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     /// Fixed identifier so the notification can be cleared once recording stops.
     static let recordingNotificationID = "meeting-recording"
 
+    /// Last known authorization, kept so `PushPolicy` can be asked a synchronous
+    /// question. `getNotificationSettings` is async, and a policy that had to
+    /// await it would have to be called from somewhere that can — which is how
+    /// «слать или нет» ended up decided at nine different call sites.
+    private(set) var isAuthorized = false
+
     private override init() { super.init() }
 
     /// Request authorization, register the delegate, and install the
@@ -25,7 +31,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     func configure() {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
+            self?.isAuthorized = granted
+        }
 
         let cancel = UNNotificationAction(
             identifier: Self.cancelAction,
@@ -45,8 +53,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     /// `authorized` reports whether notifications can show the decline action.
     func notifyRecordingStarted(completion: ((Bool) -> Void)? = nil) {
         let center = UNUserNotificationCenter.current()
-        center.getNotificationSettings { settings in
+        center.getNotificationSettings { [weak self] settings in
             let ok = settings.authorizationStatus == .authorized
+            self?.isAuthorized = ok
             guard ok else {
                 DispatchQueue.main.async { completion?(false) }
                 return
@@ -74,15 +83,22 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         center.removeDeliveredNotifications(withIdentifiers: [Self.recordingNotificationID])
     }
 
-    /// Fire-and-forget status banner (saved / stopped / recap ready, etc.).
-    func post(title: String, body: String) {
+    /// Fire-and-forget status banner.
+    ///
+    /// Whether this is called at all — and whether it makes a sound — is decided
+    /// by `PushPolicy`, not here and not at the call site. Silence is the default:
+    /// only an alarm gets a sound, and never while a recording is running
+    /// (`design/notifications.md`, R7).
+    func post(title: String, body: String, sound: Bool = false) {
         let center = UNUserNotificationCenter.current()
-        center.getNotificationSettings { settings in
-            guard settings.authorizationStatus == .authorized else { return }
+        center.getNotificationSettings { [weak self] settings in
+            let ok = settings.authorizationStatus == .authorized
+            self?.isAuthorized = ok
+            guard ok else { return }
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
-            content.sound = .default
+            if sound { content.sound = .default }
             let request = UNNotificationRequest(
                 identifier: UUID().uuidString,
                 content: content,
@@ -94,13 +110,17 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: - UNUserNotificationCenterDelegate
 
-    /// Show banners even while the app is frontmost.
+    /// Show banners even while the app is frontmost — and carry the sound only
+    /// when the notification was given one. Asking for `.sound` unconditionally
+    /// made the decision here instead of in the policy.
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.banner, .sound])
+        var options: UNNotificationPresentationOptions = [.banner]
+        if notification.request.content.sound != nil { options.insert(.sound) }
+        completionHandler(options)
     }
 
     func userNotificationCenter(

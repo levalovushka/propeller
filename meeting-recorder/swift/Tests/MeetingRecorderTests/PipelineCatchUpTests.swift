@@ -57,11 +57,14 @@ final class PipelineCatchUpTests: XCTestCase {
         }
 
         /// A phase that fails the way the world fails.
-        func fail(_ job: PipelineJob, _ message: String) -> PhaseOutcome {
+        func fail(
+            _ job: PipelineJob, _ message: String, kind: FailureKind? = nil
+        ) -> PhaseOutcome {
             performed.append(job)
             guard let i = index(job.recordingID) else { return .advanced }
             rows[i].lastFailure = PipelineFailure(
-                phase: job.phase, message: message, at: now, previous: rows[i].lastFailure
+                phase: job.phase, message: message, at: now,
+                previous: rows[i].lastFailure, kind: kind
             )
             return .advanced
         }
@@ -142,7 +145,7 @@ final class PipelineCatchUpTests: XCTestCase {
         // First failure: parked *until a deadline*, not for good.
         let failure = archive.rows[0].lastFailure
         XCTAssertNotNil(failure)
-        XCTAssertFalse(failure?.needsAttention ?? true, "nothing to tell the user yet")
+        XCTAssertFalse(failure?.isTerminal ?? true, "nothing to tell the user yet")
         XCTAssertNil(archive.outlook.job, "and nothing to do this second")
         XCTAssertEqual(archive.outlook.wakeAt, t0.addingTimeInterval(20))
 
@@ -163,38 +166,62 @@ final class PipelineCatchUpTests: XCTestCase {
         XCTAssertNil(archive.rows[0].lastFailure, "a success clears the history")
     }
 
-    /// The other half of the promise: when it really is broken, the user is told
-    /// — once, after the app has genuinely tried.
-    func testAProviderThatNeverComesBackEventuallyBecomesTheUsersProblem() async {
+    /// Провайдер, который не вернулся никогда, — это не проблема человека.
+    ///
+    /// Раньше на пятой попытке приложение сдавалось, и встреча становилась
+    /// красной с кнопкой. Теперь оно не сдаётся: лестница выходит на час и
+    /// продолжает ждать, потому что человек всё равно не может сделать с этим
+    /// ничего, чего не может сделать приложение.
+    func testПровайдерКоторыйНеВернулсяОстаётсяРаботойПриложения() async {
         let archive = Archive([("call", .saved)], now: t0)
         var attempts = 0
 
-        for _ in 0..<10 {
+        for _ in 0..<40 {
             await archive.drain { job in
                 attempts += 1
                 return archive.fail(job, "Ollama недоступен")
             }
-            // Jump to whatever deadline the app set for itself, if any.
             guard let wake = archive.outlook.wakeAt else { break }
             archive.now = wake
         }
-        XCTAssertEqual(attempts, PipelineRetry.maxAttempts(for: .summarizing))
-        XCTAssertTrue(archive.rows[0].lastFailure?.needsAttention ?? false)
-        XCTAssertEqual(archive.outlook.owed, 0, "parked meetings do not keep timers alive")
-        XCTAssertNil(archive.outlook.wakeAt)
+        XCTAssertEqual(attempts, 40, "каждое пробуждение — ещё одна попытка, и так без конца")
+        XCTAssertFalse(archive.rows[0].lastFailure?.isTerminal ?? true)
+        XCTAssertEqual(archive.outlook.owed, 1, "работа всё ещё причитается")
+        // I12: либо работа доступна сейчас, либо у неё есть дедлайн. После
+        // прыжка на дедлайн верно первое.
+        XCTAssertTrue(archive.outlook.job != nil || archive.outlook.wakeAt != nil)
     }
 
-    /// A deleted audio file is hopeless on the first try — there is no point
-    /// spending three ASR passes discovering that.
-    func testAMissingAudioFileIsNotRetried() async {
+    /// Час — потолок, а не «сдались»: пробуждения редкие, но бесконечные.
+    func testЧерезСуткиОжиданияПриложениеВсёЕщёПробуетРазВЧас() async {
+        let archive = Archive([("call", .saved)], now: t0)
+        for _ in 0..<40 {
+            await archive.drain { job in archive.fail(job, "Ollama недоступен") }
+            guard let wake = archive.outlook.wakeAt else { break }
+            archive.now = wake
+        }
+        // Шаг лестницы, а не расстояние до «сейчас»: часы мы уже перевели на
+        // момент дедлайна, поэтому измеряем от самого отказа.
+        let failure = archive.rows[0].lastFailure
+        XCTAssertEqual(
+            failure?.nextAttemptAt?.timeIntervalSince(failure!.at), 3600,
+            "через сутки ожидания приложение всё ещё пробует — раз в час"
+        )
+    }
+
+    /// Удалённое аудио безнадёжно с первой попытки — но объявляет это тот, кто
+    /// посмотрел на диск, а не текст сообщения.
+    func testУдалённоеАудиоНеПовторяется() async {
         let archive = Archive([("gone", .recorded)], now: t0)
         var attempts = 0
         await archive.drain { job in
             attempts += 1
-            return archive.fail(job, "Аудиофайл не найден — нельзя расшифровать.")
+            return archive.fail(job, "Аудио удалено — расшифровывать нечего", kind: .terminal)
         }
         XCTAssertEqual(attempts, 1)
-        XCTAssertTrue(archive.rows[0].lastFailure?.needsAttention ?? false)
+        XCTAssertTrue(archive.rows[0].lastFailure?.isTerminal ?? false)
+        XCTAssertEqual(archive.outlook.owed, 0, "терминал не держит таймеров")
+        XCTAssertNil(archive.outlook.wakeAt)
     }
 
     /// And a meeting whose audio the *user* deleted owes nothing at all — no
@@ -225,7 +252,8 @@ final class PipelineCatchUpTests: XCTestCase {
         let archive = Archive([("mon", .recorded), ("tue", .saved), ("wed", .recorded)], now: t0)
         await archive.drain { job in
             job.recordingID == "tue"
-                ? archive.fail(job, "Аудиофайл не найден")   // permanent, skipped
+                // Терминал: аудио удалено, работы по нему больше нет.
+                ? archive.fail(job, "Аудио удалено", kind: .terminal)
                 : archive.complete(job)
         }
         XCTAssertEqual(

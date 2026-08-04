@@ -97,7 +97,7 @@ enum GalleryFixture {
 
     /// Silence, sized to the meeting it belongs to.
     ///
-    /// Not decoration: «Расшифровать» and «Повторить» in the empty transcript
+    /// Not decoration: «Расшифровать» in the empty transcript
     /// panel are gated on `entry.audioFileExists`, so with no file behind them
     /// "Транскрипт — пусто" and "Транскрипт — ошибка" photographed as the same
     /// empty panel. The file is sparse — a 44-byte header and a hole — so an
@@ -155,8 +155,18 @@ enum GalleryFixture {
             state.recordingStore.recordings = []
         case "lib-upcoming":
             CalendarService.shared.upcoming = [upcoming]
+        case "lib-deleted":
+            // The entry is *out* of the store and held as pending, exactly as a
+            // real deletion leaves it — the presenter is what puts it back in the
+            // list. Posing it any other way would photograph a row the app cannot
+            // produce.
+            if let victim = library.first {
+                state.recordingStore.recordings = Array(library.dropFirst())
+                state.galleryPoseDeletion(victim)
+                state.selectedRecordingID = library.dropFirst().first?.id
+            }
         default:
-            break                       // lib-populated / lib-search / onboarding / toasts
+            break                       // lib-populated / lib-search / onboarding
         }
     }
 
@@ -167,13 +177,13 @@ enum GalleryFixture {
         state.galleryEditingRecap = false
         state.galleryRecapModelOverride = nil
         state.selectedRecordingID = nil
-        state.preferredDetailTab = nil
+        // Not nil: the pane keeps whatever column it was last switched to, so a
+        // frame that asks for nothing has to ask for the default explicitly —
+        // otherwise the shot depends on which frame ran before it.
+        state.preferredDetailTab = "recap"
         state.pipelineError = nil
-        // Toasts are screens of their own here; one left standing from an
-        // earlier pose would sit on top of an unrelated frame.
-        state.showMicPermissionAlert = false
-        state.showDiskSpaceAlert = false
-        state.showStorageNudgeAlert = false
+        state.galleryPoseDeletion(nil)
+        state.galleryPoseMicDenied(false)
         state.recordingStore.recordings = library
         CalendarService.shared.upcoming = []
     }
@@ -200,9 +210,9 @@ enum GalleryFixture {
             state.elapsedString = "12:38"
             state.elapsedSeconds = 758
         }
-        // A failure reaches the user as the toast over the list, which is where
-        // «Повторить» lives — the row itself only loses its spinner.
-        if let failure = posed.lastFailure { state.pipelineError = failure.message }
+        // A meeting with nothing left to do says so on its own row and in its
+        // card — the resting reason, not an error and not a button
+        // (`design/no-dead-ends.md`).
     }
 
     private static func poseTab(_ id: String, state: AppState) {
@@ -218,7 +228,9 @@ enum GalleryFixture {
         case "tab-transcript-failed":
             // The panel prints the *app's* current error, not the entry's own
             // record of it — which is how a real failure reaches this screen.
-            state.pipelineError = entry.lastFailure?.message
+            // The panel prints the app's current error only for hand actions now;
+            // a resting meeting states its reason instead.
+            state.pipelineError = nil
         default: break
         }
     }
@@ -278,13 +290,15 @@ enum GalleryFixture {
             topics: meeting.stage >= .summarized ? ["интеграция", "вебхуки"] : nil,
             segments: meeting.stage >= .transcribed,
             // `kind` is stated, not inferred: this screen only exists for a
-            // failure the app has stopped retrying, and a fixture that leaves it
-            // to classification would quietly stop posing that screen the day the
-            // message changes.
+            // failure with nothing left to try.
             failure: meeting.hasFailure
-                ? PipelineFailure(phase: .diarizing,
-                                  message: "gigastt HTTP 413: тело запроса слишком большое",
-                                  kind: .permanent)
+                // The only shape a person can still see: nothing left to do,
+                // because the audio is gone. Posed explicitly rather than left to
+                // classification — a fixture that guessed would quietly stop
+                // posing this screen the day the message changed.
+                ? PipelineFailure(phase: .transcribing,
+                                  message: "Аудио удалено — расшифровывать нечего",
+                                  kind: .terminal, terminalReason: .audioDeleted)
                 : nil
         )
     }
@@ -304,12 +318,11 @@ enum GalleryFixture {
         case "tab-transcript-failed":
             return make(id: "gal-transcript-failed", title: "Созвон по интеграции",
                         at: today(16, 5), duration: 1_705, stage: .recorded,
-                        // Posed as the state after the retries ran out — in the
-                        // running app a sidecar that died is retried first, and
-                        // this screen is what is left when that did not help.
+                        // Retries do not run out any more, so the only way this
+                        // panel is reachable is an input that is gone.
                         failure: PipelineFailure(phase: .transcribing,
-                                                 message: "gigastt завершился до готовности",
-                                                 kind: .permanent))
+                                                 message: "Аудио удалено — расшифровывать нечего",
+                                                 kind: .terminal, terminalReason: .audioDeleted))
         default:
             // Summary content / editing, letter, notes, transcript — the one
             // meeting with files behind it.
