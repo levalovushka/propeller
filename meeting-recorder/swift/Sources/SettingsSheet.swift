@@ -169,7 +169,7 @@ private struct AudioSettingsPane: View {
             Section("Захват") {
                 Toggle("Захватывать системный звук", isOn: $captureSystemAudio)
                     .onChange(of: captureSystemAudio) { _, val in Preferences.shared.captureSystemAudio = val }
-                Text("Нужно разрешение Screen Recording (macOS спросит при первой записи). Если выкл — только микрофон.")
+                Text("Вторую сторону звонка пишет тап Core Audio — отдельного разрешения macOS для этого не спрашивает. Выключено — в\u{00A0}записи только микрофон.")
                     .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(.secondary)
             }

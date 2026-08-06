@@ -32,8 +32,10 @@ import SwiftUI
 /// Native controls and materials come out right because nothing is being
 /// simulated.
 ///
-/// Screen Recording permission is required for that capture; the app already
-/// holds it for system-audio capture.
+/// Screen Recording permission is required for that capture, and the app no
+/// longer asks for it anywhere — audio capture stopped needing it when SCK went.
+/// A gallery build is a developer's build, so that grant is given by hand once,
+/// in System Settings, before a shoot.
 ///
 /// # Safety
 ///

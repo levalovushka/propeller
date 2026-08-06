@@ -24,7 +24,9 @@ class Preferences {
     // MARK: - Capture
 
     /// Capture system audio output (other participants in video calls) alongside the mic.
-    /// Requires Screen Recording permission. On first use macOS will prompt.
+    /// Costs no permission of its own: the far side comes from a Core Audio process
+    /// tap inside the shared-clock aggregate, and the one TCC decision that path
+    /// waits on is paid by the launch warm-up (`sharedClockCaptureWorks`).
     var captureSystemAudio: Bool {
         get { defaults.object(forKey: "captureSystemAudio") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "captureSystemAudio") }

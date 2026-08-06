@@ -1,10 +1,10 @@
 # Propeller — архитектура
 
-_Источник правды по архитектурным решениям форка. Поведение продукта — [SPEC.md](SPEC.md); активные планы/решения — [`../../plan-v2.md`](../../archive/plan-v2.md); инженерная оптимизация — [`../../plan-optimization.md`](../../archive/plan-optimization.md); UI — [`../../design/propeller-ui.md`](../../design/propeller-ui.md)._
+_Архитектурные решения форка. Состояние и дефекты — [`STATE.md`](../../STATE.md) (источник правды); поведение продукта — [SPEC.md](SPEC.md); принципы — [`design/principles.md`](../../design/principles.md); UI — [`design/propeller-ui.md`](../../design/propeller-ui.md). История решений — [`archive/plan-v2.md`](../../archive/plan-v2.md), [`archive/plan-optimization.md`](../../archive/plan-optimization.md)._
 
 ## Что это
 
-**Propeller** — нативное macOS-приложение (SwiftUI, macOS 14+, Apple Silicon): запись встреч (mic + system audio), локальная транскрипция на русском (GigaAM-v3 через `gigastt`), диаризация (FluidAudio) → консистентные `Speaker N`, markdown-вывод и LLM-саммари с авто-заголовком/темами/тегами. Живёт в менюбаре + главное окно.
+**Propeller** — нативное macOS-приложение (SwiftUI, macOS 14.4+, Apple Silicon): запись встреч (mic + system audio на общих часах), локальная транскрипция на русском (GigaAM-v3 через `gigastt`) — живая во время встречи и офлайновая в архив, — диаризация (FluidAudio) → консистентные `Speaker N`, markdown-вывод и LLM-саммари с авто-заголовком/темами/тегами, которое правится на месте. Живёт в менюбаре + главное окно.
 
 > С plan-v2 Job 3 **вырезаны** библиотека голосов (`PeopleStore`), voice-matching и опрос спикеров. Именование спикеров сведено к консистентным `Speaker N` + владелец-по-микрофону.
 
@@ -20,7 +20,7 @@ _Источник правды по архитектурным решениям 
 | Захват звука | **Единственный путь: process tap + агрегатное устройство** (`ProcessTapCapture`). Микрофон и системный звук снимаются одной IOProc одного устройства, кадр в кадр. Не поднялся — запись честно микрофонная | Замер 2026-07-29: когерентность дорожек в речевой полосе **0.91–0.97** против 0.04 у прежнего пути, сдвиг стемов исчез как класс. ScreenCaptureKit-путь удалён вместе с подъёмом минимума до 14.4: две ветки захвата — это две правды про устройство дорожек, и весь конвейер ниже вынужден уметь обе |
 | Минимум macOS | **14.4** | Раньше `AudioHardwareCreateProcessTap` не существует |
 | Запись экрана | **Не запрашивается** | Звуку не нужна. Заголовки окон читаются, если разрешение выдано (у прежних пользователей оно есть), но ни спросить его, ни блокировать им онбординг мы больше не будем |
-| Область захвата | `CaptureScopePolicy` (что писать) + `TapTargetPolicy` (в какие процессы целиться), обе по таблице `MeetingPlatform` | Core Audio фильтруется процессами, а не приложениями: звонок Zoom играет хелпер `CptHost`. SCK отдавал его вместе с приложением молча, тапу его надо назвать |
+| Область захвата | `TapTargetPolicy` (в какие процессы целиться) по таблице `MeetingPlatform`. `CaptureScopePolicy` удалён вместе с SCK — область больше не описывается дважды | Core Audio фильтруется процессами, а не приложениями: звонок Zoom играет хелпер `CptHost`. SCK отдавал его вместе с приложением молча, тапу его надо назвать |
 | Язык | Только `ru` | Ограничение модели; мультиязычность убита в бэклоге |
 | Вывод markdown | Дефолт **Simple**; Obsidian — опция | Коллеги без Vault |
 | Рекап | Ollama → OpenAI → Claude (Auto), или Off; промпт = конспект договорённостей + `languageLock` | Локально по умолчанию; ключи в Keychain |
@@ -30,15 +30,17 @@ _Источник правды по архитектурным решениям 
 | Сохранение транскрипта | **Всегда** (сразу после диаризации) | Опроса спикеров и тугла auto-save нет |
 | Дистрибуция v1 | DMG + **Sparkle** (GitHub Releases `appcast.xml`); нотаризация / Developer ID — позже | ad-hoc + ПКМ→Открыть; авто-апдейты с EdDSA; проверка фида **раз в час** (`SUScheduledCheckInterval`, минимум Sparkle) |
 | Иконка | `propellericon.icon` → Assets.car + .icns через `actool` | Liquid Glass + fallback |
-| Саммари / заметки | Встреча: табы Transcript / Notes / Summary; sidebar **Summaries** — только summary+notes; заметки якорят LLM | Talat-табы + Granola notes-as-anchors; авто-рекап после save |
+| Саммари / заметки | Одна панель на встречу: колонка саммари (она же редактор) + колонка заметок. Табов Transcript / Notes / Summary нет — карточка с ними удалена 2026-08-06 вместе с последним экраном, куда она вела. Заметки якорят LLM | Granola notes-as-anchors; авто-рекап после save. Правка на месте вместо режима: щелчок ставит каретку, вёрстка не меняется |
+| Правка саммари | Выделение → панель действий: вид блока, жирное/курсив, «Короче» / «Подробнее» через `RecapService.rewriteFragment`. Модель получает расшифровку вместе с фрагментом | Круг «разобрали → показали → поправили → записали» держит `SummaryDocument`; прежний разбор был только на чтение и терял выделение |
 
 ## Поток данных
 
 ```
 MeetingDetector (Auto) / menu bar / ⌘R / UI
-  → AudioRecorder
-      mic (.mic.wav) + ScreenCaptureKit system (.sys.wav)
+  → AudioRecorder → ProcessTapCapture (тап + микрофон в одном агрегате, одна IOProc)
+      mic (.mic.wav) + system (.sys.wav), кадр в кадр
       → offline mix (стемы уже выровнены; StemTimeline — только для старых записей) → {id}.wav (+ stems)
+      ↳ те же кадры → LiveTranscriptService (две WS-сессии к gigastt) → живой транскрипт на экране
   → одна очередь, один воркер (AppState.kickPipeline → PipelineDrain)
       фазы: transcribing → diarizing → saving → summarizing
 ```
@@ -55,34 +57,37 @@ MeetingDetector (Auto) / menu bar / ⌘R / UI
   `transcribing` встречается только после краша; `RecordingRecovery` разбирает его при старте.
 - **`AppState.activity: PipelineActivity`** — что идёт прямо сейчас (эфемерно,
   одно на приложение: воркер один).
-- Ошибка принадлежит записи (`entry.lastFailure`), не приложению, и выводит её
-  из очереди до явного «Повторить».
+- Отказ принадлежит записи (`entry.lastFailure`), не приложению, и **не выводит её
+  из очереди**: он несёт свой план возврата (`kind`, `attempt`, `nextAttemptAt`),
+  повторы молчаливые и бесконечные с потолком в час. Кнопки «Повторить» в
+  приложении нет — см. [`design/no-dead-ends.md`](../../design/no-dead-ends.md).
+  Останавливает только `.terminal`, и объявить его может лишь тот, кто посмотрел
+  на вход.
 
 ## Компоненты (`swift/Sources/`)
 
 | Файл | Роль |
 |---|---|
-| `AppState` | `@MainActor` координатор: запись, воркер пайплайна, детект звонков, переименование спикеров |
-| `AudioRecorder` | Выбирает путь захвата (`CapturePathPolicy`) и сводит стемы. Общие часы → `ProcessTapCapture`; иначе `AVAudioRecorder` + SCK. `lastStopWasMicOnly`, `capturePath` |
+| `AppState` | `@MainActor` координатор: запись, воркер пайплайна, детект звонков, переименование встречи (`renameRecording` — спикеров переименовывать больше нечем, тот интерфейс удалён) |
+| `AudioRecorder` | Выбирает путь захвата (`CapturePathPolicy`) и сводит стемы. Лестница короткая и вся тут: общие часы → `ProcessTapCapture`; не поднялись → честный mic-only через `AVAudioRecorder`. Второго пути к системному звуку нет. `lastStopWasMicOnly`, `capturePath`, пауза (`elapsed` вычитает простой) |
 | `ProcessTapCapture` | Тап на процессы встречи (или на всё, кроме себя) внутри приватного агрегатного устройства вместе с микрофоном. Одна IOProc → кольцо → 16 кГц моно стемы. Кадры кладутся по `mSampleTime` (`CaptureCursor`), состав агрегата подбирается лестницей и проверяется фактами (число каналов, пришли ли буферы) |
 | `CoreAudioObjects` | Чтение свойств Core Audio без церемонии: устройства, процессы, тапы, состав агрегата |
 | `TapProbe` | Отладочный `--tap-probe`: шесть ступеней от сырого устройства до смены устройств на живой записи, с пиком по каждому каналу. Существует потому, что порядок каналов агрегата нигде не задокументирован, а промах по нему молчаливый |
-| `SystemAudioCapture` | ScreenCaptureKit stem. Область — `CaptureScopePolicy`: сужаемся на приложение той платформы, чей звонок идёт; нет звонка (или он в браузере) — пишем машину целиком. Отката по тишине нет с 2026-07-29 |
-| `CaptureProbe` | Отладочный `--capture-probe` в релизном бинарнике: сравнивает области захвата на живом звонке. Оставлен сознательно 2026-07-29 — разрешение «Запись экрана» выдано бандлу, отдельная утилита мерила бы другую систему, а идентификаторы платформ ещё не все подтверждены |
+| `LiveProbe` | Отладочный `--live-probe`: живой слой на записанном звуке, чтобы порцию и задержку можно было мерить повторяемо (`tools/live-bench/`) |
 | `MeetingDetector` | Поллинг звонка в любой платформе из `MeetingPlatform.all` (Zoom, Контур.Толк): helper-процесс, заголовок окна, вкладка браузера, display-sleep assertion |
 | `PipelineBoundaries` | `Transcriber` / `RecapBackend` — две подменяемые границы наружу |
-| `CalendarService` | EventKit: Upcoming + `suggestedRecordingTitle` при старте записи |
+| `CalendarService` | EventKit read-only: `suggestedRecordingTitle` и `CalendarMeta` при старте записи. Списка «Скоро» больше нет — календарь называет записи, а не рисует экран |
 | `NoteOverlayController` | Оверлей быстрых заметок ⌃⌥N во время записи |
 | `NotificationManager` | UNUserNotificationCenter: интерактивная отмена авто-записи + баннеры |
 | `StateGallery` · `GalleryExport` · `GalleryFixture` | Только под `-DGALLERY` (`./build.sh --gallery`): окно со всеми состояниями из `UIStateCatalog`, экспорт в PNG, фикстурный архив под съёмку. Архив подменяется через `Preferences.galleryArchiveRoot` — ключа нет в обычной сборке, реальные записи не читаются. См. [design/state-gallery.md](../../design/state-gallery.md) |
 | `TranscriptionService` | ASR → diarize → `Speaker N` + владелец-по-микрофону |
 | `GigasttSidecar` / `GigasttClient` | Жизненный цикл сервера и HTTP (+ chunking) |
-| `PropellerPure` | Чистое ядро (988 строк, 111 тестов): стадии и очередь (`RecordingStage`, `PipelineActivity`, `PipelineDrain`), презентация транскрипта (`TranscriptPresentation`), разбор ответов границ (`BoundaryResponses`), платформы созвонов (`MeetingPlatform`), chunking, парсеры, WAV helpers |
+| `PropellerPure` | Чистое ядро (32 файла, ~5000 строк; 424 теста на пакет, ~0,5 с): стадии и очередь (`RecordingStage`, `PipelineActivity`, `PipelineDrain`), покой встречи (`MeetingRest`), живой транскрипт (`LiveTranscript`), документ саммари (`SummaryDocument`), презентация транскрипта (`TranscriptPresentation`), разбор ответов границ (`BoundaryResponses`), платформы созвонов (`MeetingPlatform`), захват (`CaptureCursor`, `CapturePath`, `TapTarget`), chunking, парсеры, WAV helpers |
 | `RecordingStore` | Индекс записей + CRUD + size-nudge (без auto-delete) |
 | `MarkdownWriter` / `RecapService` | Экспорт и LLM-конспект + метадата (заголовок/темы/теги) |
 | `Preferences` | UserDefaults + Keychain для API-ключей |
 | `LiveTranscriptService` / `GigasttLiveSession` | Живой слой встречи: две WS-сессии к gigastt (микрофон и система) из кадров `ProcessTapCapture.onLiveFrames`; складываются чистым `LiveTranscript` |
-| UI | `MainView`, `RecordingDetailView`, `RecordingPaneView`, `MenuBarPanelView`, `SettingsSheet`, `SetupView` + `Onboarding{Container,PanelController}`, `PropellerUI/`, `SearchPalette`, … |
+| UI | `MainView` (рельс + панель), `RecordingPaneView` (идущая запись), `SettingsSheet`, `SetupView` + `Onboarding{Container,PanelController}` (одна плашка первого запуска), `SearchPalette`, `MenuBarContentView`. Презентация — в `PropellerUI/`: `Sidebar`, `MeetingPane`, `SummaryEditor` + `SummaryActionBar`, `RecordingPane`, `Tokens` |
 
 ## Хранилище
 

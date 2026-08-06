@@ -1,13 +1,13 @@
 # Propeller — local-first Russian meeting transcription for macOS
 
-Native macOS app (SwiftUI): record Zoom/mic+system audio, transcribe with **GigaAM / gigastt**, diarize with **FluidAudio**, save markdown, optional LLM summary (Ollama / OpenAI / Claude).
+Native macOS app (SwiftUI): record both sides of a call on one clock (Core Audio process tap + mic in a single aggregate device), transcribe with **GigaAM / gigastt** — live during the meeting and again offline for the record — diarize with **FluidAudio**, save markdown, summarise with an LLM (bundled Ollama / OpenAI / Claude) and edit that summary in place.
 
 Fork of [tonton-golio/meeting-recorder](https://github.com/tonton-golio/meeting-recorder), productized as **Propeller**.
 
 ## Quick start
 
 ```bash
-# Needs: Apple Silicon, macOS 14+, Xcode 15.3+, and a gigastt binary
+# Needs: Apple Silicon, macOS 14.4+, Xcode 15.3+, and a gigastt binary
 # Place gigastt at tools/gigastt/gigastt (not committed — download separately)
 
 cd meeting-recorder/swift
@@ -23,10 +23,10 @@ open -a Propeller
 | `meeting-recorder/` | App source (Swift package + `build.sh`) |
 | `COLLEAGUES.md` | Install + usage guide handed to testers |
 | `vocab/` | Russian meeting jargon → gigastt hotwords (source for the built-in list) |
-| `design/` | UI spec |
+| `design/` | UI spec, the principles list, state gallery, «no dead ends» |
+| `tools/` | `gigastt` + models (not in git), Ollama runtime, echo and live-transcript probes |
 | `product-ideas.md` | Idea / decision ledger (killed / deferred with reasons) |
-| `plan-v2.md`, `plan-optimization.md`, `plan-testing-metrics.md` | Decision history. Superseded by `STATE.md` where they disagree. |
-| `archive/` | Historical: `plan-v1.md`, migration brief, phase status notes |
+| `archive/` | Decision history — `plan-v1.md`, `plan-v2.md`, `plan-optimization.md`, `plan-testing-metrics.md`, `release-review.md`, migration brief, phase status notes. Superseded by `STATE.md` wherever they disagree. |
 | `phase0`–`phase6/` | Phase validation artifacts (models/WAVs not in git) |
 | `propellericon.icon` | App icon (Icon Composer) |
 
