@@ -26,9 +26,22 @@ public enum PipelineActivity: Equatable {
 
     /// Progress line. Derived from the phase, never stored — an idle pipeline
     /// has no text to show stale, which is invariant I1 by construction.
+    ///
+    /// Prefer `detail` when a sidecar has something more specific (chunk N of
+    /// M, download). The rail does **not** use this — see `sidebarMessage`.
     public var message: String? {
         guard case .working(_, let phase, let detail) = self else { return nil }
         if let detail, !detail.isEmpty { return detail }
+        return phase.defaultMessage
+    }
+
+    /// What a meeting row says while this recording is in flight.
+    ///
+    /// Always the phase default — never sidecar detail. Detail carries engine
+    /// names («GigaAM», «Ollama») and download jargon that belong in a status
+    /// bar, not next to a meeting title.
+    public var sidebarMessage: String? {
+        guard case .working(_, let phase, _) = self else { return nil }
         return phase.defaultMessage
     }
 }
@@ -242,15 +255,21 @@ extension RecordingStage {
         // Only seen if recovery hasn't run yet; treat as "ASR still owed".
         case .transcribing:           return .transcribing
         case .transcribedRaw:         return .diarizing
-        case .transcribed:            return .saving
-        case .saved:                  return .summarizing
+        // Not `.saving`: writing the markdown is not work anyone waits for. It is
+        // milliseconds, it cannot be watched, and as a scheduled job of its own it
+        // put «Сохраняем…» on a row for one frame between two real steps. The
+        // summarising phase writes the file first if it is missing, so a meeting
+        // with a finished transcript owes exactly one thing: its summary.
+        case .transcribed, .saved:    return .summarizing
         }
     }
 }
 
 extension PipelineActivity.Phase {
     /// Phases that read the recording's audio. The two that do are the two that
-    /// cannot run once it has been deleted.
+    /// cannot run once it has been deleted. `.saving` is still a phase — it is
+    /// what writes the markdown, inside the summarising job — it just is not
+    /// scheduled on its own any more.
     public var needsAudio: Bool {
         switch self {
         case .transcribing, .diarizing: return true

@@ -82,8 +82,29 @@ struct RecordingEntry: Identifiable, Codable {
     /// access off, or recorded before 1.15.
     var calendarMeta: CalendarMeta?
 
-    /// Topics joined for subtitle display ("Ретро, ресурсы команды, планирование").
-    var subtitleText: String { (topics ?? []).joined(separator: ", ") }
+    /// Topics joined for subtitle display ("Отказ от скролла, фаст-плей на главной").
+    /// Only the first glyph is capitalised — the rest stay as written.
+    var subtitleText: String {
+        RecapMetadataParser.capitalizingFirst((topics ?? []).joined(separator: ", "))
+    }
+
+    /// Is there anything here to show a person?
+    ///
+    /// A meeting the user deleted is removed outright, and one whose audio they
+    /// deleted to reclaim space keeps its transcript and summary — so it reads
+    /// like any other. What is left is a record with neither audio nor text: a
+    /// crash between «recording started» and the first ASR pass, or a file
+    /// removed from under the app. There is nothing to open, so it does not
+    /// belong in the list.
+    ///
+    /// Deliberately *not* a deletion: the audio might be on a volume that is
+    /// merely unmounted, and dropping the index entry would be the one
+    /// irreversible reading of a temporary condition.
+    var hasSomethingToShow: Bool {
+        if transcript?.isEmpty == false { return true }
+        if status == .recording { return true }
+        return audioFileExists
+    }
 
     /// What this meeting's card has to disclose about its own depth, if anything.
     ///

@@ -113,6 +113,15 @@ enum GalleryExport {
             backing: .buffered,
             defer: false
         )
+        // Dark, always — and stated rather than inherited.
+        //
+        // `Tokens.dual` resolves through the *view's* effective appearance, so
+        // without this line every frame came out in whatever theme the Mac happened
+        // to be set to. On a machine switched to light that meant light tokens
+        // painted over `backgroundColor = .black`: forty-one frames of an almost
+        // empty window, and the exporter's own duplicate check reporting them as
+        // identical. A reference file cannot depend on a system toggle.
+        window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = hosting
         window.backgroundColor = .black
         window.isOpaque = true

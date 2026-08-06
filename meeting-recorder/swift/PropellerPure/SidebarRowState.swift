@@ -28,9 +28,17 @@ import Foundation
 /// queued-for-summary; a 276 pt row cannot, and pretending otherwise would put
 /// two identical pixels in the state gallery under two different names.
 public enum SidebarRowActivity: String, CaseIterable, Equatable, Sendable {
-    /// Nothing is happening. Includes *queued* — a meeting the worker will get
-    /// to, but has not started. See `queuedIsQuiet` for why that is deliberate.
+    /// Nothing is owed and nothing is running: the meeting is done, and the quiet
+    /// line is free for its topics.
     case none
+    /// Owed work the single worker has not reached yet.
+    ///
+    /// It used to look identical to «done» — `queuedIsQuiet`, on the grounds that
+    /// the comps drew one meeting in motion and the rest flat. That made a waiting
+    /// meeting indistinguishable from a finished one, which is the same lie as
+    /// hiding the backlog: the row says «В очереди» now, and shimmers, because it
+    /// *is* in progress — it is just not its turn.
+    case queued
     /// Audio is arriving right now.
     case recording
     /// The worker is on this meeting: ASR, diarization, saving or summarising.
@@ -52,15 +60,10 @@ public enum SidebarRowActivity: String, CaseIterable, Equatable, Sendable {
 }
 
 extension SidebarRowActivity {
-    /// Queued work looks like no work.
-    ///
-    /// `docs/REFACTOR-PIPELINE-STATE.md` §5 already records that the three
-    /// queues are indistinguishable in the interface, and the redesign does not
-    /// change that: the Figma rail draws exactly one meeting in motion — the one
-    /// being transcribed — and the rest flat. Giving *queued* its own visual
-    /// would be a design decision, and it has not been made yet. Naming it here
-    /// keeps it a known hole rather than an oversight.
-    public static let queuedIsQuiet = true
+    /// Rows that shimmer: work is happening to this meeting, whether or not it is
+    /// its turn this second. A queued meeting shimmers too — it is in the pipeline,
+    /// and a still row would say «finished» about something that is not.
+    public var isInFlight: Bool { self == .processing || self == .queued }
 }
 
 // MARK: - Row state
@@ -102,6 +105,9 @@ public enum SidebarRowMachine {
     ///   meeting, and this row must look untouched — that regression (every row
     ///   spinning because the app was busy) is state `10-other-busy` in the
     ///   catalogue.
+    /// - **Queued is last**, because it is the weakest claim: everything above it
+    ///   is a fact about this meeting right now, while «в очереди» only says the
+    ///   worker has not got here yet.
     /// - **Deleted wins over everything.** The entry is out of the index; there
     ///   is no work the pipeline could still be doing on it, and the only thing
     ///   the row is for now is the few seconds in which it can come back.
@@ -109,13 +115,14 @@ public enum SidebarRowMachine {
         stage: RecordingStage,
         involvement: UIStateCatalog.Involvement,
         isTerminal: Bool,
-        isDeletedUndoable: Bool = false
+        isDeletedUndoable: Bool = false,
+        isQueued: Bool = false
     ) -> SidebarRowActivity {
         if isDeletedUndoable { return .deletedUndoable }
         if stage == .recording { return .recording }
         if isTerminal { return .rests }
         if case .working = involvement { return .processing }
-        return .none
+        return isQueued ? .queued : .none
     }
 
     /// The full row state. Selection and hover come from the window and are
@@ -126,7 +133,8 @@ public enum SidebarRowMachine {
         isTerminal: Bool,
         isSelected: Bool,
         isHovered: Bool,
-        isDeletedUndoable: Bool = false
+        isDeletedUndoable: Bool = false,
+        isQueued: Bool = false
     ) -> SidebarRowState {
         SidebarRowState(
             // A deleted meeting is not the one you are looking at, whatever the
@@ -138,7 +146,8 @@ public enum SidebarRowMachine {
                 stage: stage,
                 involvement: involvement,
                 isTerminal: isTerminal,
-                isDeletedUndoable: isDeletedUndoable
+                isDeletedUndoable: isDeletedUndoable,
+                isQueued: isQueued
             )
         )
     }
@@ -155,13 +164,20 @@ public enum SidebarRowMachine {
         phaseMessage: String?,
         topics: String,
         elapsed: String? = nil,
-        restingReason: String? = nil
+        restingReason: String? = nil,
+        isPaused: Bool = false
     ) -> String {
         switch activity {
         case .recording:
+            // Пауза — тоже состояние записи, и строка обязана его называть:
+            // «Идёт запись» под остановленным таймером это ровно то враньё,
+            // ради которого строку вообще пишут.
+            if isPaused { return "Пауза" }
             return elapsed.map { "Идёт запись · \($0)" } ?? "Идёт запись"
         case .processing:
             return phaseMessage.flatMap { $0.isEmpty ? nil : $0 } ?? "Обрабатываем…"
+        case .queued:
+            return "В очереди"
         case .rests:
             // The words come from the meeting's own resting reason
             // (`MeetingRest.disclosure`); this is the fallback for a row whose
@@ -250,7 +266,8 @@ public enum SidebarStateCatalog {
 
     public static func activityLabel(_ activity: SidebarRowActivity) -> String {
         switch activity {
-        case .none:            return "Ничего не происходит"
+        case .none:            return "Готова, ничего не происходит"
+        case .queued:          return "В очереди"
         case .recording:       return "Идёт запись"
         case .processing:      return "Обработка записи"
         case .rests:           return "Дальше нечего делать"

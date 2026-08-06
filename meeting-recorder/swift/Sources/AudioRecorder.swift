@@ -29,6 +29,10 @@ class AudioRecorder: ObservableObject {
     private var tapCapture: AnyObject?
     /// Каким путём пишется текущая запись.
     private(set) var capturePath: CapturePath = .microphoneOnly
+    /// Есть ли у текущего захвата вторая дорожка. Решает, открывать ли живому
+    /// слою вторую сессию: сессия, в которую никогда не придёт кадр, закроется
+    /// по простою и будет переподключаться всю встречу ни за чем.
+    private(set) var capturesSystemAudio = false
     /// Каким путём была записана предыдущая — уезжает в отчёт и телеметрию.
     private(set) var lastStopPath: CapturePath?
 
@@ -54,6 +58,27 @@ class AudioRecorder: ObservableObject {
     /// the essential source — this is surfaced immediately, not tagged post-hoc.
     @Published var micCaptureWarning: String?
 
+    /// Кадры обеих дорожек 16 кГц моно по мере захвата — то, из чего живой слой
+    /// делает транскрипт (`LiveTranscriptService`). Зовётся с очереди записи, а
+    /// не с главного актора: звук туда не ходит.
+    ///
+    /// Ставится до `start()`; переживает паузу, потому что пауза — это состояние
+    /// записи, а не её конец. На микрофонном пути не зовётся никогда: буферов
+    /// там нет, и это одна из причин, по которой живой слой на нём отсутствует.
+    var onLiveFrames: ((_ mic: [Float], _ system: [Float]) -> Void)?
+
+    /// Запись идёт, но звук в неё сейчас не попадает.
+    ///
+    /// Не «стоп с продолжением»: файл остаётся тем же, дорожки — теми же, и
+    /// после снятия паузы кадры ложатся сразу за уже записанными. Пауза просто
+    /// не существует внутри записи — ни секундой тишины, ни сдвигом дорожек.
+    @Published private(set) var isPaused = false
+    /// Сколько всего простояли на паузе, и с какого момента стоим сейчас.
+    /// Из этого считается `elapsed`: таймер на экране обязан совпадать с тем,
+    /// сколько звука в файле.
+    private var pausedTotal: TimeInterval = 0
+    private var pausedSince: Date?
+
     /// Rolling history of mic audio levels (0–1) for waveform display.
     @Published var micLevelHistory: [Float] = []
     /// Rolling history of system audio levels (0–1) for waveform display.
@@ -65,7 +90,8 @@ class AudioRecorder: ObservableObject {
 
     var elapsed: TimeInterval {
         guard let start = startTime, isRecording else { return 0 }
-        return Date().timeIntervalSince(start)
+        let standing = pausedSince.map { Date().timeIntervalSince($0) } ?? 0
+        return max(0, Date().timeIntervalSince(start) - pausedTotal - standing)
     }
 
     func start() throws {
@@ -74,6 +100,9 @@ class AudioRecorder: ObservableObject {
         micCaptureWarning = nil
         lastStopWasMicOnly = false
         systemStemOffset = nil
+        isPaused = false
+        pausedTotal = 0
+        pausedSince = nil
         debugLog("[AudioRecorder] start() called — captureSystemAudio=\(Preferences.shared.captureSystemAudio)")
 
         let recordingsDir = URL(fileURLWithPath: Preferences.shared.recordingsPath)
@@ -149,6 +178,12 @@ class AudioRecorder: ObservableObject {
         capture.onIssue = { message in
             NSLog("[AudioRecorder] tap capture note: \(message)")
         }
+        // Захваченный замыканием, а не прочитанный через `self`: кадры идут с
+        // очереди записи, и лезть за ним на главный актор двадцать раз в
+        // секунду незачем.
+        if let sink = onLiveFrames {
+            capture.onLiveFrames = { mic, system in sink(mic, system) }
+        }
         do {
             try capture.start()
         } catch {
@@ -161,6 +196,7 @@ class AudioRecorder: ObservableObject {
         }
         Preferences.shared.sharedClockCaptureWorks = true
         tapCapture = capture
+        capturesSystemAudio = capture.capturesSystemAudio
         systemAudioURL = sysURL
         // Дорожки выровнены по построению: сдвига, который раньше приходилось
         // измерять и хранить, у этого пути просто нет.
@@ -168,6 +204,46 @@ class AudioRecorder: ObservableObject {
         NSLog("[AudioRecorder] запись на общих часах, id=\(id)")
         return true
     }
+
+    // MARK: - Пауза
+
+    /// Остановить приём звука, не заканчивая запись.
+    ///
+    /// На общих часах пауза — это «кадры не берём»: курсор перепривязывается на
+    /// возобновлении, и в файле пауза не оставляет следа. На микрофонном пути то
+    /// же самое делает сам `AVAudioRecorder`.
+    func pause() {
+        guard isRecording, !isPaused else { return }
+        isPaused = true
+        pausedSince = Date()
+        if let capture = tapCapture as? ProcessTapCapture {
+            capture.setPaused(true)
+        } else {
+            avRecorder?.pause()
+        }
+    }
+
+    func resume() {
+        guard isRecording, isPaused else { return }
+        if let since = pausedSince {
+            pausedTotal += Date().timeIntervalSince(since)
+        }
+        pausedSince = nil
+        isPaused = false
+        if let capture = tapCapture as? ProcessTapCapture {
+            capture.setPaused(false)
+        } else {
+            // `record()` на приостановленном рекордере — это именно
+            // «продолжить»: файл тот же, дописывается с конца.
+            _ = avRecorder?.record()
+        }
+    }
+
+#if GALLERY
+    /// Пауза без записи — кадр «Запись — пауза». Настоящую поставить нечем:
+    /// нужен живой захват.
+    func galleryPosePaused(_ paused: Bool) { isPaused = paused }
+#endif
 
     /// Enable/pause live level metering. Recording itself is unaffected (E5).
     func setMeteringDesired(_ desired: Bool) {

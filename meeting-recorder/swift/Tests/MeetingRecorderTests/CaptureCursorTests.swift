@@ -166,6 +166,35 @@ final class CaptureCursorTests: XCTestCase {
         XCTAssertEqual(cursor.reanchorCount, 1)
     }
 
+    /// Пауза на десять минут: в файле её нет. Продолжение ложится сразу за уже
+    /// записанным — иначе человек, поставивший запись на паузу на обед, получил
+    /// бы час тишины посреди встречи (а с потолком в 30 с — сдвиг всего
+    /// дальнейшего).
+    func testAPauseLeavesNoSilenceInTheRecording() {
+        var cursor = CaptureCursor(sampleRate: rate)
+        _ = cursor.place(sampleTime: 0, frameCount: 512)
+
+        cursor.detachClock()
+        // Часы устройства шли всю паузу.
+        let afterPause = cursor.place(sampleTime: 512 + 10 * 60 * rate, frameCount: 512)
+
+        XCTAssertEqual(afterPause.silenceFrames, 0)
+        XCTAssertEqual(afterPause.writeFrames, 512)
+        XCTAssertFalse(afterPause.reanchored)
+        XCTAssertEqual(cursor.framesWritten, 1024)
+        XCTAssertEqual(cursor.paddedSilenceFrames, 0)
+    }
+
+    /// Пауза — не сбой захвата: счётчик «сколько раз поехали часы» обязан
+    /// остаться ответом про здоровье записи.
+    func testAPauseIsNotCountedAsAClockProblem() {
+        var cursor = CaptureCursor(sampleRate: rate)
+        _ = cursor.place(sampleTime: 0, frameCount: 512)
+        cursor.detachClock()
+        _ = cursor.place(sampleTime: 99_999, frameCount: 512)
+        XCTAssertEqual(cursor.reanchorCount, 0)
+    }
+
     func testAnEmptyBufferChangesNothing() {
         var cursor = CaptureCursor(sampleRate: rate)
         _ = cursor.place(sampleTime: 0, frameCount: 512)

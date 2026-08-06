@@ -59,6 +59,34 @@ cp -R "$SPARKLE_FW" "$APP/Contents/Frameworks/"
 install_name_tool -add_rpath "@executable_path/../Frameworks" \
     "$APP/Contents/MacOS/MeetingRecorder" 2>/dev/null || true
 
+# Metal shaders. SwiftPM does not compile .metal — it reports them as unhandled
+# files and walks past — so the library is built here and read from the app's
+# resources (`SummaryShader`). Without it the text shimmer falls back to a
+# gradient. Summary reveal is SwiftUI-only (fade + rise) and needs no metallib.
+SHADERS=(PropellerUI/TextShimmer.metal PropellerUI/Disintegrate.metal)
+if xcrun --find metal >/dev/null 2>&1; then
+    AIR_DIR="$(mktemp -d)"
+    AIRS=()
+    SHADER_OK=1
+    for src in "${SHADERS[@]}"; do
+        air="$AIR_DIR/$(basename "$src" .metal).air"
+        if xcrun -sdk macosx metal -O -c "$src" -o "$air" 2>/dev/null; then
+            AIRS+=("$air")
+        else
+            SHADER_OK=0
+            break
+        fi
+    done
+    if [ "$SHADER_OK" -eq 1 ] &&
+       xcrun -sdk macosx metallib "${AIRS[@]}" -o "$APP/Contents/Resources/PropellerShaders.metallib"; then
+        echo "  Shaders: PropellerShaders.metallib (${#AIRS[@]} sources)"
+    else
+        echo "  WARNING: shader build failed — text shimmer uses gradient fallback"
+    fi
+else
+    echo "  WARNING: no Metal toolchain — text shimmer uses gradient fallback"
+fi
+
 # Menu bar template icon (PDF)
 if [ -f "Resources/MenuBarIcon.pdf" ]; then
     cp "Resources/MenuBarIcon.pdf" "$APP/Contents/Resources/MenuBarIcon.pdf"

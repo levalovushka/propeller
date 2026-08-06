@@ -11,6 +11,20 @@ import CoreGraphics
 /// decided here rather than in AppKit — a screen edge is exactly the case that
 /// is never reached by hand and always reached by a user.
 public enum WindowReveal {
+
+    /// How the pane divides between the meeting and the notes.
+    public struct PaneSplit: Equatable, Sendable {
+        public var left: CGFloat
+        public var notes: CGFloat
+        public var open: Bool
+
+        public init(left: CGFloat, notes: CGFloat, open: Bool) {
+            self.left = left
+            self.notes = notes
+            self.open = open
+        }
+    }
+
     /// The frame that leaves at least `contentWidth` points of content.
     ///
     /// Grows to the right while the screen allows and pulls the left edge back
@@ -39,5 +53,53 @@ public enum WindowReveal {
         if x + width > visible.maxX { x = visible.maxX - width }
         if x < visible.minX { x = visible.minX }
         return CGRect(x: x, y: window.minY, width: width, height: window.height)
+    }
+
+    /// Content width that opens the notes beside the column that was already
+    /// showing.
+    ///
+    /// The left column keeps the width it had while the notes were a button;
+    /// the window grows to the right by the notes' width. Growing to a fixed
+    /// «notes just fit» threshold instead made the summary stretch with the
+    /// window and then snap back when the notes appeared.
+    public static func contentWidth(
+        revealingNotesBeside current: CGFloat,
+        sidebar: CGFloat,
+        collapsedSlot: CGFloat,
+        notesWidth: CGFloat,
+        minimumPane: CGFloat
+    ) -> CGFloat {
+        let pane = current - sidebar
+        let left = max(0, pane - collapsedSlot)
+        return sidebar + max(left + notesWidth, minimumPane)
+    }
+
+    /// Left / notes widths for a pane of `width`.
+    ///
+    /// `pinnedLeft` is set for the duration of a reveal: the left column stays
+    /// put while the window grows and the notes take whatever appears on the
+    /// right. Without it, every intermediate width below `openAt` still looks
+    /// collapsed, so the summary widens and then snaps in.
+    public static func paneSplit(
+        width pane: CGFloat,
+        pinnedLeft: CGFloat?,
+        summaryMin: CGFloat,
+        notesMin: CGFloat,
+        notesMax: CGFloat,
+        collapsedSlot: CGFloat,
+        openAt: CGFloat
+    ) -> PaneSplit {
+        if let pinned = pinnedLeft {
+            return PaneSplit(left: pinned, notes: max(0, pane - pinned), open: true)
+        }
+        guard pane >= openAt else {
+            return PaneSplit(
+                left: max(0, pane - collapsedSlot),
+                notes: collapsedSlot,
+                open: false
+            )
+        }
+        let notes = min(notesMax, max(notesMin, pane - summaryMin))
+        return PaneSplit(left: pane - notes, notes: notes, open: true)
     }
 }

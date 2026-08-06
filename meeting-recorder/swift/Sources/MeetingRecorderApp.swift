@@ -25,6 +25,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        // `--live-probe [сек]`: успевает ли живой слой за встречей. Тот же
+        // довод, что и у пробы захвата, — сессия, которая не поднялась,
+        // выглядит как встреча, на которой все молчали.
+        if LiveProbe.isRequested {
+            Task { @MainActor in await LiveProbe.run() }
+            return
+        }
+
         // Прогрев захвата на общих часах. Самое первое открытие входа Core
         // Audio ждёт решения TCC — замерено, шестьдесят секунд, — и заплатить
         // его на старте записи означает записать встречу без первой минуты.
@@ -117,7 +125,13 @@ struct MeetingRecorderApp: App {
         WindowGroup("Propeller", id: AppWindowRole.main.rawValue) {
             RootWindow(state: state)
         }
-        .windowResizability(.contentSize)
+        // Min from content; width/height above that are the user's. `.contentSize`
+        // kept snapping the frame back to the layout's ideal and fought every drag.
+        .windowResizability(.contentMinSize)
+        .defaultSize(
+            width: AppWindowRegistry.mainSize.width,
+            height: AppWindowRegistry.mainSize.height
+        )
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) { }

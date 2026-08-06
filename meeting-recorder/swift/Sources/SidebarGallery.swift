@@ -153,8 +153,8 @@ enum SidebarGallery {
                         // `isHovered` — the same field the live pointer feeds.
                         SidebarNavRow(
                             item: SidebarNavItem(
-                                id: "sample", symbol: "record.circle",
-                                title: "Начать запись", shortcut: "⌘R",
+                                id: "sample", symbol: SidebarNavItem.propellerMarkSymbol,
+                                title: "Новая запись", shortcut: "⌘R",
                                 isSelected: item.state.isSelected,
                                 isHovered: item.state.isHovered
                             ),
@@ -206,7 +206,7 @@ enum SidebarGallery {
 
         static let model = SidebarModel(
             nav: [
-                .init(id: "record", symbol: "record.circle", title: "Начать запись", shortcut: "⌘R"),
+                .init(id: "record", symbol: SidebarNavItem.propellerMarkSymbol, title: "Новая запись", shortcut: "⌘R"),
                 .init(id: "search", symbol: "magnifyingglass", title: "Поиск", shortcut: "⌘K"),
                 .init(id: "settings", symbol: "gearshape.fill", title: "Настройки", shortcut: "⌘,"),
                 .init(id: "feedback", symbol: "ladybug.fill", title: "Сообщить о проблеме"),
@@ -288,10 +288,9 @@ enum SidebarGallery {
         private func pane(_ scheme: ColorScheme, width: CGFloat) -> some View {
             VStack(spacing: 0) {
                 MeetingPaneHeader(
+                    meetingID: "gallery",
                     title: "Воркшоп по VK Музыке",
-                    time: "17:05, 25 августа",
-                    participants: "6 участников",
-                    onParticipants: {}, onCopy: {},
+                    onRename: { _, _ in },
                     share: .init("Поделиться") {}
                 ) {
                     Button("Показать в Finder") {}
@@ -304,18 +303,20 @@ enum SidebarGallery {
             .environment(\.colorScheme, scheme)
         }
 
-        static let summary = MeetingSummary(
-            lead: "Проведен воркшоп по музыкальному приложению «интерактивная вики», где фокус на исследовании связей между артистами, треками и эпохами.",
-            body: "Ключевая цель — создание системы, которая снижает когнитивную нагрузку («усталость от норы») за счёт визуализации маршрутов исследования и быстрой ориентации через обогащённый текст (мету) с кликабельными ссылками на смежные объекты.",
-            sections: [
-                .init(id: "s1", title: "Решения", blocks: [
-                    .bullet(id: "b1", lead: "Мета как основа навигации: ",
-                            text: "Метаданные описываются не просто текстом, а структурированными блоками («краткая версия» + «развёрнутая»), где ключевые факты оформляются в виде кликабельных ссылок (сниппетов) на связанные объекты."),
-                    .bullet(id: "b2", lead: nil,
-                            text: "Связи вместо статических страниц: Каждая единица контента (трек, релиз, жанр, эпоха) рассматривается как узел графа. Важным элементом является отображение связей «вбок» и «назад»."),
-                ]),
-            ]
-        )
+        /// The posed summary, written as the markdown a recap actually is
+        /// rather than assembled block by block. The board then photographs the
+        /// same parse the app runs — a fixture built by hand can be shaped like
+        /// nothing `RecapService` ever writes, and this one was.
+        static let summary = MeetingSummary.parse(markdown: """
+        ## Итог
+        Проведен воркшоп по музыкальному приложению «интерактивная вики», где фокус на исследовании связей между артистами, треками и эпохами.
+
+        Ключевая цель — создание системы, которая снижает когнитивную нагрузку («усталость от норы») за счёт визуализации маршрутов исследования и быстрой ориентации через обогащённый текст (мету) с кликабельными ссылками на смежные объекты.
+
+        ## Решения
+        - **Мета как основа навигации:** Метаданные описываются не просто текстом, а структурированными блоками («краткая версия» + «развёрнутая»), где ключевые факты оформляются в виде кликабельных ссылок (сниппетов) на связанные объекты.
+        - Связи вместо статических страниц: Каждая единица контента (трек, релиз, жанр, эпоха) рассматривается как узел графа. Важным элементом является отображение связей «вбок» и «назад».
+        """)
 
         static let notes: [MeetingNote] = [
             .init(id: "n1", text: "Убедиться что все ошибки дают путь дальше"),

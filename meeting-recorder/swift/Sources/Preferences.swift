@@ -236,14 +236,40 @@ class Preferences {
         set { defaults.set(newValue, forKey: "onboardingCompleted") }
     }
 
-    /// The name the user entered during onboarding — used to label the
-    /// mic-dominant diarized speaker with their real name (see plan-v2 3.3).
+    /// The name the user gave — used to label the mic-dominant diarized speaker
+    /// with their real name (see plan-v2 3.3).
+    ///
+    /// Empty means *not answered yet*, and that is load-bearing: it is what tells
+    /// the rail it still owes the question (`SetupPromptMachine`). Nothing may
+    /// pre-fill it with a guess; read `ownerName` instead.
     var userName: String {
         get { defaults.string(forKey: "userName") ?? "" }
         set { defaults.set(newValue, forKey: "userName") }
     }
 
-    /// Show upcoming meetings from the system Calendar (EventKit). Off until the
+    /// The name to actually label a speaker with.
+    ///
+    /// The macOS account name is a good enough guess and needs nobody's
+    /// attention, so a transcript recorded before the rail got its answer is
+    /// still signed rather than left with `Speaker 1`. It is a *fallback*, not an
+    /// answer — see `userName`.
+    var ownerName: String {
+        let given = userName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return given.isEmpty ? NSFullUserName() : given
+    }
+
+    /// The rail asked about the calendar and the user pressed «Подключить».
+    ///
+    /// One-way, and separate from `calendarEnabled` on purpose: whether the
+    /// calendar is *on* is a setting people turn off again, and reading the
+    /// setting would bring the question back the first time somebody did.
+    /// Whether they were *asked* happens once.
+    var setupCalendarAsked: Bool {
+        get { defaults.bool(forKey: "setupCalendarAsked") }
+        set { defaults.set(newValue, forKey: "setupCalendarAsked") }
+    }
+
+    /// Read the system Calendar (EventKit) to name recordings. Off until the
     /// user opts in, since it triggers a calendar-access permission prompt.
     var calendarEnabled: Bool {
         get { defaults.bool(forKey: "calendarEnabled") }

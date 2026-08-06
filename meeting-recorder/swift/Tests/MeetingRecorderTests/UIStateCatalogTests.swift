@@ -18,20 +18,34 @@ final class UIStateCatalogTests: XCTestCase {
         XCTAssertTrue(shown.isDisjoint(with: excused))
     }
 
-    /// Each phase has a progress screen — those are the ones people stare at.
-    func testEveryPhaseHasAProgressScreen() {
+    /// Each phase people can actually watch has a progress screen. `.saving` is
+    /// excused by name: it writes the markdown inside the summarising job, is
+    /// never scheduled on its own, and its old screen was one frame of a file
+    /// write between two real steps.
+    func testEveryWatchablePhaseHasAProgressScreen() {
         let working: Set<PipelineActivity.Phase> = Set(
             UIStateCatalog.meetingStates.compactMap {
                 if case .working(let phase) = $0.involvement { return phase }
                 return nil
             }
         )
-        XCTAssertEqual(working, Set(PipelineActivity.Phase.allCases))
+        let excused = UIStateCatalog.phasesWithoutOwnScreen
+        XCTAssertEqual(working, Set(PipelineActivity.Phase.allCases).subtracting(excused))
+        XCTAssertTrue(working.isDisjoint(with: excused))
+    }
+
+    /// A phase excused from having a screen must also be one the scheduler never
+    /// hands out on its own — otherwise people would watch an unnamed state.
+    func testAnExcusedPhaseIsNeverScheduled() {
+        let scheduled = Set(RecordingStage.allCases.compactMap(\.nextPhase))
+        XCTAssertTrue(scheduled.isDisjoint(with: UIStateCatalog.phasesWithoutOwnScreen))
     }
 
     /// §5 of REFACTOR-PIPELINE-STATE.md enumerates eleven legal states. The
     /// count is asserted so the two cannot drift apart silently.
     func testMatchesTheElevenLegalStates() {
+        // Still eleven: «идёт сохранение» stopped being a state, and the stage it
+        // used to illustrate («транскрипт готов») got a frame of its own.
         XCTAssertEqual(UIStateCatalog.meetingStates.count, 11)
     }
 

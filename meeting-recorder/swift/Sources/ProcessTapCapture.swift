@@ -201,6 +201,9 @@ final class ProcessTapCapture {
     private var deviceNotifications = 0
     private var restartingSince: Date?
     private var isRunning = false
+    /// Запись на паузе — кадры не берутся. Под тем же замком, что и курсор:
+    /// читается на очереди захвата, ставится с главного актора.
+    private var isPaused = false
 
     /// Что пишем на диск: 16 кГц моно — форма, которую ждёт весь конвейер.
     private static let stemSampleRate: Double = 16_000
@@ -321,6 +324,32 @@ final class ProcessTapCapture {
             }
         }
         return report()
+    }
+
+    /// Досталась ли этому захвату системная дорожка. Ответ известен после
+    /// сборки агрегата: тапа могло не оказаться вовсе.
+    var capturesSystemAudio: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return channelMap.hasSystemAudio
+    }
+
+    /// Пауза: кадры перестают браться, устройство остаётся поднятым.
+    ///
+    /// Останавливать IOProc было бы честнее на вид и дороже по существу: на
+    /// возобновлении агрегат пересобирается, а это секунда тишины и повод
+    /// системе передумать про состав. Здесь же снятие паузы стоит одну
+    /// перепривязку шкалы — на месте паузы дорожки просто смыкаются.
+    func setPaused(_ paused: Bool) {
+        lock.lock()
+        guard paused != isPaused else { lock.unlock(); return }
+        isPaused = paused
+        if !paused {
+            // Часы агрегата за время паузы ушли вперёд. Не снять шкалу с якоря —
+            // значит дописать в запись всю паузу тишиной (или, если она длиннее
+            // потолка `CaptureCursor`, привязаться вслепую с той же тишиной).
+            cursor.detachClock()
+        }
+        lock.unlock()
     }
 
     func report() -> Report {
@@ -580,6 +609,14 @@ final class ProcessTapCapture {
         )
         let frames = CaptureBuffers.frameCount(of: list)
         guard frames > 0 else { return }
+
+        // На паузе кадры не берутся вовсе — ни в кольцо, ни в уровни. Курсор
+        // при этом не двигается, поэтому после снятия паузы разрыв часов не
+        // превратится в тишину в файле: `resume` привязывает шкалу заново.
+        lock.lock()
+        let paused = isPaused
+        lock.unlock()
+        if paused { return }
 
         // Буферы переиспользуются: `handle` — единственный, кто их трогает, и
         // только с очереди захвата. Аллокация сотню раз в секунду ничего бы не

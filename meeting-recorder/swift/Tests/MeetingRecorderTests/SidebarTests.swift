@@ -16,8 +16,8 @@ import PropellerUI
 /// pedantry: SwiftUI's `lineSpacing` puts space *between* lines and nothing
 /// around the block, so every text block comes out short by one leading and the
 /// error compounds down the list. Two points per row is invisible in isolation
-/// and a row and a half of drift over a day's meetings. The rail is 54 / 70 /
-/// 86 for one, two and three title lines (the tokens' arithmetic, see
+/// and a row and a half of drift over a day's meetings. The rail is 42 / 60 /
+/// 78 for one, two and three title lines (the tokens' arithmetic, see
 /// `testAMeetingRowIsTheHeightItsTokensAddUpTo`); if that stops being true,
 /// something changed the type scale and nobody looked at the rail.
 final class SidebarTests: XCTestCase {
@@ -110,6 +110,15 @@ final class SidebarTests: XCTestCase {
         XCTAssertEqual(text, "Ретро, планирование")
     }
 
+    /// Таймер на экране стоит — значит и строка не имеет права говорить, что
+    /// запись идёт.
+    func testAPausedRecordingSaysSoInsteadOfClaimingItIsRecording() {
+        let text = SidebarRowMachine.preview(
+            activity: .recording, phaseMessage: nil, topics: "", isPaused: true
+        )
+        XCTAssertEqual(text, "Пауза")
+    }
+
     // MARK: - Catalogue coverage
 
     func testTheCatalogueCoversEveryActivity() {
@@ -143,6 +152,15 @@ final class SidebarTests: XCTestCase {
     func testCatalogueIDsAreUnique() {
         let ids = SidebarStateCatalog.meetingRows.map(\.id) + SidebarStateCatalog.navRows.map(\.id)
         XCTAssertEqual(Set(ids).count, ids.count, "ids name screenshot files; duplicates overwrite")
+    }
+
+    func testTheTopListFadeStaysOffUntilTheListScrolls() {
+        let limit = Tokens.Sidebar.listTopFade
+        XCTAssertEqual(SidebarEdgeFade.topHeight(scrollOffset: 0), 0)
+        XCTAssertEqual(SidebarEdgeFade.topHeight(scrollOffset: -8), 0)
+        XCTAssertEqual(SidebarEdgeFade.topHeight(scrollOffset: 1), 1)
+        XCTAssertEqual(SidebarEdgeFade.topHeight(scrollOffset: limit), limit)
+        XCTAssertEqual(SidebarEdgeFade.topHeight(scrollOffset: limit + 40), limit)
     }
 
     func testEveryPipelineStateHasARowAppearance() {
@@ -213,18 +231,13 @@ final class SidebarTests: XCTestCase {
 
     @MainActor
     func testAMeetingRowIsTheHeightItsTokensAddUpTo() {
-        // 54 / 70 / 86 for one, two and three title lines, and every point of it
-        // is a token: 2×10 padding + 14 meta + 4 gap + 16 per title line.
-        //
-        // The comps say 52 / 68 / 84 and this test used to hold that number. The
-        // rail was built to 54 deliberately (2026-08-04) — padding 10, meta 14,
-        // gap 4 — so the number frozen here is the one the tokens produce. If it
-        // moves again, a token moved with it, and that should be a decision
-        // rather than a surprise.
+        // 42 / 60 / 78 for one, two and three title lines: 2×12 padding + 18
+        // per title line. The meta line (14) and the 4 pt gap under the title
+        // are built but currently hidden — add them back if that row returns.
         let cases: [(String, CGFloat)] = [
-            ("Тактика.", 54),
-            ("Тактика | Лиды. Обсудили ошибки и предложили пути.", 70),
-            ("Воркшоп по VK Музыке. Обсудили этапы, выявили препятствия, наметили следующие шаги.", 86),
+            ("Тактика.", 42),
+            ("Тактика | Лиды. Обсудили ошибки и предложили пути.", 60),
+            ("Воркшоп по VK Музыке. Обсудили этапы, выявили препятствия, наметили следующие шаги.", 78),
         ]
         for (text, expected) in cases {
             let height = measure(
@@ -269,6 +282,19 @@ final class SidebarTests: XCTestCase {
         }
     }
 
+    func testTheTextMarginSurvivesTheRailGivingRoomToItsRows() {
+        // The rail's margin is split between the body inset and each row's own
+        // padding, and only the split moved (2026-08-04): 12 + 12 became
+        // 10 + 14, so titles still start 24 pt in while a hovered or selected
+        // fill reaches 2 pt closer to both bezels. Changing one side alone is
+        // the mistake this catches — it slides every line in the rail sideways
+        // against the header above it.
+        XCTAssertEqual(Tokens.Sidebar.bodyHPadding + Tokens.Sidebar.meetingHPadding, 24)
+        // Nav labels sit a point tighter for the glyph's own inset — see the
+        // token. What matters is that the two blocks keep their relationship.
+        XCTAssertEqual(Tokens.Sidebar.bodyHPadding + Tokens.Sidebar.navRowHPadding, 23)
+    }
+
     func testTheDateHeaderBlockStaysTwentyPointsWhateverTheTypeDoes() {
         // The date line plus its gap is one drawn quantity. Letting the type
         // change grow it shifts every dated section below by the difference.
@@ -300,7 +326,7 @@ final class SidebarTests: XCTestCase {
             )
         }
         XCTAssertEqual(height(hovered: true), height(hovered: false), accuracy: 0.1)
-        XCTAssertEqual(height(hovered: true), 86, accuracy: 0.6)
+        XCTAssertEqual(height(hovered: true), 78, accuracy: 0.6)
     }
 
     @MainActor
@@ -318,8 +344,8 @@ final class SidebarTests: XCTestCase {
     func testTheMeetingListStartsWhereTheCompsPutIt() {
         // Body inset 10, four nav rows of 32, then the gap: the first meeting
         // begins 206 pt down the rail. There used to be a rule in that gap; it
-        // is gone and the gap grew from 12 to 20, so this number is the one
-        // thing that proves the two changes were made together.
+        // is gone and the gap walked 12 → 20 → 28 → 20, so this number is the
+        // one thing that proves the separation is still intentional whitespace.
         let listTop = Tokens.Sidebar.headerHeight
             + Tokens.Sidebar.bodyVPadding
             + Tokens.Sidebar.navRowHeight * 4
@@ -399,7 +425,7 @@ final class SidebarTests: XCTestCase {
     }
 
     private static let railModel = SidebarModel(
-        nav: [.init(id: "record", symbol: "record.circle", title: "Начать запись", shortcut: "⌘R")],
+        nav: [.init(id: "record", symbol: SidebarNavItem.propellerMarkSymbol, title: "Новая запись", shortcut: "⌘R")],
         groups: [.init(id: "today", header: nil, rows: [
             SidebarMeetingRowModel(
                 id: "1", meta: "17:30 · 45 мин", title: "Тактика.", preview: "", state: .rest

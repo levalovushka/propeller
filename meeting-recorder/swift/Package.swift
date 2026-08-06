@@ -42,7 +42,11 @@ let package = Package(
             // The sidebar draws `SidebarRowState`; the rule that produces one
             // lives in PropellerPure so a test can reach it.
             dependencies: ["PropellerPure"],
-            path: "PropellerUI"
+            path: "PropellerUI",
+            // SwiftPM does not compile Metal: it reports `.metal` as an
+            // unhandled file and walks past it. `build.sh` builds the library
+            // and puts it in the app's resources — see `SummaryShader`.
+            exclude: ["TextShimmer.metal", "Disintegrate.metal"]
         ),
         .executableTarget(
             name: "MeetingRecorder",

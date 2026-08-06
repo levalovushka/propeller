@@ -39,59 +39,18 @@ public enum GalleryScreens {
     public static func view(for id: String) -> some View {
         switch id {
 
-        // MARK: Onboarding
+        // MARK: Setup
 
-        case "onb-01-welcome":
-            card { OnboardingWelcomeView(onSetUp: {}, onSkip: {}) }
-        case "onb-02-name":
-            card { OnboardingNameView(onNext: { _ in }, onBack: {}) }
-        case "onb-03-calendar":
-            card { OnboardingCalendarView(onNext: {}, onSkip: {}, onBack: {}, calendarGranted: false) }
-        case "onb-03-calendar-granted":
-            card { OnboardingCalendarView(onNext: {}, onSkip: {}, onBack: {}, calendarGranted: true) }
-        case "onb-04-permissions":
-            card {
-                OnboardingPermissionsView(onNext: {}, onBack: {},
-                                          microphoneGranted: false,
-                                          notificationsGranted: false)
+        case "onb-01-setup":
+            plate { SetupView() }
+        case "onb-01-setup-mic":
+            plate { SetupView(microphoneGranted: true) }
+        case "onb-01-setup-all":
+            plate {
+                SetupView(microphoneGranted: true,
+                          notificationsGranted: true,
+                          launchAtLogin: true)
             }
-        case "onb-04-permissions-partial":
-            // Partial means *partial*: the microphone granted and notifications
-            // not. Both were passed as `true`, so this frame was a duplicate of
-            // «всё выдано» and the state it names was never photographed.
-            card {
-                OnboardingPermissionsView(onNext: {}, onBack: {},
-                                          microphoneGranted: true,
-                                          notificationsGranted: false)
-            }
-        case "onb-04-permissions-all":
-            card {
-                OnboardingPermissionsView(onNext: {}, onBack: {},
-                                          microphoneGranted: true,
-                                          notificationsGranted: true)
-            }
-        case "onb-05-model":
-            card {
-                OnboardingSummaryModelView(onNext: {}, onBack: {}, isReady: false)
-            }
-        case "onb-05-model-downloading":
-            // The screen deliberately shows no progress bar — tapping «Скачать»
-            // advances immediately. Captured so that decision is visible in the
-            // reference rather than looking like an omission.
-            card {
-                OnboardingSummaryModelView(onNext: {}, onBack: {}, isReady: false)
-            }
-        case "onb-05-model-ready":
-            card {
-                OnboardingSummaryModelView(onNext: {}, onBack: {}, isReady: true)
-            }
-        case "onb-05-model-error":
-            card {
-                OnboardingSummaryModelView(onNext: {}, onBack: {}, isReady: false,
-                                           errorMessage: "Не удалось скачать модель: нет соединения")
-            }
-        case "onb-06-end":
-            card { OnboardingEndView(onFinish: {}) }
 
         default:
             EmptyView()
@@ -100,24 +59,24 @@ public enum GalleryScreens {
 
     /// Ids this module can draw. The app-side gallery asks before falling back
     /// to its own screens, so ownership is decided in one place.
+    ///
+    /// The rail's two questions are **not** here: they are states of the rail,
+    /// and the rail needs a window and a list of meetings around it to be worth
+    /// photographing. `SidebarGallery` draws those.
     public static let ownedIDs: Set<String> = [
-        "onb-01-welcome", "onb-02-name",
-        "onb-03-calendar", "onb-03-calendar-granted",
-        "onb-04-permissions", "onb-04-permissions-partial", "onb-04-permissions-all",
-        "onb-05-model", "onb-05-model-downloading", "onb-05-model-ready", "onb-05-model-error",
-        "onb-06-end",
+        "onb-01-setup", "onb-01-setup-mic", "onb-01-setup-all",
     ]
 
     // MARK: - Framing
 
-    /// Onboarding is a fixed 400×400 plate on the glass background — same
-    /// framing as `OnboardingPanelController`, so the screenshots match the app.
+    /// Setup is a fixed 400×410 plate on the glass background — same framing as
+    /// `OnboardingPanelController`, so the screenshots match the app.
     @ViewBuilder
-    private static func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+    private static func plate<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content()
-            .frame(width: Tokens.Card.width, height: Tokens.Card.height)
-            .background(GlassBackground(cornerRadius: Tokens.Card.radius))
-            .clipShape(RoundedRectangle(cornerRadius: Tokens.Card.radius, style: .continuous))
+            .frame(width: Tokens.Setup.width, height: Tokens.Setup.height)
+            .background(GlassBackground(cornerRadius: Tokens.Setup.radius))
+            .clipShape(RoundedRectangle(cornerRadius: Tokens.Setup.radius, style: .continuous))
             .padding(24)
             .background(Color.black)
     }

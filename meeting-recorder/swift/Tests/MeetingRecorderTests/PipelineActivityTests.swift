@@ -55,6 +55,18 @@ final class PipelineActivityTests: XCTestCase {
         XCTAssertEqual(empty.message, PipelineActivity.Phase.transcribing.defaultMessage)
     }
 
+    func testSidebarMessageIgnoresSidecarDetail() {
+        let activity = PipelineActivity.working(
+            recordingID: "a", phase: .transcribing, detail: "Расшифровка (GigaAM)…"
+        )
+        XCTAssertEqual(activity.sidebarMessage, "Расшифровываем…")
+        XCTAssertEqual(
+            PipelineActivity.working(recordingID: "a", phase: .summarizing, detail: "Ollama…")
+                .sidebarMessage,
+            "Генерируем саммари…"
+        )
+    }
+
     // MARK: - I2: exactly one recording spins
 
     func testActivityConcernsExactlyOneRecording() {

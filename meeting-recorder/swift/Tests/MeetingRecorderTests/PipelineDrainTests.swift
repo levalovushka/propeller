@@ -38,6 +38,13 @@ final class PipelineDrainTests: XCTestCase {
             performed.append(job)
             guard let i = rows.firstIndex(where: { $0.id == job.recordingID }) else { return .advanced }
             rows[i].status = rows[i].status.advanced(to: job.phase.completedStage)
+            // The real ASR pass writes the markdown before it returns, so a
+            // finished diarization lands on `.saved`, not `.transcribed`
+            // (`AppState.runASR` → `runSave`). Modelled here or the fake archive
+            // would owe a phase the app no longer schedules.
+            if job.phase == .diarizing {
+                rows[i].status = rows[i].status.advanced(to: .saved)
+            }
             return .advanced
         }
 
@@ -61,7 +68,7 @@ final class PipelineDrainTests: XCTestCase {
         XCTAssertEqual(stop, .finished)
         XCTAssertEqual(
             archive.performed.map(\.phase),
-            [.transcribing, .diarizing, .saving, .summarizing],
+            [.transcribing, .diarizing, .summarizing],
             "the whole pipeline should run off one stopped recording"
         )
         XCTAssertEqual(archive.rows[0].status, .summarized)
@@ -78,7 +85,9 @@ final class PipelineDrainTests: XCTestCase {
         )
         XCTAssertEqual(
             archive.performed.map(\.recordingID),
-            ["just-stopped", "just-stopped", "just-stopped", "just-stopped", "backlog"]
+            // Three jobs, not four: the markdown is written inside the ASR pass,
+            // so a fresh meeting owes transcribing, diarizing and its summary.
+            ["just-stopped", "just-stopped", "just-stopped", "backlog"]
         )
     }
 

@@ -33,7 +33,7 @@ final class PipelineNeverStrandsWorkTests: XCTestCase {
         let messages = [
             "Ollama недоступен",            // переживаемое
             "gigastt HTTP 413",             // наш баг
-            "Аудио удалено",                // терминал (объявляется явно, ниже)
+            "в записи не нашлось речи",     // терминал (объявляется явно, ниже)
         ]
         return (0..<count).map { _ in
             (0..<next(6)).map { i in
@@ -49,7 +49,7 @@ final class PipelineNeverStrandsWorkTests: XCTestCase {
                             // Терминал объявляет вызывающий, а не текст — как в
                             // приложении.
                             kind: pick == 2 ? .terminal : nil,
-                            terminalReason: pick == 2 ? .audioDeleted : nil
+                            terminalReason: pick == 2 ? .noSpeech : nil
                         )
                         // Sometimes escalate it a few times, to reach the
                         // attempts-exhausted shape too.
@@ -233,11 +233,16 @@ final class PipelineNeverStrandsWorkTests: XCTestCase {
     /// A pause waits on an event — a call ending, a Mac cooling down — but not
     /// only on one. If that notification never arrives the archive still gets
     /// looked at, minutes later rather than never.
+    ///
+    /// `outlook.wakeAt` is only retry deadlines, so a kick that schedules from
+    /// outlook alone would leave nil here and strand the archive on a missed
+    /// hang-up. AppState must go through `PipelineDrain.plan`.
     func testAPolicyPauseStillGetsADeadline() {
         let archive = [Row(id: "a", date: t0, status: .saved, lastFailure: nil, audioAvailable: true)]
         let inCall = WorkerPolicy(isRecording: false, inCall: true, isThermallyStressed: false)
         let outlook = pipelineOutlook(from: archive, policy: inCall, now: t0)
         XCTAssertTrue(outlook.pausedByPolicy)
+        XCTAssertNil(outlook.wakeAt, "outlook itself only carries retry deadlines")
         let plan = PipelineDrain.plan(after: .finished, outlook: outlook, blockedStreak: 0, now: t0)
         XCTAssertEqual(plan.wakeAt, t0.addingTimeInterval(PipelineDrain.policyRecheck))
     }

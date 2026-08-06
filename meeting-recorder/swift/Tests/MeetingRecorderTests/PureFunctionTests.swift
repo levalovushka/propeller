@@ -15,6 +15,16 @@ final class PureFunctionTests: XCTestCase {
         XCTAssertEqual(meta?.tags, ["1:1"])
     }
 
+    func testSubtitleCapitalizesOnlyTheFirstGlyph() {
+        XCTAssertEqual(
+            RecapMetadataParser.capitalizingFirst("отказ от скролла, фаст-плей"),
+            "Отказ от скролла, фаст-плей"
+        )
+        let raw = #"{"title": null, "topics": ["отказ от скролла", "фаст-плей на главной"], "tags": []}"#
+        let meta = RecapMetadataParser.parse(raw, allowedTags: [])
+        XCTAssertEqual(meta?.topics, ["отказ от скролла", "фаст-плей на главной"])
+    }
+
     func testRepairLeavesValidJSONAndRealScalarsAlone() {
         // Well-formed input must survive the repair byte-for-byte in meaning.
         let good = #"{"title": null, "topics": ["a, b", "c"], "tags": []}"#
@@ -34,6 +44,74 @@ final class PureFunctionTests: XCTestCase {
         XCTAssertEqual(arr[0] as? Int, 12)
         XCTAssertEqual(arr[1] as? Bool, true)
         XCTAssertTrue(arr[2] is NSNull)
+    }
+
+    // MARK: - TopicText
+
+    /// Every string here is a real reply from qwen3.5:4b on this archive's own
+    /// recaps, collected while the metadata prompt was being rewritten. The
+    /// prompt now asks for two to five words and usually gets four — these are
+    /// the passes where it did not.
+    func testДлинноеОписаниеТеряетХвостАНеСмысл() {
+        let cases: [(String, String)] = [
+            ("гибридная модель главной страницы с фокусом на Fast-play и Discovery через теги",
+             "гибридная модель главной страницы"),
+            ("визуализация Rich-text блоков в виде карточек вместо текстовых описаний",
+             "визуализация Rich-text блоков"),
+            ("отказ от дизайн-системы в пользу точного сетапа проекта",
+             "отказ от дизайн-системы"),
+            ("поиск реальных проектов и плохого дизайна для экспериментов",
+             "поиск реальных проектов"),
+            ("Поиск референсов сайтов с плохим дизайном или сложным флоу",
+             "Поиск референсов сайтов"),
+            ("внедрение системы тегов вместо Rich-text блоков на главном экране",
+             "внедрение системы тегов"),
+        ]
+        for (long, short) in cases {
+            XCTAssertEqual(TopicText.tightened(long), short)
+        }
+    }
+
+    /// The common case must come back untouched — the guard is for the outlier,
+    /// and a topic that lost words it did not have to lose is the worse bug.
+    func testКороткоеОписаниеНеТрогаем() {
+        for topic in [
+            "отказ от списочности треков",
+            "структура экрана под кластеры",
+            "данные вместо заглушек",
+            "главная — фаст-плей, коллекция — шкаф",
+            "разделение брифа на логику и дизайн",
+        ] {
+            XCTAssertEqual(TopicText.tightened(topic), topic)
+        }
+        // Long, but with nowhere to cut that leaves a subject standing: better
+        // verbose than halved.
+        let unbreakable = "переоформление документации спецификации протокола обмена клиентскими сообщениями"
+        XCTAssertEqual(TopicText.tightened(unbreakable), unbreakable)
+    }
+
+    func testПодписьВстречиНеПревращаетсяВСписок() {
+        let many = [
+            "цифровая экосистема", "Flutter приложения",
+            "синхронизация данных", "этапы реализации",
+        ]
+        XCTAssertEqual(TopicText.tightened(many), Array(many.prefix(3)))
+
+        // The full stop the prompt asks it not to write, and the same thought twice.
+        XCTAssertEqual(
+            TopicText.tightened(["отказ от скролла.", "Отказ от скролла", "фаст-плей на главной"]),
+            ["отказ от скролла", "фаст-плей на главной"]
+        )
+    }
+
+    /// The rail reads what the parser stored, so the length has to be settled
+    /// before it is persisted — not on the way to the row.
+    func testПарсерОтдаётУжеКороткиеОписания() {
+        let raw = #"""
+        {"title": "PG x VK Музыка", "topics": ["гибридная модель главной страницы с фокусом на Fast-play и Discovery через теги", "структура экрана под кластеры"], "tags": []}
+        """#
+        let meta = RecapMetadataParser.parse(raw, allowedTags: [])
+        XCTAssertEqual(meta?.topics, ["гибридная модель главной страницы", "структура экрана под кластеры"])
     }
 
     /// A 49-minute meeting failed with HTTP 413 on 2026-07-28 even though

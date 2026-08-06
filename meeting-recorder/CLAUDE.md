@@ -50,7 +50,11 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full table. Coordinator
 - `MainView` — левый рельс (`PropellerSidebar`) + контентная панель. Upcoming (calendar) via `CalendarService`.
 - `PropellerUI/Sidebar.swift` — рельс редизайна (Figma 31:4581): 300 pt, заголовок окна 48 pt со светофором, меню, список встреч по дням. Чистая презентация: принимает `SidebarModel`, отдаёт id. Какой вид получает встреча — `PropellerPure/SidebarRowState.swift` (`SidebarRowMachine`), и это единственное место, где решение принимается; `Sources/SidebarPresenter.swift` только читает поля.
 - Все токены цвета — пары «тёмная / светлая» (`Tokens.dual`), тема разрешается AppKit'ом в момент отрисовки. Светлые значения выведены, а не нарисованы: правятся в одном месте, в `Tokens.Paint` / `Tokens.Sidebar`.
-- `RecordingDetailView` / `RecordingInProgressView` — tabs Transcript / Notes / Summary
+- `RecordingDetailView` — карточка встречи (легаси-путь, вкладки Transcript / Notes / Summary)
+- Идущая запись — не режим окна, а одна из встреч: `MainView` показывает `RecordingPaneView`
+  только когда выбрана записываемая встреча (`AppState.activeRecordingID`). Шапка —
+  `RecordingPaneHeader` (заголовок слева, таймер + пауза/стоп справа), слева живой транскрипт
+  (`LiveTranscriptColumn`), справа те же заметки, что у готовой встречи.
 - `NoteOverlayController` — ⌃⌥N quick-note overlay during recording
 - `MenuBarPanelView` — record/stop, recent, quit
 - Native `Settings` scene (`SettingsSheet.swift`): General / Audio / Transcription / Recap / Export

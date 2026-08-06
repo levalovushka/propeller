@@ -52,7 +52,7 @@ public struct IconButton: View {
     var prominence: ButtonProminence = .ghost
     var size: DSSize = .sm
     var iconSize: CGFloat = 15
-    var weight: Font.Weight = .semibold
+    var weight: Font.Weight = .regular
     var enabled: Bool = true
     var action: () -> Void
 
@@ -63,7 +63,7 @@ public struct IconButton: View {
         prominence: ButtonProminence = .ghost,
         size: DSSize = .sm,
         iconSize: CGFloat = 15,
-        weight: Font.Weight = .semibold,
+        weight: Font.Weight = .regular,
         enabled: Bool = true,
         action: @escaping () -> Void
     ) {
@@ -104,7 +104,7 @@ public struct IconButton: View {
 public struct MinimalIconGlyph: View {
     let systemName: String
     var iconSize: CGFloat = 15
-    var weight: Font.Weight = .medium
+    var weight: Font.Weight = .regular
     /// When true, stay at the brighter end (e.g. active filter).
     var emphasized: Bool = false
 
@@ -113,7 +113,7 @@ public struct MinimalIconGlyph: View {
     public init(
         systemName: String,
         iconSize: CGFloat = 15,
-        weight: Font.Weight = .medium,
+        weight: Font.Weight = .regular,
         emphasized: Bool = false
     ) {
         self.systemName = systemName
@@ -140,7 +140,7 @@ public struct MinimalIconGlyph: View {
 public struct MinimalIconMenu<Content: View>: View {
     let systemName: String
     var iconSize: CGFloat = 15
-    var weight: Font.Weight = .medium
+    var weight: Font.Weight = .regular
     var emphasized: Bool = false
     var helpText: String? = nil
     @ViewBuilder var menuContent: () -> Content
@@ -150,7 +150,7 @@ public struct MinimalIconMenu<Content: View>: View {
     public init(
         systemName: String,
         iconSize: CGFloat = 15,
-        weight: Font.Weight = .medium,
+        weight: Font.Weight = .regular,
         emphasized: Bool = false,
         help helpText: String? = nil,
         @ViewBuilder content: @escaping () -> Content
@@ -187,7 +187,7 @@ public struct MinimalIconMenu<Content: View>: View {
 public struct MinimalIconSettingsLink: View {
     var systemName: String = "gearshape.fill"
     var iconSize: CGFloat = 15
-    var weight: Font.Weight = .medium
+    var weight: Font.Weight = .regular
     var helpText: String? = "Настройки"
 
     @State private var hovering = false
@@ -195,7 +195,7 @@ public struct MinimalIconSettingsLink: View {
     public init(
         systemName: String = "gearshape.fill",
         iconSize: CGFloat = 15,
-        weight: Font.Weight = .medium,
+        weight: Font.Weight = .regular,
         help helpText: String? = "Настройки"
     ) {
         self.systemName = systemName

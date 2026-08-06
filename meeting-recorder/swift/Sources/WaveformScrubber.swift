@@ -43,7 +43,7 @@ struct WaveformScrubber: View {
             }
         } label: {
             Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                .font(.system(size: 30))
+                .font(.system(size: 30, weight: .regular))
                 .foregroundStyle(Color.accentColor)
                 .symbolRenderingMode(.hierarchical)
         }

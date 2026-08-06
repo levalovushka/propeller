@@ -49,7 +49,10 @@ struct StateGallery: View {
                         SidebarGallery.ids.map { ($0, SidebarGallery.label(for: $0), $0) })
                 section("Встреча — состояния пайплайна",
                         UIStateCatalog.meetingStates.map { ($0.id, $0.label, Self.caption(for: $0)) })
-                section("Онбординг", UIStateCatalog.onboarding.map { ($0.id, $0.label, $0.id) })
+                section("Экран записи", UIStateCatalog.recording.map { ($0.id, $0.label, $0.id) })
+                section("Настройка", UIStateCatalog.onboarding.map { ($0.id, $0.label, $0.id) })
+                section("Рельс — вопросы настройки",
+                        UIStateCatalog.railPrompt.map { ($0.id, $0.label, $0.id) })
                 section("Вкладки карточки", UIStateCatalog.detailTabs.map { ($0.id, $0.label, $0.id) })
                 section("Библиотека", UIStateCatalog.library.map { ($0.id, $0.label, $0.id) })
             }
@@ -139,7 +142,8 @@ enum GalleryScreenFactory {
             .frame(width: windowSize.width, height: windowSize.height)
             .background(Color.black)
         } else if UIStateCatalog.meetingStates.contains(where: { $0.id == id })
-                    || id.hasPrefix("tab-") || id.hasPrefix("lib-") {
+                    || id.hasPrefix("tab-") || id.hasPrefix("lib-")
+                    || id.hasPrefix("rec-") || id.hasPrefix("rail-prompt-") {
             // Pipeline states are rows in the list; tab states are the detail
             // inside the same chrome. Both are `MainView` deciding what to show
             // from the posed state — photographing `RecordingDetailView` on its

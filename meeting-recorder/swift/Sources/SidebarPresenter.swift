@@ -30,7 +30,32 @@ enum SidebarPresenter {
         SidebarModel(
             nav: nav(state: state),
             groups: groups(state: state, store: store, now: now),
-            emptyMessage: "Пока нет встреч"
+            emptyMessage: "Пока нет встреч",
+            prompt: prompt(state.setupPrompt)
+        )
+    }
+
+    // MARK: - The docked question
+
+    /// Every word of it comes off `SetupPrompt`; this only chooses which of the
+    /// two control shapes the step wears. Both are declared on the step, so a
+    /// step with neither — or with both — cannot be built by accident.
+    private static func prompt(_ step: SetupPrompt?) -> SidebarPromptModel? {
+        guard let step else { return nil }
+        let action: SidebarPromptModel.Action
+        if let title = step.actionTitle {
+            action = .button(title)
+        } else if let placeholder = step.fieldPlaceholder {
+            action = .field(placeholder: placeholder)
+        } else {
+            return nil
+        }
+        return SidebarPromptModel(
+            id: step.rawValue,
+            title: step.title,
+            subtitle: step.subtitle,
+            counter: step.counter,
+            action: action
         )
     }
 
@@ -76,17 +101,13 @@ enum SidebarPresenter {
                 title: "Нет доступа к\u{00A0}микрофону"
             )
         }
+        // Always «Новая запись» — stop lives in the recording pane (and ⌘.).
+        // The row that is recording already says so on itself.
         return SidebarNavItem(
             id: NavAction.record.rawValue,
-            // The comps leave a gear on this row — the same glyph as
-            // Настройки two rows down, which is a placeholder rather than a
-            // decision. Change one line here if it turns out to be one.
-            symbol: state.isRecording ? "stop.circle" : "record.circle",
-            title: state.isRecording ? "Завершить запись" : "Начать запись",
-            shortcut: "⌘R",
-            // Recording is the one nav row that can be *on*: it is the state
-            // the window is in, not a place you navigated to.
-            isSelected: state.isRecording
+            symbol: SidebarNavItem.propellerMarkSymbol,
+            title: "Новая запись",
+            shortcut: "⌘R"
         )
     }
 
@@ -100,14 +121,9 @@ enum SidebarPresenter {
         var order: [String] = []
         var byDay: [String: (header: String?, rows: [SidebarMeetingRowModel])] = [:]
 
-        // A deletion that can still be taken back stays in the list, in its own
-        // place, wearing «Вернуть». It is already out of the store — that is what
-        // makes the undo window a window — so it is put back here, and only here.
-        var listed = store.recordings
-        if let pending = state.pendingDeletion {
-            listed.append(pending)
-            listed.sort { $0.date > $1.date }
-        }
+        // Soft-deleted meetings leave the store after ash. During ash they stay
+        // so the same row can collapse its height. See `hasSomethingToShow`.
+        let listed = store.recordings.filter(\.hasSomethingToShow)
 
         for entry in listed {
             let day = SidebarDayGrouping.day(for: entry.date, now: now)
@@ -133,7 +149,10 @@ enum SidebarPresenter {
             isTerminal: entry.hasTerminalFailure,
             isSelected: state.selectedRecordingID == entry.id,
             isHovered: false,      // the view tracks the live pointer itself
-            isDeletedUndoable: state.pendingDeletion?.id == entry.id
+            isDeletedUndoable: false,
+            // «В очереди» comes from the one place that knows whether work is
+            // still owed — the same answer the card reads (`MeetingRest`).
+            isQueued: rest.owesWork && !state.activity.concerns(entry.id)
         )
         return SidebarMeetingRowModel(
             id: entry.id,
@@ -141,11 +160,13 @@ enum SidebarPresenter {
             title: SidebarTitleText.terminated(entry.title.isEmpty ? "Без названия" : entry.title),
             preview: SidebarRowMachine.preview(
                 activity: rowState.activity,
-                phaseMessage: state.activity.concerns(entry.id) ? state.activity.message : nil,
+                phaseMessage: state.activity.concerns(entry.id) ? state.activity.sidebarMessage : nil,
                 topics: entry.subtitleText,
-                restingReason: rest.disclosure
+                restingReason: rest.disclosure,
+                isPaused: state.isRecordingPaused && entry.id == state.activeRecordingID
             ),
-            state: rowState
+            state: rowState,
+            hasSummary: state.hasRecap(for: entry)
         )
     }
 

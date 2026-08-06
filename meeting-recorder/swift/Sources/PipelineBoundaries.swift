@@ -64,6 +64,16 @@ protocol RecapBackend: Sendable {
         needTitle: Bool,
         prefs: RecapPreferences
     ) async -> RecapService.RecapMetadata?
+
+    /// «Короче» / «Подробнее» over a fragment the user selected in the summary.
+    /// On the boundary like the rest: a fixture can answer it, so «модель вернула
+    /// пустое» is a test rather than a meeting somebody has to record.
+    func rewriteFragment(
+        _ fragment: String,
+        instruction: String,
+        transcript: String?,
+        prefs: RecapPreferences
+    ) async throws -> String
 }
 
 extension TranscriptionService: Transcriber {}

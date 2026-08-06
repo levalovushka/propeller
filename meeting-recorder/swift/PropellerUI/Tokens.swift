@@ -110,6 +110,27 @@ public enum Tokens {
             Tokens.dual(dark: AlphaWhite.nsColor(dark), light: AlphaBlack.nsColor(light))
         }
 
+        /// The same pair for the places that draw through AppKit — a text
+        /// storage takes `NSColor`, and going through `Color` there loses the
+        /// appearance-resolving closure that makes the pair a pair.
+        public static func inkNSColor(dark: Double, light: Double) -> NSColor {
+            Tokens.dualNSColor(dark: AlphaWhite.nsColor(dark), light: AlphaBlack.nsColor(light))
+        }
+
+        /// A solid pair given as **sRGB** whites (0…1) — i.e. as hex.
+        ///
+        /// `surface` below takes *calibrated* white, whose gamma is not sRGB's:
+        /// #212121 asked for that way draws as #2C2C2C, a fifth lighter than the
+        /// comp. It never showed up because every existing surface is 0 or 1,
+        /// where the two spaces agree. A value read off Figma is a hex, so it is
+        /// stated in the space hexes are written in.
+        public static func surfaceSRGB(dark: CGFloat, light: CGFloat, alpha: CGFloat = 1) -> SwiftUI.Color {
+            Tokens.dual(
+                dark: NSColor(srgbRed: dark, green: dark, blue: dark, alpha: alpha),
+                light: NSColor(srgbRed: light, green: light, blue: light, alpha: alpha)
+            )
+        }
+
         /// A solid pair given as calibrated whites (0…1).
         public static func surface(dark: CGFloat, light: CGFloat, alpha: CGFloat = 1) -> SwiftUI.Color {
             Tokens.dual(
@@ -269,6 +290,67 @@ public enum Tokens {
         public static let hover: Double = 0.12
         public static let press: Double = 0.065
         public static let release: Double = 0.13
+        /// List insert/remove reflow when ash is not driving the slot.
+        public static let listReflow: Double = 0.28
+        /// Legacy alias.
+        public static let listDissolve: Double = listReflow
+
+        /// Удаление встречи из рельса: строка осыпается пеплом, слот под ней
+        /// закрывается. Все ручки — здесь и только здесь; ни в шейдере, ни в
+        /// `AshRenderer` не осталось числа, которое стоило бы крутить.
+        ///
+        /// Модель — частицы, не фильтр: строка один раз растрируется в текстуру,
+        /// на каждую клетку рождается квад, который несёт *свой* кусок этой
+        /// текстуры. Летят они по настоящей физике (скорость + гравитация,
+        /// интегрируется по реальному Δt), а не по формуле от прогресса.
+        public enum Ash {
+            /// Общий такт. Пепел, слот и соседи стартуют и заканчивают вместе.
+            public static let duration: Double = 0.55
+
+            /// Сторона частицы в pt. 1 — одна частица на точку строки: строка
+            /// 272×40 даёт ~10 900 квадов, и это один draw call. Больше значение
+            /// — крупнее зерно и меньше частиц (2 → вчетверо меньше).
+            public static let cellSize: CGFloat = 1
+
+            /// Стартовая скорость разлёта, pt/с. Направление у каждой частицы
+            /// своё, случайное по всему кругу — строка осыпается, а не сдувается
+            /// в одну сторону. Направленность даёт `gravity`, а не старт.
+            public static let speedMin: CGFloat = 30
+            public static let speedMax: CGFloat = 90
+            /// Притяжение, pt/с². Плюс — вниз. Оно и загибает пух в падение;
+            /// 0 оставит ровное облако во все стороны.
+            public static let gravity: CGFloat = 260
+
+            /// Сколько живёт частица, в долях такта. Разброс обязателен: без
+            /// него поле гаснет одной плитой.
+            ///
+            /// **Бюджет: `waveDuration + lifetimeMax` ≤ 1.** Частица начинает
+            /// гореть только когда до неё дошла волна, так что крайней правой
+            /// остаётся ровно `1 − waveDuration` такта на всю свою жизнь. При
+            /// 0.8 + 1.0 на экране в момент схлопывания слота оставалась четверть
+            /// пепла — измерено оффскрином, 118 альфы из 448.
+            public static let lifetimeMin: CGFloat = 0.3
+            public static let lifetimeMax: CGFloat = 0.5
+            /// Хвост угасания в долях такта. Частица держит полную непрозрачность
+            /// почти всю жизнь и гаснет только на этом хвосте.
+            public static let fadeTail: CGFloat = 0.3
+
+            /// Ширина фронта волны в долях ширины строки. Волна едет слева
+            /// направо; перед ней частица **заморожена**, а не невидима.
+            public static let waveWindow: CGFloat = 0.8
+            /// За какую долю такта волна проходит строку насквозь.
+            /// Связана с `lifetimeMax` бюджетом выше.
+            public static let waveDuration: CGFloat = 0.45
+
+            /// Запас холста вокруг строки, pt. Не вкус, а физика: ровно то, что
+            /// успевает пролететь самая быстрая и самая живучая частица —
+            /// `v·t + g·t²/2`. Отдельной ручкой быть не должен, иначе разъедется
+            /// с разлётом и хлопья начнёт срезать краем.
+            public static var headroom: CGFloat {
+                let t = lifetimeMax * CGFloat(duration)
+                return max(8, speedMax * t + gravity * t * t / 2)
+            }
+        }
     }
 
     // MARK: - Layout semantics (roles → Space / Radius)
@@ -285,6 +367,10 @@ public enum Tokens {
         /// Narrowest the content pane may get. The rail adds its own 300 on top
         /// — the window minimum is the sum, derived rather than restated.
         public static let contentPaneMinWidth: CGFloat = 480
+        /// Opening pane width — notes stay a button. Must stay below
+        /// `Pane.notesCollapseBelow` (760); wider than Figma `thin` (601) so
+        /// the summary still reads. ~920 window with the rail.
+        public static let defaultPaneWidth: CGFloat = 620
         public static let chromePadding: CGFloat = Space.s12
         public static let trafficLightSlotWidth: CGFloat = 76
         public static let trafficLightLeading: CGFloat = Space.s24
@@ -313,29 +399,39 @@ public enum Tokens {
         public static let maxWidth: CGFloat = 420
         /// Titlebar row: traffic lights on the left, collapse toggle on the right.
         public static let headerHeight: CGFloat = 48
-        /// Body inset — `px-12 py-10` on Frame 123.
-        public static let bodyHPadding = Space.s12
+        /// Body inset — `py-10` on Frame 123, but 10 across rather than the
+        /// comps' 12.
+        ///
+        /// The rail's margin is split between this and the rows' own padding,
+        /// and the split is what moves, not the sum: the text still lands on
+        /// the same 24 pt margin, while the hover and selected fills reach 2 pt
+        /// closer to both bezels. A row under the pointer should feel like it
+        /// belongs to the rail, not like a card floating inside it.
+        public static let bodyHPadding = Space.s10
         public static let bodyVPadding = Space.s10
         /// Between the nav block and the meeting list (`gap-20`).
         ///
         /// There used to be a rule between them; it is gone from the comps, and
-        /// the gap grew to carry the separation on its own. Whitespace does the
-        /// job a hairline was doing, which is why the number moved rather than
-        /// the line simply disappearing.
+        /// the gap grew to carry the separation on its own. Brought back from
+        /// 28 → 20 — eight points of air the list did not need.
         public static let blockGap = Space.s20
         /// Between dated meeting groups (`gap-24`).
         public static let groupGap = Space.s24
-        /// Soft alpha fade at the foot of the meeting list — mask height, not a
-        /// painted wash. Keeps rows from shearing against the window's corner.
-        public static let listEdgeFade = Space.s24
+        /// Soft alpha fade at the top of the meeting list once scrolled — mask
+        /// height, not a painted wash. Zero while parked at the top.
+        public static let listTopFade = Space.s24
+        /// Soft alpha fade at the foot of the meeting list — always on. When a
+        /// docked prompt is present the clear zone under this fade grows to the
+        /// prompt's measured height; the fade itself stays this tall.
+        public static let listBottomFade: CGFloat = 44
 
         /// Nav rows — `list-item`, h-32 rounded-8.
         public static let navRowHeight = Space.s32
-        /// `px-11`, not 12: the SF Symbol sits about a point inside its 16 pt
-        /// box, so 11 puts the *glyph* on the same 12 pt margin as the meeting
-        /// titles below. Snapping this to the 12 of the scale visibly stairsteps
-        /// the two blocks against each other.
-        public static let navRowHPadding: CGFloat = 11
+        /// One point less than the meeting rows': the SF Symbol sits about a
+        /// point inside its 16 pt box, so 13 puts the *glyph* on the same
+        /// margin as the meeting titles below. Snapping this to a round number
+        /// of the scale visibly stairsteps the two blocks against each other.
+        public static let navRowHPadding: CGFloat = 13
         public static let navRowGap = Space.s4
         public static let navIconSide = Space.s16
         /// Point size of the SF Symbol inside that 16 pt box — the *ink*, not
@@ -354,12 +450,16 @@ public enum Tokens {
         public static let rowActionGap = Space.s8
         public static let rowActionIconSize: CGFloat = 12
 
-        /// Meeting rows — `meetingitem`, px-12 py-10 rounded-8, 4 pt between lines.
-        public static let meetingHPadding = Space.s12
-        public static let meetingVPadding = Space.s10
+        /// Meeting rows — `meetingitem`, py-10 rounded-8, 4 pt between lines.
+        ///
+        /// 14 across, against the comps' 12, for the reason on `bodyHPadding`:
+        /// the row keeps the text where it was and takes the two points the
+        /// rail's margin gave up, so its fill is wider than its type.
+        public static let meetingHPadding: CGFloat = 14
+        public static let meetingVPadding = Space.s12
         public static let meetingLineGap = Space.s4
-        /// Date header block — `px-12`, 22 pt from the top of the date to the
-        /// top of the first meeting under it.
+        /// Date header block — inset with the rows it heads, 22 pt from the top
+        /// of the date to the top of the first meeting under it.
         public static let sectionHeaderBlockHeight: CGFloat = 22
         /// What is left of that block once the line has taken its share.
         ///
@@ -445,13 +545,12 @@ public enum Tokens {
 
         /// Not `Type` — that spelling collides with metatype syntax at every use site.
         public enum Typo {
-            /// 13 / 16 regular — nav row label.
+            /// 14 / 18 regular — nav row label.
             ///
-            /// Same size and weight as the meeting titles below it. The rail
-            /// therefore has one text size and one weight, and everything is
-            /// said with colour.
+            /// Same face as the meeting title below it. The rail therefore has
+            /// one text size and one weight, and everything is said with colour.
             public static let navLabel = Typography.Style(
-                size: 13, lineHeight: 16, weight: .regular,
+                size: 14, lineHeight: 18, weight: .regular,
                 weightTrim: Typography.railWeightTrim
             )
             /// 11 / 14 regular — time line, shortcut hint.
@@ -459,22 +558,16 @@ public enum Tokens {
             /// Eleven, not the 10 of the label scale: the component sheet says
             /// `text-[11px]`, and it is the one size in the rail that is off the
             /// scale on purpose — 10 is legible but the times sit next to a
-            /// 13 pt title and read as a footnote at that size.
+            /// 14 pt title and read as a footnote at that size.
             public static let meta = Typography.Style(
                 size: 11, lineHeight: 14, weight: .regular,
                 weightTrim: Typography.railWeightTrim
             )
-            /// 13 / 16 regular — meeting title + preview, wraps to three lines.
+            /// 14 / 18 regular — meeting title + preview, wraps to three lines.
             ///
-            /// 13 is off the 14 / 12 / 10 label scale on purpose: the rail is the
-            /// one place where a 12 pt line has to carry a whole sentence, and
-            /// 13 buys legibility without moving the 16 pt line box the rows are
-            /// built on. It also happens to be the size at which SF Pro's laid-out
-            /// line is exactly 16, so the block needs no leading correction at all.
-            public static let meetingTitle = Typography.Style(
-                size: 13, lineHeight: 16, weight: .regular,
-                weightTrim: Typography.railWeightTrim
-            )
+            /// Same Style as `navLabel`: one face for the whole rail. The line
+            /// box is what the rows are built on (padding + N × 18).
+            public static let meetingTitle = navLabel
             /// 11 / 14 regular — date header. The same face and size as the
             /// time line; only the colour separates them (30 % against 55 %).
             public static let sectionHeader = meta
@@ -490,6 +583,18 @@ public enum Tokens {
         /// stops are 29.643 % / 43.876 % / 58.108 %.
         public static let shimmerHalfWidth: Double = 0.14232
         public static let shimmerCenter: Double = 0.43876
+
+        /// Soft typewriter on the phase line («Расшифровываем…» → «Суммируем…»).
+        /// Shorter than the summary column — statuses are a few words.
+        public enum StatusReveal {
+            public static let softChars: Double = 16
+            public static let appearSecondsPerChar: Double = 0.028
+            public static let appearMin: Double = 0.35
+            public static let appearMax: Double = 0.9
+            public static let dismissSecondsPerChar: Double = 0.012
+            public static let dismissMin: Double = 0.12
+            public static let dismissMax: Double = 0.35
+        }
     }
 
     
@@ -535,14 +640,14 @@ public enum Tokens {
         public static let actionLabel = Sidebar.navLabelSelected
         public static let closeIcon = Sidebar.chromeIcon
 
-        /// 13 / 16 regular — the message.
+        /// 14 / 18 regular — the message.
         public static let titleType = Sidebar.Typo.meetingTitle
         /// 12 / 16 regular — the supporting line, when there is one.
         public static let subtitleType = Typography.Label.smRegular.lineHeight(16)
         /// 12 / 16 medium — the action's label. The one place in the rail
         /// that still uses medium: it is a button, and it has to out-weigh
         /// the sentence it sits beside.
-        public static let actionType = Typography.Label.smMedium.lineHeight(16)
+        public static let actionType = Typography.Label.smRegular.lineHeight(16)
     }
 
     /// The content pane beside the rail — Figma 31:4624.
@@ -559,29 +664,29 @@ public enum Tokens {
         public static let headerTitleWidth: CGFloat = 430
         public static let headerHPadding = Space.s16
         public static let headerVPadding = Space.s8
-        /// Between the time and the participant count.
-        public static let headerMetaGap = Space.s16
-        /// Between the count and its chevron.
-        public static let headerChevronGap = Space.s4
+        /// Soft alpha fade where a long title meets the action cluster — same
+        /// idea as the rail's list edge, sideways.
+        public static let titleEdgeFade = Space.s24
         /// Trailing cluster: `px-8 gap-6`.
         public static let headerActionsPadding = Space.s8
         public static let headerActionsGap = Space.s6
         public static let headerButtonSide = Space.s32
         public static let headerButtonRadius = Radius.xs
         public static let headerIconSize: CGFloat = 13
-        /// The one filled button up there.
-        public static let shareRadius = Radius.xxs
-        public static let shareHPadding = Space.s10
 
         // MARK: Summary column (31:4645)
 
         public static let summaryHPadding = Space.s40
         public static let summaryVPadding = Space.s24
+        /// Room under the last line so a scrolled summary is not hard against
+        /// the window edge.
+        public static let summaryBottomPadding = Space.s40
         /// Between the lead block and each section.
         public static let summaryBlockGap = Space.s24
-        /// Inside a block: heading to body. Off the scale, and from the comps —
-        /// 8 would let a 22 pt line breathe just enough to look like a gap.
-        public static let summaryLineGap: CGFloat = 7
+        /// Inside a block: title (lead or section heading) to the text under it.
+        /// Off the scale — the comps' 7, plus eight so a heading has a clear beat
+        /// before the body or bullets that follow.
+        public static let summaryLineGap: CGFloat = 7 + Space.s8
         public static let summaryMinWidth: CGFloat = 520
         /// A measure, not a container: past ~640 pt a 14 pt line stops being
         /// comfortable to read, however much room the window has.
@@ -601,6 +706,34 @@ public enum Tokens {
         public static let transcriptMetaGap = Space.s8
         /// Fixed, so the timecodes form a column instead of drifting with names.
         public static let transcriptTimeWidth: CGFloat = 40
+
+        // MARK: Живая колонка — то же место, что у саммари
+
+        /// Как проявляется живой текст.
+        ///
+        /// Считано от подачи: движок отвечает раз в две секунды порциями по
+        /// три-четыре слова (`GigasttLiveSession`), то есть на проявление есть
+        /// почти вся эта пауза. Двадцать пять миллисекунд на знак — порция в
+        /// двадцать знаков печатается полсекунды и читается как письмо, а не
+        /// как вспышка; потолок в 1.4 с не даёт длинной порции догонять
+        /// следующую. Мягкий край в восемь знаков — на этой скорости он виден.
+        public enum LiveReveal {
+            public static let softChars: Double = 8
+            public static let secondsPerChar: Double = 0.025
+            public static let minimum: Double = 0.2
+            public static let maximum: Double = 1.4
+        }
+
+        /// Доезд колонки до низа, когда в неё дописали. Быстрее ховера, но не
+        /// мгновенно: прыжок без движения читается как перерисовка экрана.
+        public static let followScroll: Double = 0.22
+
+        /// Замена содержимого левой колонки: расшифровка уходит, саммари
+        /// приходит. Не одновременно — по очереди, иначе два текста проступают
+        /// друг сквозь друга. Уход короче прихода: пустое место держать долго
+        /// незачем, а появление читается спокойнее медленным.
+        public static let columnSwapOut: Double = 0.16
+        public static let columnSwapIn: Double = 0.26
 
         // MARK: Notes column (31:4652)
 
@@ -634,25 +767,138 @@ public enum Tokens {
         public static let body = Sidebar.navLabelSelected
         public static let placeholder = Sidebar.sectionHeader
         public static let buttonIcon = Sidebar.chromeIcon
-        public static let shareFill = ToastBar.actionFill
-        public static let shareHoverFill = ToastBar.actionHoverFill
-        public static let shareLabel = Sidebar.navLabelSelected
         public static let noteHoverFill = Sidebar.rowHover
+
+        // MARK: The summary as an editor
+
+        /// `body`, for the text storage — see `Primitive.inkNSColor`.
+        public static let bodyNSColor = Primitive.inkNSColor(
+            dark: Primitive.AlphaWhite.a95, light: Primitive.AlphaBlack.a92
+        )
+        /// The caret. Full-strength ink: a 1 pt line at 95 % reads as grey.
+        public static let caret = Tokens.dualNSColor(
+            dark: Primitive.AlphaWhite.nsColor(Primitive.AlphaWhite.a100),
+            light: Primitive.AlphaBlack.nsColor(Primitive.AlphaBlack.a100)
+        )
+        /// Selection. Quiet enough to read through — the action bar is what
+        /// says «this is selected», the wash only says where.
+        public static let selectionFill = Tokens.dualNSColor(
+            dark: Primitive.AlphaWhite.nsColor(Primitive.AlphaWhite.a20),
+            light: Primitive.AlphaBlack.nsColor(Primitive.AlphaBlack.a12)
+        )
+
+        // MARK: Selection action bar
+
+        /// A control the pointer summoned, not a bar the app raised over the
+        /// text — hence a row under the selection rather than a strip at an
+        /// edge, and hence it leaves the moment the selection does.
+        /// Measured off Figma 91:993 at 1×, where the body's 22 pt leading gives
+        /// the scale: the bar is 40 tall, its items 32, so the padding is 4 on
+        /// every side. No border — separation is glass + shadow.
+        public enum Bar {
+            public static let height = Space.s40
+            public static let radius = Radius.xs
+            /// Equal inset on every side: 4 → 32 pt item inside 40 pt bar.
+            public static let padding = Space.s4
+            public static let itemGap = Space.s2
+            /// Same gap on both sides of every divider — one number, not
+            /// «around a group» that stacks with item padding unevenly.
+            public static let groupGap = Space.s4
+            public static let itemHeight = Space.s32
+            /// Horizontal pad inside every control (menu, B/I, «Короче»).
+            /// Kept identical so the bar's left edge and right edge match.
+            public static let itemHPadding = Space.s8
+            public static let itemRadius = Radius.xxs
+            public static let itemIconSize: CGFloat = 12
+            public static let dividerHeight = Space.s16
+            /// Between the last line of the selection and the bar's top edge.
+            public static let anchorGap = Space.s8
+            /// Drop under the bar. Same blur in both themes; opacity carries the
+            /// difference — black at 70 % reads as a stain on light paper and as
+            /// almost nothing on dark glass.
+            public static let shadowRadius: CGFloat = 28
+            public static let shadowY = Space.s4
+            public static let menuChevronSize: CGFloat = 9
+            public static let menuChevronGap = Space.s4
+
+            public static let divider = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                      light: Primitive.AlphaBlack.a10)
+            /// 95 % white at rest — the bar is a tool over dark glass, and 55 %
+            /// reads as disabled. Hover keeps the same ink; the pill fill is
+            /// what moves.
+            public static let label = Sidebar.navLabelSelected
+            /// White 7 % over the bar — the «Подробнее» pill the comp draws.
+            public static let itemHoverFill = Primitive.ink(dark: Primitive.AlphaWhite.a7,
+                                                            light: Primitive.AlphaBlack.a7)
+            public static let itemOnFill = Primitive.ink(dark: Primitive.AlphaWhite.a12,
+                                                         light: Primitive.AlphaBlack.a10)
+            public static let shadow = Tokens.dual(
+                dark: Primitive.AlphaBlack.nsColor(Primitive.AlphaBlack.a80),
+                light: Primitive.AlphaBlack.nsColor(Primitive.AlphaBlack.a28)
+            )
+
+            /// 12, measured: «Обычный» is 55 pt wide in the comp, which is this
+            /// size and no other. The chrome around it is 14 — the bar is
+            /// smaller than what it sits on, which is what keeps it a tool
+            /// rather than a second interface over the text.
+            public static let labelType = Typography.Label.smRegular
+                .lineHeight(16)
+                .trimmed(Typography.railWeightTrim)
+
+            // MARK: Appearing and leaving
+
+            /// The bar does not travel between selections. Selecting somewhere
+            /// else is not the same bar moving — it is one bar's job finishing
+            /// and another's starting, and a control sliding across the text
+            /// under the pointer is the app taking a turn nobody gave it.
+            public static let fadeOut: Double = 0.08
+            public static let fadeIn: Double = 0.12
+            /// The new bar waits for the old one to be gone. Without the pause
+            /// the two cross-fade, which is the sliding it replaces, softer.
+            public static let fadeInDelay: Double = 0.06
+        }
+
+        // MARK: The summary arriving
+
+        /// Soft typewriter on the `NSTextView` — appear and dismiss.
+        ///
+        /// Plays when the model wrote this (new summary or rewritten fragment),
+        /// nowhere else. Duration scales with character count and clamps.
+        public enum Reveal {
+            /// Wide soft head — a short ramp reads as glyphs popping.
+            public static let softChars: Double = 28
+            public static let appearSecondsPerChar: Double = 0.022
+            public static let appearMin: Double = 0.55
+            public static let appearMax: Double = 2.2
+            /// Dismiss is snappier — the old words get out of the way.
+            public static let dismissSecondsPerChar: Double = 0.01
+            public static let dismissMin: Double = 0.2
+            public static let dismissMax: Double = 0.5
+        }
+
+        /// The fragment the model is being asked about, while it thinks.
+        ///
+        /// Dimmed first, then swept. At 95 % white a band of light has nothing
+        /// to add — the shimmer was there and invisible. Dropping the glyphs to
+        /// 55 % gives the sweep somewhere to travel, and the dip itself says
+        /// «этот кусок сейчас не ваш».
+        public enum Rewriting {
+            public static let dimmed = Primitive.inkNSColor(
+                dark: Primitive.AlphaWhite.a55, light: Primitive.AlphaBlack.a55
+            )
+        }
 
         // MARK: Type
 
         public enum Typo {
-            /// 11 / 14 regular — the meeting's name and the line under it. The
-            /// header is chrome, and chrome in this app is 11 pt.
-            public static let headerTitle = Sidebar.Typo.meta
-            /// 12 / 16 medium — «Поделиться».
-            public static let shareLabel = ToastBar.actionType
-            /// 18 / 22 semibold, −0.18 tracking — the one-sentence summary.
+            /// 14 / 18 regular — the meeting's name in the pane header.
+            public static let headerTitle = Sidebar.Typo.meetingTitle
+            /// 20 / 26 semibold, −0.1 tracking — the one-sentence summary.
             public static let lead = Typography.Style(
-                size: 18, lineHeight: 22, weight: .semibold,
+                size: 20, lineHeight: 26, weight: .semibold,
                 weightTrim: Typography.railWeightTrim
             )
-            public static let leadTracking: CGFloat = -0.18
+            public static let leadTracking: CGFloat = -0.1
             /// 14 / 22 regular — everything that is read rather than scanned.
             public static let body = Typography.Style(
                 size: 14, lineHeight: 22, weight: .regular,
@@ -664,16 +910,18 @@ public enum Tokens {
                 weightTrim: Typography.railWeightTrim
             )
             public static let sectionTracking: CGFloat = -0.14
-            /// 13 / 16 regular — a note.
+            /// 14 / 18 regular — a note.
             public static let note = Sidebar.Typo.meetingTitle
             /// 11 / 14 regular — the speaker and timecode over a remark.
             public static let transcriptMeta = Sidebar.Typo.meta
-            /// 12 / 18 regular — the remark itself. Tighter than the summary's
-            /// 14 / 22: a transcript is long, and it is skimmed, not studied.
-            public static let transcriptBody = Typography.Style(
-                size: 12, lineHeight: 18, weight: .regular,
-                weightTrim: Typography.railWeightTrim
-            )
+            /// Реплика — тем же кеглем, что и саммари.
+            ///
+            /// Было 12 / 18, «транскрипт длинный, его просматривают». Отменено:
+            /// один и тот же текст теперь живёт в двух местах — живой строкой во
+            /// время встречи и расшифровкой после, — и переход между ними при
+            /// разном кегле читается как перерисовка встречи, а не как её
+            /// уточнение. Читаемость важнее компактности: это речь, а не список.
+            public static let transcriptBody = body
             /// 12 / 16 regular — «Добавьте заметку...».
             public static let notePlaceholder = Typography.Style(
                 size: 12, lineHeight: 16, weight: .regular,
@@ -682,14 +930,137 @@ public enum Tokens {
         }
     }
 
-    public enum Card {
+    /// The one plate the app opens with — Figma `setup` (50:1223).
+    ///
+    /// It replaced six. What is left is what macOS itself has to be asked, and
+    /// the sentence that says why; the calendar and the name moved into the rail
+    /// (`RailPrompt`), where they cost nobody a screen.
+    public enum Setup {
         public static let width: CGFloat = 400
-        public static let height: CGFloat = 400
-        public static let radius: CGFloat = Radius.xl
-        public static let inset: CGFloat = Space.s24
-        public static let contentGap: CGFloat = Space.s20
-        public static let textGap: CGFloat = Space.s12
-        public static let actionPadding: CGFloat = Space.s24
+        public static let height: CGFloat = 410
+        /// The comps say 20. The scale's nearest step is 18, and the rule in this
+        /// file is that an off-scale literal snaps rather than mints a step —
+        /// two points of corner is under the threshold of noticing, a tenth step
+        /// on the radius scale is not.
+        public static let radius = Radius.lg
+        /// The plate has no titlebar row. Everything lives in one column inset
+        /// from all four edges — mark, sentence, rows, and the button at the foot.
+        public static let inset = Space.s20
+        /// Between the three blocks of that column: mark → sentence → rows. Also
+        /// the least the button will leave above itself.
+        public static let blockGap = Space.s20
+
+        /// A permission row: 12 above and below its 32 pt content.
+        public static let cellVPadding = Space.s12
+        public static let cellHeight = Space.s32
+        /// The grant pill and the switch share a column so the row does not shift
+        /// when a pill becomes a tick.
+        public static let controlWidth: CGFloat = 89
+        public static let controlHeight = Space.s32
+        public static let controlRadius = Radius.xxs
+        public static let controlHPadding = Space.s10
+        /// «Начать» — full width at the foot of the plate.
+        public static let actionHeight: CGFloat = 36
+        public static let actionRadius = Radius.xxs
+
+        /// The mark opens the column, on the same margin as the sentence under
+        /// it — 26 pt, off-scale and from the comps: at 24 it reads as an icon in
+        /// a row, at 32 it becomes a splash screen. It is neither; it is the
+        /// signature on a short note.
+        public static let markSize: CGFloat = 26
+        /// Full-strength ink, like the sentence it introduces. The mark is part
+        /// of what the plate says, not chrome around it — the 40 % it wore while
+        /// it lived in a titlebar was the colour of a window control.
+        public static let mark = Paint.Text.primary
+        /// Seconds for one turn of the mark, counter-clockwise.
+        ///
+        /// Twelve, against the two seconds the nav row spins at. That one is a
+        /// reaction to the pointer and stops when the pointer leaves; this one
+        /// never stops, and anything quick enough to read as *motion* becomes a
+        /// spinner — which would say the screen is waiting on something. It is
+        /// not. It is a mark that happens to turn.
+        public static let markTurn: Double = 12
+
+        public static let title = Paint.Text.primary
+        public static let cellTitle = Paint.Text.primary
+        /// The quiet second line of a cell — 50 % in the comps, half a step under
+        /// the rail's own 55 % because it sits directly under a 95 % line.
+        public static let cellSubtitle = Primitive.ink(dark: Primitive.AlphaWhite.a50,
+                                                       light: Primitive.AlphaBlack.a50)
+        public static let controlFill = Paint.Bg.surface
+        public static let controlHoverFill = Paint.Bg.selected
+        public static let controlLabel = Paint.Text.primary
+
+        public enum Typo {
+            /// 22 / 26 semibold, −0.22 — the one sentence the plate makes.
+            public static let title = Typography.Style(
+                size: 22, lineHeight: 26, weight: .semibold,
+                weightTrim: Typography.railWeightTrim
+            )
+            public static let titleTracking: CGFloat = -0.22
+            /// 13 / 16 regular — both lines of a cell.
+            public static let cell = Typography.Style(
+                size: 13, lineHeight: 16, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
+            /// 12 / 16 regular — «Разрешить». A step under the row it sits in:
+            /// the row is the sentence, the pill is the answer to it.
+            public static let grant = Typography.Style(
+                size: 12, lineHeight: 16, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
+            /// 13 / 16 medium — «Начать», the only weighted label on the plate.
+            public static let action = cell.weight(.medium)
+        }
+    }
+
+    /// The block that docks at the foot of the rail — Figma 91:794 / 91:882.
+    ///
+    /// Two questions that are not permissions, asked where the answer is visibly
+    /// for something: the calendar, then the name. One at a time, with a «1/2»
+    /// so the block says how long it is.
+    public enum RailPrompt {
+        public static let inset = Space.s12
+        public static let bottomInset = Space.s12
+        /// Comps say 20 — snapped, for the reason on `Setup.radius`.
+        public static let radius = Radius.lg
+        public static let padding = Space.s12
+        /// Between the head (title / subtitle / counter) and the control.
+        public static let blockGap = Space.s12
+        /// Between the text block and the counter beside it.
+        public static let counterGap = Space.s8
+        public static let controlHeight: CGFloat = 36
+        public static let controlRadius = Radius.xxs
+        public static let controlHPadding = Space.s10
+        /// The field's own inner inset, and the gap to the ⏎ glyph.
+        public static let fieldTextInset = Space.s2
+        public static let fieldGlyphGap = Space.s2
+        public static let fieldGlyphSize: CGFloat = 13
+
+        /// Blur behind the block, so the list reads through it as texture.
+        public static let backdropBlur: CGFloat = 16
+
+        /// Same wash as a selected row, over the blur. **Not** the comps' opaque
+        /// `#101010 @ 92 %`: over Propeller's glass that would stop the window
+        /// being a window exactly where the block sits.
+        public static let fill = Primitive.ink(dark: Primitive.AlphaWhite.a7,
+                                               light: Primitive.AlphaBlack.a7)
+        public static let border = Sidebar.border
+        public static let title = Sidebar.meetingTitle
+        public static let subtitle = Setup.cellSubtitle
+        public static let counter = Sidebar.meetingPreview
+        public static let controlFill = Paint.Bg.surface
+        public static let controlHoverFill = Paint.Bg.selected
+        public static let controlLabel = Paint.Text.primary
+        public static let fieldPlaceholder = Paint.Text.tertiary
+        public static let fieldGlyph = Sidebar.chromeIcon
+
+        public enum Typo {
+            /// 13 / 16 regular — head lines, counter, and the button's label.
+            public static let head = Setup.Typo.cell
+            /// 14 / 18 regular — what is typed into the field, and its placeholder.
+            public static let field = Sidebar.Typo.navLabel
+        }
     }
 
     public enum Pill {
@@ -746,9 +1117,9 @@ public enum Tokens {
             /// are simply fatter.
             ///
             /// Trimming the axis is the only lever that does not lie about the
-            /// type: the style still says «regular», and a hair comes off the
-            /// stems to land where the design does. Set it to 0 to see exactly
-            /// what the system would draw.
+            /// type: the style still says its named weight, and a hair comes
+            /// off the stems to land where the design does. Set it to 0 to see
+            /// exactly what the system would draw.
             public var weightTrim: CGFloat = 0
 
             public init(
@@ -768,6 +1139,7 @@ public enum Tokens {
                 case .semibold: return .semibold
                 case .medium: return .medium
                 case .bold: return .bold
+                case .light: return .light
                 default: return .regular
                 }
             }
@@ -841,8 +1213,8 @@ public enum Tokens {
             public static let xsRegular = Style(size: 10, lineHeight: 12, weight: .regular)
             public static let xsMedium = Style(size: 10, lineHeight: 12, weight: .medium)
 
-            /// Pill / CTA label — medium 14/18 (no semibold in Label).
-            public static let pill = mdMedium
+            /// Pill / CTA label — regular 14/18.
+            public static let pill = mdRegular
         }
 
         /// Long-form reading: summary, transcript, notes. 14 / 22.
@@ -901,52 +1273,31 @@ extension View {
     }
 }
 
-/// Onboarding title/supporting via AppKit so fixed line-height sticks.
-enum OnboardText {
-    /// Heading.md, centered, primary ink.
+/// The setup plate's headline, drawn through AppKit.
+///
+/// SwiftUI's `.lineSpacing` puts room *between* lines and cannot be told «26 pt
+/// lines, whatever the face does» — which is what a wrapping 22 pt headline with
+/// a designed line box needs. A paragraph style can, so the title goes through a
+/// text field. Tracking rides along for the same reason: `.kern` is an attribute,
+/// not a modifier.
+enum SetupText {
     static func title(_ string: String) -> StyledLabel {
-        StyledLabel(attributed: attributed(
-            string,
-            style: Tokens.Typography.Heading.md,
-            color: Tokens.Primitive.AlphaWhite.nsColor(Tokens.Primitive.AlphaWhite.a95),
-            alignment: .center))
-    }
-
-    /// Label.md regular — onboarding support line (not Body; Body is for reading panes).
-    static func body(_ string: String) -> StyledLabel {
-        StyledLabel(attributed: attributed(
-            string,
-            style: Tokens.Typography.Label.mdRegular,
-            color: Tokens.Primitive.AlphaWhite.nsColor(Tokens.Primitive.AlphaWhite.a70),
-            alignment: .center))
-    }
-
-    /// Heading.md with solid lead + tertiary tail (end / summary-model screens).
-    static func titleTwoTone(_ lead: String, _ tail: String) -> StyledLabel {
-        let style = Tokens.Typography.Heading.md
-        let m = NSMutableAttributedString()
-        m.append(attributed(lead, style: style,
-                            color: Tokens.Primitive.AlphaWhite.nsColor(Tokens.Primitive.AlphaWhite.a95),
-                            alignment: .center))
-        m.append(attributed(tail, style: style,
-                            color: Tokens.Primitive.AlphaWhite.nsColor(Tokens.Primitive.AlphaWhite.a30),
-                            alignment: .center))
-        return StyledLabel(attributed: m)
-    }
-
-    private static func attributed(
-        _ string: String, style: Tokens.Typography.Style,
-        color: NSColor, alignment: NSTextAlignment = .left
-    ) -> NSAttributedString {
+        let style = Tokens.Setup.Typo.title
         let paragraph = NSMutableParagraphStyle()
         paragraph.minimumLineHeight = style.lineHeight
         paragraph.maximumLineHeight = style.lineHeight
-        paragraph.alignment = alignment
-        return NSAttributedString(string: string, attributes: [
+        paragraph.alignment = .left
+        return StyledLabel(attributed: NSAttributedString(string: string, attributes: [
             .font: style.nsFont,
             .paragraphStyle: paragraph,
-            .foregroundColor: color,
-        ])
+            .kern: Tokens.Setup.Typo.titleTracking,
+            // The pair, not a white: the plate follows the system theme like
+            // everything else, and an `NSColor` literal here would not.
+            .foregroundColor: Tokens.Primitive.inkNSColor(
+                dark: Tokens.Primitive.AlphaWhite.a95,
+                light: Tokens.Primitive.AlphaBlack.a92
+            ),
+        ]))
     }
 }
 

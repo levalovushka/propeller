@@ -52,6 +52,10 @@ final class PipelineCatchUpTests: XCTestCase {
             performed.append(job)
             guard let i = index(job.recordingID) else { return .advanced }
             rows[i].status = rows[i].status.advanced(to: job.phase.completedStage)
+            // ASR writes the markdown in the same pass — see `PipelineDrainTests`.
+            if job.phase == .diarizing {
+                rows[i].status = rows[i].status.advanced(to: .saved)
+            }
             rows[i].lastFailure = nil
             return .advanced
         }

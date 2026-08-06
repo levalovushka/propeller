@@ -1,0 +1,107 @@
+import XCTest
+@testable import PropellerPure
+
+/// Онбординг стал одной плашкой, а два его вопроса — блоком в рельсе. Тесты
+/// названы тем, что видит человек: блок не должен появиться там, где вопрос уже
+/// задавали, и не должен исчезнуть, пока на него не ответили.
+final class SetupPromptTests: XCTestCase {
+
+    private func step(
+        setupCompleted: Bool = true,
+        calendarGranted: Bool = false,
+        calendarAsked: Bool = false,
+        knownName: String = ""
+    ) -> SetupPrompt? {
+        SetupPromptMachine.step(
+            setupCompleted: setupCompleted,
+            calendarGranted: calendarGranted,
+            calendarAsked: calendarAsked,
+            knownName: knownName
+        )
+    }
+
+    // MARK: - Порядок
+
+    func testНоваяУстановкаСначалаСпрашиваетКалендарь() {
+        XCTAssertEqual(step(), .calendar)
+    }
+
+    func testПослеКалендаряСпрашиваетИмя() {
+        XCTAssertEqual(step(calendarAsked: true), .name)
+    }
+
+    func testКогдаОтвеченоОбоеБлокаНет() {
+        XCTAssertNil(step(calendarAsked: true, knownName: "Лёва"))
+    }
+
+    /// Пока плашка настройки на экране, рельса не видно вовсе — но состояние не
+    /// должно зависеть от того, кто на что смотрит.
+    func testДоНастройкиБлокаНет() {
+        XCTAssertNil(step(setupCompleted: false))
+    }
+
+    // MARK: - Что закрывает вопрос
+
+    /// «Подключить» тратит шаг само по себе. Что ответит система — дело человека
+    /// и календаря; спросить второй раз значит превратить предложение в нытьё.
+    func testНажатиеПодключитьЗакрываетШагДажеБезДоступа() {
+        XCTAssertEqual(step(calendarGranted: false, calendarAsked: true), .name)
+    }
+
+    /// Обновление с 1.14: имя спрашивали своим экраном, календарь — своим. Оба
+    /// вопроса уже заданы, и блок не должен здороваться с тем, кто давно внутри.
+    func testОбновлениеСВыданнымКалендарёмИИменемНеСпрашиваетНичего() {
+        XCTAssertNil(step(calendarGranted: true, knownName: "Лёва"))
+    }
+
+    func testВыданныйКалендарьЗакрываетШагБезНажатия() {
+        XCTAssertEqual(step(calendarGranted: true), .name)
+    }
+
+    /// Пробелы — не имя. Иначе ⏎ по пустому полю закрыл бы вопрос ничем, и
+    /// каждая будущая расшифровка молча ушла бы на имя учётной записи.
+    func testПробелыНеСчитаютсяОтветом() {
+        XCTAssertEqual(step(calendarAsked: true, knownName: "   \n "), .name)
+    }
+
+    /// Решение по продукту: кнопки «пропустить» нет. Блок ничего не держит —
+    /// запись, расшифровка и саммари идут поверх него, — поэтому он просто ждёт.
+    func testБезОтветаБлокНеУходитСамПоСебе() {
+        for _ in 0..<3 {
+            XCTAssertEqual(step(), .calendar)
+        }
+    }
+
+    // MARK: - Слова
+
+    func testСчётчикВсегдаИзДвух() {
+        XCTAssertEqual(SetupPrompt.calendar.counter, "1/2")
+        XCTAssertEqual(SetupPrompt.name.counter, "2/2")
+        XCTAssertEqual(SetupPrompt.total, SetupPrompt.allCases.count)
+    }
+
+    /// Счётчик не сжимается, когда календарь уже выдан: шаг имени остаётся
+    /// вторым из двух, а не становится «1/1».
+    func testСчётчикНеЗависитОтТогоЧтоУжеОтвечено() {
+        XCTAssertEqual(step(calendarGranted: true)?.counter, "2/2")
+    }
+
+    /// У каждого шага ровно одна форма ответа — кнопка или поле. И то и другое
+    /// сразу означало бы два способа ответить на один вопрос; ни одного —
+    /// вопрос, на который нельзя ответить.
+    func testУКаждогоШагаРовноОднаФормаОтвета() {
+        for prompt in SetupPrompt.allCases {
+            let hasButton = prompt.actionTitle != nil
+            let hasField = prompt.fieldPlaceholder != nil
+            XCTAssertTrue(hasButton != hasField,
+                          "\(prompt.rawValue): кнопка=\(hasButton), поле=\(hasField)")
+        }
+    }
+
+    func testУКаждогоШагаЕстьЧтоСказать() {
+        for prompt in SetupPrompt.allCases {
+            XCTAssertFalse(prompt.title.isEmpty)
+            XCTAssertFalse(prompt.subtitle.isEmpty)
+        }
+    }
+}

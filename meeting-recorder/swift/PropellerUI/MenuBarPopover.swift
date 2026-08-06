@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 /// The menu-bar popover: a small glass panel with a header (name + version +
-/// open-window), a state-dependent primary row, and Settings / Restart / Quit.
+/// open-window), a state-dependent primary row, and Settings / Quit.
 /// Data-driven — the app passes `status` and the callbacks. Verified against
 /// Figma 632:754 (idle / started / stopped).
 public struct MenuBarPopover: View {
@@ -19,7 +19,6 @@ public struct MenuBarPopover: View {
     var onStop: () -> Void
     var onDiscard: (() -> Void)?
     var onSettings: () -> Void
-    var onRestart: () -> Void
     var onQuit: () -> Void
 
     public init(
@@ -30,7 +29,6 @@ public struct MenuBarPopover: View {
         onStop: @escaping () -> Void,
         onDiscard: (() -> Void)? = nil,
         onSettings: @escaping () -> Void,
-        onRestart: @escaping () -> Void,
         onQuit: @escaping () -> Void
     ) {
         self.version = version
@@ -40,7 +38,6 @@ public struct MenuBarPopover: View {
         self.onStop = onStop
         self.onDiscard = onDiscard
         self.onSettings = onSettings
-        self.onRestart = onRestart
         self.onQuit = onQuit
     }
 
@@ -50,9 +47,20 @@ public struct MenuBarPopover: View {
             divider
             primary
             divider
-            MenuRow(title: "Настройки", action: onSettings)
-            MenuRow(title: "Перезапуск", action: onRestart)
-            MenuRow(title: "Выйти", action: onQuit)
+            MenuRow(
+                title: "Настройки…",
+                symbol: "gearshape",
+                shortcut: "⌘,",
+                action: onSettings
+            )
+            .keyboardShortcut(",", modifiers: .command)
+            MenuRow(
+                title: "Выйти",
+                symbol: "xmark.circle",
+                shortcut: "⌘Q",
+                action: onQuit
+            )
+            .keyboardShortcut("q", modifiers: .command)
         }
         .padding(6)
         .frame(width: 260)
@@ -109,7 +117,7 @@ public struct MenuBarPopover: View {
     private var stopButton: some View {
         Button(action: onStop) {
             Image(systemName: "stop.fill")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 12, weight: .regular))
                 .foregroundStyle(.white)
                 .frame(width: 32, height: 32)   // sm
                 .background(Color(nsColor: .systemRed), in: Circle())   // system destructive colour
@@ -127,22 +135,41 @@ public struct MenuBarPopover: View {
 }
 
 /// A popover menu row: SF Pro Medium 12, hover fills a 6pt rounded highlight.
+///
+/// Optional `symbol` / `shortcut` follow the system menu layout — icon, title,
+/// then the key equivalent on the trailing edge (same as `Menu` + `Label` +
+/// `keyboardShortcut`, drawn by hand because this is a custom panel).
 private struct MenuRow: View {
     let title: String
+    var symbol: String? = nil
+    var shortcut: String? = nil
     var action: () -> Void
     @State private var hovering = false
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .typo(Tokens.Typography.Label.smMedium)
-                .foregroundStyle(Tokens.Ink.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(hovering ? Tokens.Paint.Interactive.Ghost.hover : Color.clear,
-                            in: RoundedRectangle(cornerRadius: Tokens.Radius.xxs, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.xxs, style: .continuous))
+            HStack(spacing: 8) {
+                if let symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundStyle(Tokens.Ink.primary)
+                        .frame(width: 16, alignment: .center)
+                }
+                Text(title)
+                    .typo(Tokens.Typography.Label.smMedium)
+                    .foregroundStyle(Tokens.Ink.primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let shortcut {
+                    Text(shortcut)
+                        .typo(Tokens.Typography.Label.smRegular)
+                        .foregroundStyle(Tokens.Ink.tertiary)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(hovering ? Tokens.Paint.Interactive.Ghost.hover : Color.clear,
+                        in: RoundedRectangle(cornerRadius: Tokens.Radius.xxs, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: Tokens.Radius.xxs, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
@@ -153,12 +180,12 @@ private struct MenuRow: View {
 #Preview("Popover states") {
     HStack(alignment: .top, spacing: 24) {
         MenuBarPopover(status: .idle, onOpenWindow: {}, onStartRecording: {}, onStop: {},
-                       onSettings: {}, onRestart: {}, onQuit: {})
+                       onSettings: {}, onQuit: {})
         MenuBarPopover(status: .recording(title: "Новая запись 26.08", elapsed: "00:12:04"),
                        onOpenWindow: {}, onStartRecording: {}, onStop: {},
-                       onSettings: {}, onRestart: {}, onQuit: {})
+                       onSettings: {}, onQuit: {})
         MenuBarPopover(status: .processing("Сохранение…"), onOpenWindow: {}, onStartRecording: {},
-                       onStop: {}, onSettings: {}, onRestart: {}, onQuit: {})
+                       onStop: {}, onSettings: {}, onQuit: {})
     }
     .padding(40)
     .background(Color(white: 0.12))

@@ -34,7 +34,7 @@ public struct SidebarNavItem: Identifiable, Equatable, Sendable {
     }
 
     public let id: String
-    /// SF Symbol, named by the comps.
+    /// SF Symbol name — or `SidebarNavItem.propellerMarkSymbol` for the brand glyph.
     public let symbol: String
     public let title: String
     public let role: Role
@@ -46,6 +46,9 @@ public struct SidebarNavItem: Identifiable, Equatable, Sendable {
     /// hovered" flag inside the view would let the gallery draw something the
     /// app cannot produce.
     public let isHovered: Bool
+
+    /// Reserved `symbol` for the Propeller mark in the record row.
+    public static let propellerMarkSymbol = "propeller.mark"
 
     public init(
         id: String,
@@ -78,19 +81,23 @@ public struct SidebarMeetingRowModel: Identifiable, Equatable, Sendable {
     /// *forced* pose for the gallery; the live pointer is tracked by the view
     /// and the two are OR-ed, so the real app passes `false` and forgets it.
     public let state: SidebarRowState
+    /// Whether «Копировать саммари» in the row's menu has anything to copy.
+    public let hasSummary: Bool
 
     public init(
         id: String,
         meta: String,
         title: String,
         preview: String,
-        state: SidebarRowState
+        state: SidebarRowState,
+        hasSummary: Bool = false
     ) {
         self.id = id
         self.meta = meta
         self.title = title
         self.preview = preview
         self.state = state
+        self.hasSummary = hasSummary
     }
 }
 
@@ -113,15 +120,21 @@ public struct SidebarModel: Equatable, Sendable {
     public var groups: [SidebarMeetingGroup]
     /// Shown in place of the list when there is nothing to show.
     public var emptyMessage: String?
+    /// The one question setup did not ask on its own screen — the calendar, then
+    /// the name. Nil once both are settled, which for most of the app's life is
+    /// always. See `SetupPromptMachine`.
+    public var prompt: SidebarPromptModel?
 
     public init(
         nav: [SidebarNavItem],
         groups: [SidebarMeetingGroup],
-        emptyMessage: String? = nil
+        emptyMessage: String? = nil,
+        prompt: SidebarPromptModel? = nil
     ) {
         self.nav = nav
         self.groups = groups
         self.emptyMessage = emptyMessage
+        self.prompt = prompt
     }
 }
 
@@ -149,6 +162,18 @@ public struct PropellerSidebar: View {
     /// Bring back a meeting whose deletion is still undoable. Absent means the
     /// rows don't offer it.
     private let onRestoreMeeting: ((String) -> Void)?
+    /// Right-click actions, by meeting id. Absent means that item is omitted.
+    private let onCopySummary: ((String) -> Void)?
+    private let onShareMeeting: ((String) -> Void)?
+    private let onRevealMeeting: ((String) -> Void)?
+    /// Meeting row playing Codelaby disintegrate — still laid out until finish.
+    private let dissolvingMeetingID: String?
+    /// Ash finished — soft-delete can land.
+    private let onDissolveFinished: (() -> Void)?
+    /// The docked question's button was pressed — the step's id comes back with it.
+    private let onPromptAction: (String) -> Void
+    /// The docked question's field was submitted: step id, then the answer.
+    private let onPromptSubmit: (String, String) -> Void
 
     public init(
         model: SidebarModel,
@@ -157,7 +182,14 @@ public struct PropellerSidebar: View {
         onSelectMeeting: @escaping (String) -> Void = { _ in },
         onDeleteMeeting: ((String) -> Void)? = nil,
         onRestoreMeeting: ((String) -> Void)? = nil,
-        onToggle: (() -> Void)? = nil
+        onCopySummary: ((String) -> Void)? = nil,
+        onShareMeeting: ((String) -> Void)? = nil,
+        onRevealMeeting: ((String) -> Void)? = nil,
+        dissolvingMeetingID: String? = nil,
+        onDissolveFinished: (() -> Void)? = nil,
+        onToggle: (() -> Void)? = nil,
+        onPromptAction: @escaping (String) -> Void = { _ in },
+        onPromptSubmit: @escaping (String, String) -> Void = { _, _ in }
     ) {
         self.model = model
         self.trafficLights = trafficLights
@@ -165,15 +197,26 @@ public struct PropellerSidebar: View {
         self.onSelectMeeting = onSelectMeeting
         self.onDeleteMeeting = onDeleteMeeting
         self.onRestoreMeeting = onRestoreMeeting
+        self.onCopySummary = onCopySummary
+        self.onShareMeeting = onShareMeeting
+        self.onRevealMeeting = onRevealMeeting
+        self.dissolvingMeetingID = dissolvingMeetingID
+        self.onDissolveFinished = onDissolveFinished
         self.onToggle = onToggle
+        self.onPromptAction = onPromptAction
+        self.onPromptSubmit = onPromptSubmit
     }
 
+    /// What the docked block takes off the foot of the rail, including its own
+    /// bottom margin. Zero when nothing is docked.
+    @State private var promptHeight: CGFloat = 0
+
     /// There is no toast layer. Everything the app has to say about a meeting is
-    /// said by that meeting's own row — a deletion offering «Вернуть», a failure
-    /// showing its mark — and everything it has to say about recording is said by
-    /// the row that starts one. A bar that floated over the list said things
-    /// nobody could act on, and one of them managed to blame the user for the
-    /// app's own crash.
+    /// said by that meeting's own row — a failure showing its mark — and
+    /// everything it has to say about recording is said by the row that starts
+    /// one. Deletion dissolves the row; ⌘Z restores. A bar that floated over the
+    /// list said things nobody could act on, and one of them managed to blame
+    /// the user for the app's own crash.
     public var body: some View {
         VStack(spacing: 0) {
             header
@@ -249,10 +292,10 @@ public struct PropellerSidebar: View {
         }
     }
 
-    // MARK: Body (Frame 123) — px 12, py 10, gap 12
+    // MARK: Body (Frame 123) — px 10, py 10, gap 12
 
-    /// The body's 12 pt inset is applied per block rather than to the whole
-    /// column, so the scroll view can run the full width of the rail.
+    /// The body's inset is applied per block rather than to the whole column,
+    /// so the scroll view can run the full width of the rail.
     ///
     /// Otherwise the scroller sits 12 pt in from the edge, floating in the
     /// middle of the margin — every other Mac app puts it against the bezel,
@@ -263,11 +306,45 @@ public struct PropellerSidebar: View {
                 .padding(.horizontal, Tokens.Sidebar.bodyHPadding)
             meetingList
         }
-        // Top only: the list runs to the window edge and softens itself with an
-        // alpha mask. A bottom inset here would leave a hard clip floating above
-        // the bezel — the thing the mask is meant to erase.
+        // Top only: the meeting list owns the bottom of the rail and scrolls
+        // flush to the window edge.
         .padding(.top, Tokens.Sidebar.bodyVPadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .overlay(alignment: .bottom) { promptLayer }
+        .onPreferenceChange(SidebarPromptHeightKey.self) { height in
+            promptHeight = height
+        }
+        .onChange(of: model.prompt?.id) { _, id in
+            if id == nil { promptHeight = 0 }
+        }
+    }
+
+    /// The one question setup left for the rail. Absent for the whole of the
+    /// app's ordinary life — which is why it is an overlay and not a row: the
+    /// list's layout must not know it was ever there.
+    @ViewBuilder
+    private var promptLayer: some View {
+        if let prompt = model.prompt {
+            SidebarPromptBlock(
+                model: prompt,
+                onAction: onPromptAction,
+                onSubmit: onPromptSubmit
+            )
+            .padding(.horizontal, Tokens.RailPrompt.inset)
+            .padding(.bottom, Tokens.RailPrompt.bottomInset)
+            .background {
+                GeometryReader { geo in
+                    Color.clear.preference(
+                        key: SidebarPromptHeightKey.self,
+                        value: geo.size.height
+                    )
+                }
+            }
+            // Answered, it leaves downward — the direction it came from, and the
+            // direction that says «убрано», not «закрыто».
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .animation(.easeOut(duration: 0.22), value: prompt.id)
+        }
     }
 
     private var navBlock: some View {
@@ -288,49 +365,195 @@ public struct PropellerSidebar: View {
                 .padding(.top, Tokens.Space.s4)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            ScrollView(.vertical) {
-                LazyVStack(alignment: .leading, spacing: Tokens.Sidebar.groupGap) {
-                    ForEach(model.groups) { group in
-                        VStack(alignment: .leading, spacing: 0) {
-                            if let header = group.header {
-                                Text(header)
-                                    .typoBlock(Tokens.Sidebar.Typo.sectionHeader)
-                                    .foregroundStyle(Tokens.Sidebar.sectionHeader)
-                                    .padding(.horizontal, Tokens.Sidebar.meetingHPadding)
-                                    .padding(.bottom, Tokens.Sidebar.sectionHeaderBottomGap)
-                            }
-                            ForEach(group.rows) { row in
-                                SidebarMeetingRow(
-                                    row: row,
-                                    action: { onSelectMeeting(row.id) },
-                                    onDelete: onDeleteMeeting.map { delete in { delete(row.id) } },
-                                    onRestore: onRestoreMeeting.map { restore in { restore(row.id) } }
-                                )
-                            }
+            SidebarMeetingScroll(
+                groups: model.groups,
+                bottomClear: promptHeight,
+                dissolvingMeetingID: dissolvingMeetingID,
+                onDissolveFinished: onDissolveFinished,
+                onSelectMeeting: onSelectMeeting,
+                onDeleteMeeting: onDeleteMeeting,
+                onRestoreMeeting: onRestoreMeeting,
+                onCopySummary: onCopySummary,
+                onShareMeeting: onShareMeeting,
+                onRevealMeeting: onRevealMeeting
+            )
+        }
+    }
+}
+
+/// The scrollable meeting column. Dates scroll with their groups — nothing pins.
+private struct SidebarMeetingScroll: View {
+    let groups: [SidebarMeetingGroup]
+    let bottomClear: CGFloat
+    let dissolvingMeetingID: String?
+    let onDissolveFinished: (() -> Void)?
+    let onSelectMeeting: (String) -> Void
+    let onDeleteMeeting: ((String) -> Void)?
+    let onRestoreMeeting: ((String) -> Void)?
+    let onCopySummary: ((String) -> Void)?
+    let onShareMeeting: ((String) -> Void)?
+    let onRevealMeeting: ((String) -> Void)?
+
+    @State private var topFade: CGFloat = 0
+    /// Only the first finish callback wins — row + fallback both may fire.
+    @State private var dissolveReported = false
+
+    /// Stable fingerprint of who is in the list — drives the reflow animation
+    /// when a meeting appears, leaves, or moves between day groups.
+    private var listSignature: String {
+        groups.map { group in
+            group.id + ":" + group.rows.map(\.id).joined(separator: ",")
+        }.joined(separator: "|")
+    }
+
+    var body: some View {
+        ScrollView(.vertical) {
+            // `VStack`, not `LazyVStack`: the rail is short enough, and lazy
+            // stacks skip insert/remove transitions — neighbours just teleport.
+            VStack(alignment: .leading, spacing: Tokens.Sidebar.groupGap) {
+                ForEach(groups) { group in
+                    VStack(alignment: .leading, spacing: 0) {
+                        if let header = group.header {
+                            Text(header)
+                                .typoBlock(Tokens.Sidebar.Typo.sectionHeader)
+                                .foregroundStyle(Tokens.Sidebar.sectionHeader)
+                                .padding(.horizontal, Tokens.Sidebar.meetingHPadding)
+                                .padding(.bottom, Tokens.Sidebar.sectionHeaderBottomGap)
+                        }
+                        ForEach(group.rows) { row in
+                            SidebarMeetingRow(
+                                row: row,
+                                action: { onSelectMeeting(row.id) },
+                                onDelete: onDeleteMeeting.map { delete in { delete(row.id) } },
+                                onRestore: onRestoreMeeting.map { restore in { restore(row.id) } },
+                                onCopySummary: onCopySummary.map { copy in { copy(row.id) } },
+                                onShare: onShareMeeting.map { share in { share(row.id) } },
+                                onRevealInFinder: onRevealMeeting.map { reveal in { reveal(row.id) } },
+                                isDissolving: row.id == dissolvingMeetingID,
+                                onDissolveFinished: reportDissolveFinished
+                            )
+                            // Opacity only — move transitions shove neighbours.
+                            .transition(.opacity)
                         }
                     }
                 }
-                .padding(.horizontal, Tokens.Sidebar.bodyHPadding)
-                // Room to scroll the last row clear of the fade, so it does not
-                // sit permanently half-transparent at the end of the list.
-                .padding(.bottom, Tokens.Sidebar.listEdgeFade)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .scrollIndicators(.automatic)
-            // Alpha mask, not a painted gradient: black keeps ink, clear drops
-            // it. The rail's own wash shows through whichever shade the glass
-            // is wearing that day.
-            .mask {
-                VStack(spacing: 0) {
-                    Color.black
-                    LinearGradient(
-                        colors: [.black, .clear],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: Tokens.Sidebar.listEdgeFade)
+            .padding(.horizontal, Tokens.Sidebar.bodyHPadding)
+            // Room to scroll the last row clear of the bottom fade (and of a
+            // docked prompt's clear zone), so nothing sits permanently veiled.
+            .padding(.bottom, Tokens.Sidebar.listBottomFade + bottomClear)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // Implicit animation on signature fights explicit withAnimation on
+            // undo/delete and makes rows hop. Reflow is driven only by callers.
+            .onChange(of: dissolvingMeetingID) { _, id in
+                dissolveReported = id == nil
+            }
+            .background {
+                SidebarScrollOffsetReader { offset in
+                    topFade = SidebarEdgeFade.topHeight(scrollOffset: offset)
                 }
             }
+        }
+        .scrollIndicators(.automatic)
+        .mask {
+            VStack(spacing: 0) {
+                LinearGradient(
+                    colors: [.clear, .black],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: topFade)
+                Color.black
+                LinearGradient(
+                    colors: [.black, .clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: Tokens.Sidebar.listBottomFade)
+                Color.clear
+                    .frame(height: max(0, bottomClear))
+            }
+        }
+    }
+
+    private func reportDissolveFinished() {
+        guard !dissolveReported else { return }
+        dissolveReported = true
+        onDissolveFinished?()
+    }
+}
+
+/// How tall the top alpha fade should be for a given scroll offset.
+public enum SidebarEdgeFade {
+    /// Parked at the top → 0. Scrolled down → grows until `listTopFade`.
+    public static func topHeight(
+        scrollOffset: CGFloat,
+        limit: CGFloat = Tokens.Sidebar.listTopFade
+    ) -> CGFloat {
+        min(limit, max(0, scrollOffset))
+    }
+}
+
+/// Reads `NSScrollView.contentView.bounds.origin.y` — the offset AppKit updates
+/// on every tick of a drag, which SwiftUI's content GeometryReader does not.
+private struct SidebarScrollOffsetReader: NSViewRepresentable {
+    var onChange: (CGFloat) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onChange: onChange) }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        view.isHidden = true
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.onChange = onChange
+        context.coordinator.attach(from: nsView)
+    }
+
+    final class Coordinator {
+        var onChange: (CGFloat) -> Void
+        private weak var scrollView: NSScrollView?
+        private var token: NSObjectProtocol?
+        private var attachAttempts = 0
+
+        init(onChange: @escaping (CGFloat) -> Void) {
+            self.onChange = onChange
+        }
+
+        deinit {
+            if let token { NotificationCenter.default.removeObserver(token) }
+        }
+
+        func attach(from view: NSView) {
+            guard scrollView == nil else { return }
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self, let view else { return }
+                guard self.scrollView == nil else { return }
+                guard let scroll = view.enclosingScrollView else {
+                    self.attachAttempts += 1
+                    if self.attachAttempts < 8 {
+                        self.attach(from: view)
+                    }
+                    return
+                }
+                self.scrollView = scroll
+                let clip = scroll.contentView
+                clip.postsBoundsChangedNotifications = true
+                self.token = NotificationCenter.default.addObserver(
+                    forName: NSView.boundsDidChangeNotification,
+                    object: clip,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.publish(from: scroll)
+                }
+                self.publish(from: scroll)
+            }
+        }
+
+        private func publish(from scroll: NSScrollView) {
+            onChange(max(0, scroll.contentView.bounds.origin.y))
         }
     }
 }
@@ -354,7 +577,9 @@ public struct SidebarNavRow: View {
     private var isHovered: Bool { hovering || item.isHovered }
 
     private var foreground: Color {
-        item.isSelected ? Tokens.Sidebar.navLabelSelected : Tokens.Sidebar.navLabel
+        // Selected and hovered both take the 95 % ink — the icon and label
+        // move together. The shortcut keeps its own quieter colour below.
+        (item.isSelected || isHovered) ? Tokens.Sidebar.navLabelSelected : Tokens.Sidebar.navLabel
     }
 
     private var fill: Color {
@@ -385,8 +610,7 @@ public struct SidebarNavRow: View {
 
     private var label: some View {
         HStack(spacing: Tokens.Sidebar.navRowGap) {
-            Image(systemName: item.symbol)
-                .font(.system(size: Tokens.Sidebar.navIconSize, weight: .regular))
+            navGlyph
                 .frame(width: Tokens.Sidebar.navIconSide, height: Tokens.Sidebar.navIconSide)
 
             Text(item.title)
@@ -419,12 +643,23 @@ public struct SidebarNavRow: View {
         )
         .contentShape(RoundedRectangle(cornerRadius: Tokens.Sidebar.rowRadius, style: .continuous))
     }
+
+    @ViewBuilder
+    private var navGlyph: some View {
+        if item.symbol == SidebarNavItem.propellerMarkSymbol {
+            PropellerNavMark(spinning: isHovered)
+        } else {
+            Image(systemName: item.symbol)
+                .font(.system(size: Tokens.Sidebar.navIconSize, weight: .regular))
+        }
+    }
 }
 
 // MARK: - Meeting row (meetingitem)
 
-/// px 12 / py 10, rounded 8, two lines 4 pt apart: the time, then the title and
-/// its preview run together as one wrapping paragraph.
+/// px 14 / py 11, rounded 8: the title and its preview as one wrapping
+/// paragraph. The time line (and the hover / restore slot it carried) is built
+/// below but not shown — still deciding whether that row belongs here.
 ///
 /// The two halves of that paragraph carry the state:
 ///
@@ -443,31 +678,66 @@ public struct SidebarMeetingRow: View {
     /// The hover action. Absent means the row has none — the gallery draws it
     /// that way, and so would a list of things that cannot be deleted.
     ///
-    /// «Показать в Finder» used to live here too. It is a thing you do to a
-    /// meeting *occasionally*, from the card's «ещё» menu where it still is —
-    /// and two icons appearing under the pointer made the row's quiet slot busy
-    /// for the one action that is not routine.
+    /// Occasional actions (Finder, share, copy) live on the right-click menu —
+    /// not as hover icons. Two glyphs under the pointer made the quiet slot busy
+    /// for things that are not routine; the card's «ещё» still has them too.
     let onDelete: (() -> Void)?
     /// Present only while the deletion can still be taken back.
     let onRestore: (() -> Void)?
+    let onCopySummary: (() -> Void)?
+    let onShare: (() -> Void)?
+    let onRevealInFinder: (() -> Void)?
+    /// Codelaby-style ash — snapshot of this label, then height collapse.
+    let isDissolving: Bool
+    let onDissolveFinished: (() -> Void)?
 
     @State private var hovering = false
+    /// Measured row height — the slot collapses from this while ash plays.
+    @State private var slotHeight: CGFloat = 0
+    /// 0 = full slot, 1 = gone. Animated with the ash, same duration.
+    @State private var slotCollapse: CGFloat = 0
+    /// `slotHeight` is the height we collapse *from* — once the ash is lit it
+    /// must stop tracking the row, or the collapse measures itself.
+    @State private var slotFrozen = false
+    /// Latched when the ash has burned out. The entry leaves the store from a
+    /// different object than the one that clears `isDissolving`, and a frame
+    /// rendered between those two updates was the row blinking back into place.
+    @State private var burnedOut = false
+    /// Phase line typewriter — «Расшифровываем…» → «Суммируем…».
+    @StateObject private var statusTypewriter = SoftTypewriterSession()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.sidebarSweepFrozen) private var sweepFrozen
 
     public init(
         row: SidebarMeetingRowModel,
         action: @escaping () -> Void,
         onDelete: (() -> Void)? = nil,
-        onRestore: (() -> Void)? = nil
+        onRestore: (() -> Void)? = nil,
+        onCopySummary: (() -> Void)? = nil,
+        onShare: (() -> Void)? = nil,
+        onRevealInFinder: (() -> Void)? = nil,
+        isDissolving: Bool = false,
+        onDissolveFinished: (() -> Void)? = nil
     ) {
         self.row = row
         self.action = action
         self.onDelete = onDelete
         self.onRestore = onRestore
+        self.onCopySummary = onCopySummary
+        self.onShare = onShare
+        self.onRevealInFinder = onRevealInFinder
+        self.isDissolving = isDissolving
+        self.onDissolveFinished = onDissolveFinished
     }
 
     private var isHovered: Bool { hovering || row.state.isHovered }
-    private var isWorking: Bool { row.state.activity == .processing }
+    /// Both «being worked on» and «waiting its turn» shimmer: the sweep says
+    /// «this meeting is in the pipeline», not «this second is spent on it».
+    private var isWorking: Bool { row.state.activity.isInFlight }
     private var isDeleted: Bool { row.state.activity == .deletedUndoable }
+    /// Ash is playing, or already has. Either way the row itself paints nothing.
+    private var isVanishing: Bool { isDissolving || burnedOut }
+    private var statusAnimated: Bool { !reduceMotion && !sweepFrozen }
 
     private var fill: Color {
         if row.state.isSelected { return Tokens.Sidebar.rowSelected }
@@ -486,12 +756,15 @@ public struct SidebarMeetingRow: View {
     }
 
     public var body: some View {
-        // A deleted row is not clickable: there is nothing to open, and a body
-        // that restored on any click would undo deletions people meant.
-        Button(action: isDeleted ? {} : action) {
+        // Keep the real row for layout. Ash is an overlay only — a ZStack/stand-in
+        // that grew with the particle canvas was blowing the rail open.
+        Button(action: isDeleted || isVanishing ? {} : action) {
             VStack(alignment: .leading, spacing: Tokens.Sidebar.meetingLineGap) {
-                metaLine
                 titleLine
+                // Hidden for now — time, duration, hover trash / «Вернуть» /
+                // recording badge. Logic stays compiled below; still thinking
+                // whether this row belongs on the meeting item at all.
+                if false { metaLine }
             }
             .padding(.horizontal, Tokens.Sidebar.meetingHPadding)
             .padding(.vertical, Tokens.Sidebar.meetingVPadding)
@@ -503,9 +776,130 @@ public struct SidebarMeetingRow: View {
             .contentShape(RoundedRectangle(cornerRadius: Tokens.Sidebar.meetingRadius, style: .continuous))
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if !isVanishing { meetingMenu }
+        }
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
         .animation(.easeOut(duration: Tokens.Motion.hover), value: row.state)
+        .opacity(isVanishing ? 0 : 1)
+        // Measured as an *action*, not a preference. A preference arrives after
+        // the layout that produced it, and a row can be born already dissolving —
+        // `onAppear` then fires before the first delivery, so the collapse used to
+        // start with `slotHeight` still 0 and fall back to a guessed one-line row.
+        // Real rows wrap to three lines: the slot snapped 78 → 42 on the frame the
+        // delete landed, and everything below it jumped by 36 pt before the smooth
+        // part even began.
+        .background {
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { noteHeight(geo.size.height) }
+                    .onChange(of: geo.size.height) { _, height in noteHeight(height) }
+            }
+        }
+        // Ash and neighbours share one clock: slot shrinks while flakes fade.
+        .frame(
+            height: isVanishing && slotHeight > 1
+                ? max(0.5, slotHeight * (1 - (burnedOut ? 1 : slotCollapse)))
+                : nil,
+            alignment: .top
+        )
+        .clipped()
+        // Ash floats *above* the closing gap, outside the clip — it stands in
+        // the slot it is burning, so the slot must not cut it down as it shrinks.
+        .overlay(alignment: .top) {
+            if isDissolving, slotHeight > 1 {
+                MeetingRowAshView(
+                    title: row.title,
+                    preview: row.preview,
+                    onFinished: {
+                        burnedOut = true
+                        onDissolveFinished?()
+                    }
+                )
+                .frame(height: slotHeight, alignment: .top)
+            }
+        }
+        .onChange(of: isDissolving) { _, dissolving in
+            if dissolving { startSlotCollapse() }
+            // Undo mid-ash — the row is staying. After a burn-out the row is on
+            // its way out of the store and must not come back for a frame.
+            else if !burnedOut { resetSlotCollapse() }
+        }
+        .onAppear {
+            // Ghost rows are born already dissolving — `onChange` will not fire.
+            if isDissolving { startSlotCollapse() }
+            syncStatusTypewriter(animated: false)
+        }
+        .onChange(of: row.preview) { _, _ in syncStatusTypewriter(animated: isWorking) }
+        .onChange(of: isWorking) { _, working in
+            // Leaving the pipeline — snap to topics; no dismiss of «Суммируем».
+            if !working { statusTypewriter.snap(to: row.preview) }
+            else { syncStatusTypewriter(animated: true) }
+        }
+    }
+
+    private func syncStatusTypewriter(animated: Bool) {
+        statusTypewriter.play(to: row.preview, animated: animated && statusAnimated)
+    }
+
+    /// The row's own height, delivered on every layout pass until the ash freezes
+    /// it. Also what *starts* the collapse when the row arrives already dissolving:
+    /// there is nothing to collapse from until this has run once.
+    private func noteHeight(_ height: CGFloat) {
+        guard height > 1, !slotFrozen else { return }
+        slotHeight = height
+        if isDissolving { startSlotCollapse() }
+    }
+
+    private func startSlotCollapse() {
+        // No guessing. Without a measurement the row simply holds its natural
+        // height until the entry leaves the store — worse motion than a collapse,
+        // but not a visible snap to the wrong size.
+        guard slotHeight > 1, !slotFrozen else { return }
+        AshLog.log.info("slot: collapsing from \(self.slotHeight)")
+        slotFrozen = true
+        slotCollapse = 0
+        withAnimation(.easeInOut(duration: Tokens.Motion.Ash.duration)) {
+            slotCollapse = 1
+        }
+    }
+
+    private func resetSlotCollapse() {
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) {
+            slotCollapse = 0
+            burnedOut = false
+            slotFrozen = false
+        }
+    }
+
+    /// The system menu for a meeting — right-click, not hover chrome.
+    @ViewBuilder
+    private var meetingMenu: some View {
+        if isDeleted {
+            if let onRestore {
+                Button("Вернуть", action: onRestore)
+            }
+        } else {
+            if let onCopySummary {
+                Button("Копировать саммари", action: onCopySummary)
+                    .disabled(!row.hasSummary)
+            }
+            if let onShare {
+                Button("Поделиться", action: onShare)
+            }
+            if let onRevealInFinder {
+                Button("Показать в Finder", action: onRevealInFinder)
+            }
+            if onDelete != nil, onCopySummary != nil || onShare != nil || onRevealInFinder != nil {
+                Divider()
+            }
+            if let onDelete {
+                Button("Удалить встречу", role: .destructive, action: onDelete)
+            }
+        }
     }
 
     /// The time, and then the slot the comps keep to its right.
@@ -569,21 +963,26 @@ public struct SidebarMeetingRow: View {
             // It does not — the quiet line already says «Аудио удалено» in words
             // (PR-005). The badge slot is for what the text *cannot* say.
             EmptyView()
-        case .none, .processing, .deletedUndoable:
+        case .none, .processing, .queued, .deletedUndoable:
             // Working already says so, in words and in motion; a deleted row
-            // spends the slot on «Вернуть».
+            // spends the slot on «Вернуть». Queued is the same quiet — the
+            // subtitle carries the wait, the badge slot stays empty.
             EmptyView()
         }
     }
 
     private var titleLine: some View {
-        paragraph
-            .overlay {
-                if isWorking {
-                    SidebarSweep().mask(paragraph)
-                }
+        // Working: shimmer on the whole line + typewriter on the phase half.
+        // Metal colorEffect on `Text` is a no-op — `sidebarSweep` keeps the
+        // gradient path for the rail.
+        Group {
+            if isWorking {
+                workingParagraph.sidebarSweep()
+            } else {
+                paragraph
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// One `Text`, two colours. Built as an `AttributedString` rather than two
@@ -596,6 +995,13 @@ public struct SidebarMeetingRow: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
+    private var workingParagraph: some View {
+        Text(workingAttributed)
+            .typoBlock(Tokens.Sidebar.Typo.meetingTitle)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
     private var attributed: AttributedString {
         var title = AttributedString(row.title)
         title.foregroundColor = titleColor
@@ -603,6 +1009,26 @@ public struct SidebarMeetingRow: View {
         var preview = AttributedString((row.title.isEmpty ? "" : " ") + row.preview)
         preview.foregroundColor = previewColor
         title.append(preview)
+        return title
+    }
+
+    /// Title static; phase line soft-typewritten so a new status arrives.
+    private var workingAttributed: AttributedString {
+        var title = AttributedString(row.title)
+        title.foregroundColor = titleColor
+        let status = statusTypewriter.displayed
+        guard !status.isEmpty else { return title }
+        if !row.title.isEmpty {
+            var space = AttributedString(" ")
+            space.foregroundColor = previewColor
+            title.append(space)
+        }
+        title.append(SoftTypewriter.paint(
+            status,
+            color: previewColor,
+            progress: statusTypewriter.progress,
+            softness: Tokens.Sidebar.StatusReveal.softChars
+        ))
         return title
     }
 }
@@ -647,7 +1073,7 @@ struct SidebarRowRestore: View {
     var body: some View {
         Button(action: action) {
             Text("Вернуть")
-                .typo(Tokens.Sidebar.Typo.meta.weight(.medium))
+                .typo(Tokens.Sidebar.Typo.meta)
                 .foregroundStyle(hovering ? Tokens.Sidebar.meetingTitle : Tokens.Sidebar.navLabelSelected)
                 .padding(.horizontal, Tokens.Space.s4)
                 .frame(height: Tokens.Sidebar.rowActionSlot)

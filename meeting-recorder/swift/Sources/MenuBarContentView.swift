@@ -15,14 +15,17 @@ struct MenuBarContentView: View {
             onStop: { state.stopRecording() },
             onDiscard: { state.cancelRecording() },
             onSettings: { SettingsOpener.open() },
-            onRestart: { Self.relaunch() },
             onQuit: { quit() }
         )
     }
 
     private var status: MenuBarPopover.Status {
         if state.isRecording {
-            return .recording(title: state.selectedRecording?.title ?? "Новая запись",
+            // Именно записываемая встреча, а не выбранная: во время записи в
+            // окне можно открыть любую другую, и меню-бар назвал бы её.
+            let recorded = state.activeRecordingID
+                .flatMap { state.recordingStore.recording(for: $0) }
+            return .recording(title: recorded?.title ?? "Новая запись",
                               elapsed: state.elapsedString)
         }
         // One question instead of three step flags — and the summary phase is
@@ -44,16 +47,6 @@ struct MenuBarContentView: View {
         } else {
             state.recordingStore.flush()
             NSApplication.shared.terminate(nil)
-        }
-    }
-
-    /// Relaunch the app (a fresh instance replaces this one).
-    static func relaunch() {
-        let url = Bundle.main.bundleURL
-        let config = NSWorkspace.OpenConfiguration()
-        config.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in
-            DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
         }
     }
 }

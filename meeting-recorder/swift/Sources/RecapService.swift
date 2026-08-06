@@ -100,7 +100,7 @@ actor RecapService {
     - Не выдумывай того, чего нет в транскрипте.
     - Пустые секции полностью опускай — не пиши «Нет» или «—».
     - Детальность — в служении понятности, а не подробности ради подробности.
-    - Не добавляй шапку Date / Duration / Participants (и аналоги) — дата, длительность и участники уже есть в UI встречи.
+    - Не добавляй шапку Date / Duration / Participants (и аналоги) — дата уже в списке встреч, длительность и участники не дублируются в шапке.
     - Блок «Заметки» в итоговый файл добавит система отдельно — не дублируй сырые заметки отдельной секцией; их смысл уже вплетён выше.
     - По контексту аккуратно исправляй очевидные ASR-ошибки (искажённые имена и термины), не меняя смысл.
     """
@@ -264,6 +264,77 @@ actor RecapService {
         }
     }
 
+    /// Rewrite a fragment the user selected in the summary — «короче» / «подробнее».
+    ///
+    /// The same backend the summary itself came from, so «короче» never means
+    /// «отправить кусок вашей встречи в облако» on a machine where everything
+    /// else is local. Returns the replacement text and nothing else: this lands
+    /// straight into a text view, so a preamble («Вот сокращённый вариант:»)
+    /// would be typed into the meeting.
+    ///
+    /// `transcript` is what «Подробнее» is for: the detail it adds has to come
+    /// from what was said, not from the model's sense of what usually follows a
+    /// sentence like this one. «Короче» passes nil — it has everything it needs
+    /// in the fragment, and handing it the meeting would invite it to bring
+    /// things back in while cutting.
+    func rewriteFragment(
+        _ fragment: String,
+        instruction: String,
+        transcript: String?,
+        prefs: RecapPreferences
+    ) async throws -> String {
+        let trimmed = fragment.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return fragment }
+
+        let backend: String
+        switch await resolveBackend(kind: prefs.provider, ollamaModel: prefs.ollamaModel,
+                                    openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey) {
+        case .failure(let reason): throw reason
+        case .success(let name):   backend = name
+        }
+
+        let system = """
+        Ты редактируешь фрагмент конспекта встречи.
+        \(instruction)
+        Верни только переписанный фрагмент — один абзац, без пояснений, без кавычек, \
+        без заголовков, без списков, без пустых строк и без markdown-ограждений.
+        Если в исходном фрагменте было жирное (`**…**`), сохрани его так же; \
+        новую структурную разметку не вводи.
+        """ + Self.languageLock
+
+        let user: String
+        if let transcript, !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            user = """
+            РАСШИФРОВКА ВСТРЕЧИ
+            \(transcript)
+
+            ФРАГМЕНТ КОНСПЕКТА
+            \(trimmed)
+            """
+        } else {
+            user = trimmed
+        }
+
+        let raw: String
+        switch backend {
+        case "ollama":
+            raw = try await callOllama(model: prefs.ollamaModel, system: system, user: user)
+        case "openai":
+            raw = try await callOpenAI(apiKey: prefs.openAIKey ?? "", model: prefs.openAIModel,
+                                       system: system, user: user)
+        case "claude":
+            raw = try await callClaude(apiKey: prefs.claudeKey ?? "", model: prefs.claudeModel,
+                                       system: system, user: user)
+        default:
+            throw RecapSkipReason.noProvider
+        }
+
+        let cleaned = RecapMetadataParser.stripCodeFences(raw)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { throw RecapError.emptyResponse }
+        return cleaned
+    }
+
     // MARK: - Meeting metadata (title / topics / tags) from the finished summary
 
     struct RecapMetadata {
@@ -319,6 +390,25 @@ actor RecapService {
         return RecapMetadata(title: parsed.title, topics: parsed.topics, tags: parsed.tags)
     }
 
+    /// The topics rules are longer than they look like they need to be, and each
+    /// line is there because the shorter version was measured and failed.
+    ///
+    /// Asking for «3–6 слов» produced 7.2 words a topic across the archive's own
+    /// recaps (max 9), because a 4B model reads a range as a suggestion and a
+    /// recap's decision bullet as something to preserve. Naming the wordy shapes
+    /// («с фокусом на…», «в пользу…») and forbidding subordinate clauses moved it
+    /// to 6.5 — still a row four lines tall. What actually worked was showing the
+    /// compression: with the four examples below it lands at 4.1 words (max 6).
+    ///
+    /// The examples are about a warehouse on purpose. The first set was written
+    /// from real meetings, and the model copied them wholesale onto unrelated
+    /// calls — «данные вместо заглушек» arrived on a summary that had neither.
+    /// A domain nowhere near the user's work cannot be pasted in unnoticed.
+    ///
+    /// Compressing harder is not better either: making the model draft and then
+    /// squeeze got 2.6 words and turned every meeting into filing labels
+    /// («структура экранов», «этапы реализации») — which is the row saying
+    /// nothing in fewer words. Hence «пункт — факт, а не рубрика».
     private static func metadataPrompt(needTitle: Bool) -> String {
         let vocab = MeetingTags.vocabulary.joined(separator: ", ")
         return """
@@ -326,7 +416,19 @@ actor RecapService {
         Формат: {"title": <строка или null>, "topics": [<строка>, ...], "tags": [<строка>, ...]}
         Правила:
         - title: суть встречи одной ёмкой фразой на русском, 3–7 слов.\(needTitle ? "" : " Заголовок уже задан пользователем — верни null.")
-        - topics: 2–5 ключевых обсуждённых тем короткими фразами на русском (пойдут в сабтайтл). Только то, что реально есть в саммари, не выдумывай. Без китайского и других языков.
+        - topics: 2–3 пункта — подпись встречи в списке. Каждый пункт — именная группа из 2–5 слов, без точки в конце.
+          Сформулируй по сути, потом сократи: отрезается хвост, ядро остаётся.
+          Примеры сокращения — они про длину и форму фразы; их слова и тема в ответ не попадают:
+            «Переход на новую систему учёта заказов с фокусом на склад» → «учёт заказов под склад»
+            «Отказ от бумажных накладных в пользу мобильного приложения» → «отказ от бумажных накладных»
+            «Замена устаревших ценников на актуальные электронные» → «электронные ценники вместо бумажных»
+            «Унификация маршрутов доставки и подтверждение графика курьеров» → «унификация маршрутов доставки»
+          Слова «полностью», «актуальный», «текущий», «ключевой», «система», «структура», «модель», «внедрение», «подготовка» — выкидывай, если без них понятно.
+          Предпочитай существительные глаголам. Придаточных нет. Союз «и» — не больше одного на весь список.
+          Пункт — факт, а не рубрика: «этапы реализации», «структура экранов», «контент» — так нельзя.
+          С большой буквы — только первый пункт; остальные со строчной, кроме имён, названий и аббревиатур (VK, Rich-text, Figma).
+          Сначала ключевые решения. Если решений не было — конкретные темы обсуждения, не процесс («обсудили», «договорились», «наметили», «проговорили»).
+          Без воды и общих слов: «этапы», «следующие шаги», «приоритеты», «вопросы», «результаты». Только то, что реально есть в саммари. Без китайского и других языков.
         - tags: 0..N значений СТРОГО из списка: [\(vocab)]. Значения вне списка запрещены. Если ничего не подходит — пустой массив [].
         - Верни только JSON, никакого текста вокруг. Все строковые значения — на русском.
         """

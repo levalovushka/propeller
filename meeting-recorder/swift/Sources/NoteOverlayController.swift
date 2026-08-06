@@ -133,6 +133,7 @@ private struct NoteSavedView: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(.secondary)
             Text("Заметка сохранена")
                 .typo(Tokens.Typography.Label.mdRegular)
@@ -159,6 +160,7 @@ private struct NoteInputView: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "square.and.pencil")
+                .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(.secondary)
             TextField("Быстрая заметка…", text: $text)
                 .textFieldStyle(.plain)

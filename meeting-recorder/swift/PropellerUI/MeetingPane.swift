@@ -15,24 +15,35 @@ import PropellerPure
 
 // MARK: - Header
 
-/// The meeting's name, when it happened, who was in it, and the three actions.
+/// Constants of the header's name field. Outside the view because a generic
+/// type cannot hold stored statics.
+private enum HeaderTitle {
+    /// Room for the caret past the last glyph, so it is not clipped at the edge.
+    static let caretRoom: CGFloat = 4
+    static let untitled = "Без названия"
+}
+
+/// The meeting's name and the actions you can take on it.
 ///
-/// Deliberately quiet — 11 pt, the same as the rail's chrome. This row sits in
-/// the window's titlebar, and a titlebar that shouts competes with the summary
-/// two centimetres below it, which is the thing actually worth reading.
+/// One line, 14 / 18 — the same face as a meeting row's title. Clicking the
+/// name places the caret where you clicked; Enter saves and leaves, Escape
+/// leaves the name as it was, clicking away saves. The date lives on the rail,
+/// so it is not repeated here.
 public struct MeetingPaneHeader<MoreMenu: View>: View {
+    /// Which meeting the name belongs to. The header outlives the meeting it is
+    /// showing — the pane keeps one of these and swaps the text underneath it —
+    /// so a rename has to name its own meeting rather than trust «the selected
+    /// one» to still be the one that was typed into.
+    private let meetingID: String
     private let title: String
-    private let time: String
-    private let participants: String?
-    private let onParticipants: (() -> Void)?
-    private let onCopy: (() -> Void)?
+    private let onRename: ((_ meetingID: String, _ newTitle: String) -> Void)?
     private let share: Share?
     /// The ellipsis is a *menu*, not a button — «ещё» has no single action, and
     /// a closure would only be able to open one somewhere else.
     private let moreMenu: () -> MoreMenu
     private let hasMoreMenu: Bool
 
-    /// The one filled button in the header.
+    /// Opens the system share sheet from the header's quiet icon cluster.
     public struct Share {
         public let title: String
         public let handler: () -> Void
@@ -43,20 +54,16 @@ public struct MeetingPaneHeader<MoreMenu: View>: View {
     }
 
     public init(
+        meetingID: String,
         title: String,
-        time: String,
-        participants: String? = nil,
-        onParticipants: (() -> Void)? = nil,
-        onCopy: (() -> Void)? = nil,
+        onRename: ((_ meetingID: String, _ newTitle: String) -> Void)? = nil,
         share: Share? = nil,
         hasMoreMenu: Bool = true,
         @ViewBuilder moreMenu: @escaping () -> MoreMenu
     ) {
+        self.meetingID = meetingID
         self.title = title
-        self.time = time
-        self.participants = participants
-        self.onParticipants = onParticipants
-        self.onCopy = onCopy
+        self.onRename = onRename
         self.share = share
         self.moreMenu = moreMenu
         self.hasMoreMenu = hasMoreMenu
@@ -64,55 +71,11 @@ public struct MeetingPaneHeader<MoreMenu: View>: View {
 
     public var body: some View {
         HStack(spacing: 0) {
-            identity
+            MeetingPaneIdentity(meetingID: meetingID, title: title, onRename: onRename)
             Spacer(minLength: Tokens.Space.s8)
             actions
         }
         .frame(height: Tokens.Pane.headerHeight)
-    }
-
-    private var identity: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(title)
-                .typoBlock(Tokens.Pane.Typo.headerTitle)
-                .foregroundStyle(Tokens.Pane.title)
-                .lineLimit(1)
-            HStack(spacing: Tokens.Pane.headerMetaGap) {
-                Text(time)
-                    .typoBlock(Tokens.Pane.Typo.headerTitle)
-                    .foregroundStyle(Tokens.Pane.meta)
-                    .lineLimit(1)
-                if let participants {
-                    participantsButton(participants)
-                }
-            }
-        }
-        .padding(.horizontal, Tokens.Pane.headerHPadding)
-        .padding(.vertical, Tokens.Pane.headerVPadding)
-        // A cap, not a width. The comps give this block 430 at 800 pt of pane
-        // and 250 at 601 — it takes what is left after the actions, which keep
-        // their intrinsic size. Fixed at 430, «Поделиться» is the thing that
-        // gets truncated instead.
-        .frame(maxWidth: Tokens.Pane.headerTitleWidth, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private func participantsButton(_ text: String) -> some View {
-        let label = HStack(spacing: Tokens.Pane.headerChevronGap) {
-            Text(text)
-                .typoBlock(Tokens.Pane.Typo.headerTitle)
-                .lineLimit(1)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 9, weight: .regular))
-        }
-        .foregroundStyle(Tokens.Pane.meta)
-
-        if let onParticipants {
-            Button(action: onParticipants) { label }
-                .buttonStyle(.plain)
-        } else {
-            label
-        }
     }
 
     private var actions: some View {
@@ -132,11 +95,12 @@ public struct MeetingPaneHeader<MoreMenu: View>: View {
                 .menuIndicator(.hidden)
                 .help("Ещё")
             }
-            if let onCopy {
-                PaneIconButton(symbol: "document.on.clipboard", help: "Скопировать", action: onCopy)
-            }
             if let share {
-                PaneShareButton(title: share.title, action: share.handler)
+                PaneIconButton(
+                    symbol: "arrowshape.turn.up.right.fill",
+                    help: share.title,
+                    action: share.handler
+                )
             }
         }
         .padding(.horizontal, Tokens.Pane.headerActionsPadding)
@@ -145,20 +109,183 @@ public struct MeetingPaneHeader<MoreMenu: View>: View {
     }
 }
 
+/// The meeting's name, editable in place.
+///
+/// Its own view because two headers carry it: the one over a finished meeting
+/// and the one over the meeting being recorded. A recording is a meeting from
+/// the first second — it has a name, and that name is renamed the same way,
+/// with the same pencil in the same place.
+struct MeetingPaneIdentity: View {
+    let meetingID: String
+    let title: String
+    let onRename: ((_ meetingID: String, _ newTitle: String) -> Void)?
+
+    /// A name being typed, and the meeting it is being typed into.
+    ///
+    /// `original` travels with it because that is what "did it change" has to be
+    /// asked against: a rename latches the title as manual and blocks the model
+    /// from ever naming that meeting again, so re-saving the identical string is
+    /// not the no-op it looks like.
+    private struct Edit: Equatable {
+        let meetingID: String
+        let original: String
+        var draft: String
+    }
+
+    @State private var edit: Edit?
+    @State private var hovering = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        identity
+            // Picking another meeting mid-edit saves into the meeting you were
+            // editing and shows the one you picked. It used to hand your text to
+            // the meeting you had just moved to, which is a rename nobody asked
+            // for in one place and a lost one in the other.
+            .onChange(of: meetingID) { _, _ in
+                commit()
+                focused = false
+            }
+    }
+
+    private var identity: some View {
+        HStack(spacing: Tokens.Space.s4) {
+            titleField
+            editHint
+        }
+        .padding(.horizontal, Tokens.Pane.headerHPadding)
+        .padding(.vertical, Tokens.Pane.headerVPadding)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        // A cap, not a width — and minWidth 0 so the pane can go narrow without
+        // the title claiming more room than the actions leave it.
+        .frame(minWidth: 0, maxWidth: Tokens.Pane.headerTitleWidth, alignment: .leading)
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: focused)
+    }
+
+    private var titleField: some View {
+        TextField(HeaderTitle.untitled, text: text)
+            .textFieldStyle(.plain)
+            .typoBlock(Tokens.Pane.Typo.headerTitle)
+            .foregroundStyle(Tokens.Pane.title)
+            .lineLimit(1)
+            .focused($focused)
+            .disabled(onRename == nil)
+            // Return saves *and* leaves. Left focused, AppKit answers Return by
+            // selecting the whole field — the save had happened, and the only
+            // thing you could see was your name going blue.
+            .onSubmit {
+                commit()
+                focused = false
+            }
+            .onExitCommand { cancel() }
+            .onChange(of: focused) { _, isFocused in
+                if isFocused { begin() } else { commit() }
+            }
+            // As wide as the name, no wider: the pencil belongs at the end of
+            // the title, not at the far edge of a 430 pt block. minWidth 0 so a
+            // long name yields to the actions instead of shoving them off.
+            .frame(minWidth: 0, maxWidth: titleWidth, alignment: .leading)
+            .mask { GeometryReader { geo in edgeFade(given: geo.size.width) } }
+    }
+
+    /// The affordance, right beside the name: a pencil while you are looking at
+    /// it, the Return key while you are typing — at that moment the question is
+    /// no longer «can this be edited» but «how do I keep what I typed».
+    @ViewBuilder
+    private var editHint: some View {
+        if onRename != nil {
+            Image(systemName: focused ? "return" : "pencil")
+                .font(.system(size: Tokens.Pane.headerIconSize, weight: .regular))
+                .foregroundStyle(Tokens.Pane.buttonIcon)
+                .opacity(hovering || focused ? 1 : 0)
+                // A hint, not a button. Clicking it would take focus off the
+                // field, which already saves — and a control that looks like it
+                // does something else is worse than no control.
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    /// What the field shows: the name being typed, or the meeting's own.
+    ///
+    /// Reading through to `title` is what lets an outside rename — the model
+    /// naming a meeting the moment its summary lands — appear without a flag to
+    /// guard it, and *not* appear over something half-typed.
+    private var text: Binding<String> {
+        Binding(
+            get: { edit?.draft ?? title },
+            set: { typed in
+                begin()
+                edit?.draft = typed
+            }
+        )
+    }
+
+    /// Measured in the face the field actually draws with, so the pencil lands
+    /// against the name at any length.
+    private var titleWidth: CGFloat {
+        let shown = edit?.draft ?? title
+        let string = shown.isEmpty ? HeaderTitle.untitled : shown
+        let width = (string as NSString).size(
+            withAttributes: [.font: Tokens.Pane.Typo.headerTitle.nsFont]
+        ).width
+        return ceil(width) + HeaderTitle.caretRoom
+    }
+
+    /// A name longer than its room meets the actions with a fade rather than a
+    /// cut — and only then. Faded unconditionally, the last letters of every
+    /// short name would go pale for no reason.
+    private func edgeFade(given width: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            Color.black
+            if width < titleWidth {
+                LinearGradient(
+                    colors: [.black, .clear],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: Tokens.Pane.titleEdgeFade)
+            }
+        }
+    }
+
+    private func begin() {
+        guard onRename != nil, edit == nil else { return }
+        edit = Edit(meetingID: meetingID, original: title, draft: title)
+    }
+
+    /// Escape gives the meeting its name back — there is no undo up here, so
+    /// the one key that means «forget it» has to actually forget it.
+    private func cancel() {
+        edit = nil
+        focused = false
+    }
+
+    private func commit() {
+        guard let edit else { return }
+        self.edit = nil
+        let trimmed = edit.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A meeting with no name is a meeting you cannot find again: an empty
+        // field keeps the name it had.
+        guard !trimmed.isEmpty, trimmed != edit.original else { return }
+        onRename?(edit.meetingID, trimmed)
+    }
+}
+
 extension MeetingPaneHeader where MoreMenu == EmptyView {
     /// A header with no «ещё» menu — the gallery, and any pane whose meeting
     /// has nothing more to offer.
     public init(
+        meetingID: String,
         title: String,
-        time: String,
-        participants: String? = nil,
-        onParticipants: (() -> Void)? = nil,
-        onCopy: (() -> Void)? = nil,
+        onRename: ((_ meetingID: String, _ newTitle: String) -> Void)? = nil,
         share: Share? = nil
     ) {
         self.init(
-            title: title, time: time, participants: participants,
-            onParticipants: onParticipants, onCopy: onCopy, share: share,
+            meetingID: meetingID, title: title,
+            onRename: onRename, share: share,
             hasMoreMenu: false,
             moreMenu: { EmptyView() }
         )
@@ -251,52 +378,48 @@ public struct ShareAnchor: NSViewRepresentable {
     }
 }
 
-/// Same shape as the rail's row action, because it is the same idea: the one
-/// filled thing in a row of quiet ones.
-struct PaneShareButton: View {
-    let title: String
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .typo(Tokens.Pane.Typo.shareLabel)
-                .foregroundStyle(Tokens.Pane.shareLabel)
-                .lineLimit(1)
-                .padding(.horizontal, Tokens.Space.s2)
-                .padding(.horizontal, Tokens.Pane.shareHPadding)
-                .frame(height: Tokens.Pane.headerButtonSide)
-                .background(
-                    hovering ? Tokens.Pane.shareHoverFill : Tokens.Pane.shareFill,
-                    in: RoundedRectangle(cornerRadius: Tokens.Pane.shareRadius, style: .continuous)
-                )
-                .contentShape(
-                    RoundedRectangle(cornerRadius: Tokens.Pane.shareRadius, style: .continuous)
-                )
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
-    }
-}
-
 // MARK: - Summary column
 
-/// The summary the pane draws — parsed from the recap by
-/// `RecapPresentation`, which is where the markdown's surprises are handled.
-public typealias MeetingSummary = RecapPresentation.Summary
+/// The summary the pane draws — and edits. `SummaryDocument` is where the
+/// markdown's surprises are handled, and the reason it round-trips.
+public typealias MeetingSummary = SummaryDocument
 
+/// The summary, as a text you can put a caret into.
+///
+/// There is no read mode and no edit mode: one surface, always the same
+/// typography, and the caret appears wherever it was clicked. A mode would
+/// re-flow the column under the pointer — the 20 pt lead collapsing into
+/// monospaced markdown is exactly what the pre-redesign screen did, and what
+/// made editing a summary something you did on purpose rather than by reflex.
 public struct MeetingSummaryColumn: View {
     private let summary: MeetingSummary
     /// Shown instead of the summary when there is not one yet — a meeting is
     /// readable long before the model has finished with it.
     private let placeholder: String?
+    /// nil — nowhere to save it, so nothing to type into: the gallery, and any
+    /// pane whose meeting has no recap file behind it.
+    private let onChange: ((MeetingSummary) -> Void)?
+    private let onRewrite: ((SummaryRewrite, String) -> Void)?
+    @ObservedObject private var controller: SummaryEditorController
 
-    public init(summary: MeetingSummary, placeholder: String? = nil) {
+    @State private var height: CGFloat = 0
+    /// Ширина/высота колонки и ширина панели — чтобы панель не уезжала за край.
+    @State private var columnWidth: CGFloat = 0
+    @State private var columnHeight: CGFloat = 0
+    @State private var barWidth: CGFloat = 0
+
+    public init(
+        summary: MeetingSummary,
+        placeholder: String? = nil,
+        controller: SummaryEditorController,
+        onChange: ((MeetingSummary) -> Void)? = nil,
+        onRewrite: ((SummaryRewrite, String) -> Void)? = nil
+    ) {
         self.summary = summary
         self.placeholder = placeholder
+        self.controller = controller
+        self.onChange = onChange
+        self.onRewrite = onRewrite
     }
 
     public var body: some View {
@@ -305,88 +428,137 @@ public struct MeetingSummaryColumn: View {
                 Text(placeholder)
                     .typoBlock(Tokens.Pane.Typo.body)
                     .foregroundStyle(Tokens.Pane.placeholder)
-            }
-            VStack(alignment: .leading, spacing: Tokens.Pane.summaryLineGap) {
-                if !summary.lead.isEmpty {
-                    Text(summary.lead)
-                        .typoBlock(Tokens.Pane.Typo.lead)
-                        .tracking(Tokens.Pane.Typo.leadTracking)
-                }
-                if !summary.body.isEmpty {
-                    Text(summary.body)
-                        .typoBlock(Tokens.Pane.Typo.body)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            ForEach(summary.sections) { section in
-                VStack(alignment: .leading, spacing: Tokens.Pane.summaryLineGap) {
-                    Text(section.title)
-                        .typoBlock(Tokens.Pane.Typo.sectionTitle)
-                        .tracking(Tokens.Pane.Typo.sectionTracking)
-                    VStack(alignment: .leading, spacing: Tokens.Pane.bulletGap) {
-                        ForEach(section.blocks) { block in
-                            switch block {
-                            case .bullet(_, let lead, let text):
-                                BulletRow(lead: lead, text: text)
-                            case .paragraph(_, let text):
-                                Text(text)
-                                    .typoBlock(Tokens.Pane.Typo.body)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                editor
             }
         }
-        .foregroundStyle(Tokens.Pane.body)
-        .multilineTextAlignment(.leading)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, Tokens.Pane.summaryHPadding)
-        .padding(.vertical, Tokens.Pane.summaryVPadding)
+        .padding(.top, Tokens.Pane.summaryVPadding)
+        .padding(.bottom, Tokens.Pane.summaryBottomPadding)
         // The measure is capped for readability and then *centred* in whatever
         // room the column has. Pinned left, a wide window leaves the text
         // against one edge with a field of empty beside it.
         .frame(maxWidth: Tokens.Pane.summaryMaxWidth + Tokens.Pane.summaryHPadding * 2)
         .frame(maxWidth: .infinity)
     }
-}
 
-/// A disc, then a paragraph that hangs off it.
-///
-/// The indent is on the *paragraph*, not on the first line, so wrapped lines
-/// align under the text rather than under the bullet — which is the difference
-/// between a list and a stack of sentences with dots.
-private struct BulletRow: View {
-    let lead: String?
-    let text: String
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 0) {
-            Text("•")
-                .typoBlock(Tokens.Pane.Typo.body)
-                .frame(width: Tokens.Pane.bulletIndent, alignment: .leading)
-            Text(attributed)
-                .typoBlock(Tokens.Pane.Typo.body)
-                .frame(maxWidth: .infinity, alignment: .leading)
+    private var editor: some View {
+        SummaryEditor(
+            document: summary,
+            // Editable while the typewriter runs: `shouldChangeText` rejects
+            // programmatic replace when `isEditable` is false, which left the
+            // dismissed fragment stuck at alpha 0 and put nothing on the undo
+            // stack. User typing is swallowed in `SummaryTextView` instead.
+            isEditable: onChange != nil && !controller.isRewriting,
+            controller: controller,
+            height: $height,
+            onChange: { onChange?($0) }
+        )
+        .frame(height: height)
+        .overlay(alignment: .topLeading) { shimmer }
+        .overlay(alignment: .topLeading) { actionBar }
+        .background {
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear {
+                        columnWidth = geo.size.width
+                        columnHeight = geo.size.height
+                    }
+                    .onChange(of: geo.size.width) { _, new in columnWidth = new }
+                    .onChange(of: geo.size.height) { _, new in columnHeight = new }
+            }
         }
-        .fixedSize(horizontal: false, vertical: true)
     }
 
-    /// Bold lead-in and the rest as one paragraph — two `Text`s would break the
-    /// line after the colon whatever the width.
-    private var attributed: AttributedString {
-        guard let lead, !lead.isEmpty else {
-            return AttributedString(text)
+    /// The fragment the model is being asked about, shimmering.
+    ///
+    /// Glyph silhouette + band-only Metal (`sidebarSweepBand`): outside the
+    /// diagonal the overlay is clear, so the editor letters stay put; inside
+    /// it they light up. Geometry from `rewriteTarget`, not `selection` — the
+    /// wash is gone the moment the model starts.
+    @ViewBuilder
+    private var shimmer: some View {
+        if controller.isRewriting,
+           let target = controller.rewriteTarget,
+           let glyphs = target.glyphs {
+            Image(nsImage: glyphs)
+                .resizable()
+                .sidebarSweepBand()
+                .frame(width: target.bounds.width, height: target.bounds.height)
+                .offset(x: target.bounds.minX, y: target.bounds.minY)
+                .allowsHitTesting(false)
         }
-        var head = AttributedString(lead)
-        head.font = Tokens.Pane.Typo.sectionTitle.font
-        var tail = AttributedString(text)
-        tail.font = Tokens.Pane.Typo.body.font
-        head.append(tail)
-        return head
     }
+
+    /// Under the last line of the selection, kept inside the column: a bar half
+    /// off the edge is a bar with half its actions unreachable.
+    ///
+    /// It does not travel. Selecting somewhere else replaces the bar — `.id` on
+    /// the selection's range — so the old one fades out where it stood and the
+    /// new one fades in where it belongs. Animating the offset instead made a
+    /// control slide across the text under the pointer, which is the app moving
+    /// something nobody asked it to move. While the model thinks, the bar is
+    /// gone — the shimmer is the only signal left.
+    @ViewBuilder
+    private var actionBar: some View {
+        if let selection = controller.selection, onChange != nil, !controller.isRewriting {
+            // Hosted in AppKit so the click does not resign the text view —
+            // selection and ⌘Z target stay where the person left them.
+            SummaryActionBarHost(
+                selection: selection,
+                onKind: { controller.setKind($0) },
+                onBold: { controller.toggleBold() },
+                onItalic: { controller.toggleItalic() },
+                onRewrite: onRewrite.map { handler in
+                    { (rewrite: SummaryRewrite) in
+                        controller.pinRewriteTarget(selection)
+                        handler(rewrite, selection.text)
+                    }
+                },
+                onMeasuredWidth: { barWidth = $0 }
+            )
+            .fixedSize()
+            .offset(
+                x: clampedX(for: selection),
+                y: clampedY(for: selection)
+            )
+            .id(selection.range)
+            .transition(AnyTransition.asymmetric(
+                insertion: .opacity.animation(
+                    .easeOut(duration: Tokens.Pane.Bar.fadeIn)
+                        .delay(Tokens.Pane.Bar.fadeInDelay)
+                ),
+                removal: .opacity.animation(.easeIn(duration: Tokens.Pane.Bar.fadeOut))
+            ))
+        }
+    }
+
+    /// The bar starts under the selection and stops at the column's edge —
+    /// `SummaryBarPlacement`, where a test can reach the arithmetic.
+    private func clampedX(for selection: SummaryEditorController.Selection) -> CGFloat {
+        SummaryBarPlacement.x(
+            anchor: selection.anchor.x,
+            // Before the first layout the bar has no width yet. Its height is
+            // the one number that is certainly not zero, and one frame at the
+            // wrong x beats one frame at zero.
+            barWidth: barWidth > 0 ? barWidth : Tokens.Pane.Bar.height,
+            columnWidth: columnWidth
+        )
+    }
+
+    /// Under the selection when there is room; above it when the last line
+    /// would push the bar past the column's bottom.
+    private func clampedY(for selection: SummaryEditorController.Selection) -> CGFloat {
+        SummaryBarPlacement.y(
+            selectionTop: selection.bounds.minY,
+            selectionBottom: selection.anchor.y,
+            barHeight: Tokens.Pane.Bar.height,
+            columnHeight: columnHeight > 0 ? columnHeight : height,
+            gap: Tokens.Pane.Bar.anchorGap
+        )
+    }
+
 }
 
 // MARK: - Notes column
@@ -405,16 +577,27 @@ public struct MeetingNote: Identifiable, Equatable, Sendable {
 public struct MeetingNotesColumn: View {
     private let notes: [MeetingNote]
     private let composer: MeetingPaneBody.NoteComposer?
+    /// Raised by the collapsed button: the notes were *asked* for, so the
+    /// composer takes the caret the moment it exists. Lowered as soon as it is
+    /// honoured — a request left standing steals the caret on every re-layout.
+    private let focusRequest: Binding<Bool>?
 
-    public init(notes: [MeetingNote], composer: MeetingPaneBody.NoteComposer? = nil) {
+    @FocusState private var composerFocused: Bool
+
+    public init(
+        notes: [MeetingNote],
+        composer: MeetingPaneBody.NoteComposer? = nil,
+        focusRequest: Binding<Bool>? = nil
+    ) {
         self.notes = notes
         self.composer = composer
+        self.focusRequest = focusRequest
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let composer {
-                NoteComposerRow(composer: composer)
+                NoteComposerRow(composer: composer, focused: $composerFocused)
             }
             ForEach(notes) { note in
                 NoteRow(text: note.text, style: Tokens.Pane.Typo.note, colour: Tokens.Pane.body)
@@ -423,16 +606,33 @@ public struct MeetingNotesColumn: View {
         .padding(.horizontal, Tokens.Pane.notesHPadding)
         .padding(.vertical, Tokens.Pane.notesVPadding)
         .frame(minWidth: Tokens.Pane.notesMinWidth, alignment: .leading)
+        // `onAppear`, not only `onChange`: the column does not exist yet when
+        // the request is made — the window is still growing — so the change it
+        // would listen for happens before there is anything to listen with.
+        .onAppear { claimFocus() }
+        .onChange(of: focusRequest?.wrappedValue ?? false) { _, _ in claimFocus() }
+    }
+
+    private func claimFocus() {
+        guard focusRequest?.wrappedValue == true else { return }
+        DispatchQueue.main.async {
+            focusRequest?.wrappedValue = false
+            composerFocused = true
+        }
     }
 }
 
 /// The row you type into. Sits above the notes, like the comps' `empty-writing`.
 private struct NoteComposerRow: View {
     let composer: MeetingPaneBody.NoteComposer
+    /// Held by the column, bound here: focus belongs to the field itself, and
+    /// `.focused` on the wrapper is a coin toss about which descendant it means.
+    @FocusState.Binding var focused: Bool
 
     var body: some View {
         TextField(composer.placeholder, text: composer.text, axis: .vertical)
             .textFieldStyle(.plain)
+            .focused($focused)
             .typoBlock(Tokens.Pane.Typo.note)
             .foregroundStyle(Tokens.Pane.body)
             .lineLimit(1...6)
@@ -567,8 +767,29 @@ public struct MeetingPaneBody: View {
     private let turns: [MeetingTranscriptColumn.Turn]
     private let notes: [MeetingNote]
     private let composer: NoteComposer?
-    private let summaryPlaceholder: String
+    /// Что стоит в колонке саммари — решено `SummaryColumnContent`, не здесь.
+    private let summaryContent: SummaryColumnContent
+    /// Откуда взяты реплики: живая строка или готовая расшифровка. Отличать их
+    /// надо ради замены — момент, когда проход по файлу вытесняет живой текст,
+    /// это смена содержания, а не перерисовка.
+    private let transcriptSource: TranscriptSource
     private let transcriptDisclosure: String?
+    /// What the collapsed notes button asks for: room. The pane cannot make
+    /// any — its width is the window's — so it hands the request up.
+    private let onRevealNotes: (() -> Void)?
+    /// Set by whoever answers that request, cleared by the composer once it has
+    /// the caret. See `MeetingNotesColumn.focusRequest`.
+    private let notesFocusRequest: Binding<Bool>?
+    /// Left column width held while the window grows for the notes. See
+    /// `PaneColumns.pinnedLeftWidth`.
+    private let pinnedLeftWidth: Binding<CGFloat?>?
+    /// The summary's caret and what the action bar does to it. Owned above the
+    /// pane, because the pane is rebuilt on every keystroke in the notes.
+    private let summaryController: SummaryEditorController
+    /// nil where a summary cannot be saved: the gallery, and a meeting with no
+    /// recap file to write into.
+    private let onSummaryChange: ((MeetingSummary) -> Void)?
+    private let onSummaryRewrite: ((SummaryRewrite, String) -> Void)?
 
     /// The «Добавьте заметку...» row, when notes can be written.
     public struct NoteComposer {
@@ -585,50 +806,90 @@ public struct MeetingPaneBody: View {
         }
     }
 
+    /// Чей текст сейчас в колонке транскрипта.
+    public enum TranscriptSource: String, Equatable, Sendable {
+        /// Встреча идёт или только что кончилась: то, что услышал живой слой.
+        case live
+        /// Проход по файлу закончен — это он.
+        case stored
+    }
+
     public init(
         mode: MeetingPaneMode = .summary,
         summary: MeetingSummary,
         turns: [MeetingTranscriptColumn.Turn] = [],
         notes: [MeetingNote],
         composer: NoteComposer? = nil,
-        summaryPlaceholder: String = "Саммари пока нет",
-        transcriptDisclosure: String? = nil
+        summaryContent: SummaryColumnContent = .summary,
+        transcriptSource: TranscriptSource = .stored,
+        transcriptDisclosure: String? = nil,
+        onRevealNotes: (() -> Void)? = nil,
+        notesFocusRequest: Binding<Bool>? = nil,
+        pinnedLeftWidth: Binding<CGFloat?>? = nil,
+        summaryController: SummaryEditorController = SummaryEditorController(),
+        onSummaryChange: ((MeetingSummary) -> Void)? = nil,
+        onSummaryRewrite: ((SummaryRewrite, String) -> Void)? = nil
     ) {
         self.mode = mode
         self.summary = summary
         self.turns = turns
         self.notes = notes
         self.composer = composer
-        self.summaryPlaceholder = summaryPlaceholder
+        self.summaryContent = summaryContent
+        self.transcriptSource = transcriptSource
         self.transcriptDisclosure = transcriptDisclosure
+        self.onRevealNotes = onRevealNotes
+        self.notesFocusRequest = notesFocusRequest
+        self.pinnedLeftWidth = pinnedLeftWidth
+        self.summaryController = summaryController
+        self.onSummaryChange = onSummaryChange
+        self.onSummaryRewrite = onSummaryRewrite
     }
 
     public var body: some View {
-        // The split is decided from the pane's real width, not from a
-        // breakpoint: the notes hold their column while the summary can keep its
-        // 520, and collapse to a button the moment it cannot.
-        GeometryReader { geo in
-            let roomForNotes = geo.size.width >= Tokens.Pane.notesCollapseBelow
-            // The notes take the leftover, but only between their floor and
-            // their ceiling. Everything past the ceiling belongs to the summary,
-            // which centres its measure in it.
-            let notesWidth = min(
-                Tokens.Pane.notesMaxWidth,
-                max(Tokens.Pane.notesMinWidth, geo.size.width - Tokens.Pane.summaryMinWidth)
-            )
-            let collapsedWidth = max(0, geo.size.width - Tokens.Pane.notesCollapsedSide)
-            ScrollView(.vertical) {
-                HStack(alignment: .top, spacing: 0) {
-                    leftColumn
-                        .frame(width: roomForNotes ? geo.size.width - notesWidth : collapsedWidth)
-                    if roomForNotes {
-                        MeetingNotesColumn(notes: notes, composer: composer)
-                            .frame(width: notesWidth)
-                    } else {
-                        CollapsedNotesButton(count: notes.count)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
+        PaneColumns(
+            notes: notes,
+            composer: composer,
+            onRevealNotes: onRevealNotes,
+            notesFocusRequest: notesFocusRequest,
+            pinnedLeftWidth: pinnedLeftWidth
+        ) {
+            // Смена того, что стоит в колонке, — не перерисовка, а смена
+            // содержания: старое уходит, новое приходит на его место. Ключ
+            // описывает *что* показано, а не какая это встреча, — иначе колонка
+            // мигала бы на каждом переходе по списку.
+            ZStack(alignment: .top) {
+                leftColumn
+                    .id(columnKey)
+                    // По очереди, а не крест-накрест: два текста, проступающие
+                    // друг сквозь друга, читаются хуже, чем подмена в один
+                    // кадр, — ради которой всё и затевалось. Старое уходит,
+                    // и только на освободившееся место приходит новое.
+                    .transition(
+                        .asymmetric(
+                            insertion: .opacity.animation(
+                                .easeOut(duration: Tokens.Pane.columnSwapIn)
+                                    .delay(Tokens.Pane.columnSwapOut)
+                            ),
+                            removal: .opacity.animation(
+                                .easeIn(duration: Tokens.Pane.columnSwapOut)
+                            )
+                        )
+                    )
+            }
+            .animation(.default, value: columnKey)
+        }
+    }
+
+    /// Что сейчас в левой колонке. Меняется — играет замена.
+    private var columnKey: String {
+        switch mode {
+        case .transcript: return "transcript-\(transcriptSource.rawValue)"
+        case .summary:
+            switch summaryContent {
+            case .summary:            return "summary"
+            case .transcript:         return "summary-transcript-\(transcriptSource.rawValue)"
+            case .nothing(let text):  return "summary-nothing-\(text)"
             }
         }
     }
@@ -637,38 +898,179 @@ public struct MeetingPaneBody: View {
     private var leftColumn: some View {
         switch mode {
         case .summary:
-            MeetingSummaryColumn(
-                summary: summary,
-                placeholder: summary.isEmpty ? summaryPlaceholder : nil
-            )
+            switch summaryContent {
+            case .summary:
+                MeetingSummaryColumn(
+                    summary: summary,
+                    placeholder: nil,
+                    controller: summaryController,
+                    onChange: onSummaryChange,
+                    onRewrite: onSummaryRewrite
+                )
+            case .transcript:
+                // Саммари ещё пишется. До тех пор колонка показывает то, что
+                // человек и читал минуту назад, — расшифровку.
+                MeetingTranscriptColumn(turns: turns, disclosure: transcriptDisclosure)
+            case .nothing(let text):
+                MeetingSummaryColumn(
+                    summary: .empty,
+                    placeholder: text,
+                    controller: summaryController,
+                    onChange: onSummaryChange,
+                    onRewrite: onSummaryRewrite
+                )
+            }
         case .transcript:
             MeetingTranscriptColumn(turns: turns, disclosure: transcriptDisclosure)
         }
     }
 }
 
+/// Две колонки пане́ли: встреча слева, заметки справа.
+///
+/// Одна на все состояния встречи — готовую и идущую. Заметки во время записи не
+/// «похожи» на заметки готовой встречи, а буквально они же: тот же композер, тот
+/// же список, те же правила схлопывания в кнопку. Разница между экранами ровно в
+/// левой колонке, поэтому только она и параметризована.
+struct PaneColumns<Left: View>: View {
+    let notes: [MeetingNote]
+    let composer: MeetingPaneBody.NoteComposer?
+    let onRevealNotes: (() -> Void)?
+    let notesFocusRequest: Binding<Bool>?
+    /// Left width held while the window grows for a notes reveal. Nil outside
+    /// that animation — ordinary split rules apply.
+    var pinnedLeftWidth: Binding<CGFloat?>? = nil
+    /// Отпечаток растущего содержимого левой колонки. Меняется — колонка
+    /// доезжает до низа. Нужен живому транскрипту: строка, которая появляется
+    /// ниже края окна, не показана. Nil у всего остального: саммари и готовый
+    /// транскрипт не растут, и уезжать им некуда.
+    var follow: String? = nil
+    @ViewBuilder let left: () -> Left
+
+    /// Пустышка в конце колонки — то, к чему доезжают.
+    private static var bottomAnchor: String { "pane-columns-bottom" }
+
+    var body: some View {
+        // The split is decided from the pane's real width, not from a
+        // breakpoint: the notes hold their column while the summary can keep its
+        // 520, and collapse to a button the moment it cannot. During a reveal
+        // the left width is pinned so the summary does not stretch and snap.
+        GeometryReader { geo in
+            let split = WindowReveal.paneSplit(
+                width: geo.size.width,
+                pinnedLeft: pinnedLeftWidth?.wrappedValue,
+                summaryMin: Tokens.Pane.summaryMinWidth,
+                notesMin: Tokens.Pane.notesMinWidth,
+                notesMax: Tokens.Pane.notesMaxWidth,
+                collapsedSlot: Tokens.Pane.notesCollapsedSide,
+                openAt: Tokens.Pane.notesCollapseBelow
+            )
+            // Notes stay put while the summary scrolls: they sit beside the
+            // scroll view, not inside it. Their own scroll covers a long list.
+            HStack(alignment: .top, spacing: 0) {
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical) {
+                        VStack(spacing: 0) {
+                            left()
+                            Color.clear
+                                .frame(height: 1)
+                                .id(Self.bottomAnchor)
+                        }
+                        .frame(width: split.left)
+                    }
+                    .scrollIndicators(.hidden)
+                    .onChange(of: follow) { _, _ in
+                        guard follow != nil else { return }
+                        withAnimation(.easeOut(duration: Tokens.Pane.followScroll)) {
+                            proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+                        }
+                    }
+                }
+                .frame(width: split.left)
+                if split.open {
+                    ScrollView(.vertical) {
+                        MeetingNotesColumn(
+                            notes: notes,
+                            composer: composer,
+                            focusRequest: notesFocusRequest
+                        )
+                        .frame(width: split.notes)
+                    }
+                    .frame(width: split.notes)
+                } else {
+                    CollapsedNotesButton(count: notes.count, onReveal: onRevealNotes)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .onChange(of: geo.size.width) { _, width in
+                clearPinIfSettled(paneWidth: width)
+            }
+        }
+    }
+
+    /// Drop the pin once the ordinary split would keep the same left width —
+    /// the animation has arrived, and pinning further would freeze the summary
+    /// against later resizes.
+    private func clearPinIfSettled(paneWidth: CGFloat) {
+        guard let pinned = pinnedLeftWidth?.wrappedValue else { return }
+        let natural = WindowReveal.paneSplit(
+            width: paneWidth,
+            pinnedLeft: nil,
+            summaryMin: Tokens.Pane.summaryMinWidth,
+            notesMin: Tokens.Pane.notesMinWidth,
+            notesMax: Tokens.Pane.notesMaxWidth,
+            collapsedSlot: Tokens.Pane.notesCollapsedSide,
+            openAt: Tokens.Pane.notesCollapseBelow
+        )
+        guard natural.open, abs(natural.left - pinned) < 1 else { return }
+        pinnedLeftWidth?.wrappedValue = nil
+    }
+}
+
 /// The notes, with nowhere to be — `notes-block` state `*-hidden`.
 ///
 /// Shown rather than dropped: a column that vanishes silently at a certain
-/// window width looks like the notes were lost.
+/// window width looks like the notes were lost. And pressed rather than merely
+/// looked at: the button says the notes are here, so it has to be able to
+/// produce them. It cannot make room itself — `onReveal` widens the window, and
+/// the composer takes the caret on the other side, so one click ends with a
+/// cursor in an empty note.
 struct CollapsedNotesButton: View {
     let count: Int
+    /// Absent in the gallery, where there is no window to grow. The button then
+    /// stays what it was: a marker that the notes are somewhere.
+    var onReveal: (() -> Void)?
 
     @State private var hovering = false
 
     var body: some View {
-        Image(systemName: "bubble.left.fill")
-            .font(.system(size: Tokens.Pane.headerIconSize, weight: .regular))
-            .foregroundStyle(hovering ? Tokens.Paint.Text.primary : Tokens.Pane.buttonIcon)
-            .frame(width: Tokens.Pane.headerButtonSide, height: Tokens.Pane.headerButtonSide)
-            .background(
-                hovering ? Tokens.Sidebar.rowHover : .clear,
-                in: RoundedRectangle(cornerRadius: Tokens.Pane.noteRadius, style: .continuous)
-            )
-            .frame(width: Tokens.Pane.notesCollapsedSide, height: Tokens.Pane.notesCollapsedSide)
-            .onHover { hovering = $0 }
-            .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
-            .help(count == 0 ? "Заметок нет" : "Заметок: \(count) — окно слишком узкое")
-            .accessibilityLabel("Заметки")
+        Button { onReveal?() } label: {
+            Image(systemName: "square.and.pencil")
+                .font(.system(size: Tokens.Pane.headerIconSize, weight: .regular))
+                .foregroundStyle(hovering ? Tokens.Paint.Text.primary : Tokens.Pane.buttonIcon)
+                .frame(width: Tokens.Pane.headerButtonSide, height: Tokens.Pane.headerButtonSide)
+                .background(
+                    hovering ? Tokens.Sidebar.rowHover : .clear,
+                    in: RoundedRectangle(cornerRadius: Tokens.Pane.noteRadius, style: .continuous)
+                )
+        }
+        .buttonStyle(.plain)
+        .disabled(onReveal == nil)
+        .frame(width: Tokens.Pane.notesCollapsedSide, height: Tokens.Pane.notesCollapsedSide)
+        .onHover { hovering = $0 && onReveal != nil }
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+        .help(hint)
+        .accessibilityLabel("Заметки")
+    }
+
+    /// Says what the click does, because widening the window is a big enough
+    /// consequence to warn about and too useful to hide behind a resize.
+    private var hint: String {
+        guard onReveal != nil else {
+            return count == 0 ? "Заметок нет" : "Заметок: \(count) — окно слишком узкое"
+        }
+        return count == 0
+            ? "Написать заметку — окно станет шире"
+            : "Заметок: \(count) — окно станет шире"
     }
 }

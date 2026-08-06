@@ -10,8 +10,8 @@ import PropellerPure
 /// content. The summary reads a markdown file (`AppState.resolvedRecapURL`), the
 /// letter reads another one, the transcript reads the entry's own segment
 /// snapshot — and with none of those present, twelve different states all drew
-/// their empty variant. "Саммари — конспект", "Саммари — правка" and "Письмо"
-/// were the same photograph of "Нет саммари".
+/// their empty variant: "Саммари — конспект" and "Саммари — правка" were the same
+/// photograph of "Нет саммари".
 ///
 /// So the fixture is a real archive in a temp directory: real files, real index,
 /// read through the app's own code paths. Nothing is simulated, which is the
@@ -68,10 +68,20 @@ enum GalleryFixture {
         let meetings = dir.appendingPathComponent("meetings")
         // Name by prefix + suffix only: that is all `RecapFile.isRecap` and the
         // follow-up lookup match on, so no slug has to be kept in sync.
-        try? recapMarkdown.write(to: meetings.appendingPathComponent("\(contentID)-recap.md"),
-                                 atomically: true, encoding: .utf8)
-        try? letterMarkdown.write(to: meetings.appendingPathComponent("\(contentID)-followup.md"),
-                                  atomically: true, encoding: .utf8)
+        // Every posed meeting that claims to be summarised gets a summary on disk.
+        //
+        // Only `contentID` used to get one, so «Всё готово» photographed a row at
+        // `.summarized` beside a pane saying «Саммари пока нет» — a state the app
+        // cannot be in (`RecordingStore.reconcileSummarizedStage` demotes a
+        // meeting whose recap file is missing, invariant I9). The fixture was the
+        // only thing that could produce it, and a reference of an impossible state
+        // is worse than a missing one.
+        for entry in allFixtureEntries where entry.status >= .summarized {
+            try? recapMarkdown.write(
+                to: meetings.appendingPathComponent("\(entry.id)-recap.md"),
+                atomically: true, encoding: .utf8
+            )
+        }
 
         for (id, duration) in audioRoster {
             writeSilentWav(id: id, duration: duration, into: dir.appendingPathComponent("recordings"))
@@ -79,20 +89,28 @@ enum GalleryFixture {
         NSLog("[GalleryFixture] archive at \(dir.path)")
     }
 
-    /// Every fixture meeting, with the length its row claims. Derived from the
-    /// entries themselves so a new screen cannot get audio that disagrees with
-    /// its own duration.
-    private static var audioRoster: [(String, Double)] {
+    /// Every meeting any frame can pose, deduplicated. One list so audio, recap
+    /// files and rows are all derived from the same set — a screen invented in one
+    /// place and forgotten in another is how the fixture lied about «Всё готово».
+    private static var allFixtureEntries: [RecordingEntry] {
         var seen = Set<String>()
-        var roster: [(String, Double)] = []
+        var out: [RecordingEntry] = []
         func add(_ entry: RecordingEntry) {
             guard seen.insert(entry.id).inserted else { return }
-            roster.append((entry.id, entry.duration))
+            out.append(entry)
         }
         library.forEach(add)
         UIStateCatalog.meetingStates.map(pipelineEntry(for:)).forEach(add)
         UIStateCatalog.detailTabs.map { tabEntry(for: $0.id) }.forEach(add)
-        return roster
+        UIStateCatalog.recording.map { recordingEntry(for: $0.id) }.forEach(add)
+        return out
+    }
+
+    /// Every fixture meeting, with the length its row claims. Derived from the
+    /// entries themselves so a new screen cannot get audio that disagrees with
+    /// its own duration.
+    private static var audioRoster: [(String, Double)] {
+        allFixtureEntries.map { ($0.id, $0.duration) }
     }
 
     /// Silence, sized to the meeting it belongs to.
@@ -150,31 +168,39 @@ enum GalleryFixture {
             poseTab(id, state: state)
             return
         }
+        if id.hasPrefix("rec-") {
+            poseRecording(id, state: state)
+            return
+        }
         switch id {
         case "lib-empty":
             state.recordingStore.recordings = []
-        case "lib-upcoming":
-            CalendarService.shared.upcoming = [upcoming]
         case "lib-deleted":
-            // The entry is *out* of the store and held as pending, exactly as a
-            // real deletion leaves it — the presenter is what puts it back in the
-            // list. Posing it any other way would photograph a row the app cannot
-            // produce.
+            // Soft-delete pose: out of the list, no «Вернуть» row. Same shape
+            // as a real delete after dissolve.
             if let victim = library.first {
                 state.recordingStore.recordings = Array(library.dropFirst())
                 state.galleryPoseDeletion(victim)
                 state.selectedRecordingID = library.dropFirst().first?.id
             }
+        case "rail-prompt-calendar":
+            state.galleryPoseSetupPrompt(.calendar)
+        case "rail-prompt-name":
+            state.galleryPoseSetupPrompt(.name)
         default:
-            break                       // lib-populated / lib-search / onboarding
+            break                       // lib-populated / lib-search / setup
         }
     }
 
     private static func reset(_ state: AppState) {
         state.galleryFrozen = true
         state.isRecording = false
+        state.galleryPoseRecording(nil)
+        state.galleryPosePaused(false)
+        state.live.end()
         state.galleryPose(activity: .idle)
         state.galleryEditingRecap = false
+        state.galleryRewritingSummary = false
         state.galleryRecapModelOverride = nil
         state.selectedRecordingID = nil
         // Not nil: the pane keeps whatever column it was last switched to, so a
@@ -184,8 +210,8 @@ enum GalleryFixture {
         state.pipelineError = nil
         state.galleryPoseDeletion(nil)
         state.galleryPoseMicDenied(false)
+        state.galleryPoseSetupPrompt(nil)
         state.recordingStore.recordings = library
-        CalendarService.shared.upcoming = []
     }
 
     private static func poseMeeting(_ meeting: UIStateCatalog.MeetingState, state: AppState) {
@@ -207,12 +233,43 @@ enum GalleryFixture {
 
         if meeting.stage == .recording {
             state.isRecording = true
+            state.galleryPoseRecording(posed.id)
+            state.selectedRecordingID = posed.id
             state.elapsedString = "12:38"
             state.elapsedSeconds = 758
         }
         // A meeting with nothing left to do says so on its own row and in its
         // card — the resting reason, not an error and not a button
         // (`design/no-dead-ends.md`).
+    }
+
+    /// Экран записи: живой транскрипт и он же на паузе.
+    ///
+    /// Реплики набираются теми же методами, что и настоящие — движка тут нет, а
+    /// правило склейки должно остаться тем же, иначе кадр показывает не то, что
+    /// увидит человек.
+    private static func poseRecording(_ id: String, state: AppState) {
+        let entry = recordingEntry(for: id)
+        state.recordingStore.recordings = [entry] + library
+        state.selectedRecordingID = entry.id
+        state.isRecording = true
+        state.galleryPoseRecording(entry.id)
+        state.elapsedString = "12:38"
+        state.elapsedSeconds = 758
+
+        var live = LiveTranscript()
+        live.absorb(channel: .owner, start: 731, end: 734,
+                         text: "Давай пройдёмся по вебхукам.")
+        live.absorb(channel: .remote, start: 736, end: 740,
+                         text: "Да, у нас там подпись не сходится на ретраях.")
+        live.absorb(channel: .owner, start: 742, end: 745,
+                         text: "Значит считаем её от исходного тела, а не от повторного.")
+        if id == "rec-live" {
+            live.absorb(channel: .remote, start: 754, end: 757,
+                        text: "Тогда я поправлю клиент и прогоню ретраи ещё раз.")
+        }
+        state.live.galleryPose(recordingID: entry.id, transcript: live)
+        if id == "rec-paused" { state.galleryPosePaused(true) }
     }
 
     private static func poseTab(_ id: String, state: AppState) {
@@ -225,6 +282,9 @@ enum GalleryFixture {
         case "tab-summary-empty-nomodel": state.galleryRecapModelOverride = true
         case "tab-summary-empty-ready":   state.galleryRecapModelOverride = false
         case "tab-summary-editing":       state.galleryEditingRecap = true
+        case "tab-summary-rewriting":
+            state.galleryEditingRecap = true
+            state.galleryRewritingSummary = true
         case "tab-transcript-failed":
             // The panel prints the *app's* current error, not the entry's own
             // record of it — which is how a real failure reaches this screen.
@@ -241,7 +301,6 @@ enum GalleryFixture {
         if id.hasPrefix("tab-summary")    { return "recap" }
         if id.hasPrefix("tab-notes")      { return "notes" }
         if id.hasPrefix("tab-transcript") { return "transcript" }
-        if id == "tab-letter"             { return "followUp" }
         return nil
     }
 
@@ -292,14 +351,23 @@ enum GalleryFixture {
             // `kind` is stated, not inferred: this screen only exists for a
             // failure with nothing left to try.
             failure: meeting.hasFailure
-                // The only shape a person can still see: nothing left to do,
-                // because the audio is gone. Posed explicitly rather than left to
+                // The only shape a person can still see: there was no speech in
+                // the recording. Posed explicitly rather than left to
                 // classification — a fixture that guessed would quietly stop
                 // posing this screen the day the message changed.
                 ? PipelineFailure(phase: .transcribing,
-                                  message: "Аудио удалено — расшифровывать нечего",
-                                  kind: .terminal, terminalReason: .audioDeleted)
+                                  message: MeetingRest.TerminalReason.noSpeech.logMessage,
+                                  kind: .terminal, terminalReason: .noSpeech)
                 : nil
+        )
+    }
+
+    /// Встреча, которая «пишется» на кадрах экрана записи.
+    static func recordingEntry(for id: String) -> RecordingEntry {
+        make(
+            id: "gal-\(id)", title: "Созвон по интеграции",
+            at: today(16, 5), duration: 758, stage: .recording,
+            notes: "Проверить подпись вебхука на ретраях"
         )
     }
 
@@ -319,33 +387,17 @@ enum GalleryFixture {
             return make(id: "gal-transcript-failed", title: "Созвон по интеграции",
                         at: today(16, 5), duration: 1_705, stage: .recorded,
                         // Retries do not run out any more, so the only way this
-                        // panel is reachable is an input that is gone.
-                        failure: PipelineFailure(phase: .transcribing,
-                                                 message: "Аудио удалено — расшифровывать нечего",
-                                                 kind: .terminal, terminalReason: .audioDeleted))
+                        // panel is reachable is an input with nothing in it.
+                        failure: PipelineFailure(
+                            phase: .transcribing,
+                            message: MeetingRest.TerminalReason.noSpeech.logMessage,
+                            kind: .terminal, terminalReason: .noSpeech))
         default:
             // Summary content / editing, letter, notes, transcript — the one
             // meeting with files behind it.
             return library[0]
         }
     }
-
-    private static var upcoming: UpcomingMeeting {
-        // Tomorrow morning, not "now + 40 minutes": always in the future, so
-        // auto-record has nothing to act on, and the row reads the same whether
-        // the export runs at noon or at midnight.
-        let start = tomorrow(10, 30)
-        return UpcomingMeeting(
-            id: "gal-upcoming",
-            title: "Ретро спринта",
-            start: start,
-            end: start.addingTimeInterval(45 * 60),
-            attendees: ["Кирилл", "Аня", "Максим"],
-            hasVideoLink: true
-        )
-    }
-
-    // MARK: - Building blocks
 
     private static func make(
         id: String,
@@ -458,22 +510,6 @@ enum GalleryFixture {
     ## Открытые вопросы
 
     - Кто принимает решение по корпусу после релиза.
-    """
-
-    private static let letterMarkdown = """
-    Привет!
-
-    Коротко по итогам встречи.
-
-    Дизайн-систему под веб начинаем сегодня, ориентир — понедельник. Компоненты
-    и сторибук закрываем сегодня, токены на себя берёт Кирилл, ревью назначили
-    на четверг.
-
-    По боту: текст первого сообщения пришлю сегодня вечером, выкладка — завтра
-    утром. Корпус решили не трогать до релиза, чтобы не растащить команду на две
-    задачи сразу.
-
-    Если что-то из этого выглядит иначе с вашей стороны — скажите, поправлю.
     """
 }
 #endif

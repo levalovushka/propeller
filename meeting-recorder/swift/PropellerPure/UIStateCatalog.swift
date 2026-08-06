@@ -63,9 +63,13 @@ public enum UIStateCatalog {
               stage: .transcribedRaw, involvement: .idle),
         .init(id: "05-diarizing",      label: "«Определяем спикеров…»",
               stage: .transcribedRaw, involvement: .working(.diarizing)),
-        .init(id: "06-saving",         label: "Транскрипт виден, идёт сохранение",
-              stage: .transcribed,    involvement: .working(.saving)),
-        .init(id: "07-queued-recap",   label: "Транскрипт готов, саммари в очереди",
+        // Two stages, one appearance, and that is the honest picture: «текст в
+        // индексе» and «файл на диске» differ only inside the app, and both read
+        // as «саммари в очереди». Kept as two frames so every stage is covered;
+        // the exporter reports them as identical, which they are.
+        .init(id: "06-transcript-ready", label: "Транскрипт готов, саммари в очереди",
+              stage: .transcribed,    involvement: .idle),
+        .init(id: "07-queued-recap",   label: "Файл записан, саммари в очереди",
               stage: .saved,          involvement: .idle),
         .init(id: "08-summarizing",    label: "«Генерируем саммари…»",
               stage: .saved,          involvement: .working(.summarizing)),
@@ -83,6 +87,13 @@ public enum UIStateCatalog {
     /// "forgotten".
     public static let stagesWithoutOwnScreen: Set<RecordingStage> = [.transcribing]
 
+    /// Phases with no screen of their own, for the same reason: `.saving` writes
+    /// the markdown inside the summarising job and is never scheduled alone
+    /// (`RecordingStage.nextPhase`). It used to have a state — «Транскрипт виден,
+    /// идёт сохранение» — which is one frame of a file write between two real
+    /// steps, and nobody has ever needed to look at it.
+    public static let phasesWithoutOwnScreen: Set<PipelineActivity.Phase> = [.saving]
+
     // MARK: - Other surfaces
 
     /// Screens outside the pipeline. No type to derive these from, so the list
@@ -96,19 +107,44 @@ public enum UIStateCatalog {
         }
     }
 
+    /// Настройка — одна плашка вместо шести.
+    ///
+    /// Ушли: карусель на четыре слайда, экран имени, экран календаря, экран про
+    /// модель саммари и «Готово». Первый описывал приложение тому, кто его только
+    /// что поставил; предпоследний объявлял загрузку, которая идёт сама; последний
+    /// существовал, чтобы его закрыли. Имя и календарь ничего не держат и теперь
+    /// спрашиваются из рельса — их состояния ниже, в `railPrompt`.
+    ///
+    /// Осталось три кадра: что видит человек до единственного разрешения, что
+    /// после микрофона и что после обоих. Запуск при входе — переключатель, а не
+    /// разрешение: он не может быть «выдан кем-то ещё», и отдельного кадра ему не
+    /// нужно.
     public static let onboarding: [Screen] = [
-        .init(id: "onb-01-welcome",            label: "Приветствие"),
-        .init(id: "onb-02-name",               label: "Имя"),
-        .init(id: "onb-03-calendar",           label: "Календарь — не подключён"),
-        .init(id: "onb-03-calendar-granted",   label: "Календарь — подключён"),
-        .init(id: "onb-04-permissions",        label: "Разрешения — ничего не выдано"),
-        .init(id: "onb-04-permissions-partial", label: "Разрешения — микрофон есть, экрана нет"),
-        .init(id: "onb-04-permissions-all",    label: "Разрешения — всё выдано"),
-        .init(id: "onb-05-model",              label: "Модель саммари — состояние"),
-        .init(id: "onb-05-model-downloading",  label: "Модель саммари — качается"),
-        .init(id: "onb-05-model-ready",        label: "Модель саммари — готова"),
-        .init(id: "onb-05-model-error",        label: "Модель саммари — ошибка установки"),
-        .init(id: "onb-06-end",                label: "Готово"),
+        .init(id: "onb-01-setup",              label: "Настройка — ничего не выдано"),
+        .init(id: "onb-01-setup-mic",          label: "Настройка — микрофон есть"),
+        .init(id: "onb-01-setup-all",          label: "Настройка — всё выдано"),
+    ]
+
+    /// Блок у подошвы рельса — то, что настройка не стала спрашивать экраном.
+    ///
+    /// Оба шага живут в приложении, поверх списка встреч, поэтому их кадры — это
+    /// кадры рельса, а не плашки. Снимаются в окне: вопрос, на который они
+    /// отвечают, — «не спорит ли блок со списком под ним».
+    public static let railPrompt: [Screen] = [
+        .init(id: "rail-prompt-calendar", label: "Рельс — «Подключите календарь» 1/2"),
+        .init(id: "rail-prompt-name",     label: "Рельс — «Как вас зовут?» 2/2"),
+    ]
+
+    /// Экран идущей записи.
+    ///
+    /// Отдельным списком, а не строками в `meetingStates`: пауза — не стадия
+    /// (её нет в `RecordingStage` и не должно быть: стадия — это чего встреча
+    /// достигла), а живой транскрипт — не состояние пайплайна вовсе. Стадия
+    /// `.recording` свой кадр имеет, `01-recording`, и это первая секунда, когда
+    /// ещё ничего не сказано.
+    public static let recording: [Screen] = [
+        .init(id: "rec-live",   label: "Запись — живой транскрипт"),
+        .init(id: "rec-paused", label: "Запись — пауза"),
     ]
 
     public static let detailTabs: [Screen] = [
@@ -116,7 +152,7 @@ public enum UIStateCatalog {
         .init(id: "tab-summary-empty-ready",   label: "Саммари — пусто, модель есть"),
         .init(id: "tab-summary-content",       label: "Саммари — конспект"),
         .init(id: "tab-summary-editing",       label: "Саммари — правка"),
-        .init(id: "tab-letter",                label: "Письмо"),
+        .init(id: "tab-summary-rewriting",     label: "Саммари — модель переписывает фрагмент"),
         .init(id: "tab-notes-empty",           label: "Заметки — пусто"),
         .init(id: "tab-notes-content",         label: "Заметки — есть"),
         .init(id: "tab-transcript-empty",      label: "Транскрипт — пусто"),
@@ -127,16 +163,14 @@ public enum UIStateCatalog {
     public static let library: [Screen] = [
         .init(id: "lib-empty",     label: "Список встреч — пусто"),
         .init(id: "lib-populated", label: "Список встреч — записи по секциям"),
-        .init(id: "lib-upcoming",  label: "Список встреч — с блоком Upcoming"),
         .init(id: "lib-search",    label: "Поиск ⌘K"),
-        // The undo lives on the row now, which makes it a state of the list and
-        // not of a floating bar. Photographed in the window for that reason: the
-        // question it answers is «видно ли её среди остальных».
-        .init(id: "lib-deleted",   label: "Список встреч — удалённая с\u{00A0}«Вернуть»"),
+        // After dissolve: the row is gone; restore is ⌘Z, not a list state.
+        .init(id: "lib-deleted",   label: "Список встреч — после удаления"),
     ]
 
     /// Everything the gallery has to be able to show, in shooting order.
     public static var allScreenIDs: [String] {
-        meetingStates.map(\.id) + (onboarding + detailTabs + library).map(\.id)
+        meetingStates.map(\.id)
+            + (recording + onboarding + railPrompt + detailTabs + library).map(\.id)
     }
 }

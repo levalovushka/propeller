@@ -89,7 +89,7 @@ final class PushPolicyTests: XCTestCase {
         XCTAssertEqual(PushPolicy.surface(for: .meetingReady, in: seen), .none)
         XCTAssertEqual(PushPolicy.surface(for: .recordingAutoStopped, in: seen), .none)
         XCTAssertEqual(PushPolicy.surface(for: .micDenied, in: seen), .none,
-                       "строка «Начать запись» уже говорит это в окне, которое перед человеком")
+                       "строка «Новая запись» уже говорит это в окне, которое перед человеком")
     }
 
     func testДогонАрхиваМолчит() {

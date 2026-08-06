@@ -1,4 +1,5 @@
 import AppKit
+import PropellerPure
 import PropellerUI
 import SwiftUI
 
@@ -8,9 +9,12 @@ enum AppWindowRole: String {
 
 @MainActor
 enum AppWindowRegistry {
-    /// Figma `sidebar` artboard (31:4580) — a 300 pt rail plus an 800 pt pane.
-    /// What the window *opens* at.
-    static let mainSize = CGSize(width: Tokens.Sidebar.width + 800, height: 640)
+    /// First-open size: rail + a pane narrow enough that notes stay a button.
+    /// After that, the frame the user left is restored (`frameAutosaveName`).
+    static let mainSize = CGSize(
+        width: Tokens.Sidebar.width + Tokens.Window.defaultPaneWidth,
+        height: 640
+    )
 
     /// The smallest the window may be dragged to — a different question, and
     /// using `mainSize` for both is what pinned the window at its opening width.
@@ -20,6 +24,15 @@ enum AppWindowRegistry {
         width: Tokens.Sidebar.width + Tokens.Window.contentPaneMinWidth,
         height: 480
     )
+
+    /// Our key in UserDefaults (`NSWindow Frame PropellerMain`). SwiftUI also
+    /// writes `main-AppWindow-1` for the same window — we read that as a
+    /// fallback so a resize the system already remembered is not thrown away.
+    static let frameAutosaveName = "PropellerMain"
+
+    /// SwiftUI's WindowGroup id `"main"` persists under this name. Do not
+    /// invent a second source of truth without reading it.
+    private static let swiftUIFrameKey = "NSWindow Frame main-AppWindow-1"
 
     static func mainWindow() -> NSWindow? {
         let onboarding = OnboardingPanelController.shared.panel
@@ -32,14 +45,21 @@ enum AppWindowRegistry {
     }
 
     /// Hide without destroying — used while the onboarding panel is up.
+    /// Does not write the frame: an unseen window's size is not a preference.
     static func hideMain() {
         guard let window = mainWindow() else { return }
         window.alphaValue = 0
         window.orderOut(nil)
     }
 
-    /// Show the main window at its final size, centered. Never grows from the
-    /// onboarding plate — that morph is what felt like a jerk.
+    /// Show the main window. Restores the user's last frame when there is one;
+    /// otherwise opens at `mainSize`, centred. Never grows from the onboarding
+    /// plate — that morph is what felt like a jerk.
+    ///
+    /// Important: do **not** call `placeCentered` when any saved frame exists.
+    /// The first persistence attempt restored only `PropellerMain`, which was
+    /// never written (SwiftUI saves `main-AppWindow-1`), so every reopen fell
+    /// through to the factory size and wiped the drag.
     static func showMain(centered: Bool = true) {
         NSApp.setActivationPolicy(.regular)
         guard let window = mainWindow() else {
@@ -47,11 +67,42 @@ enum AppWindowRegistry {
             return
         }
         window.alphaValue = 1
-        if centered {
+        rememberFrame(on: window)
+        if !applySavedFrame(to: window), centered {
             placeCentered(window, contentSize: mainSize)
+            persistFrame(window)
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Install autosave and a resize/move watcher. AppKit's autosave alone is
+    /// flaky under SwiftUI `WindowGroup` (race on close / `orderOut`); the
+    /// watcher writes the same key on every drag so the next `showMain` has
+    /// something to read.
+    static func rememberFrame(on window: NSWindow) {
+        _ = window.setFrameAutosaveName(frameAutosaveName)
+        MainWindowFramePersistence.shared.watch(window)
+    }
+
+    /// Grow the window until its content is at least `contentWidth` wide — what
+    /// a column that collapsed for want of room asks for when it is pressed.
+    /// Never shrinks, never leaves the screen; the arithmetic is `WindowReveal`.
+    static func widenMain(toContentWidth contentWidth: CGFloat) {
+        guard let window = mainWindow(),
+              let visible = (window.screen ?? NSScreen.main)?.visibleFrame
+        else { return }
+        let frame = window.frame
+        let chrome = frame.width - window.contentRect(forFrameRect: frame).width
+        let target = WindowReveal.frame(
+            revealing: contentWidth,
+            window: frame,
+            chromeWidth: chrome,
+            visible: visible
+        )
+        guard target != frame else { return }
+        window.setFrame(target, display: true, animate: true)
+        persistFrame(window)
     }
 
     static func placeCentered(_ window: NSWindow, contentSize: CGSize) {
@@ -67,6 +118,77 @@ enum AppWindowRegistry {
         if frame.minX < visible.minX { frame.origin.x = visible.minX }
         if frame.minY < visible.minY { frame.origin.y = visible.minY }
         window.setFrame(frame, display: true, animate: false)
+    }
+
+    static func persistFrame(_ window: NSWindow) {
+        window.saveFrame(usingName: frameAutosaveName)
+    }
+
+    /// Our key first, then SwiftUI's — so a frame saved before we owned the
+    /// name still opens where the user left it. Factory widths from earlier
+    /// defaults are ignored: they were written by `placeCentered`, not by a
+    /// person, and would hide every new opening size.
+    private static func applySavedFrame(to window: NSWindow) -> Bool {
+        let ownKey = "NSWindow Frame \(frameAutosaveName)"
+        if let own = UserDefaults.standard.string(forKey: ownKey),
+           !isSupersededFactoryFrame(own) {
+            window.setFrame(from: own)
+            return true
+        }
+        if let swiftUI = UserDefaults.standard.string(forKey: swiftUIFrameKey),
+           !isSupersededFactoryFrame(swiftUI) {
+            window.setFrame(from: swiftUI)
+            persistFrame(window)
+            return true
+        }
+        return false
+    }
+
+    /// Content widths we once forced on every launch (`300+800`, then `300+720`).
+    private static let supersededFactoryWidths: Set<Int> = [
+        Int(Tokens.Sidebar.width + 800),
+        Int(Tokens.Sidebar.width + 720),
+    ]
+
+    private static func isSupersededFactoryFrame(_ descriptor: String) -> Bool {
+        // `NSWindow` frame strings are "x y w h …".
+        let parts = descriptor.split(separator: " ")
+        guard parts.count >= 4, let width = Double(parts[2]) else { return false }
+        return supersededFactoryWidths.contains(Int(width.rounded()))
+    }
+}
+
+/// Writes `PropellerMain` on every user resize/move. `setFrameAutosaveName`
+/// alone was not enough: the window is often `orderOut`'d rather than closed,
+/// and AppKit then never flushes the frame.
+@MainActor
+private final class MainWindowFramePersistence {
+    static let shared = MainWindowFramePersistence()
+
+    private var watched: ObjectIdentifier?
+    private var observations: [NSObjectProtocol] = []
+
+    func watch(_ window: NSWindow) {
+        let id = ObjectIdentifier(window)
+        guard watched != id else { return }
+        observations.forEach { NotificationCenter.default.removeObserver($0) }
+        observations.removeAll()
+        watched = id
+
+        let center = NotificationCenter.default
+        for name in [NSWindow.didResizeNotification, NSWindow.didMoveNotification] {
+            observations.append(center.addObserver(
+                forName: name, object: window, queue: .main
+            ) { [weak self] note in
+                MainActor.assumeIsolated {
+                    guard let self,
+                          let noted = note.object as? NSWindow,
+                          ObjectIdentifier(noted) == self.watched
+                    else { return }
+                    AppWindowRegistry.persistFrame(noted)
+                }
+            })
+        }
     }
 }
 
@@ -103,6 +225,7 @@ struct SceneWindowChrome: NSViewRepresentable {
         if !window.styleMask.contains(.fullSizeContentView) {
             window.styleMask.insert(.fullSizeContentView)
         }
+        AppWindowRegistry.rememberFrame(on: window)
         positionTrafficLights(on: window)
         if startHidden, window.isVisible || window.alphaValue > 0 {
             window.alphaValue = 0

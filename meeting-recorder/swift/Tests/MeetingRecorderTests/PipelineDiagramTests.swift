@@ -30,7 +30,7 @@ final class PipelineDiagramTests: XCTestCase {
             recorded --> transcribed_raw: transcribing
             transcribing --> transcribed_raw: transcribing
             transcribed_raw --> transcribed: diarizing
-            transcribed --> saved: saving
+            transcribed --> summarized: summarizing
             saved --> summarized: summarizing
             summarized --> [*]
         """

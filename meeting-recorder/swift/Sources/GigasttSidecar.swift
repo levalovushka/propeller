@@ -329,7 +329,17 @@ final class GigasttSidecar: @unchecked Sendable {
             "--model-dir", modelDir.path,
             "--model-variant", Self.variant,
             "--port", "\(Self.port)",
-            "--pool-size", "1",
+            // Две: живой слой держит по сессии на дорожку всю встречу
+            // (`LiveTranscriptService`), и с одной триплетой вторая дорожка
+            // ждала бы первую до конца звонка. Замерено на живом потоке:
+            // 547 МБ RSS и ~1 ядро на две сессии — столько стоит видеть, что
+            // говорят, пока говорят.
+            "--pool-size", "2",
+            // Потолок сессии = потолок записи (`AppState.maxRecordingSeconds`).
+            // Не 0: «без ограничения» складывает бесконечность с моментом
+            // времени и роняет воркер сервера паникой — проверено 2026-08-05,
+            // сессия обрывалась сразу после `ready`.
+            "--max-session-secs", "28800",
             // Headroom for ~25–27 min 16 kHz mono chunks (client still chunks
             // longer meetings — body-limit alone cannot cover 2h files).
             "--body-limit-bytes", "\(GigasttChunking.serverBodyLimitBytes)",

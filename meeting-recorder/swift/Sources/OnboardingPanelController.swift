@@ -20,7 +20,7 @@ final class OnboardingPanelController {
     private(set) var panel: NSPanel?
     private weak var state: AppState?
 
-    private let contentSize = NSSize(width: Tokens.Card.width, height: Tokens.Card.height)
+    private let contentSize = NSSize(width: Tokens.Setup.width, height: Tokens.Setup.height)
 
     func show(state: AppState) {
         self.state = state
@@ -84,17 +84,29 @@ final class OnboardingPanelController {
 
     private func makePanel(state: AppState) -> NSPanel {
         let content = OnboardingContainer(state: state)
-            .environment(\.onboardingHostProvidesGlass, true)
             .frame(width: contentSize.width, height: contentSize.height)
-            .background(GlassBackground(cornerRadius: Tokens.Card.radius))
-            .clipShape(RoundedRectangle(cornerRadius: Tokens.Card.radius, style: .continuous))
+            .background(GlassBackground(cornerRadius: Tokens.Setup.radius))
+            .clipShape(RoundedRectangle(cornerRadius: Tokens.Setup.radius, style: .continuous))
             .ignoresSafeArea()
 
         // `.titled` + hidden transparent titlebar (not `.borderless`): AppKit
-        // delivers key events to TextField/Toggle. Hide traffic lights.
+        // delivers key events to TextField/Toggle.
+        //
+        // `.closable` is here for ⌘W, not for a disc. The plate has no titlebar
+        // row any more — the mark opens its content column instead, on the very
+        // margin the discs would sit on — so nothing is drawn, but the screen
+        // must still not be a trap: closing it leaves Propeller in the menu bar
+        // with setup still owed, and it comes back next launch with whatever
+        // grants were given in the meantime already ticked.
+        //
+        // Worth knowing if the discs ever come back: `standardWindowButton`
+        // returns **nil** for a button the style mask does not claim — measured
+        // on this panel's previous mask, `[.titled, .fullSizeContentView]`, which
+        // hands back nil for the close button. Showing them without claiming
+        // them is a no-op that reads as working code.
         let panel = OnboardingPanel(
             contentRect: NSRect(origin: .zero, size: contentSize),
-            styleMask: [.titled, .fullSizeContentView],
+            styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -105,8 +117,9 @@ final class OnboardingPanelController {
 
         let hosting = NSHostingView(rootView: content)
         hosting.frame = NSRect(origin: .zero, size: contentSize)
+        hosting.autoresizingMask = [.width, .height]
         hosting.wantsLayer = true
-        hosting.layer?.cornerRadius = Tokens.Card.radius
+        hosting.layer?.cornerRadius = Tokens.Setup.radius
         hosting.layer?.masksToBounds = true
         panel.contentView = hosting
 
@@ -121,10 +134,19 @@ final class OnboardingPanelController {
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.contentView?.wantsLayer = true
 
-        panel.standardWindowButton(.closeButton)?.isHidden = true
-        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        panel.standardWindowButton(.zoomButton)?.isHidden = true
+        hideTrafficLights(on: panel)
 
         return panel
+    }
+
+    /// No discs on the plate.
+    ///
+    /// The comps put the mark where they would go, on the content column's own
+    /// top-left margin (Figma 91:934) — two things cannot have that corner. The
+    /// way out is ⌘W, which `.closable` gives without drawing anything.
+    private func hideTrafficLights(on panel: NSPanel) {
+        for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            panel.standardWindowButton(type)?.isHidden = true
+        }
     }
 }

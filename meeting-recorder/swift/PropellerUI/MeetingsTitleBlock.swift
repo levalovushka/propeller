@@ -53,7 +53,7 @@ public struct MeetingsTitleBlock: View {
                     systemName: "record.circle",
                     prominence: .minimal,
                     iconSize: 15,
-                    weight: .medium,
+                    weight: .regular,
                     action: onRecord
                 )
                 .help("Запись (⌘R)")

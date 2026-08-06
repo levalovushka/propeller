@@ -31,7 +31,8 @@ public enum MeetingRest: Equatable, Sendable {
         case network
     }
 
-    /// Законные концы. Все три — про вход, ни один — про нашу неудачу.
+    /// Законные концы. Все — про вход или про настройки, ни один — про нашу
+    /// неудачу.
     /// `Codable`, потому что причина остановки лежит на записи и переживает
     /// перезапуск: карточка обязана сказать то же самое и завтра.
     public enum TerminalReason: String, Codable, Equatable, Sendable, CaseIterable {
@@ -39,8 +40,6 @@ public enum MeetingRest: Equatable, Sendable {
         case complete
         /// В записи не нашлось речи.
         case noSpeech
-        /// Аудио удалено человеком — расшифровывать нечего.
-        case audioDeleted
         /// Саммари выключено в настройках: значит встреча готова без него.
         case summariesOff
 
@@ -51,7 +50,6 @@ public enum MeetingRest: Equatable, Sendable {
             switch self {
             case .complete:     return "обработка завершена"
             case .noSpeech:     return "в записи не нашлось речи"
-            case .audioDeleted: return "аудио удалено — расшифровывать нечего"
             case .summariesOff: return "саммари выключено в настройках"
             }
         }
@@ -74,8 +72,6 @@ public enum MeetingRest: Equatable, Sendable {
             return nil
         case .done(.noSpeech):
             return "В записи не нашлось речи"
-        case .done(.audioDeleted):
-            return "Аудио удалено"
         case .done(.summariesOff):
             return "Саммари выключено в\u{00A0}настройках"
         }

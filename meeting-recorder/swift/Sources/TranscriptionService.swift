@@ -211,7 +211,7 @@ class TranscriptionService {
         )
 
         let unmerged = mergedSegments.filter { !$0.text.isEmpty }
-        let ownerName = Preferences.shared.userName
+        let ownerName = Preferences.shared.ownerName
         let useSourceSplit = Self.hasUsableStems(for: audioURL)
         // Clustering happened at all? Nothing downstream can tell from the
         // labels alone — one speaker is a legitimate diarization of a monologue.
@@ -266,7 +266,7 @@ class TranscriptionService {
         systemStemOffset: Double = 0
     ) -> [PersistedSegment]? {
         guard Self.hasUsableStems(for: audioURL) else { return nil }
-        let ownerName = Preferences.shared.userName
+        let ownerName = Preferences.shared.ownerName
         return segments.map { seg in
             let source = Self.captureSource(
                 audioURL: audioURL,
@@ -335,7 +335,7 @@ class TranscriptionService {
         audioURL: URL,
         systemStemOffset: Double
     ) -> [String: String] {
-        let ownerName = Preferences.shared.userName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ownerName = Preferences.shared.ownerName
         guard !ownerName.isEmpty else { return [:] }
 
         var best: (label: String, talkTime: Float)?

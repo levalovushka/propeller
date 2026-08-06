@@ -26,13 +26,21 @@ public enum RecapMetadataParser {
             guard let t = rawTitle, !t.isEmpty, t.lowercased() != "null" else { return nil }
             return t
         }()
-        let topics = (obj["topics"] as? [Any])?
-            .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty } ?? []
+        // Held to length here rather than at the row: the topics are persisted
+        // and read by the pane too, and every backend arrives through this call.
+        let topics = TopicText.tightened(
+            (obj["topics"] as? [Any])?.compactMap { $0 as? String } ?? []
+        )
         let tags = (obj["tags"] as? [Any])?
             .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { allowedTags.contains($0) } ?? []
         return Metadata(title: title, topics: topics, tags: tags)
+    }
+
+    /// Lift the first glyph — used on the joined subtitle, not on each topic.
+    public static func capitalizingFirst(_ text: String) -> String {
+        guard let first = text.first else { return text }
+        return String(first).uppercased() + text.dropFirst()
     }
 
     private static func decodeObject(_ s: String) -> [String: Any]? {
@@ -101,6 +109,94 @@ public enum RecapMetadataParser {
             t = t.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return t
+    }
+}
+
+/// What a meeting says about itself in the rail, held to a length.
+///
+/// The topics are written by the model, and the prompt is what shapes them —
+/// measured over the archive's own recaps it moved the average from 7.2 words a
+/// topic to about four. What a prompt cannot do is bound the *worst* case: the
+/// same prompt on the same summary, run twice, returned «гибридная модель
+/// главной страницы с фокусом на Fast-play и Discovery через теги» on the second
+/// pass. The rail has no line limit — a description that long is simply a row
+/// six lines tall, pushing the rest of the day off screen.
+///
+/// So the shape is settled here rather than hoped for there.
+public enum TopicText {
+
+    /// Longest a topic is left alone. Two words above what the prompt asks for,
+    /// deliberately: this is a guard against the outlier, not a second opinion
+    /// about the wording. Six words is a slightly long line; twelve is a
+    /// paragraph in a 300 pt rail.
+    public static let wordBudget = 7
+
+    /// The prompt asks for two or three. A model that returns six writes the row
+    /// a list, so the extra ones are dropped rather than rendered.
+    public static let maxTopics = 3
+
+    /// Words that begin a tail rather than the thing itself. Cutting in front of
+    /// one is exactly the compression the prompt describes — «отказ от
+    /// дизайн-системы в пользу точного сетапа проекта» is about the refusal, and
+    /// everything from «в пользу» on is the sentence explaining itself.
+    private static let tailStarters: Set<String> = [
+        "с", "со", "за", "в", "во", "для", "через", "вместо", "ради", "при",
+        "по", "из", "от", "до", "о", "об", "обо", "на", "к", "ко", "у", "без",
+        "под", "над", "про", "и", "а", "или", "чтобы", "что", "как", "где",
+        "когда", "который", "которая", "которые",
+    ]
+
+    public static func tightened(_ topics: [String]) -> [String] {
+        var seen = Set<String>()
+        var out: [String] = []
+        for topic in topics {
+            let tight = tightened(topic)
+            guard !tight.isEmpty else { continue }
+            // Two topics that compress to the same words say it once.
+            guard seen.insert(tight.lowercased()).inserted else { continue }
+            out.append(tight)
+            if out.count == maxTopics { break }
+        }
+        return out
+    }
+
+    /// One topic, trimmed of the punctuation the prompt asked it not to add and
+    /// of the tail it was asked not to write.
+    ///
+    /// A topic with no place to cut is left long. Half a phrase reads as a bug;
+    /// a long one only reads as verbose, and the recap still has the full
+    /// sentence.
+    public static func tightened(_ topic: String) -> String {
+        let words = topic
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(whereSeparator: { $0.isWhitespace })
+            .map(String.init)
+        guard !words.isEmpty else { return "" }
+
+        var kept = words
+        // The last word carries whatever the model put at the end of the phrase.
+        kept[kept.count - 1] = trimmingTrailingPunctuation(kept[kept.count - 1])
+        if kept[kept.count - 1].isEmpty { kept.removeLast() }
+        guard kept.count > wordBudget else { return kept.joined(separator: " ") }
+
+        // From index 2: a topic has to keep a subject, and «отказ от …» must not
+        // be cut down to «отказ». The first boundary, not the last one that
+        // would fit — cutting late leaves the preposition without its object
+        // («… с фокусом»), which is worse than the long line it replaced.
+        guard let cut = kept.indices.first(where: { index in
+            index >= 2 && tailStarters.contains(kept[index].lowercased())
+        }), cut <= wordBudget else {
+            return kept.joined(separator: " ")
+        }
+        return kept[..<cut].joined(separator: " ")
+    }
+
+    private static func trimmingTrailingPunctuation(_ word: String) -> String {
+        var out = word
+        while let last = out.last, ".,;:…".contains(last) {
+            out.removeLast()
+        }
+        return out
     }
 }
 

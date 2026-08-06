@@ -67,7 +67,7 @@ private struct GeneralSettingsPane: View {
                         if on {
                             Task { await CalendarService.shared.enableAndLoad() }
                         } else {
-                            CalendarService.shared.upcoming = []
+                            CalendarService.shared.events = []
                         }
                     }
                 Text("Читает macOS Календарь (включая Google/Exchange из Системных настроек → Интернет-аккаунты). Данные не покидают Mac.")
@@ -410,6 +410,7 @@ private struct RecapSettingsPane: View {
 
 private struct ExportSettingsPane: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.undoManager) private var undoManager
     @AppStorage("markdownOutputFormat") private var markdownOutputFormat = MarkdownOutputFormat.simple.rawValue
     @AppStorage("meetingsPath") private var meetingsPath = ""
     @AppStorage("recordingsPath") private var recordingsPath = ""
@@ -479,7 +480,7 @@ private struct ExportSettingsPane: View {
                         }
                         .controlSize(.small)
                         Button("Удалить встречу", role: .destructive) {
-                            appState.removeRecording(entry)
+                            appState.removeRecording(entry, undoManager: undoManager)
                         }
                         .controlSize(.small)
                     }

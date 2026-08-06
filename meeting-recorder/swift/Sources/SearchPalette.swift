@@ -42,7 +42,7 @@ struct SearchPalette: View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
-                    .typo(Tokens.Typography.Label.mdMedium)
+                    .font(.system(size: 14, weight: .regular))
                     .foregroundStyle(Tokens.Ink.quaternary)
                 TextField("Поиск встреч и транскриптов…", text: $query)
                     .textFieldStyle(.plain)
@@ -285,7 +285,7 @@ struct SearchPalette: View {
             case .recording(let match):
                 let entry = match.entry
                 Image(systemName: "mic")
-                    .typo(Tokens.Typography.Label.mdMedium)
+                    .font(.system(size: 14, weight: .regular))
                     .foregroundStyle(Tokens.Ink.quaternary)
                     .frame(width: 20)
                 VStack(alignment: .leading, spacing: 2) {
@@ -318,7 +318,7 @@ struct SearchPalette: View {
                 }
             case .startRecording:
                 Image(systemName: "record.circle")
-                    .typo(Tokens.Typography.Label.mdMedium)
+                    .font(.system(size: 14, weight: .regular))
                     .foregroundStyle(Color.red.opacity(0.9))
                     .frame(width: 20)
                 Text("Записать")
@@ -328,7 +328,7 @@ struct SearchPalette: View {
             Spacer(minLength: 0)
             if highlighted {
                 Image(systemName: "return")
-                    .typo(Tokens.Typography.Label.xsMedium)
+                    .font(.system(size: 10, weight: .regular))
                     .foregroundStyle(Tokens.Ink.tertiary)
             }
         }

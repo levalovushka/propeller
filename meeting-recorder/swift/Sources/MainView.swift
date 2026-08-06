@@ -7,10 +7,8 @@ import PropellerUI
 struct MainView: View {
     @ObservedObject var state: AppState
     @ObservedObject var recordingStore: RecordingStore
+    @Environment(\.undoManager) private var undoManager
     @State private var showSearchPalette = false
-    @State private var hoveredRowID: String?
-    /// nil = all; otherwise owner name or "Speaker N".
-    @State private var speakerFilter: String?
     @ObservedObject private var calendar = CalendarService.shared
 
     /// Browser-style history: `nil` = meetings list, otherwise a recording id.
@@ -18,9 +16,6 @@ struct MainView: View {
     @State private var navStack: [String?] = [nil]
     @State private var navIndex: Int = 0
     @State private var suppressNavRecord = false
-
-    /// Stub / empty takes shorter than this stay out of the feed (reqs §1).
-    private static let stubDurationThreshold: TimeInterval = 5
 
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -30,9 +25,11 @@ struct MainView: View {
     }()
 
     /// Back is available whenever we can leave the meeting detail (or step history).
+    ///
+    /// Запись ничего из этого не запрещает: она идёт своим ходом, а окно всё это
+    /// время остаётся окном — можно уйти в другую встречу и вернуться.
     private var canGoBack: Bool {
-        if state.isRecording { return false }
-        return navIndex > 0 || state.selectedRecordingID != nil
+        navIndex > 0 || state.selectedRecordingID != nil
     }
     private var canGoForward: Bool { navIndex + 1 < navStack.count }
 
@@ -45,9 +42,33 @@ struct MainView: View {
     @State private var paneMode: MeetingPaneMode = .summary
     /// What is being typed into the notes composer.
     @State private var draftNote = ""
+    /// Raised when the collapsed notes button is pressed, lowered by the
+    /// composer once it has the caret — so widening the window lands you in a
+    /// new note rather than merely next to one.
+    @State private var focusNoteComposer = false
+    /// Left column width held while the window grows for the notes, so the
+    /// summary does not stretch and snap back. Cleared when the ordinary split
+    /// would keep the same width.
+    @State private var notesRevealLeft: CGFloat?
     /// Raised by «Поделиться»; the anchor lowers it once the sheet is up.
     @State private var showShareSheet = false
+    /// Записываемая встреча, которую попросили удалить. Спрашиваем один раз —
+    /// это удаление необратимо, в отличие от всех остальных.
+    @State private var discardConfirmation: RecordingEntry?
 
+    /// The summary being read and edited, and which meeting it belongs to.
+    ///
+    /// Held here rather than re-read from disk on every draw — which is what the
+    /// pane did while the summary was read-only — because now the newest version
+    /// is the one under the caret, and a re-read mid-word would type over it.
+    @State private var summary = SummaryDocument.empty
+    @State private var summaryOf: String?
+    /// The caret and what the action bar does to it. `@StateObject`, so the
+    /// selection survives the pane being rebuilt on every keystroke elsewhere.
+    @StateObject private var summaryEditing = SummaryEditorController()
+    /// Writes are debounced: a summary is saved when typing pauses, and flushed
+    /// when the meeting changes or the window closes.
+    @State private var summarySave: DispatchWorkItem?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -77,18 +98,51 @@ struct MainView: View {
             selectNewestIfNothingChosen()
         }
         .onDisappear {
+            flushSummarySave()
             state.isWindowOpen = false
             NSApp.setActivationPolicy(.accessory)
         }
         .onChange(of: state.selectedRecordingID) { _, newID in
+            // Before the switch, not after: the pending write belongs to the
+            // meeting that was open, and a moment later there is no way to
+            // learn which one that was.
+            flushSummarySave()
             recordNav(to: newID)
+            loadSummary()
         }
+        // The summary lands when the worker finishes, and the pane is already
+        // open on that meeting — so the arrival is an activity change, not a
+        // selection one.
+        .onChange(of: state.activity) { _, _ in loadSummary() }
+        .onAppear {
+            loadSummary()
+            poseSummarySelectionIfAsked()
+        }
+        // A shot of a half-swept column differs from the next shot of the same
+        // column, and the gallery exists to answer «что изменилось».
+        .environment(\.summaryRevealFrozen, isPosedForAScreenshot)
         // The pipeline asks for a column when it finishes something («саммари
         // готово» → the summary). Nothing honoured that after the redesign: the
         // request was written and dropped, because the pane's mode is local
         // `@State` and the old detail view was the only reader.
         .onChange(of: state.preferredDetailTab) { _, _ in adoptPreferredColumn() }
         .onAppear { adoptPreferredColumn() }
+        .confirmationDialog(
+            "Удалить встречу, которая пишется?",
+            isPresented: Binding(
+                get: { discardConfirmation != nil },
+                set: { if !$0 { discardConfirmation = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Остановить и удалить", role: .destructive) {
+                discardConfirmation = nil
+                state.cancelRecording()
+            }
+            Button("Продолжить запись", role: .cancel) { discardConfirmation = nil }
+        } message: {
+            Text("Запись остановится, аудио и заметки этой встречи удалятся.")
+        }
         .sheet(isPresented: $showSearchPalette) {
             SearchPalette(
                 state: state,
@@ -101,10 +155,20 @@ struct MainView: View {
         }
         .background {
             Button("") {
-                if state.isRecording { state.stopRecording() }
-                else { state.startRecording() }
+                guard !state.isRecording else { return }
+                state.startRecording()
             }
             .keyboardShortcut("r", modifiers: .command)
+            .hidden()
+
+            // ⌘. останавливает запись из любой встречи, а не только с её
+            // экрана: во время записи можно уйти читать другую, и оттуда тоже
+            // надо уметь остановиться.
+            Button("") {
+                guard state.isRecording else { return }
+                state.stopRecording()
+            }
+            .keyboardShortcut(".", modifiers: .command)
             .hidden()
 
             Button("") {
@@ -125,7 +189,6 @@ struct MainView: View {
     /// There is no list screen any more, so "nothing selected" is not a state
     /// the pane can usefully show — the newest meeting stands in for it.
     private func selectNewestIfNothingChosen() {
-        guard !state.isRecording else { return }
         // Also re-run when the chosen meeting has left the list, so the pane
         // never shows something the rail does not. Nothing is filtered out of
         // the rail any more — short recordings are easy enough to delete that
@@ -165,17 +228,51 @@ struct MainView: View {
             },
             onDeleteMeeting: { id in
                 guard let entry = recordingStore.recordings.first(where: { $0.id == id }) else { return }
-                state.removeRecording(entry)
+                // Удалить встречу, которая пишется, — единственное удаление в
+                // приложении, которое ⌘Z не вернёт: аудио ещё не дописано, и
+                // возвращать будет нечего. Поэтому спрашиваем — здесь, а не в
+                // `AppState`: вопрос задаёт тот, у кого есть окно.
+                if isBeingRecorded(entry) {
+                    discardConfirmation = entry
+                } else {
+                    state.removeRecording(entry, undoManager: undoManager)
+                }
             },
-            onRestoreMeeting: { _ in state.undoDeletion() },
-            onToggle: { sidebarVisible = false }
+            onRestoreMeeting: nil,
+            onCopySummary: { id in
+                guard let entry = recordingStore.recordings.first(where: { $0.id == id }) else { return }
+                copySummary(entry)
+            },
+            onShareMeeting: { id in
+                guard let entry = recordingStore.recordings.first(where: { $0.id == id }) else { return }
+                shareMeetingNearCursor(entry)
+            },
+            onRevealMeeting: { id in
+                guard let entry = recordingStore.recordings.first(where: { $0.id == id }) else { return }
+                revealInFinder(entry)
+            },
+            dissolvingMeetingID: state.dissolvingMeetingID,
+            onDissolveFinished: { state.finishDissolvingDeletion() },
+            onToggle: { sidebarVisible = false },
+            onPromptAction: { id in
+                // Only the calendar step has a button; the id comes back so the
+                // window is not guessing which question it just answered.
+                guard SetupPrompt(rawValue: id) == .calendar else { return }
+                state.connectCalendarFromRail()
+            },
+            onPromptSubmit: { id, value in
+                guard SetupPrompt(rawValue: id) == .name else { return }
+                state.setOwnerNameFromRail(value)
+            }
         )
     }
 
     private func performNav(_ id: String) {
         switch SidebarPresenter.NavAction(rawValue: id) {
         case .record:
-            if state.isRecording { state.stopRecording() } else { state.startRecording() }
+            // Stop lives in the recording pane (and ⌘.). This row only starts.
+            guard !state.isRecording else { return }
+            state.startRecording()
         case .search:
             showSearchPalette = true
             Analytics.signal("Search.opened")
@@ -199,21 +296,16 @@ struct MainView: View {
     // MARK: - Content pane
 
     private var contentPane: some View {
-        ZStack(alignment: .bottomTrailing) {
-            VStack(spacing: 0) {
-                topBar
-                    .zIndex(2)
-                mainArea
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-
-            if state.isRecording {
-                recordingEdgeGlow
-                    .allowsHitTesting(false)
-                    .zIndex(1)
-            }
-
+        VStack(spacing: 0) {
+            topBar
+                .zIndex(2)
+            mainArea
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        // Свечения по краям окна во время записи больше нет. Оно светилось
+        // уровнями двух дорожек — то есть отвечало на вопрос «работает ли
+        // захват» тем, что красило края экрана всю встречу. На этот вопрос
+        // теперь отвечает сам транскрипт: если реплики появляются, звук идёт.
         // Nothing floats over the pane. What the app has to say about a meeting
         // is said by that meeting's row.
         // The rail carries its own 300; the pane only has to stay readable.
@@ -231,16 +323,40 @@ struct MainView: View {
     /// navigation bar it already had.
     @ViewBuilder
     private var topBar: some View {
-        if let entry = state.selectedRecording, !state.isRecording {
+        if let entry = state.selectedRecording, isBeingRecorded(entry) {
+            HStack(spacing: 0) {
+                if !sidebarVisible {
+                    collapsedChrome
+                }
+                RecordingPaneHeader(
+                    meetingID: entry.id,
+                    title: entry.title,
+                    elapsed: state.elapsedString,
+                    isPaused: state.isRecordingPaused,
+                    onRename: { id, newTitle in state.renameRecording(id: id, to: newTitle) },
+                    onPause: {
+                        if state.isRecordingPaused {
+                            state.resumeRecording()
+                        } else {
+                            state.pauseRecording()
+                        }
+                    },
+                    onStop: { state.stopRecording() }
+                )
+            }
+            .frame(height: Tokens.Sidebar.headerHeight)
+        } else if let entry = state.selectedRecording {
             HStack(spacing: 0) {
                 if !sidebarVisible {
                     collapsedChrome
                 }
                 MeetingPaneHeader(
-                    title: entry.title.isEmpty ? "Без названия" : entry.title,
-                    time: Self.headerTime(for: entry),
-                    participants: participantsLabel(for: entry),
-                    onCopy: { copyPaneText(for: entry) },
+                    meetingID: entry.id,
+                    title: entry.title,
+                    // By id, not by `entry`: the rename that arrives when you
+                    // switch meetings mid-edit belongs to the meeting it was
+                    // typed into, which by then is no longer the selected one.
+                    onRename: { id, newTitle in state.renameRecording(id: id, to: newTitle) },
                     share: .init("Поделиться") { showShareSheet = true }
                 ) {
                     Picker("Показать", selection: $paneMode) {
@@ -253,7 +369,9 @@ struct MainView: View {
                     Button("Удалить аудио") { state.deleteAudioFile(entry) }
                         .disabled(!entry.audioFileExists)
                     Divider()
-                    Button("Удалить встречу", role: .destructive) { state.removeRecording(entry) }
+                    Button("Удалить встречу", role: .destructive) {
+                        state.removeRecording(entry, undoManager: undoManager)
+                    }
                 }
             }
             .frame(height: Tokens.Sidebar.headerHeight)
@@ -267,33 +385,24 @@ struct MainView: View {
         }
     }
 
-    /// Copies what the pane is currently showing — the summary or the
-    /// transcript. The button sits next to that column, so copying the *other*
-    /// one would be a surprise.
-    private func copyPaneText(for entry: RecordingEntry) {
-        let text: String
-        switch paneMode {
-        case .summary:
-            text = Self.recapMarkdown(for: entry)
-        case .transcript:
-            text = transcriptTurns(for: entry)
-                .map { "\($0.speaker) \($0.time)\n\($0.text)" }
-                .joined(separator: "\n\n")
-        }
-        guard !text.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-
-    /// The markdown file when there is one — sharing a file lets the receiving
-    /// app decide what to do with it — otherwise the text itself.
+    /// Summary as plain text when there is one — so system Copy lands in
+    /// Telegram as readable prose, not as a `.md` filename. File URL only when
+    /// there is no summary to share.
     private func shareItems(for entry: RecordingEntry) -> [Any] {
-        if paneMode == .summary, let url = AppState.resolvedRecapURL(for: entry) {
-            return [url]
+        if let text = plainSummary(for: entry), !text.isEmpty {
+            return [text]
         }
         if let url = markdownURL(for: entry) { return [url] }
         let text = Self.recapMarkdown(for: entry)
         return text.isEmpty ? [] : [text]
+    }
+
+    /// Summary stripped of markdown — clipboard / share payload for chat apps.
+    private func plainSummary(for entry: RecordingEntry) -> String? {
+        let markdown = Self.recapMarkdown(for: entry)
+        guard !markdown.isEmpty else { return nil }
+        let plain = SummaryDocument.parse(markdown: markdown).plainText
+        return plain.isEmpty ? nil : plain
     }
 
     /// Traffic-light slot and the re-open toggle, for when the rail is away.
@@ -306,19 +415,6 @@ struct MainView: View {
             }
         }
         .padding(.leading, Tokens.Window.chromePadding)
-    }
-
-    private static func headerTime(for entry: RecordingEntry) -> String {
-        let f = DateFormatter()
-        f.locale = SidebarDayGrouping.locale
-        f.dateFormat = "HH:mm, d MMMM"
-        return f.string(from: entry.date)
-    }
-
-    private func participantsLabel(for entry: RecordingEntry) -> String? {
-        let names = state.distinctSpeakerNames(for: entry)
-        guard !names.isEmpty else { return nil }
-        return "\(names.count) участников"
     }
 
     private var listTopBar: some View {
@@ -338,7 +434,7 @@ struct MainView: View {
                         systemName: "chevron.left",
                         prominence: .minimal,
                         iconSize: 14,
-                        weight: .medium,
+                        weight: .regular,
                         enabled: canGoBack
                     ) { goBack() }
                     .help("Назад")
@@ -347,7 +443,7 @@ struct MainView: View {
                         systemName: "chevron.right",
                         prominence: .minimal,
                         iconSize: 14,
-                        weight: .medium,
+                        weight: .regular,
                         enabled: canGoForward
                     ) { goForward() }
                     .help("Вперёд")
@@ -356,7 +452,7 @@ struct MainView: View {
                         systemName: "magnifyingglass",
                         prominence: .minimal,
                         iconSize: 14,
-                        weight: .medium
+                        weight: .regular
                     ) {
                         showSearchPalette = true
                         Analytics.signal("Search.opened")
@@ -438,32 +534,6 @@ struct MainView: View {
         navIndex = navStack.count - 1
     }
 
-    /// Mic glow on the leading edge, system on the trailing — live proof both stems work.
-    private var recordingEdgeGlow: some View {
-        let mic = Double(state.recorder.micLevelHistory.last ?? 0)
-        let sys = Double(state.recorder.systemLevelHistory.last ?? 0)
-        return ZStack {
-            HStack(spacing: 0) {
-                LinearGradient(
-                    colors: [Color.red.opacity(0.15 + mic * 0.55), .clear],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-                .frame(width: 28)
-                Spacer(minLength: 0)
-                LinearGradient(
-                    colors: [.clear, Color.cyan.opacity(0.12 + sys * 0.50)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-                .frame(width: 28)
-            }
-        }
-        .ignoresSafeArea()
-        .animation(.easeOut(duration: 0.08), value: mic)
-        .animation(.easeOut(duration: 0.08), value: sys)
-    }
-
     private var topStatusText: String? {
         if let frac = state.ollamaSetupProgress {
             let msg = state.ollamaSetupMessage.isEmpty
@@ -487,22 +557,47 @@ struct MainView: View {
     /// an archive with nothing in it yet.
     @ViewBuilder
     private var mainArea: some View {
-        if state.isRecording {
-            RecordingInProgressView(state: state, recorder: state.recorder)
-                .padding(.horizontal, Tokens.Window.chromePadding)
-                .frame(maxWidth: .infinity)
+        if let entry = state.selectedRecording, isBeingRecorded(entry) {
+            RecordingPaneView(
+                live: state.live,
+                entry: entry,
+                isPaused: state.isRecordingPaused,
+                ownerName: Preferences.shared.ownerName,
+                notes: noteModels(for: entry),
+                composer: .init(text: $draftNote) { commitNote(for: entry) },
+                onRevealNotes: revealNotes,
+                notesFocusRequest: $focusNoteComposer,
+                pinnedLeftWidth: $notesRevealLeft
+            )
+            .frame(maxWidth: .infinity)
         } else if let entry = state.selectedRecording {
             MeetingPaneBody(
                 mode: paneMode,
-                summary: RecapPresentation.summary(fromMarkdown: Self.recapMarkdown(for: entry)),
+                summary: summary,
                 turns: transcriptTurns(for: entry),
                 notes: noteModels(for: entry),
                 composer: .init(text: $draftNote) { commitNote(for: entry) },
-                // Two facts, two homes: what the transcript is, and why the
-                // summary is not here yet. Joined into one line they read as one
-                // thought and neither was legible.
-                summaryPlaceholder: state.rest(of: entry).disclosure ?? "Саммари пока нет",
-                transcriptDisclosure: entry.depthDisclosure
+                // Что стоит на месте саммари, пока саммари нет, — решает
+                // `SummaryColumnContent`, и это правило, а не отрисовка.
+                summaryContent: SummaryColumnContent.decide(
+                    hasSummary: !summary.isEmpty && summaryOf == entry.id,
+                    hasTranscript: !transcriptTurns(for: entry).isEmpty,
+                    rest: state.rest(of: entry)
+                ),
+                transcriptSource: liveTurnsStandIn(for: entry) ? .live : .stored,
+                transcriptDisclosure: entry.depthDisclosure,
+                onRevealNotes: revealNotes,
+                notesFocusRequest: $focusNoteComposer,
+                pinnedLeftWidth: $notesRevealLeft,
+                summaryController: summaryEditing,
+                // No file behind it, no caret: a summary that cannot be saved
+                // must not look like one you can type into.
+                onSummaryChange: AppState.resolvedRecapURL(for: entry) == nil
+                    ? nil
+                    : { document in scheduleSummarySave(document, for: entry) },
+                onSummaryRewrite: { rewrite, fragment in
+                    runSummaryRewrite(rewrite, over: fragment, of: entry)
+                }
             )
             .frame(maxWidth: .infinity)
         } else {
@@ -515,6 +610,16 @@ struct MainView: View {
 
     // MARK: - Pane content
 
+    /// Та ли это встреча, которая сейчас пишется.
+    ///
+    /// Не `state.isRecording`: пока идёт запись, в рельсе можно выбрать любую
+    /// другую встречу и читать её — и панель обязана показывать выбранную, а не
+    /// ту, которая пишется. Раньше запись была режимом всего окна, и уйти из
+    /// неё было некуда.
+    private func isBeingRecorded(_ entry: RecordingEntry) -> Bool {
+        state.isRecording && entry.id == state.activeRecordingID
+    }
+
     private func noteModels(for entry: RecordingEntry) -> [MeetingNote] {
         MeetingNotes.resolved(items: entry.noteItems, blob: entry.notes)
             .map { MeetingNote(id: $0.id, text: $0.text) }
@@ -522,7 +627,23 @@ struct MainView: View {
 
     /// Diarised segments when they exist, the plain transcript when they do not
     /// — same fallback the detail view has always used.
+    /// Стоит ли сейчас в колонке живой текст вместо готовой расшифровки.
+    ///
+    /// Встреча только что кончилась, проход по файлу ещё идёт — а живой текст
+    /// уже есть, и это всё, что про неё известно. Стирать его в момент нажатия
+    /// «стоп» значило бы отнять у человека ровно то, что он читал секунду
+    /// назад; настоящая расшифровка займёт это место, когда будет, — и займёт
+    /// заменой, а не подменой (`MeetingPaneBody.TranscriptSource`).
+    private func liveTurnsStandIn(for entry: RecordingEntry) -> Bool {
+        entry.transcript == nil
+            && state.live.recordingID == entry.id
+            && !state.live.transcript.isEmpty
+    }
+
     private func transcriptTurns(for entry: RecordingEntry) -> [MeetingTranscriptColumn.Turn] {
+        if liveTurnsStandIn(for: entry) {
+            return liveTurns(state.live.transcript)
+        }
         let turns: [TranscriptPresentation.Turn]
         if let json = entry.mergedSegmentsJSON,
            let data = json.data(using: .utf8),
@@ -544,6 +665,23 @@ struct MainView: View {
         }
     }
 
+    /// Живые реплики, показанные как обычный транскрипт: те же имена дорожек,
+    /// что поставит финальный проход, — чтобы текст не переименовывал говорящих
+    /// в момент, когда его заменят.
+    private func liveTurns(_ live: LiveTranscript) -> [MeetingTranscriptColumn.Turn] {
+        live.turns.map { turn in
+            MeetingTranscriptColumn.Turn(
+                id: turn.id,
+                speaker: SourceAwareSpeaker.stemsOnly(
+                    source: turn.channel == .owner ? .microphone : .system,
+                    ownerName: Preferences.shared.ownerName
+                ),
+                time: turn.timestamp,
+                text: turn.text
+            )
+        }
+    }
+
     /// The recap markdown on disk, or empty when the model has not run yet.
     /// `resolvedRecapURL`, never `recapURL`.
     ///
@@ -559,276 +697,156 @@ struct MainView: View {
         return text
     }
 
+    // MARK: - The summary, read and written
+
+    /// Read the recap off disk into the document the pane draws.
+    ///
+    /// Only when it is a *different* summary than the one already loaded: this
+    /// runs on every pipeline heartbeat, and reloading the same text would drop
+    /// the caret out of the sentence being typed once a second.
+    private func loadSummary() {
+        guard let entry = state.selectedRecording else {
+            summary = .empty
+            summaryOf = nil
+            return
+        }
+        let document = SummaryDocument.parse(markdown: Self.recapMarkdown(for: entry))
+        let sameMeeting = summaryOf == entry.id
+        guard !sameMeeting || (summary.isEmpty && !document.isEmpty) else { return }
+        // The reveal means «модель это написала», so it plays here and only
+        // here: the meeting was already open, it had no summary, and now it
+        // does. Opening a meeting that has had one for a week is not an
+        // arrival, and the reveal used to play for that too.
+        if sameMeeting, summary.isEmpty, !document.isEmpty {
+            summaryEditing.armColumnAppear(animated: !isPosedForAScreenshot)
+        }
+        summaryOf = entry.id
+        summary = document
+    }
+
+    /// Hold the edit, then write it when typing stops.
+    ///
+    /// Not on every keystroke: the file is on the user's disk, possibly inside
+    /// an Obsidian vault with a watcher on it, and a write per character is a
+    /// re-index per character. 0.8 s is the same pause the notes have used since
+    /// they were a single blob.
+    private func scheduleSummarySave(_ document: SummaryDocument, for entry: RecordingEntry) {
+        summary = document
+        summaryOf = entry.id
+        summarySave?.cancel()
+        let markdown = document.markdown
+        let work = DispatchWorkItem { state.saveSummary(markdown, for: entry) }
+        summarySave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.summarySaveDelay, execute: work)
+    }
+
+    private static let summarySaveDelay: TimeInterval = 0.8
+
+    /// Write a pending edit right now — switching meetings, closing the window.
+    private func flushSummarySave() {
+        guard let work = summarySave else { return }
+        summarySave = nil
+        work.cancel()
+        work.perform()
+    }
+
+    /// Ask the model to say the selected fragment differently, and put its
+    /// answer where the selection was.
+    ///
+    /// While it thinks: the wash and the bar are gone, the fragment shimmers.
+    /// If the model comes back empty or with the same words, the text stays as
+    /// it was — there is no failure state here to report.
+    private func runSummaryRewrite(
+        _ rewrite: SummaryRewrite, over fragment: String, of entry: RecordingEntry
+    ) {
+        guard !summaryEditing.isRewriting else { return }
+        // `rewriteTarget` is pinned by the bar before this runs — the click has
+        // usually already cleared `selection` by the time we get here.
+        summaryEditing.isRewriting = true
+        // «Подробнее» adds detail, and detail has to come from what was said.
+        // «Короче» gets nothing extra: handed the meeting while cutting, a model
+        // brings things back in.
+        let transcript = rewrite.needsTranscript ? entry.transcript : nil
+        Task { @MainActor in
+            guard let rewritten = await state.rewriteSummaryFragment(
+                fragment, instruction: rewrite.instruction, transcript: transcript
+            ) else {
+                summaryEditing.cancelRewrite()
+                return
+            }
+            await summaryEditing.applyRewrite(rewritten)
+        }
+    }
+
+    /// True only in the state-gallery build. There is nothing to freeze in the
+    /// app: the reveal is the summary arriving, and it is meant to be seen.
+    private var isPosedForAScreenshot: Bool {
+        #if GALLERY
+        return state.galleryFrozen
+        #else
+        return false
+        #endif
+    }
+
+    /// «Саммари — правка» on the state board: text selected, the action bar
+    /// under it. Posed rather than performed — the exporter draws the window
+    /// offscreen, where nothing is first responder and no caret exists.
+    private func poseSummarySelectionIfAsked() {
+        #if GALLERY
+        guard state.galleryEditingRecap else { return }
+        let rewriting = state.galleryRewritingSummary
+        // A bullet, because that is most of a summary — and after the editor has
+        // its text, which it gets during the render pass this call follows.
+        DispatchQueue.main.async {
+            summaryEditing.poseSelection(ofFirst: .bullet)
+            summaryEditing.isRewriting = rewriting
+        }
+        #endif
+    }
+
+    /// The collapsed notes button was pressed. The pane cannot widen itself —
+    /// its width is the window's — so the window grows to the right by the
+    /// notes' width while the left column keeps the width it already had. The
+    /// composer takes the caret as soon as the column exists.
+    private func revealNotes() {
+        focusNoteComposer = true
+        let sidebar = sidebarVisible ? Tokens.Sidebar.width : 0
+        let contentWidth: CGFloat
+        if let window = AppWindowRegistry.mainWindow() {
+            contentWidth = window.contentRect(forFrameRect: window.frame).width
+        } else {
+            contentWidth = sidebar + Tokens.Window.defaultPaneWidth
+        }
+        let pane = contentWidth - sidebar
+        notesRevealLeft = max(0, pane - Tokens.Pane.notesCollapsedSide)
+        AppWindowRegistry.widenMain(
+            toContentWidth: WindowReveal.contentWidth(
+                revealingNotesBeside: contentWidth,
+                sidebar: sidebar,
+                collapsedSlot: Tokens.Pane.notesCollapsedSide,
+                notesWidth: Tokens.Pane.notesMaxWidth,
+                minimumPane: Tokens.Pane.notesCollapseBelow
+            )
+        )
+        // Fallback: a screen edge can clamp the grow short of the settled
+        // width, so the ordinary split never matches the pin. Drop it after
+        // the window animation either way — by then the pin has done its job.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            notesRevealLeft = nil
+        }
+    }
+
     private func commitNote(for entry: RecordingEntry) {
         let text = draftNote
         draftNote = ""
         recordingStore.appendNote(id: entry.id, text: text)
     }
 
-    private var meetingsHome: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Tokens.Window.sectionStackGap) {
-                titleBlock
-                meetingsList
-            }
-            .frame(maxWidth: Tokens.Window.contentWidth, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.bottom, 120)
-        }
-    }
-
-    /// Figma 640:1877 — h=100, items-end, px=12 py=8, title 40/44/−0.8.
-    private var titleBlock: some View {
-        MeetingsTitleBlock(
-            showRecord: !state.isRecording,
-            speakerOptions: filterSpeakerOptions,
-            selectedSpeaker: speakerFilter,
-            onRecord: { state.startRecording() },
-            onSelectSpeaker: { speakerFilter = $0 }
-        )
-    }
-
-    // MARK: - List
-
-    private var meetingsList: some View {
-        // Frame 86 gap=24 between Upcoming / Today blocks; rows inside a section stack flush.
-        LazyVStack(alignment: .leading, spacing: Tokens.Window.sectionStackGap) {
-            if let next = nextUpcoming {
-                sectionBlock(title: "Скоро") {
-                    upcomingRow(next)
-                }
-            }
-            ForEach(groupedRecordings, id: \.0) { group, entries in
-                sectionBlock(title: group) {
-                    ForEach(entries) { entry in
-                        meetingRow(entry)
-                    }
-                }
-            }
-            if nextUpcoming == nil && groupedRecordings.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Пока нет встреч")
-                        .typo(Tokens.Typography.Label.mdMedium)
-                        .foregroundStyle(Tokens.Ink.tertiary)
-                    Text("Начните запись — или Propeller сам подхватит звонок.")
-                        .typo(Tokens.Typography.Label.smMedium)
-                        .foregroundStyle(Tokens.Ink.tertiary)
-                    Button {
-                        state.startRecording()
-                    } label: {
-                        Text("Записать")
-                            .typo(Tokens.Typography.Label.mdMedium)
-                            .foregroundStyle(Tokens.Ink.primary)
-                            .padding(.horizontal, 14)
-                            .frame(height: 32)
-                            .background(Tokens.Neutral.aw10, in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Запись (⌘R)")
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 24)
-            }
-        }
-    }
-
-    /// Soonest future calendar event (not the whole day list).
-    private var nextUpcoming: UpcomingMeeting? {
-        let now = Date()
-        return calendar.upcoming
-            .filter { $0.start >= now }
-            .sorted { $0.start < $1.start }
-            .first
-    }
-
-    /// Speakers seen in the library: owner first, then Speaker N / others.
-    private var filterSpeakerOptions: [String] {
-        var set = Set<String>()
-        for entry in recordingStore.recordings {
-            for name in state.distinctSpeakerNames(for: entry) {
-                let t = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !t.isEmpty { set.insert(t) }
-            }
-        }
-        let owner = Preferences.shared.userName.trimmingCharacters(in: .whitespacesAndNewlines)
-        var list = Array(set).sorted {
-            if $0 == owner { return true }
-            if $1 == owner { return false }
-            return $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
-        }
-        if !owner.isEmpty, !list.contains(owner) {
-            list.insert(owner, at: 0)
-        }
-        return list
-    }
-
-    private func sectionBlock<Content: View>(
-        title: String, @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: Tokens.Window.sectionInnerGap) {
-            Text(title)
-                .typo(Tokens.Typography.Label.smMedium)
-                .foregroundStyle(Tokens.Ink.tertiary)
-                .padding(.horizontal, 12)
-            VStack(spacing: 0) { content() }
-        }
-    }
-
-    // MARK: - Rows
-
-    private func upcomingRow(_ m: UpcomingMeeting) -> some View {
-        let key = "evt-" + m.id
-        let hovered = hoveredRowID == key
-        return rowChrome(hovered: hovered) {
-            timeColumn(start: m.start, end: m.end)
-            // Feed preview = topics; calendar events have none yet → blank subtitle.
-            textColumn(title: m.title, subtitle: "")
-            Spacer(minLength: 0)
-            // Mute is the primary action for the single upcoming row (reqs §4).
-            rowTrailingSlot(hovered: hovered, busy: false) {
-                IconButton(
-                    systemName: "mic.slash",
-                    prominence: .minimal,
-                    iconSize: 14,
-                    weight: .medium
-                ) { calendar.dismiss(m) }
-                .help("Не записывать эту встречу")
-            }
-        }
-        .onHover { inside in
-            hoveredRowID = inside ? key : (hoveredRowID == key ? nil : hoveredRowID)
-        }
-    }
-
-    private func meetingRow(_ entry: RecordingEntry) -> some View {
-        let hovered = hoveredRowID == entry.id
-        let end = entry.date.addingTimeInterval(entry.duration)
-        let busy = isProcessing(entry)
-        return rowChrome(hovered: hovered) {
-            timeColumn(start: entry.date, end: end)
-            textColumn(
-                title: entry.title.isEmpty ? "Без названия" : entry.title,
-                subtitle: entry.subtitleText
-            )
-            Spacer(minLength: 0)
-            rowTrailingSlot(hovered: hovered, busy: busy) {
-                IconButton(
-                    systemName: "square.and.arrow.down",
-                    prominence: .minimal,
-                    iconSize: 14,
-                    weight: .medium
-                ) { revealInFinder(entry) }
-                .help("Показать в Finder")
-                IconButton(
-                    systemName: "trash",
-                    prominence: .minimal,
-                    iconSize: 14,
-                    weight: .medium
-                ) { state.removeRecording(entry) }
-                .help("Удалить")
-            }
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { state.selectRecording(entry) }
-        .onHover { inside in
-            hoveredRowID = inside ? entry.id : (hoveredRowID == entry.id ? nil : hoveredRowID)
-        }
-        .contextMenu {
-            Button("Показать в Finder") { revealInFinder(entry) }
-            Button("Удалить аудио") { state.deleteAudioFile(entry) }
-                .disabled(!entry.audioFileExists)
-            Divider()
-            Button("Удалить встречу", role: .destructive) { state.removeRecording(entry) }
-        }
-    }
-
-    /// Spinner stays put; on hover, action cluster paints over it.
-    private func rowTrailingSlot<Actions: View>(
-        hovered: Bool,
-        busy: Bool,
-        @ViewBuilder actions: () -> Actions
-    ) -> some View {
-        ZStack(alignment: .trailing) {
-            if busy {
-                processingSpinner
-            }
-            if hovered {
-                HStack(spacing: 0, content: actions)
-                    .background {
-                        // Opaque wash so the spinner doesn't bleed through transparent icons.
-                        Capsule()
-                            .fill(Color(nsColor: NSColor(calibratedWhite: Tokens.Glass.fillWhite, alpha: 1)))
-                            .overlay(Capsule().fill(Tokens.Paint.Bg.surface))
-                    }
-            }
-        }
-        .frame(minWidth: busy || hovered ? 32 : 0, minHeight: 32)
-        .animation(.easeOut(duration: 0.12), value: hovered)
-    }
-
-    /// Figma row: h≈52, gap 10, px 12 / py 8, hover fill white/5, radius 12.
-    private func rowChrome<Content: View>(
-        hovered: Bool, @ViewBuilder content: () -> Content
-    ) -> some View {
-        HStack(spacing: 10) {
-            content()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .frame(minHeight: 52)
-        .background(
-            RoundedRectangle(cornerRadius: Tokens.Window.rowRadius, style: .continuous)
-                .fill(hovered ? Tokens.Paint.Bg.surface : Color.clear)
-        )
-    }
-
-    private func timeColumn(start: Date, end: Date) -> some View {
-        VStack(alignment: .trailing, spacing: 0) {
-            Text(Self.timeFormatter.string(from: start))
-                .typo(Tokens.Typography.Label.mdMedium)
-                .foregroundStyle(Tokens.Ink.primary)
-                .frame(height: 20)
-            Text(Self.timeFormatter.string(from: end))
-                .typo(Tokens.Typography.Label.smMedium)
-                .foregroundStyle(Tokens.Ink.quaternary)
-                .frame(height: 16)
-        }
-        .frame(width: 44, alignment: .trailing)
-    }
-
-    private func textColumn(title: String, subtitle: String) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(title)
-                .typo(Tokens.Typography.Label.mdMedium)
-                .foregroundStyle(Tokens.Ink.primary)
-                .lineLimit(1)
-                .frame(height: 20, alignment: .leading)
-            Text(subtitle.isEmpty ? " " : subtitle)
-                .typo(Tokens.Typography.Label.smMedium)
-                .foregroundStyle(subtitle.isEmpty ? Color.clear : Tokens.Ink.quaternary)
-                .lineLimit(1)
-                .frame(height: 16, alignment: .leading)
-        }
-        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private var processingSpinner: some View {
-        let icon = Image(systemName: "progress.indicator")
-            .typo(Tokens.Typography.Label.mdMedium)
-            .foregroundStyle(Tokens.Ink.secondary)
-            .frame(width: 32, height: 32)
-        if #available(macOS 15.0, *) {
-            icon.symbolEffect(
-                .variableColor.iterative.dimInactiveLayers.nonReversing,
-                options: .repeat(.continuous)
-            )
-        } else {
-            ProgressView().controlSize(.small).frame(width: 32, height: 32)
-        }
-    }
-
-    // MARK: - Helpers
+    /// The old meetings list — the pre-redesign screen — used to live here:
+    /// a title block, an «Скоро» section fed by the calendar, and hand-built rows
+    /// with their own hover chrome. Nothing referenced it after the rail took
+    /// over, so it sat as dead code holding the only interface a removed feature
+    /// had. Deleted 2026-08-04 together with Upcoming; the rail is the list.
 
     private func revealInFinder(_ entry: RecordingEntry) {
         if let audioURL = recordingStore.audioURL(for: entry) {
@@ -836,6 +854,29 @@ struct MainView: View {
         } else if let mdURL = markdownURL(for: entry) {
             NSWorkspace.shared.activateFileViewerSelecting([mdURL])
         }
+    }
+
+    private func copySummary(_ entry: RecordingEntry) {
+        guard let text = plainSummary(for: entry) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Share sheet for a rail row — hangs off the cursor, not the pane header.
+    /// The header button keeps its own `ShareAnchor`; right-click has no view
+    /// of its own, so the window's content view and the mouse location stand in.
+    private func shareMeetingNearCursor(_ entry: RecordingEntry) {
+        let items = shareItems(for: entry)
+        guard !items.isEmpty,
+              let window = NSApp.keyWindow,
+              let contentView = window.contentView else { return }
+        let location = contentView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        let picker = NSSharingServicePicker(items: items)
+        picker.show(
+            relativeTo: NSRect(origin: location, size: .zero),
+            of: contentView,
+            preferredEdge: .minY
+        )
     }
 
     private func markdownURL(for entry: RecordingEntry) -> URL? {
@@ -853,45 +894,6 @@ struct MainView: View {
         return state.activity.concerns(entry.id)
     }
 
-    private var visibleRecordings: [RecordingEntry] {
-        recordingStore.recordings.filter { entry in
-            // Hide stubs; keep anything still in the pipeline even if short.
-            if entry.duration > 0, entry.duration < Self.stubDurationThreshold, !isProcessing(entry) {
-                return false
-            }
-            if let speakerFilter {
-                let names = state.distinctSpeakerNames(for: entry)
-                if !names.contains(where: { $0.caseInsensitiveCompare(speakerFilter) == .orderedSame }) {
-                    return false
-                }
-            }
-            return true
-        }
-    }
-
-    private var groupedRecordings: [(String, [RecordingEntry])] {
-        let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
-        let yesterday = cal.date(byAdding: .day, value: -1, to: today)!
-        let weekAgo = cal.date(byAdding: .day, value: -7, to: today)!
-
-        var groups: [(String, [RecordingEntry])] = []
-        var t: [RecordingEntry] = [], y: [RecordingEntry] = [], w: [RecordingEntry] = [], o: [RecordingEntry] = []
-
-        for rec in visibleRecordings {
-            let d = cal.startOfDay(for: rec.date)
-            if d >= today { t.append(rec) }
-            else if d >= yesterday { y.append(rec) }
-            else if d >= weekAgo { w.append(rec) }
-            else { o.append(rec) }
-        }
-
-        if !t.isEmpty { groups.append(("Сегодня", t)) }
-        if !y.isEmpty { groups.append(("Вчера", y)) }
-        if !w.isEmpty { groups.append(("На этой неделе", w)) }
-        if !o.isEmpty { groups.append(("Ранее", o)) }
-        return groups
-    }
 }
 
 enum SettingsOpener {

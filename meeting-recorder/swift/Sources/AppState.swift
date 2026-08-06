@@ -1,5 +1,7 @@
+import AppKit
 import AVFoundation
 import PropellerPure
+import PropellerUI
 import SwiftUI
 
 @MainActor
@@ -9,6 +11,14 @@ class AppState: ObservableObject {
     // Recording
     @Published var recorder = AudioRecorder()
     @Published var player = AudioPlayer()
+    /// Что слышно прямо сейчас — живой транскрипт идущей встречи. Отдельный
+    /// объект, а не поле: за него подписывается только экран записи, и текст,
+    /// приходящий несколько раз в секунду, не должен перерисовывать рельс.
+    let live = LiveTranscriptService()
+    /// Какую запись сейчас пишем. Не то же, что «выбранная»: во время записи
+    /// можно уйти читать другую встречу, и панель обязана понимать, на какую из
+    /// двух она смотрит.
+    @Published private(set) var activeRecordingID: String?
     @Published var elapsedString = "00:00"
     @Published var elapsedSeconds: TimeInterval = 0
     private var displayTimer: Timer?
@@ -42,12 +52,28 @@ class AppState: ObservableObject {
     /// without this, "Саммари — правка" photographed the read view.
     var galleryEditingRecap = false
 
-    /// Pose a deletion that has not landed, so the row can be photographed with
-    /// «Вернуть» on it. Nothing is actually deleted — the poser's archive is
-    /// fiction, and `removeRecording` would take a real entry out of a real index.
+    /// Poses «Короче» mid-flight: the fragment selected and shimmering while
+    /// the model thinks. Reachable no other way — it needs a live model and the
+    /// seconds it takes to answer.
+    var galleryRewritingSummary = false
+
+    /// Pose a soft-deleted meeting (out of the list). Deletion no longer shows
+    /// a «Вернуть» row — ⌘Z restores. Kept so gallery reset can clear the slot.
     func galleryPoseDeletion(_ entry: RecordingEntry?) { pendingDeletion = entry }
 
     func galleryPoseMicDenied(_ denied: Bool) { micAccessDenied = denied }
+
+    /// Dock one of the rail's two questions. The real answer is derived from
+    /// `Preferences`, which a screenshot run may not write — and the pose has to
+    /// survive `refreshSetupPrompt`, so it is set here rather than by faking the
+    /// defaults behind it.
+    func galleryPoseSetupPrompt(_ prompt: SetupPrompt?) { setupPrompt = prompt }
+
+    /// Какая встреча «пишется». Настоящую запись позировать нечем — она требует
+    /// микрофона и живого сайдкара, — а панель выбирает вид по этому полю.
+    func galleryPoseRecording(_ id: String?) { activeRecordingID = id }
+
+    func galleryPosePaused(_ paused: Bool) { recorder.galleryPosePaused(paused) }
 #endif
     /// Last pipeline failure shown in the empty transcript / recap panels.
     /// Cleared when a new ASR/recap attempt starts successfully past the early guards.
@@ -94,7 +120,20 @@ class AppState: ObservableObject {
     }
     /// Must be decided before the first window paint — RootWindow swaps
     /// onboarding card vs main UI from this flag alone.
-    @Published var showOnboarding = !Preferences.shared.onboardingCompleted
+    @Published var showOnboarding = !Preferences.shared.onboardingCompleted {
+        didSet { refreshSetupPrompt() }
+    }
+
+    /// The question the rail is still carrying — the calendar, then the name.
+    /// Nil for the whole of the app's ordinary life. Decided by
+    /// `SetupPromptMachine`; published because the answer lives in `Preferences`,
+    /// which SwiftUI cannot watch.
+    @Published var setupPrompt: SetupPrompt? = SetupPromptMachine.step(
+        setupCompleted: Preferences.shared.onboardingCompleted,
+        calendarGranted: Preferences.shared.calendarEnabled,
+        calendarAsked: Preferences.shared.setupCalendarAsked,
+        knownName: Preferences.shared.userName
+    )
     private var didBootstrap = false
     @Published var meetingDetected = false
     @Published var storageLibraryBytes: Int64 = 0
@@ -152,7 +191,7 @@ class AppState: ObservableObject {
         // and quit. Left unguarded, the meeting detector saw the very call being
         // probed and started recording it — the first probe left a 0-second stub
         // in the archive, which the pipeline then owed a summary.
-        if TapProbe.isRequested { return }
+        if TapProbe.isRequested || LiveProbe.isRequested { return }
         didBootstrap = true
 
         // (model migration lives in `Preferences.recapOllamaModel` so it also
@@ -173,6 +212,7 @@ class AppState: ObservableObject {
         }
 
         showOnboarding = !Preferences.shared.onboardingCompleted
+        adoptSetupAnswersFromOldOnboarding()
 
         setupMeetingDetector()
 
@@ -180,7 +220,7 @@ class AppState: ObservableObject {
         // while a recording is active (plan-optimization E7).
         NoteOverlayController.shared.install(state: self)
 
-        // Load upcoming meetings if the user opted into Calendar. Use the
+        // Load nearby calendar events if the user opted in. Use the
         // requesting path so access is re-prompted after an ad-hoc rebuild
         // resets TCC (otherwise the list silently shows nothing).
         if Preferences.shared.calendarEnabled {
@@ -206,6 +246,64 @@ class AppState: ObservableObject {
         }
 
         // ASR sidecar starts lazily on first transcription (plan-optimization E1).
+    }
+
+    // MARK: - The rail's two questions
+
+    /// Re-derive which question the rail carries. Every write behind it goes
+    /// through `Preferences`, so this is called after each answer rather than the
+    /// answers each maintaining the flag — one place to get it wrong instead of
+    /// three.
+    func refreshSetupPrompt() {
+        setupPrompt = SetupPromptMachine.step(
+            setupCompleted: Preferences.shared.onboardingCompleted,
+            calendarGranted: Preferences.shared.calendarEnabled,
+            calendarAsked: Preferences.shared.setupCalendarAsked,
+            knownName: Preferences.shared.userName
+        )
+    }
+
+    /// Someone upgrading from the six-plate onboarding has already been asked
+    /// both of these — the calendar on its own screen, the name on its own. A
+    /// stored name is the marker: the old flow always wrote one, defaulting to
+    /// the macOS account name, so it cannot be empty on a machine that went
+    /// through it. Greeting an existing user with a setup block would say the app
+    /// had forgotten the conversation.
+    private func adoptSetupAnswersFromOldOnboarding() {
+        if Preferences.shared.onboardingCompleted,
+           !Preferences.shared.setupCalendarAsked,
+           !Preferences.shared.userName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Preferences.shared.setupCalendarAsked = true
+        }
+        refreshSetupPrompt()
+    }
+
+    /// «Подключить» on the calendar step.
+    ///
+    /// The step is spent on the press, not on the grant. Whether macOS then says
+    /// yes is the user's business and the calendar's; asking a second time
+    /// because they said no would make a suggestion into nagging. If they said
+    /// yes, `CalendarService` has the events by the time the block is gone.
+    func connectCalendarFromRail() {
+        Preferences.shared.setupCalendarAsked = true
+        Preferences.shared.calendarEnabled = true
+        refreshSetupPrompt()
+        Analytics.signal("Setup.calendarAsked")
+        Task { await CalendarService.shared.enableAndLoad() }
+    }
+
+    /// The name typed into the rail's field.
+    ///
+    /// Empty is not an answer — the field's own ⏎ is disabled on empty, and this
+    /// guards it too, because a blank write would settle the question with
+    /// nothing and quietly leave every future transcript on the account-name
+    /// fallback without anyone having chosen that.
+    func setOwnerNameFromRail(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        Preferences.shared.userName = trimmed
+        refreshSetupPrompt()
+        Analytics.signal("Setup.nameGiven")
     }
 
     // MARK: - Call auto-detect
@@ -270,8 +368,6 @@ class AppState: ObservableObject {
     private func startRecordingFromDetectedCall() {
         guard !isRecording else { return }
         guard !ignoredDetectedCall else { return }
-        // Upcoming «Don't record» mutes this calendar session (DECIDE-6).
-        if CalendarService.shared.isMutedForRecording() { return }
         recordingLinkedToCall = true
         autoStartedFromMeeting = true
         startRecording()
@@ -397,7 +493,7 @@ class AppState: ObservableObject {
     /// Recording was asked for and cannot happen.
     ///
     /// The state goes on the app, not into a message: from here on the rail's
-    /// «Начать запись» row *is* the notice, and it stays one until the permission
+    /// «Новая запись» row *is* the notice, and it stays one until the permission
     /// changes. The push exists because the window is usually closed at this
     /// moment — the user is in the call that asked for the recording.
     private func refuseForMicrophone() {
@@ -429,6 +525,11 @@ class AppState: ObservableObject {
         let recordingSource = autoStartedFromMeeting ? "auto" : "manual"
 
         do {
+            // Ставится до старта: кадры пойдут с первой же сотой секунды, а
+            // подписчик у них один и на всю запись.
+            recorder.onLiveFrames = { [live] mic, system in
+                live.ingest(mic: mic, system: system)
+            }
             try recorder.start()
             isRecording = true
             // Call already in progress and the user started manually — still link it so
@@ -464,7 +565,9 @@ class AppState: ObservableObject {
             )
             recordingStore.add(entry)
             refreshStorageUsage()
+            activeRecordingID = entry.id
             selectedRecordingID = entry.id
+            startLiveTranscript(for: entry.id)
             Analytics.recordingStarted(source: recordingSource)
             if title != placeholder {
                 NSLog("[AppState] Recording titled from calendar: \(title)")
@@ -498,6 +601,41 @@ class AppState: ObservableObject {
         }
     }
 
+    /// Живой транскрипт — только на общих часах: на микрофонном пути буферов
+    /// нет вовсе, и открывать сессию не из чего. Экран тогда честно говорит,
+    /// что текст будет после встречи, — это глубина, а не отказ.
+    private func startLiveTranscript(for id: String) {
+        guard recorder.capturePath == .processTap else {
+            live.end()
+            return
+        }
+        live.begin(
+            recordingID: id,
+            hasSystemAudio: recorder.capturesSystemAudio,
+            elapsed: 0
+        )
+    }
+
+    // MARK: - Пауза
+
+    /// Пауза — состояние записи, а не её конец: встреча остаётся той же, файл
+    /// тем же, живой текст на экране остаётся тем, что уже сказано.
+    func pauseRecording() {
+        guard isRecording, !recorder.isPaused else { return }
+        recorder.pause()
+        live.pause()
+        objectWillChange.send()
+    }
+
+    func resumeRecording() {
+        guard isRecording, recorder.isPaused else { return }
+        recorder.resume()
+        live.resume(at: recorder.elapsed)
+        objectWillChange.send()
+    }
+
+    var isRecordingPaused: Bool { isRecording && recorder.isPaused }
+
     /// Cancel the in-progress recording and discard it entirely (no transcript,
     /// no saved audio). Triggered by the "Don't record" notification action.
     func cancelRecording() {
@@ -515,6 +653,9 @@ class AppState: ObservableObject {
         NoteOverlayController.shared.stopMonitoring()
         recorder.setMeteringDesired(false)
         isRecording = false
+        activeRecordingID = nil
+        // Записи не будет вовсе — значит и её живого текста тоже.
+        live.end()
         recordingLinkedToCall = false
         player.stop()
         let id = recorder.recordingID
@@ -557,6 +698,10 @@ class AppState: ObservableObject {
         NoteOverlayController.shared.stopMonitoring()
         recorder.setMeteringDesired(false)
         isRecording = false
+        activeRecordingID = nil
+        // Сессии закрываются, а сказанное остаётся на экране: до конца прохода
+        // по файлу это всё, что про встречу известно.
+        live.stop()
         let wasLinkedToCall = recordingLinkedToCall
         recordingLinkedToCall = false
         NotificationManager.shared.clearRecordingNotification()
@@ -576,7 +721,15 @@ class AppState: ObservableObject {
                 // the same place instead of guessing zero.
                 systemStemOffset: recorder.lastStopSystemStemOffset
             )
-            selectedRecordingID = result.id
+            // Только если человек и так смотрел на эту запись. Во время встречи
+            // можно уйти читать другую, и звонок, кончившийся сам, не имеет
+            // права утащить с той страницы, которую в этот момент читают.
+            if selectedRecordingID == nil || selectedRecordingID == result.id {
+                selectedRecordingID = result.id
+            }
+            // Колонку не переключаем: пока саммари пишется, на его месте стоит
+            // расшифровка (`SummaryColumnContent`), и человек продолжает читать
+            // ровно то, что читал секунду назад.
             // This is a meeting the user is waiting for, so it is allowed to
             // announce itself when it is done.
             awaitedRecordingIDs.insert(result.id)
@@ -774,6 +927,60 @@ class AppState: ObservableObject {
         kickPipeline("regenerated")
     }
 
+    /// Persist an edited summary back to its markdown file.
+    ///
+    /// Straight over the file the model wrote, and that is the whole design: the
+    /// summary is one document, not «модельная версия и правки поверх». The
+    /// pipeline cannot undo it — a meeting with a recap on disk is never
+    /// re-summarised (`SummaryWork.needed` answers `.nothing`), and the one path
+    /// that would overwrite it, `regenerateRecap`, is an explicit action nobody
+    /// takes by accident.
+    ///
+    /// Returns false when there is no file to write into, which is also the
+    /// answer to «можно ли это править» — the pane asks before offering a caret.
+    @discardableResult
+    func saveSummary(_ markdown: String, for entry: RecordingEntry) -> Bool {
+        guard let url = Self.resolvedRecapURL(for: entry) else { return false }
+        let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        // An empty document is a save that would delete the summary. Deleting is
+        // an action of its own, and this one is a stray ⌘A followed by Backspace.
+        guard !trimmed.isEmpty else { return false }
+        do {
+            try markdown.write(to: url, atomically: true, encoding: .utf8)
+            return true
+        } catch {
+            NSLog("[AppState] failed to save summary edit: \(error)")
+            return false
+        }
+    }
+
+    /// «Короче» / «Подробнее» over the fragment selected in the summary.
+    ///
+    /// Returns nil when there is nothing to ask — no model, no key, the model
+    /// answered with nothing. The caller leaves the text exactly as it was:
+    /// silently doing nothing is the right answer for a request whose whole
+    /// value was replacing text with better text.
+    func rewriteSummaryFragment(
+        _ fragment: String, instruction: String, transcript: String?
+    ) async -> String? {
+        do {
+            let rewritten = try await recapBackend.rewriteFragment(
+                fragment, instruction: instruction, transcript: transcript,
+                prefs: RecapPreferences.fromShared()
+            )
+            // Compare what will actually land in the editor after
+            // `SummaryRewriteText` flattens lists/newlines — a reply that is
+            // only `- ` wrappers around the same words is not a rewrite.
+            let trimmed = fragment.trimmingCharacters(in: .whitespacesAndNewlines)
+            let prepared = SummaryRewriteText.plain(rewritten)
+            guard !prepared.isEmpty, prepared != trimmed else { return nil }
+            return rewritten
+        } catch {
+            NSLog("[AppState] summary rewrite failed: \(error)")
+            return nil
+        }
+    }
+
     /// Where this meeting stands, and why — the one answer the interface reads.
     ///
     /// Composed here because the inputs are the app's (what the worker is on, what
@@ -841,9 +1048,16 @@ class AppState: ObservableObject {
         pipelineError = nil
     }
 
-    func renameRecording(_ entry: RecordingEntry, to newTitle: String) {
-        recordingStore.rename(id: entry.id, to: newTitle)
+    /// Rename by id, because the caller that has one is the one that cannot
+    /// trust the selection: the pane header saves a name after the user has
+    /// already moved to another meeting.
+    func renameRecording(id: String, to newTitle: String) {
+        recordingStore.rename(id: id, to: newTitle)
         markDirty()
+    }
+
+    func renameRecording(_ entry: RecordingEntry, to newTitle: String) {
+        renameRecording(id: entry.id, to: newTitle)
     }
 
     /// Append a note tagged with the current recording timecode (used by the
@@ -892,57 +1106,144 @@ class AppState: ObservableObject {
         recordingStore.deleteAudioFile(for: entry)
     }
 
-    /// A meeting that has been deleted but can still be brought back.
-    ///
-    /// Deletion is offered as undo rather than as a confirmation dialogue: a
-    /// dialogue asks before every delete, an undo interrupts none of them and
-    /// still saves the one that was a mistake.
+    /// Soft-deleted meeting — files still on disk, ⌘Z restores.
+    /// Set when delete begins; hard-deleted on the next delete, or on quit.
     @Published var pendingDeletion: RecordingEntry?
-    private var pendingDeletionTask: Task<Void, Never>?
-    /// How long «Вернуть» stays on offer, and therefore how long the row keeps
-    /// its `deletedUndoable` look. One constant, so the two cannot disagree.
-    static let undoWindow: Duration = .seconds(8)
 
-    /// Bring back the last deleted meeting.
-    func undoDeletion() {
-        pendingDeletionTask?.cancel()
-        pendingDeletionTask = nil
+    /// Row playing ash + slot collapse. Stays in the store until the slot is
+    /// ~zero so the same view can animate height (a re-injected ghost is born
+    /// already-dissolving and never fires `onChange`).
+    @Published private(set) var dissolvingMeetingID: String?
+    private var dissolveFallbackTask: Task<Void, Never>?
+
+    /// The window's undo manager, and only it. Deleting a meeting belongs to the
+    /// window, not to whatever has focus: `@Environment(\.undoManager)` follows
+    /// the responder chain, so registering there means ⌘Z later asks a different
+    /// manager — and finds nothing. It is also often nil here.
+    private func resolveUndoManager(_ preferred: UndoManager?) -> UndoManager? {
+        AppWindowRegistry.mainWindow()?.undoManager
+            ?? NSApp.keyWindow?.undoManager
+            ?? preferred
+    }
+
+    /// Bring back the last soft-deleted meeting (⌘Z).
+    func undoDeletion(undoManager: UndoManager? = nil) {
+        dissolveFallbackTask?.cancel()
+        dissolveFallbackTask = nil
+        dissolvingMeetingID = nil
+
         guard let entry = pendingDeletion else { return }
         pendingDeletion = nil
-        recordingStore.restore(entry)
-        selectRecording(entry)
+        let um = resolveUndoManager(undoManager)
+        // Mid-ash the row is still in the store — only restore if it left.
+        if !recordingStore.recordings.contains(where: { $0.id == entry.id }) {
+            withAnimation(.easeInOut(duration: Tokens.Motion.listReflow)) {
+                recordingStore.restore(entry)
+            }
+        }
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) { selectRecording(entry) }
+        um?.registerUndo(withTarget: self) { target in
+            target.removeRecording(entry, undoManager: um)
+        }
+        um?.setActionName("Удаление встречи")
     }
 
     /// Finish a deferred deletion — the audio goes now.
     ///
-    /// Called when the offer expires, when another meeting is deleted, and on
-    /// quit. Leaving it uncommitted would strand the audio: the entry is already
-    /// out of the index, so nothing would ever point at those files again.
+    /// Called when another meeting is deleted, and on quit. Leaving it
+    /// uncommitted would strand the audio: the entry is already out of the
+    /// index, so nothing would ever point at those files again.
     func commitPendingDeletion() {
-        pendingDeletionTask?.cancel()
-        pendingDeletionTask = nil
         guard let entry = pendingDeletion else { return }
         pendingDeletion = nil
         recordingStore.remove(entry)
     }
 
-    func removeRecording(_ entry: RecordingEntry) {
+    /// Ash + slot collapse start together; ⌘Z registered immediately.
+    func removeRecording(_ entry: RecordingEntry, undoManager: UndoManager? = nil) {
+        // Удалить встречу, которая пишется, — это «не записывать её»: другого
+        // смысла у действия нет, а убрать строку из списка, оставив рекордер
+        // писать в файл удалённой встречи, значит завести запись, к которой не
+        // ведёт ни одна дверь. Раньше такого случая не было — встречу нельзя
+        // было выбрать во время записи.
+        if entry.id == activeRecordingID, isRecording {
+            cancelRecording()
+            return
+        }
+        if dissolvingMeetingID != nil {
+            finishDissolvingDeletion()
+        }
         player.stop()
-        // One offer at a time: deleting a second meeting finishes the first.
+        let um = resolveUndoManager(undoManager)
+        um?.removeAllActions(withTarget: self)
         commitPendingDeletion()
-        recordingStore.removeDeferred(entry)
-        if selectedRecordingID == entry.id { selectedRecordingID = nil }
+
+        if selectedRecordingID == entry.id {
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { selectNeighbor(afterRemoving: entry) }
+        }
+        if let window = AppWindowRegistry.mainWindow() {
+            window.makeFirstResponder(window.contentView)
+        }
+
         pendingDeletion = entry
-        // The row itself now carries the offer (`SidebarRowActivity.deletedUndoable`);
-        // this task is the deadline behind it. It has to exist independently of
-        // any view: an entry already out of the index, with files nobody points
-        // at, is the one leak here that cannot be noticed.
-        pendingDeletionTask = Task { [weak self] in
-            try? await Task.sleep(for: AppState.undoWindow)
+        dissolvingMeetingID = entry.id
+        // Stay in the store while the existing row collapses — layout moves now.
+
+        um?.registerUndo(withTarget: self) { target in
+            target.undoDeletion(undoManager: um)
+        }
+        um?.setActionName("Удаление встречи")
+
+        dissolveFallbackTask?.cancel()
+        dissolveFallbackTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Tokens.Motion.Ash.duration + 0.05))
             guard !Task.isCancelled else { return }
-            await MainActor.run { self?.commitPendingDeletion() }
+            if self.dissolvingMeetingID == entry.id {
+                self.finishDissolvingDeletion()
+            }
+        }
+    }
+
+    /// Slot is ~zero — pull the entry out with no second layout jump.
+    func finishDissolvingDeletion() {
+        dissolveFallbackTask?.cancel()
+        dissolveFallbackTask = nil
+        // The row leaves the store *first*, and the «is dissolving» flag is
+        // cleared in the same transaction. The other order asks the rail to
+        // paint a row that is no longer dissolving but is still in the list —
+        // full height, full opacity — which is the blink before the reflow.
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) {
+            if let entry = pendingDeletion,
+               recordingStore.recordings.contains(where: { $0.id == entry.id }) {
+                recordingStore.removeDeferred(entry)
+            }
+            dissolvingMeetingID = nil
         }
         refreshStorageUsage()
+    }
+
+    /// Next row down in the rail (older); if this was last, the one above.
+    private func selectNeighbor(afterRemoving entry: RecordingEntry) {
+        let listed = recordingStore.recordings
+            .filter(\.hasSomethingToShow)
+            .sorted { $0.date > $1.date }
+        guard let idx = listed.firstIndex(where: { $0.id == entry.id }) else {
+            selectedRecordingID = nil
+            return
+        }
+        if listed.indices.contains(idx + 1) {
+            selectRecording(listed[idx + 1])
+        } else if idx > 0 {
+            selectRecording(listed[idx - 1])
+        } else {
+            selectedRecordingID = nil
+        }
     }
 
     func deleteAudioKeepingMeeting(_ entry: RecordingEntry) {
@@ -1021,7 +1322,14 @@ class AppState: ObservableObject {
                 debugLog("[pipeline] \(reason): \(now.owed) owed, nothing runnable"
                     + (now.pausedByPolicy ? " (paused: \(workerPolicy))" : ""))
             }
-            scheduleWake(at: now.wakeAt)
+            // `outlook.wakeAt` is only retry deadlines. A policy pause (call /
+            // recording / heat) used to leave it nil here and rely solely on
+            // `onMeetingEnded` — a missed hang-up then stranded the archive.
+            // `PipelineDrain.plan` adds the belt-and-braces recheck.
+            let wake = PipelineDrain.plan(
+                after: .finished, outlook: now, blockedStreak: 0
+            ).wakeAt
+            scheduleWake(at: wake)
             return
         }
         debugLog("[pipeline] \(reason): starting, \(now.owed) owed")
@@ -1254,16 +1562,10 @@ class AppState: ObservableObject {
             // One pass, two entry points: `.transcribing` runs ASR then speakers,
             // `.diarizing` resumes from the checkpoint a crash left behind.
             await runASR(recordingID: job.recordingID, phase: job.phase)
-        case .saving:
-            guard let rec = recordingStore.recording(for: job.recordingID),
-                  let text = rec.transcript, !text.isEmpty else {
-                // ASR ran and produced nothing: there was no speech. A result,
-                // not a failure — and no attempt could change it.
-                recordTerminal(job.recordingID, phase: .saving, reason: .noSpeech)
-                return .advanced
-            }
-            await runSave(recordingID: rec.id, transcriptText: text, duration: rec.duration)
-        case .summarizing:
+        // `.saving` is no longer scheduled on its own (`RecordingStage.nextPhase`);
+        // the summarising job writes the markdown first when it is missing. The
+        // case stays because a failure recorded by an older build still names it.
+        case .saving, .summarizing:
             return await runSummarize(recordingID: job.recordingID)
         }
         return .advanced
@@ -1273,6 +1575,13 @@ class AppState: ObservableObject {
     /// written next to, then runs the one recap path there is.
     private func runSummarize(recordingID: String) async -> PhaseOutcome {
         guard let rec = recordingStore.recording(for: recordingID) else { return .advanced }
+        // ASR ran and produced nothing: there was no speech. A result, not a
+        // failure — and no attempt could change it. Checked here because this is
+        // now the first phase after the transcript.
+        guard rec.transcript?.isEmpty == false else {
+            recordTerminal(recordingID, phase: .summarizing, reason: .noSpeech)
+            return .advanced
+        }
         // What is already on disk decides how much work this is. A meeting with a
         // summary but no topics — every calendar-named meeting from 1.11 — needs
         // one short pass over text that exists, not minutes of GPU rewriting a
@@ -1382,11 +1691,20 @@ class AppState: ObservableObject {
         guard let rec = recordingStore.recording(for: recordingID) else { return }
         let durationAtStart = rec.duration
         guard let audioURL = recordingStore.audioURL(for: rec) else {
-            // The scheduler keeps meetings without audio out of the queue, so
-            // this is the race where it went away mid-flight. Parked on the
-            // meeting's own card; not worth announcing over whatever is open.
-            // The user reclaimed the space. Nothing to transcribe, ever.
-            recordTerminal(recordingID, phase: phase, reason: .audioDeleted)
+            // No audio, and that is not a failure of anything.
+            //
+            // Two ways to get here, and neither wants a state of its own: the
+            // user deleted the audio to reclaim space — in which case the
+            // transcript and the summary stay and the meeting reads as normal —
+            // or the file went away between the scheduler's check and this line.
+            // Either way there is nothing to transcribe and nothing to say: the
+            // scheduler already keeps such meetings out of the queue
+            // (`audioAvailable`), so this is a race, not a dead end.
+            //
+            // It used to record a terminal failure, which put «Аудио удалено» on
+            // a row whose transcript was sitting right there — an absurd thing to
+            // tell someone about a meeting they can read.
+            debugLog("[pipeline] \(recordingID) has no audio — nothing owed")
             return
         }
 
@@ -1490,7 +1808,20 @@ class AppState: ObservableObject {
                 ok: true,
                 reason: phase == .diarizing ? "diarize_resume" : nil
             )
-            _ = durationAtStart
+            // The markdown is written here, in the same pass, because a transcript
+            // that exists and is not on disk is a promise the app has already made
+            // («transcripts are always saved right after diarization»).
+            //
+            // It used to be a scheduled job of its own, which put «Сохраняем…» on
+            // the row for one frame of a file write — and worse, when it was folded
+            // into the summarising job, an archive with summaries off never got its
+            // markdown at all: the summarising job is the one thing that does not
+            // run without a provider.
+            await runSave(
+                recordingID: recordingID,
+                transcriptText: result.transcript,
+                duration: recordingStore.recording(for: recordingID)?.duration ?? durationAtStart
+            )
         } catch is CancellationError {
             // A call started, or the app is quitting. Not a failure: parking the
             // meeting here would mean every interrupted catch-up needed a manual

@@ -44,6 +44,7 @@ struct RecordingDetailView: View {
     /// Nested player must be observed directly — `@Published` on AppState
     /// does not forward `AudioPlayer`’s own `@Published` updates.
     @ObservedObject private var player: AudioPlayer
+    @Environment(\.undoManager) private var undoManager
     let entry: RecordingEntry
     /// `.meeting` — full Transcript/Notes/Summary tabs.
     /// `.summaryFocus` — Summaries library: Summary + Notes only (stacked).
@@ -61,17 +62,20 @@ struct RecordingDetailView: View {
         case summaryFocus
     }
 
-    /// Req order: Summary · Follow-up · Notes · Transcript.
+    /// Summary · Notes · Transcript.
+    ///
+    /// «Письмо» was a fourth tab: a short outbound note drafted by squeezing the
+    /// summary through a text filter until a real LLM step arrived. It never
+    /// arrived, and the feature is gone (2026-08-04) — a meeting produces a
+    /// transcript and a summary, and what you write to people you write yourself.
     enum DetailTab: String, CaseIterable, Identifiable {
         case recap
-        case followUp
         case notes
         case transcript
         var id: String { rawValue }
         var title: String {
             switch self {
             case .recap: return "Саммари"
-            case .followUp: return "Письмо"
             case .notes: return "Заметки"
             case .transcript: return "Транскрипт"
             }
@@ -80,14 +84,12 @@ struct RecordingDetailView: View {
 
     @State private var tab: DetailTab = .recap   // Summary is the default view
     @State private var recapText: String?
-    @State private var followUpText: String?
 
     @State private var showingDeleteConfirm = false
     @State private var showingRemoveConfirm = false
     @State private var copiedTranscript = false
     @State private var copiedForChat = false
     @State private var copiedRecap = false
-    @State private var copiedFollowUp = false
     @State private var editingTitle = false
     @State private var editedTitle = ""
     @State private var titleHovered = false
@@ -95,8 +97,6 @@ struct RecordingDetailView: View {
     @State private var editedNotes = ""
     @State private var isEditingRecap = false
     @State private var editedRecapText = ""
-    @State private var isEditingFollowUp = false
-    @State private var editedFollowUpText = ""
     @State private var speakerFilter: Set<String> = []
     @State private var selectedSegmentIndices: Set<Int> = []
     @State private var showRenameSheet = false
@@ -107,14 +107,13 @@ struct RecordingDetailView: View {
     @State private var activeKaraokeID: Int?
 
     private var isInlineEditing: Bool {
-        editingTitle || isEditingRecap || isEditingFollowUp
+        editingTitle || isEditingRecap
     }
 
     /// Leave any in-place editor (summary / follow-up / transcript / title), saving.
     private func endActiveInlineEdit() {
         if editingTitle { commitTitleEdit() }
         if isEditingRecap { commitRecapEdit() }
-        if isEditingFollowUp { commitFollowUpEdit() }
     }
 
     private static var pendingNotesSave: DispatchWorkItem?
@@ -184,26 +183,23 @@ struct RecordingDetailView: View {
         }
         .alert("Удалить встречу?", isPresented: $showingRemoveConfirm) {
             Button("Удалить", role: .destructive) {
-                state.removeRecording(entry)
+                state.removeRecording(entry, undoManager: undoManager)
             }
             Button("Отмена", role: .cancel) {}
         } message: {
-            Text("Встреча и все данные удалятся навсегда.")
+            Text("Встреча уйдёт из списка. ⌘Z вернёт её, пока не удалили другую или не вышли из приложения.")
         }
         .onChange(of: state.selectedRecordingID) { _, _ in
             // Commit any in-flight transcript edit before swapping recordings,
             // otherwise edits are silently discarded.
             if isEditingRecap { commitRecapEdit() }
-            if isEditingFollowUp { commitFollowUpEdit() }
             // Flush any pending debounced notes save so we don't lose keystrokes.
             Self.flushPendingNotesSave()
             editingTitle = false
             isEditingRecap = false
-            isEditingFollowUp = false
             selectedSegmentIndices = []
             editedNotes = entry.notes ?? ""
             recapText = nil
-            followUpText = nil
         }
         .sheet(isPresented: $showRenameSheet) {
             renameSpeakerSheet
@@ -216,20 +212,17 @@ struct RecordingDetailView: View {
                 tab = .recap
                 loadRecapText()
             }
-            loadFollowUpText()
             applyPreferredTab()
         }
         .onChange(of: entry.id) { _, _ in
             if presentation == .meeting { autoLoadAudioForPlayer() }
             loadRecapText()
-            loadFollowUpText()
         }
         .onChange(of: state.preferredDetailTab) { _, _ in
             applyPreferredTab()
         }
         .task(id: "\(entry.id)-\(entry.status.rawValue)-\(tab.rawValue)-\(presentation)") {
             if tab == .recap || presentation == .summaryFocus { loadRecapText() }
-            if tab == .followUp { loadFollowUpText() }
 #if GALLERY
             if state.galleryEditingRecap, tab == .recap, !isEditingRecap {
                 editedRecapText = recapText ?? ""
@@ -252,7 +245,6 @@ struct RecordingDetailView: View {
         case "transcript": mapped = .transcript
         case "notes": mapped = .notes
         case "recap", "summary": mapped = .recap
-        case "followUp", "followup", "follow-up": mapped = .followUp
         default: mapped = DetailTab(rawValue: raw)
         }
         if let mapped {
@@ -426,7 +418,7 @@ struct RecordingDetailView: View {
                         systemName: "folder",
                         prominence: .minimal,
                         iconSize: 14,
-                        weight: .medium,
+                        weight: .regular,
                         enabled: entry.audioFileExists || markdownURL != nil
                     ) {
                         revealInFinder()
@@ -437,7 +429,7 @@ struct RecordingDetailView: View {
                         systemName: "trash",
                         prominence: .minimal,
                         iconSize: 14,
-                        weight: .medium
+                        weight: .regular
                     ) {
                         showingRemoveConfirm = true
                     }
@@ -479,7 +471,7 @@ struct RecordingDetailView: View {
                 .lineLimit(2)
 
                 Image(systemName: "pencil")
-                    .typo(Tokens.Typography.Label.mdMedium)
+                    .font(.system(size: 14, weight: .regular))
                     .foregroundStyle(Tokens.Ink.tertiary)
                     .opacity(titleHovered ? 1 : 0)
             }
@@ -600,7 +592,7 @@ struct RecordingDetailView: View {
                         systemName: copiedForChat ? "checkmark" : "doc.on.doc",
                         prominence: .minimal,
                         iconSize: 14,
-                        weight: .medium
+                        weight: .regular
                     ) { copyForChat() }
                     .help("Копировать транскрипт")
                 }
@@ -613,7 +605,7 @@ struct RecordingDetailView: View {
                             systemName: "checkmark",
                             prominence: .minimal,
                             iconSize: 14,
-                            weight: .medium
+                            weight: .regular
                         ) { commitRecapEdit() }
                         .help("Готово")
                     } else {
@@ -621,14 +613,14 @@ struct RecordingDetailView: View {
                             systemName: "arrow.clockwise",
                             prominence: .minimal,
                             iconSize: 14,
-                            weight: .medium
+                            weight: .regular
                         ) { Task { await state.regenerateRecap() } }
                         .help("Перегенерировать")
                         IconButton(
                             systemName: copiedRecap ? "checkmark" : "doc.on.doc",
                             prominence: .minimal,
                             iconSize: 14,
-                            weight: .medium
+                            weight: .regular
                         ) { copyRecapForChat() }
                         .help("Копировать саммари")
                     }
@@ -637,45 +629,9 @@ struct RecordingDetailView: View {
                         systemName: "arrow.clockwise",
                         prominence: .minimal,
                         iconSize: 14,
-                        weight: .medium
+                        weight: .regular
                     ) { Task { await state.regenerateRecap() } }
                     .help("Сгенерировать")
-                }
-            case .followUp:
-                if followUpText?.isEmpty == false {
-                    if isEditingFollowUp {
-                        IconButton(
-                            systemName: "checkmark",
-                            prominence: .minimal,
-                            iconSize: 14,
-                            weight: .medium
-                        ) { commitFollowUpEdit() }
-                        .help("Готово")
-                    } else {
-                        IconButton(
-                            systemName: "arrow.clockwise",
-                            prominence: .minimal,
-                            iconSize: 14,
-                            weight: .medium
-                        ) { draftFollowUpFromSummary() }
-                        .help("Перегенерировать письмо")
-                        IconButton(
-                            systemName: copiedFollowUp ? "checkmark" : "doc.on.doc",
-                            prominence: .minimal,
-                            iconSize: 14,
-                            weight: .medium
-                        ) { copyFollowUp() }
-                        .help("Копировать письмо")
-                    }
-                } else {
-                    IconButton(
-                        systemName: "arrow.clockwise",
-                        prominence: .minimal,
-                        iconSize: 14,
-                        weight: .medium,
-                        enabled: recapText?.isEmpty == false
-                    ) { draftFollowUpFromSummary() }
-                    .help("Письмо из саммари")
                 }
             }
         }
@@ -687,7 +643,7 @@ struct RecordingDetailView: View {
             systemName: player.isPlaying ? "pause" : "play",
             prominence: .minimal,
             iconSize: 14,
-            weight: .medium,
+            weight: .regular,
             enabled: entry.audioFileExists
         ) {
             togglePlayback()
@@ -761,8 +717,6 @@ struct RecordingDetailView: View {
                 notesPanel
             case .recap:
                 recapPanel
-            case .followUp:
-                followUpPanel
             }
         }
         .frame(maxWidth: Tokens.Window.contentWidth)
@@ -892,37 +846,6 @@ struct RecordingDetailView: View {
         }
     }
 
-    // MARK: - Follow-up Tab
-
-    @ViewBuilder
-    private var followUpPanel: some View {
-        if isEditingFollowUp {
-            TextEditor(text: $editedFollowUpText)
-                .typo(Tokens.Typography.Body.md)
-                .foregroundStyle(Tokens.Ink.primary)
-                .scrollContentBackground(.hidden)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .onExitCommand { endActiveInlineEdit() }
-                .onDisappear { commitFollowUpEdit() }
-        } else if let text = followUpText, !text.isEmpty {
-            ScrollView {
-                recapRendered(text)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 16)
-                    .contentShape(Rectangle())
-                    .onTapGesture { editedFollowUpText = text; isEditingFollowUp = true }
-            }
-        } else {
-            emptyTabPlaceholder(
-                title: "Нет письма",
-                detail: "Короткое исходящее. Сгенерируйте из саммари и отредактируйте."
-            )
-        }
-    }
-
     private func emptyTabPlaceholder(title: String, detail: String) -> some View {
         VStack(spacing: 10) {
             Spacer()
@@ -1012,99 +935,6 @@ struct RecordingDetailView: View {
         }
     }
 
-    private func resolvedFollowUpURL() -> URL? {
-        let dir = URL(fileURLWithPath: Preferences.shared.meetingsPath)
-        let prefix = entry.id + "-"
-        if let hit = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil))?
-            .first(where: {
-                $0.pathExtension == "md"
-                    && $0.lastPathComponent.hasPrefix(prefix)
-                    && $0.lastPathComponent.hasSuffix("-followup.md")
-            }) {
-            return hit
-        }
-        let slug = MarkdownWriter.slugify(entry.title.isEmpty ? entry.id : entry.title)
-        return dir.appendingPathComponent("\(entry.id)-\(slug)-followup.md")
-    }
-
-    private func loadFollowUpText() {
-        guard let url = resolvedFollowUpURL(),
-              FileManager.default.fileExists(atPath: url.path) else {
-            followUpText = nil
-            return
-        }
-        followUpText = try? String(contentsOf: url, encoding: .utf8)
-    }
-
-    private func commitFollowUpEdit() {
-        guard isEditingFollowUp else { return }
-        isEditingFollowUp = false
-        let trimmed = editedFollowUpText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed != (followUpText ?? "").trimmingCharacters(in: .whitespacesAndNewlines) else { return }
-        guard let url = resolvedFollowUpURL() else { return }
-        do {
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true
-            )
-            try trimmed.write(to: url, atomically: true, encoding: .utf8)
-            followUpText = trimmed
-        } catch {
-            NSLog("[RecordingDetailView] failed to save follow-up edit: \(error)")
-        }
-    }
-
-    /// MVP: draft a short outbound note from the summary until dedicated LLM follow-up lands.
-    private func draftFollowUpFromSummary() {
-        loadRecapText()
-        guard let summary = recapText?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty else {
-            return
-        }
-        let body = Self.compressForFollowUp(summary)
-        let draft = "# Письмо\n\n\(body)\n"
-        guard let url = resolvedFollowUpURL() else { return }
-        do {
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true
-            )
-            try draft.write(to: url, atomically: true, encoding: .utf8)
-            followUpText = draft
-            editedFollowUpText = draft
-            isEditingFollowUp = true
-        } catch {
-            NSLog("[RecordingDetailView] failed to draft follow-up: \(error)")
-        }
-    }
-
-    /// Keep headings + bullets; drop long prose paragraphs — outbound-friendly.
-    private static func compressForFollowUp(_ markdown: String) -> String {
-        let lines = markdown.components(separatedBy: "\n")
-        var out: [String] = []
-        for line in lines {
-            let t = line.trimmingCharacters(in: .whitespaces)
-            if t.hasPrefix("#") || t.hasPrefix("- ") || t.hasPrefix("* ") || t.hasPrefix("•") {
-                out.append(line)
-            } else if t.count <= 140, !t.isEmpty {
-                out.append(line)
-            }
-        }
-        let joined = out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        if joined.isEmpty {
-            return String(markdown.prefix(600)).trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        return joined
-    }
-
-    private func copyFollowUp() {
-        let text = (isEditingFollowUp ? editedFollowUpText : followUpText) ?? ""
-        guard !text.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        copiedFollowUp = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copiedFollowUp = false }
-    }
-
-    // MARK: - Participants Panel
-
     private struct Participant: Identifiable {
         let name: String
         let talkTime: Double
@@ -1187,6 +1017,7 @@ struct RecordingDetailView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
+                        .font(.system(size: 14, weight: .regular))
                         .foregroundStyle(.secondary)
                 }
                 .menuStyle(.borderlessButton)
@@ -1219,7 +1050,7 @@ struct RecordingDetailView: View {
                         if let dl = state.modelDownloadProgress {
                             VStack(spacing: 8) {
                                 Image(systemName: "arrow.down.circle")
-                                    .typo(Tokens.Typography.Heading.sm)
+                                    .font(.system(size: 22, weight: .regular))
                                     .foregroundStyle(.secondary)
                                 Text(progress)
                                     .typo(Tokens.Typography.Label.mdRegular)
@@ -1239,7 +1070,7 @@ struct RecordingDetailView: View {
                         }
                     } else {
                         Image(systemName: "text.quote")
-                            .typo(Tokens.Typography.Heading.sm)
+                            .font(.system(size: 22, weight: .regular))
                             .foregroundStyle(.quaternary)
                         Text("Нет транскрипта")
                             .typo(Tokens.Typography.Label.mdRegular)
@@ -1547,6 +1378,7 @@ struct RecordingDetailView: View {
             reassignMenuContent(for: [seg.index])
         } label: {
             Image(systemName: "person.crop.circle.badge.plus")
+                .font(.system(size: 14, weight: .regular))
                 .foregroundStyle(.secondary)
         }
         .menuStyle(.borderlessButton)

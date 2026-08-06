@@ -1,53 +1,29 @@
 import SwiftUI
 import AppKit
 import AVFoundation
-import CoreGraphics
-import EventKit
 import ServiceManagement
-import ApplicationServices
 import UserNotifications
 import PropellerUI
 
-/// Hosts `OnboardingFlowView` and wires steps to the app: name → Preferences,
-/// calendar → EventKit, grants → TCC prompts, launch-at-login → SMAppService.
+/// Hosts `SetupView` and wires it to the machine: grants → TCC prompts,
+/// launch-at-login → `SMAppService`, «Начать» → the app.
 ///
-/// Every row reflects a *real* authorization state, polled once a second so the
-/// tick appears as soon as the user grants it in System Settings.
+/// Both permission rows reflect a *real* authorization state, polled once a
+/// second so the tick appears the moment it is granted in System Settings rather
+/// than when the plate happens to redraw.
 struct OnboardingContainer: View {
     @ObservedObject var state: AppState
 
     @State private var microphoneGranted = false
     @State private var notificationsGranted = false
-    @State private var calendarGranted = false
-    @State private var ollamaReady = false
+    @State private var launchAtLogin = false
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        OnboardingFlowView(
-            onComplete: { name in
-                Preferences.shared.userName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                Preferences.shared.onboardingCompleted = true
-                // System audio capture is required for remote speakers — lock it on
-                // once Screen Recording was granted in onboarding.
-                Preferences.shared.captureSystemAudio = true
-                state.showOnboarding = false
-                Analytics.signal("Onboarding.completed")
-            },
+        SetupView(
             microphoneGranted: microphoneGranted,
             notificationsGranted: notificationsGranted,
-            calendarGranted: calendarGranted,
-            onConnectCalendar: { provider in
-                // Google calendars reach us through macOS, not OAuth: the account
-                // has to exist in System Settings → Internet Accounts first.
-                if provider == .google, !calendarGranted {
-                    openInternetAccounts()
-                }
-                Preferences.shared.calendarEnabled = true
-                Task {
-                    await CalendarService.shared.enableAndLoad()
-                    await MainActor.run { refreshGrants() }
-                }
-            },
+            launchAtLogin: launchAtLogin,
             onGrantMicrophone: {
                 switch AVCaptureDevice.authorizationStatus(for: .audio) {
                 case .notDetermined:
@@ -75,37 +51,49 @@ struct OnboardingContainer: View {
                 do {
                     if on { try SMAppService.mainApp.register() }
                     else { try SMAppService.mainApp.unregister() }
-                } catch { NSLog("[Onboarding] launch-at-login failed: \(error)") }
+                    launchAtLogin = on
+                } catch {
+                    NSLog("[Setup] launch-at-login failed: \(error)")
+                    // Say what is true: the switch goes back, because the login
+                    // item did not take.
+                    launchAtLogin = SMAppService.mainApp.status == .enabled
+                }
             },
-            ollamaProgress: state.ollamaSetupProgress,
-            ollamaStatus: state.ollamaSetupMessage,
-            ollamaReady: ollamaReady,
-            ollamaError: state.ollamaSetupError
+            onStart: finish
         )
         .onAppear {
             refreshGrants()
-            // The model is fetched because the app needs one, not because this
-            // screen was reached — but reaching it is a fine moment to make sure
-            // the fetch is under way (`design/no-dead-ends.md` §5).
-            Task { await state.ensureSummaryModel() }
-            Task {
-                let model = Preferences.shared.recapOllamaModel
-                let name = model.isEmpty ? OllamaSidecar.defaultModel : model
-                if await OllamaSidecar.shared.probeAPI(),
-                   await OllamaSidecar.shared.modelPresent(name) {
-                    await MainActor.run { ollamaReady = true }
-                }
-            }
-        }
-        .onChange(of: state.ollamaSetupMessage) { _, msg in
-            if msg == "Модель готова" { ollamaReady = true }
+            launchAtLogin = SMAppService.mainApp.status == .enabled
         }
         .onReceive(poll) { _ in refreshGrants() }
     }
 
+    /// The only way off the plate.
+    ///
+    /// The summary model starts downloading here — on the press, not on the
+    /// screen appearing — and nothing on screen says so. It is ~3.4 GB the app
+    /// needs and nobody has to decide about (`design/no-dead-ends.md` §5):
+    /// recording and transcription work immediately, summaries backfill when the
+    /// weights land. A progress bar here would be an invitation to wait for
+    /// something there is no reason to wait for.
+    ///
+    /// The name is *not* written. It is the rail's question now
+    /// (`SetupPromptMachine`), and an empty `userName` is what tells the rail it
+    /// still has to ask — writing `NSFullUserName()` here as a fallback would
+    /// answer the question on the user's behalf and the block would never appear.
+    /// The fallback lives at the point of use instead (`Preferences.ownerName`).
+    private func finish() {
+        Preferences.shared.onboardingCompleted = true
+        // Remote speakers come from the process tap, which needs no grant of its
+        // own — the switch stays on because there is nothing to switch off.
+        Preferences.shared.captureSystemAudio = true
+        state.showOnboarding = false
+        Task { await state.ensureSummaryModel() }
+        Analytics.signal("Onboarding.completed")
+    }
+
     private func refreshGrants() {
         microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        calendarGranted = Self.calendarAuthorized
 
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             let granted = settings.authorizationStatus == .authorized
@@ -116,11 +104,6 @@ struct OnboardingContainer: View {
         }
     }
 
-    /// Package targets macOS 14+, so full access is the only state that counts.
-    private static var calendarAuthorized: Bool {
-        EKEventStore.authorizationStatus(for: .event) == .fullAccess
-    }
-
     private func openSettings(_ anchor: String) {
         openSystemSettings("x-apple.systempreferences:com.apple.preference.security?\(anchor)")
     }
@@ -129,12 +112,7 @@ struct OnboardingContainer: View {
         openSystemSettings("x-apple.systempreferences:com.apple.preference.notifications")
     }
 
-    /// System Settings → Internet Accounts, where a Google account is added.
-    private func openInternetAccounts() {
-        openSystemSettings("x-apple.systempreferences:com.apple.preferences.internetaccounts")
-    }
-
-    /// Always go through the panel controller: the onboarding plate floats above
+    /// Always go through the panel controller: the setup plate floats above
     /// ordinary windows, so System Settings would open behind it and the grant
     /// button would look dead.
     private func openSystemSettings(_ string: String) {

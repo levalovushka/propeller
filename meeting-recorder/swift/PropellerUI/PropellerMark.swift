@@ -1,14 +1,102 @@
 import SwiftUI
 
-/// Propeller mark from Figma End (642:2477) — 48×48 viewBox, white petals.
-struct PropellerMark: View {
-    var size: CGFloat = 48
+/// Propeller mark from Figma End (642:2477) — square viewBox, six petals.
+///
+/// Fills with the ambient foreground style, so a parent can tint it for light /
+/// dark (or for a selected nav row) the same way an SF Symbol would.
+public struct PropellerMark: View {
+    public var size: CGFloat = 48
 
-    var body: some View {
+    public init(size: CGFloat = 48) {
+        self.size = size
+    }
+
+    public var body: some View {
         PropellerMarkShape()
-            .fill(Color.white)
+            .fill()
             .frame(width: size, height: size)
             .accessibilityHidden(true)
+    }
+}
+
+/// The brand glyph in a nav-sized slot. Spins counter-clockwise while the row
+/// is hovered, and coasts to the next full turn when the pointer leaves —
+/// never snaps back mid-petal.
+struct PropellerNavMark: View {
+    var spinning: Bool
+
+    /// One full turn every two seconds — slow enough to read as a mark, not a fan.
+    private let degreesPerSecond: Double = 180
+
+    @State private var parkedAngle: Double = 0
+    @State private var spinStartedAt: Date?
+    @State private var settleFrom: Double = 0
+    @State private var settleTo: Double?
+    @State private var settleStartedAt: Date?
+    @State private var settleDuration: TimeInterval = 0
+
+    var body: some View {
+        TimelineView(
+            .animation(
+                minimumInterval: 1.0 / 60.0,
+                paused: spinStartedAt == nil && settleTo == nil
+            )
+        ) { context in
+            PropellerMark(size: Tokens.Sidebar.navIconSize)
+                .rotationEffect(.degrees(angle(at: context.date)))
+        }
+        .frame(width: Tokens.Sidebar.navIconSide, height: Tokens.Sidebar.navIconSide)
+        .onChange(of: spinning) { _, now in
+            let t = Date()
+            if now {
+                parkedAngle = angle(at: t)
+                settleTo = nil
+                settleStartedAt = nil
+                spinStartedAt = t
+            } else {
+                let current = angle(at: t)
+                spinStartedAt = nil
+                let target = Self.nextFullTurnCCW(from: current)
+                if abs(target - current) < 0.5 {
+                    parkedAngle = target
+                    settleTo = nil
+                    settleStartedAt = nil
+                } else {
+                    settleFrom = current
+                    settleTo = target
+                    settleStartedAt = t
+                    settleDuration = abs(target - current) / degreesPerSecond
+                    parkedAngle = current
+                }
+            }
+        }
+        .task(id: settleTo) {
+            guard settleTo != nil else { return }
+            let ns = UInt64(max(settleDuration, 0.05) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: ns)
+            guard let target = settleTo else { return }
+            parkedAngle = target
+            settleTo = nil
+            settleStartedAt = nil
+        }
+    }
+
+    private func angle(at date: Date) -> Double {
+        if let start = spinStartedAt {
+            return parkedAngle - date.timeIntervalSince(start) * degreesPerSecond
+        }
+        if let target = settleTo, let start = settleStartedAt {
+            let u = min(1, date.timeIntervalSince(start) / max(settleDuration, 0.05))
+            // Ease-out cubic — same feel as the row's hover, without a hard stop.
+            let eased = 1 - pow(1 - u, 3)
+            return settleFrom + (target - settleFrom) * eased
+        }
+        return parkedAngle
+    }
+
+    /// Continues counter-clockwise to the next pose that matches the resting mark.
+    private static func nextFullTurnCCW(from current: Double) -> Double {
+        -360.0 * ceil((-current) / 360.0)
     }
 }
 

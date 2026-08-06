@@ -213,11 +213,8 @@ class RecordingStore: ObservableObject {
 
     /// Take a meeting out of the list but leave its audio alone.
     ///
-    /// This is what «Удалить» does now, because the row that stays behind offers
-    /// «Вернуть» — and an undo that cannot bring the audio back is not an undo.
-    /// Every deferred removal is finished by `remove` sooner or later:
-    /// `AppState` commits it when the offer expires, when another meeting is
-    /// deleted, and on quit.
+    /// Soft-delete for ⌘Z: files stay until `remove` commits (next delete or
+    /// quit). An undo that cannot bring the audio back is not an undo.
     func removeDeferred(_ entry: RecordingEntry) {
         recordings.removeAll { $0.id == entry.id }
         scheduleSave()

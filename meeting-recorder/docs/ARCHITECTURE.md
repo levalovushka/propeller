@@ -81,7 +81,8 @@ MeetingDetector (Auto) / menu bar / ⌘R / UI
 | `RecordingStore` | Индекс записей + CRUD + size-nudge (без auto-delete) |
 | `MarkdownWriter` / `RecapService` | Экспорт и LLM-конспект + метадата (заголовок/темы/теги) |
 | `Preferences` | UserDefaults + Keychain для API-ключей |
-| UI | `MainView`, `RecordingDetailView`, `RecordingInProgressView`, `MenuBarPanelView`, `SettingsSheet`, `Onboarding*`, `PropellerUI/`, `SearchPalette`, … |
+| `LiveTranscriptService` / `GigasttLiveSession` | Живой слой встречи: две WS-сессии к gigastt (микрофон и система) из кадров `ProcessTapCapture.onLiveFrames`; складываются чистым `LiveTranscript` |
+| UI | `MainView`, `RecordingDetailView`, `RecordingPaneView`, `MenuBarPanelView`, `SettingsSheet`, `SetupView` + `Onboarding{Container,PanelController}`, `PropellerUI/`, `SearchPalette`, … |
 
 ## Хранилище
 

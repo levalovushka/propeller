@@ -77,9 +77,14 @@ struct MenuBarPanelView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
                     Image(systemName: "record.circle.fill")
+                        .font(.system(size: 14, weight: .regular))
                         .foregroundStyle(.red)
                         .symbolRenderingMode(.hierarchical)
-                    Text("Запись").typo(Tokens.Typography.Label.mdMedium)
+                    // Пауза ставится в окне записи, а меню-бар обязан говорить
+                    // то же самое: «Запись» над остановившимся таймером — то же
+                    // враньё, что и в строке рельса.
+                    Text(state.isRecordingPaused ? "Пауза" : "Запись")
+                        .typo(Tokens.Typography.Label.mdMedium)
                     Spacer()
                     Text(state.elapsedString)
                         .typo(Tokens.Typography.Label.mdMedium, monospacedDigit: true)
@@ -102,6 +107,7 @@ struct MenuBarPanelView: View {
                         showingDiscardConfirm = true
                     } label: {
                         Image(systemName: "trash")
+                            .font(.system(size: 14, weight: .regular))
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.regular)
@@ -123,6 +129,7 @@ struct MenuBarPanelView: View {
         } else if state.meetingDetected && !state.isRecording {
             HStack(spacing: 6) {
                 Image(systemName: "video.fill")
+                    .font(.system(size: 14, weight: .regular))
                     .foregroundStyle(.cyan)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Идёт звонок").typo(Tokens.Typography.Label.mdMedium)
@@ -211,7 +218,7 @@ struct MenuBarPanelView: View {
                             Spacer()
                             if entry.status >= .saved {
                                 Image(systemName: "checkmark.circle.fill")
-                                    .typo(Tokens.Typography.Label.smRegular)
+                                    .font(.system(size: 12, weight: .regular))
                                     .foregroundStyle(.green)
                             }
                         }
