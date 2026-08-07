@@ -177,6 +177,14 @@ Which apps count as a call, and which window titles mean "in one", is **data** i
 All of them in one place: [`../design/principles.md`](../design/principles.md) —
 product framing, notifications, «no dead ends», the engineering order below, the
 studio's form canon (`pgcorpus`) and the grep-checkable typography rules. Read the
+- **Заголовки окон как сигнал мертвы, и в браузере детекта сейчас нет вовсе.** Без «Записи экрана»
+  `CGWindowListCopyWindowInfo` отдаёт пустые имена у всех окон (замерено 2026-08-07), значит
+  `browserTitleMeansCall` не срабатывает никогда. Кандидат на замену — аудио-дуплекс процесса
+  (`kAudioProcessPropertyIsRunningInput` + `IsRunningOutput`), который читается без единого
+  TCC-разрешения. Идёт теневой замер: `tools/shadow-mic-probe/` (`./run.sh report`), критерий
+  приёмки — не больше 2 ложных баннеров за неделю, подробности и снятые факты в
+  [`../STATE.md`](../STATE.md) §8.
+
 relevant section before a decision; run §6 before a commit.
 
 ## How to work in this repo
