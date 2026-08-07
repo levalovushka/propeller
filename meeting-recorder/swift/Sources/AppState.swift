@@ -991,7 +991,13 @@ class AppState: ObservableObject {
             stage: entry.status,
             failure: entry.lastFailure,
             isWorkingOnIt: activity.concerns(entry.id),
-            summariesEnabled: Preferences.shared.recapProvider != .off,
+            // Всегда. Провайдера выбирают, саммари — нет: «Выкл» из пикера
+            // удалён (`RecapProviderKind`). Параметр пока остаётся у чистой
+            // функции вместе с веткой `.done(.summariesOff)`, потому что эта
+            // причина `Codable` и уже может лежать на записи у того, кто
+            // выключал саммари в 1.15; выкинуть её из типа можно, когда такие
+            // записи перестанут встречаться.
+            summariesEnabled: true,
             // `needsLocalRecapModel`, not `localRecapModelReady == true`: the
             // question is «is the model the thing we are waiting for», and with a
             // cloud key it never is. It also answers «not asked yet» as ready,
@@ -1019,8 +1025,8 @@ class AppState: ObservableObject {
 #endif
         guard localRecapModelReady == false else { return false }
         switch Preferences.shared.recapProvider {
-        case .off, .openai, .claude:
-            return false          // cloud / disabled: the local model is irrelevant
+        case .openai, .claude:
+            return false          // cloud: the local model is irrelevant
         case .ollama:
             return true
         case .auto:
@@ -1272,7 +1278,8 @@ class AppState: ObservableObject {
             isRecording: isRecording,
             inCall: meetingDetected,
             isThermallyStressed: thermal == .serious || thermal == .critical,
-            summariesEnabled: Preferences.shared.recapProvider != .off
+            // Саммари — не опция: воркеру всегда причитается эта фаза.
+            summariesEnabled: true
         )
     }
 
@@ -1956,7 +1963,9 @@ class AppState: ObservableObject {
                 .transcriptSaved,
                 body: "Расшифровка готова",
                 isAwaited: isAwaited(recordingID),
-                recapExpected: Preferences.shared.recapProvider != .off
+                // Саммари придёт всегда, поэтому «Расшифровка готова» всегда
+                // молчит в пользу одного «готово» на встречу.
+                recapExpected: true
             )
             kickPipeline("saved")
         } catch {
@@ -2026,7 +2035,6 @@ class AppState: ObservableObject {
             case .failure(let reason):
                 let skip: String
                 switch reason {
-                case .disabled: skip = "disabled"
                 case .noProvider: skip = "no_provider"
                 case .emptyTranscript: skip = "empty"
                 }
@@ -2043,9 +2051,6 @@ class AppState: ObservableObject {
                 }
                 if selectedRecordingID == recordingID {
                     switch reason {
-                    case .disabled:
-                        recapSkipHint = nil
-                        surfaceMeetingUI(preferSummaryTab: false)
                     case .noProvider:
                         // A skip, not a failure — and no longer a request either:
                         // the model comes on its own (`ensureSummaryModel`), so the

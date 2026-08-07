@@ -127,7 +127,18 @@ class Preferences {
 
     var recapProvider: RecapProviderKind {
         get {
-            RecapProviderKind(rawValue: defaults.string(forKey: "recapProvider") ?? "") ?? .auto
+            let raw = defaults.string(forKey: "recapProvider") ?? ""
+            // Удалённый «Выкл» переезжает на «Авто». Записанное значение
+            // **перезаписывается**, а не просто игнорируется на чтении, как это
+            // делает миграция `autoRecordMode`: пикер в настройках держит не
+            // `Preferences`, а строку из defaults напрямую (`@AppStorage`), и
+            // незнакомое ему значение оставило бы селектор пустым — ни одного
+            // выбранного пункта из четырёх.
+            if raw == "off" {
+                defaults.set(RecapProviderKind.auto.rawValue, forKey: "recapProvider")
+                return .auto
+            }
+            return RecapProviderKind(rawValue: raw) ?? .auto
         }
         set { defaults.set(newValue.rawValue, forKey: "recapProvider") }
     }

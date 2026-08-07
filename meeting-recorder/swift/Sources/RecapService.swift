@@ -2,12 +2,21 @@ import Foundation
 import PropellerMetrics
 import PropellerPure
 
+/// Кто пишет саммари. Выключателя здесь нет и быть не может.
+///
+/// «Выкл» был пятым вариантом этого пикера, и он отключал ровно то, зачем
+/// приложение существует: расшифровка без конспекта — это файл, который никто не
+/// откроет. Выбор провайдера — да, выбор «а давайте без саммари» — нет, ровно
+/// как нет гейта на скачивание модели (`CLAUDE.md`: «нет LLM» не является
+/// законным состоянием приложения).
+///
+/// Сохранённое `"off"` переписывается на `.auto` при чтении —
+/// `Preferences.recapProvider`.
 enum RecapProviderKind: String, CaseIterable, Identifiable {
     case auto
     case ollama
     case openai
     case claude
-    case off
 
     var id: String { rawValue }
 
@@ -17,13 +26,14 @@ enum RecapProviderKind: String, CaseIterable, Identifiable {
         case .ollama: return "Ollama"
         case .openai: return "OpenAI"
         case .claude: return "Claude"
-        case .off: return "Выкл"
         }
     }
 }
 
+/// Почему саммари не сделали. Обе причины — про то, чего нет снаружи, ни одна не
+/// про наше решение: ветка `.disabled` ушла вместе с «Выкл», потому что после
+/// него её нечем было произвести.
 enum RecapSkipReason: Error, Equatable {
-    case disabled
     case noProvider
     case emptyTranscript
 }
@@ -150,8 +160,6 @@ actor RecapService {
         claudeKey: String?
     ) async -> Result<String, RecapSkipReason> {
         switch kind {
-        case .off:
-            return .failure(.disabled)
         case .ollama:
             return await ollamaUsable(model: ollamaModel) ? .success("ollama") : .failure(.noProvider)
         case .openai:
