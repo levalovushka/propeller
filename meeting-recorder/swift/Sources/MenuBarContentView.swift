@@ -15,6 +15,9 @@ struct MenuBarContentView: View {
             onStop: { state.stopRecording() },
             onDiscard: { state.cancelRecording() },
             onSettings: { SettingsOpener.open() },
+            // Только «скрыть»: вернуть иконку можно из настроек, куда без неё
+            // ведёт ⌘, и повторный запуск приложения.
+            onHideFromMenuBar: { Preferences.shared.menuBarIconVisible = false },
             onQuit: { quit() }
         )
     }

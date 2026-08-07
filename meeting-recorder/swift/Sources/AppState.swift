@@ -4,6 +4,15 @@ import PropellerPure
 import PropellerUI
 import SwiftUI
 
+/// Что показывает правая панель.
+///
+/// Две ветки, не флаг: панель показывает ровно одно, и «настройки открыты, а
+/// встреча всё ещё выбрана» — состояние, которого не должно быть выразимо.
+enum PaneRoute: Equatable {
+    case meeting
+    case settings
+}
+
 @MainActor
 class AppState: ObservableObject {
     @Published var isRecording = false
@@ -101,6 +110,18 @@ class AppState: ObservableObject {
     // Selection
     @Published var selectedRecordingID: String?
 
+    /// Что стоит сейчас в правой панели — встреча или настройки.
+    ///
+    /// Настройки перестали быть окном (2026-08-07), и это не косметика: окно
+    /// настроек в приложении со строкой меню — вторая поверхность, которую надо
+    /// найти, поднять и закрыть, ради полутора страниц переключателей. Как
+    /// состояние панели они открываются той же строкой рельса, что и встреча, и
+    /// закрываются выбором любой встречи.
+    ///
+    /// Живёт здесь, а не во вью, потому что открыть настройки просят снаружи
+    /// окна — из меню-бара и с ⌘, (`SettingsOpener`).
+    @Published var paneRoute: PaneRoute = .meeting
+
     /// Recording was asked for and the microphone is not ours to open.
     ///
     /// An attribute of recording, not a message about it: the row that starts a
@@ -112,9 +133,12 @@ class AppState: ObservableObject {
     // Window
     @Published var isWindowOpen = false {
         didSet {
-            // Live waveforms only matter when the window is visible (E5).
+            // Уровень нужен не только окну: лопасть в чёлке идёт всю запись, и
+            // её остановка означает паузу, а не закрытое окно. Экономия E5
+            // остаётся там, где потребитель действительно один: вне записи
+            // метринг не работает вовсе.
             if isRecording {
-                recorder.setMeteringDesired(isWindowOpen)
+                recorder.setMeteringDesired(true)
             }
         }
     }
@@ -220,9 +244,9 @@ class AppState: ObservableObject {
 
         setupMeetingDetector()
 
-        // Quick-note overlay: register the state; key monitors install only
-        // while a recording is active (plan-optimization E7).
-        NoteOverlayController.shared.install(state: self)
+        // Чёлка: регистрируем состояние; панель и монитор клавиши поднимаются
+        // только на время записи (plan-optimization E7).
+        NotchController.shared.install(state: self)
 
         // Load nearby calendar events if the user opted in. Use the
         // requesting path so access is re-prompted after an ad-hoc rebuild
@@ -544,8 +568,8 @@ class AppState: ObservableObject {
             elapsedString = "00:00"
             elapsedSeconds = 0
             startDisplayTimer()
-            recorder.setMeteringDesired(isWindowOpen)
-            NoteOverlayController.shared.startMonitoring()
+            recorder.setMeteringDesired(true)
+            NotchController.shared.startRecording()
 
             let now = Date()
             // Calendar title wins over the placeholder (and later over LLM rename).
@@ -571,6 +595,10 @@ class AppState: ObservableObject {
             refreshStorageUsage()
             activeRecordingID = entry.id
             selectedRecordingID = entry.id
+            // Началась встреча — панель показывает её, даже если в ней были
+            // открыты настройки. «Новая запись» нажата из того же рельса, и
+            // ничего не произошедшее на экране читается как несработавшая кнопка.
+            paneRoute = .meeting
             startLiveTranscript(for: entry.id)
             Analytics.recordingStarted(source: recordingSource)
             if title != placeholder {
@@ -628,6 +656,9 @@ class AppState: ObservableObject {
         guard isRecording, !recorder.isPaused else { return }
         recorder.pause()
         live.pause()
+        // Кнопки паузы в чёлке нет, но состояние там есть: лопасть встаёт
+        // совсем, и это единственное, что означает неподвижность.
+        NotchController.shared.refresh()
         objectWillChange.send()
     }
 
@@ -635,6 +666,7 @@ class AppState: ObservableObject {
         guard isRecording, recorder.isPaused else { return }
         recorder.resume()
         live.resume(at: recorder.elapsed)
+        NotchController.shared.refresh()
         objectWillChange.send()
     }
 
@@ -654,7 +686,7 @@ class AppState: ObservableObject {
         defer { isTerminalRecordingAction = false }
 
         stopDisplayTimer()
-        NoteOverlayController.shared.stopMonitoring()
+        NotchController.shared.stopRecording()
         recorder.setMeteringDesired(false)
         isRecording = false
         activeRecordingID = nil
@@ -699,7 +731,7 @@ class AppState: ObservableObject {
         defer { isTerminalRecordingAction = false }
 
         stopDisplayTimer()
-        NoteOverlayController.shared.stopMonitoring()
+        NotchController.shared.stopRecording()
         recorder.setMeteringDesired(false)
         isRecording = false
         activeRecordingID = nil
@@ -807,8 +839,17 @@ class AppState: ObservableObject {
 
     // MARK: - Selection
 
+    /// Настройки в панель. Выбранную встречу не трогаем: она под ними, и
+    /// вернуться к ней можно тем же кликом, которым её выбирали.
+    func openSettings() {
+        paneRoute = .settings
+    }
+
     func selectRecording(_ entry: RecordingEntry) {
         player.stop()
+        // Выбрать встречу — значит уйти из настроек. Отдельной кнопки «закрыть»
+        // у них нет и не нужно: панель одна, и в ней всегда что-то одно.
+        paneRoute = .meeting
         selectedRecordingID = entry.id
         transcript = entry.transcript ?? ""
         recordingDuration = entry.duration
@@ -883,6 +924,10 @@ class AppState: ObservableObject {
     }
 
     private func surfaceMeetingUI(preferSummaryTab: Bool) {
+        // Панель показывает встречу, о которой речь, — даже если в ней сейчас
+        // открыты настройки. Просить показать колонку и оставить на экране
+        // настройки значит не показать ничего.
+        paneRoute = .meeting
         preferredSidebarSection = "meetings"
         preferredDetailTab = preferSummaryTab ? "recap" : "transcript"
         NSApp.setActivationPolicy(.regular)
@@ -1033,11 +1078,6 @@ class AppState: ObservableObject {
             return false          // cloud: the local model is irrelevant
         case .ollama:
             return true
-        case .auto:
-            // Auto falls back to a cloud provider only if a key exists.
-            let hasKey = (Preferences.shared.openAIAPIKey?.isEmpty == false)
-                || (Preferences.shared.claudeAPIKey?.isEmpty == false)
-            return !hasKey
         }
     }
 
@@ -1084,8 +1124,8 @@ class AppState: ObservableObject {
         recordingStore.appendNote(id: id, text: line)
         // No notification here on purpose. It used to post one — with a sound,
         // during a recording, about something the user had just done themselves,
-        // with nothing to do about it. The overlay confirms it where the typing
-        // happened (`NoteOverlayController.confirmSaved`).
+        // with nothing to do about it. Подтверждение живёт там, где печатали:
+        // ухо чёлки на 0,7 с показывает, сколько заметок стало (`NotchController`).
         return true
     }
 

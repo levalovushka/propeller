@@ -934,6 +934,114 @@ public enum Tokens {
         }
     }
 
+    /// Настройки — состояние правой панели, а не отдельное окно.
+    ///
+    /// Ширина у них саммарийная, и это не совпадение: это та же колонка панели,
+    /// просто с другим содержимым, — те же поля, тот же потолок измерения и то
+    /// же центрирование в остатке. Число здесь ровно одно (`editorMinHeight`),
+    /// всё остальное — псевдонимы к уже нарисованному.
+    ///
+    /// Группа устроена как день в рельсе: тихий заголовок 11 / 14 и ряд ячеек
+    /// под ним. Плашки нет намеренно — иерархия расстоянием и типографикой, а не
+    /// рамками (`design/principles.md` §5, PR-005).
+    public enum Settings {
+
+        // MARK: Column — мерка саммари
+
+        public static let hPadding = Pane.summaryHPadding
+        public static let topPadding = Pane.summaryVPadding
+        public static let bottomPadding = Pane.summaryBottomPadding
+        public static let maxWidth = Pane.summaryMaxWidth
+        /// Тот же пол, что у саммари. Ниже него колонка не сжимается — панель
+        /// отдаёт свой минимум (`Window.contentPaneMinWidth`), а не текст.
+        public static let minWidth = Pane.summaryMinWidth
+
+        // MARK: Groups
+
+        /// Между группами — тот же шаг, что между днями в рельсе.
+        public static let groupGap = Sidebar.groupGap
+        /// Заголовок группы → её плашка. Выведен, а не назван: правка кегля
+        /// заголовка двигает зазор, а не растит группу.
+        public static var headerBottomGap: CGFloat {
+            max(0, Sidebar.sectionHeaderBlockHeight - Typo.header.lineHeight)
+        }
+        /// Отступ заголовка слева. Чуть меньше внутреннего отступа плашки (14):
+        /// заголовок стоит *над* ней, а не в ней, и совпадение до пикселя
+        /// склеило бы их в один блок.
+        public static let headerLeadingInset = Space.s12
+
+        /// Плашка группы — буквально строка встречи под ховером: тот же оттенок,
+        /// то же скругление, тот же горизонтальный отступ. Не «похожая», а та же:
+        /// список настроек и список встреч живут в одном окне, и две разные
+        /// плашки в нём читались бы как два разных приложения.
+        public static let plateFill = Sidebar.rowHover
+        public static let plateRadius = Sidebar.meetingRadius
+        public static let plateHPadding = Sidebar.meetingHPadding
+        /// Волосяная линия между ячейками. Собственного вертикального отступа у
+        /// плашки нет — его несут сами ячейки, поэтому от края плашки до первой
+        /// строки ровно столько же, сколько у строки встречи.
+        public static let divider = Sidebar.border
+
+        // MARK: Cells
+
+        public static let cellVPadding = Sidebar.meetingVPadding
+        /// Между тем, что настраивается, и тем, чем это делают.
+        public static let cellGap = Space.s16
+        /// Заголовок ячейки → его тихая вторая строка.
+        public static let cellLineGap = Space.s2
+        /// Заголовок → элемент, который стоит **под** ним: поле, редактор, путь.
+        public static let stackGap = Space.s8
+        /// Столбец управления: выключатель и всплывающий список обязаны стоять
+        /// на одной высоте, иначе строки настроек шатаются друг относительно друга.
+        public static let controlHeight = Space.s32
+
+        // MARK: Fields
+
+        public static let fieldHeight = Space.s32
+        public static let fieldRadius = Radius.xxs
+        public static let fieldHPadding = Space.s10
+        public static let fieldFill = Paint.Bg.surface
+        public static let fieldBorder = Sidebar.border
+        /// Промпт — единственное поле, которое читают целиком, а не правят
+        /// одним словом. Высота фиксирована, а не растёт по содержимому: промпт
+        /// длиной в экран утащил бы вниз всё, что под ним, а дальше он всё
+        /// равно скроллится внутри себя.
+        public static let editorHeight: CGFloat = 400
+
+        // MARK: Buttons — пилюля установочной плашки, та же самая
+
+        public static let buttonHeight = Setup.controlHeight
+        public static let buttonRadius = Setup.controlRadius
+        public static let buttonHPadding = Setup.controlHPadding
+        public static let buttonFill = Setup.controlFill
+        public static let buttonHoverFill = Setup.controlHoverFill
+        public static let buttonLabel = Setup.controlLabel
+
+        // MARK: Paint
+
+        public static let header = Sidebar.sectionHeader
+        public static let title = Sidebar.meetingTitle
+        public static let subtitle = Setup.cellSubtitle
+        /// То, что настройка сообщает, а не спрашивает: версия, движок, объём.
+        public static let value = Sidebar.meetingMeta
+
+        // MARK: Type
+
+        public enum Typo {
+            /// 11 / 14 — заголовок группы. Тот же, что у даты в рельсе.
+            public static let header = Sidebar.Typo.sectionHeader
+            /// 14 / 18 — то, что настраивается.
+            public static let title = Sidebar.Typo.navLabel
+            /// 13 / 16 — тихая вторая строка ячейки.
+            public static let subtitle = Setup.Typo.cell
+            /// 14 / 18 — показание справа и текст в поле: и то и другое читают
+            /// в паре с заголовком слева, значит кегль у них общий.
+            public static let value = Sidebar.Typo.navLabel
+            public static let field = Sidebar.Typo.navLabel
+            public static let button = Setup.Typo.grant
+        }
+    }
+
     /// The one plate the app opens with — Figma `setup` (50:1223).
     ///
     /// It replaced six. What is left is what macOS itself has to be asked, and

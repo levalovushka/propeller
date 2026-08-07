@@ -23,14 +23,22 @@ class Preferences {
 
     // MARK: - Capture
 
-    /// Capture system audio output (other participants in video calls) alongside the mic.
-    /// Costs no permission of its own: the far side comes from a Core Audio process
-    /// tap inside the shared-clock aggregate, and the one TCC decision that path
-    /// waits on is paid by the launch warm-up (`sharedClockCaptureWorks`).
-    var captureSystemAudio: Bool {
-        get { defaults.object(forKey: "captureSystemAudio") as? Bool ?? true }
-        set { defaults.set(newValue, forKey: "captureSystemAudio") }
-    }
+    /// Пишем ли вторую сторону разговора. Всегда да, и это больше не настройка.
+    ///
+    /// Она стояла целым разделом «Аудио» и предлагала выключить ровно то, ради
+    /// чего записывают встречу: без системного звука в файле остаётся один
+    /// микрофон, то есть половина реплик и саммари по половине разговора. Тот же
+    /// довод, что снял «Выкл» из провайдеров саммари, — выбор не должен уметь
+    /// ломать продукт.
+    ///
+    /// Стоило это ноль разрешений: дальняя сторона приходит из тапа Core Audio
+    /// внутри агрегата на общих часах, а единственное решение TCC на этом пути
+    /// оплачено прогревом на старте (`sharedClockCaptureWorks`). Свойство
+    /// оставлено на месте, потому что `AudioRecorder` и `CapturePathPolicy`
+    /// продолжают спрашивать — просто ответ теперь один. Записанное `false` у
+    /// того, кто выключил захват в 1.15, перестаёт читаться: иначе он остался бы
+    /// с моно-записями навсегда, без переключателя, которым это вернуть.
+    var captureSystemAudio: Bool { true }
 
     /// Подтверждено ли, что на этой машине работает захват на общих часах
     /// (`ProcessTapCapture`).
@@ -128,17 +136,17 @@ class Preferences {
     var recapProvider: RecapProviderKind {
         get {
             let raw = defaults.string(forKey: "recapProvider") ?? ""
-            // Удалённый «Выкл» переезжает на «Авто». Записанное значение
-            // **перезаписывается**, а не просто игнорируется на чтении, как это
-            // делает миграция `autoRecordMode`: пикер в настройках держит не
-            // `Preferences`, а строку из defaults напрямую (`@AppStorage`), и
-            // незнакомое ему значение оставило бы селектор пустым — ни одного
-            // выбранного пункта из четырёх.
-            if raw == "off" {
-                defaults.set(RecapProviderKind.auto.rawValue, forKey: "recapProvider")
-                return .auto
+            // Удалённые «Выкл» и «Авто» переезжают на Ollama. Записанное
+            // значение **перезаписывается**, а не просто игнорируется на
+            // чтении, как это делает миграция `autoRecordMode`: пикер в
+            // настройках держит не `Preferences`, а строку из defaults напрямую
+            // (`@AppStorage`), и незнакомое ему значение оставило бы селектор
+            // пустым — ни одного выбранного пункта из трёх.
+            if raw == "off" || raw == "auto" {
+                defaults.set(RecapProviderKind.ollama.rawValue, forKey: "recapProvider")
+                return .ollama
             }
-            return RecapProviderKind(rawValue: raw) ?? .auto
+            return RecapProviderKind(rawValue: raw) ?? .ollama
         }
         set { defaults.set(newValue.rawValue, forKey: "recapProvider") }
     }
@@ -182,7 +190,7 @@ class Preferences {
         get {
             let v = defaults.string(forKey: "recapOllamaModel") ?? ""
             if v.isEmpty { return Self.defaultRecapModel }
-            // SettingsSheet's @AppStorage persists the value as soon as the pane
+            // The settings pane's @AppStorage persists the value as soon as it
             // is opened, so 1.11 users have the old default written to disk and
             // would never pick up the new one. Deliberately narrow: only the
             // exact previous built-in migrates, a hand-picked model is kept.
@@ -240,6 +248,21 @@ class Preferences {
     var analyticsEnabled: Bool {
         get { defaults.object(forKey: "analyticsEnabled") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "analyticsEnabled") }
+    }
+
+    // MARK: - Меню-бар
+
+    /// Показывать ли иконку в строке меню.
+    ///
+    /// Выключенная иконка — единственное состояние, в котором у приложения не
+    /// остаётся видимой ручки при закрытом окне: политика активации у него
+    /// `.accessory`, значка в доке нет. Тупика при этом не возникает — повторный
+    /// запуск из Spotlight поднимает окно (`applicationShouldHandleReopen`), —
+    /// но именно поэтому выключатель живёт в настройках, где его можно вернуть,
+    /// а из поповера доступно только выключение.
+    var menuBarIconVisible: Bool {
+        get { defaults.object(forKey: "menuBarIconVisible") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "menuBarIconVisible") }
     }
 
     // MARK: - Onboarding

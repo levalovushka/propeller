@@ -86,9 +86,8 @@ struct OnboardingContainer: View {
     /// The fallback lives at the point of use instead (`Preferences.ownerName`).
     private func finish() {
         Preferences.shared.onboardingCompleted = true
-        // Remote speakers come from the process tap, which needs no grant of its
-        // own — the switch stays on because there is nothing to switch off.
-        Preferences.shared.captureSystemAudio = true
+        // Захват системного звука здесь больше не включают: он не выключается
+        // (`Preferences.captureSystemAudio`).
         state.showOnboarding = false
         Task { await state.ensureSummaryModel() }
         Analytics.signal("Onboarding.completed")

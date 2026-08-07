@@ -20,24 +20,17 @@ import PropellerPure
 
 public struct SidebarNavItem: Identifiable, Equatable, Sendable {
 
-    /// What kind of control the row actually is.
-    ///
-    /// Settings needs its own case because opening the Settings scene is not
-    /// something a closure can do. `NSApp.sendAction(showSettingsWindow:)` is
-    /// the obvious way and it silently does nothing from a menu-bar app that is
-    /// currently `.accessory` — which is exactly the state Propeller is in when
-    /// the window is open. `SettingsLink` is the only API that works, and it is
-    /// a *view*, so the row has to be built as one.
-    public enum Role: Equatable, Sendable {
-        case action
-        case settings
-    }
+    // Settings used to need a `Role` of their own: opening the Settings *scene*
+    // is not something a closure can do — `NSApp.sendAction(showSettingsWindow:)`
+    // silently does nothing from a menu-bar app that is `.accessory`, and
+    // `SettingsLink` is a view rather than an action. That scene is gone
+    // (2026-08-07): settings are a state of the content pane, so every nav row
+    // is now the same thing — a button that reports its id.
 
     public let id: String
     /// SF Symbol name — or `SidebarNavItem.propellerMarkSymbol` for the brand glyph.
     public let symbol: String
     public let title: String
-    public let role: Role
     /// Revealed on hover. The comps reserve the slot and paint it transparent.
     public let shortcut: String?
     public let isSelected: Bool
@@ -54,7 +47,6 @@ public struct SidebarNavItem: Identifiable, Equatable, Sendable {
         id: String,
         symbol: String,
         title: String,
-        role: Role = .action,
         shortcut: String? = nil,
         isSelected: Bool = false,
         isHovered: Bool = false
@@ -62,7 +54,6 @@ public struct SidebarNavItem: Identifiable, Equatable, Sendable {
         self.id = id
         self.symbol = symbol
         self.title = title
-        self.role = role
         self.shortcut = shortcut
         self.isSelected = isSelected
         self.isHovered = isHovered
@@ -588,24 +579,11 @@ public struct SidebarNavRow: View {
     }
 
     public var body: some View {
-        control
+        Button(action: action) { label }
             .buttonStyle(.plain)
             .onHover { hovering = $0 }
             .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
             .animation(.easeOut(duration: Tokens.Motion.hover), value: item.isSelected)
-    }
-
-    /// Same chrome, two different controls underneath. The Settings scene can
-    /// only be opened by `SettingsLink`, so that row is a link wearing the row's
-    /// clothes rather than a button that calls something.
-    @ViewBuilder
-    private var control: some View {
-        switch item.role {
-        case .action:
-            Button(action: action) { label }
-        case .settings:
-            SettingsLink { label }
-        }
     }
 
     private var label: some View {

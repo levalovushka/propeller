@@ -74,8 +74,11 @@ enum SidebarPresenter {
                 id: NavAction.settings.rawValue,
                 symbol: "gearshape.fill",
                 title: "Настройки",
-                // A `SettingsLink`, not a closure — see `SidebarNavItem.Role`.
-                role: .settings
+                // Обычная строка, как все: настройки — состояние панели, а не
+                // окно, и открывает их клик, а не `SettingsLink`. Пока они
+                // открыты, строка выбрана — ровно как выбрана строка встречи,
+                // которую панель показывает.
+                isSelected: state.paneRoute == .settings
             ),
             SidebarNavItem(
                 id: NavAction.feedback.rawValue,
@@ -147,7 +150,9 @@ enum SidebarPresenter {
             stage: entry.status,
             involvement: involvement,
             isTerminal: entry.hasTerminalFailure,
-            isSelected: state.selectedRecordingID == entry.id,
+            // Только когда панель действительно показывает эту встречу: пока в
+            // ней настройки, выбранных строк в рельсе одна — их собственная.
+            isSelected: state.paneRoute == .meeting && state.selectedRecordingID == entry.id,
             isHovered: false,      // the view tracks the live pointer itself
             isDeletedUndoable: false,
             // «В очереди» comes from the one place that knows whether work is

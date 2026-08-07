@@ -29,7 +29,7 @@ final class TempRailShotTests: XCTestCase {
             nav: [
                 SidebarNavItem(id: "new", symbol: SidebarNavItem.propellerMarkSymbol, title: "Новая запись"),
                 SidebarNavItem(id: "search", symbol: "magnifyingglass", title: "Поиск", shortcut: "⌘K"),
-                SidebarNavItem(id: "settings", symbol: "gearshape.fill", title: "Настройки", role: .settings, isHovered: true),
+                SidebarNavItem(id: "settings", symbol: "gearshape.fill", title: "Настройки", isHovered: true),
                 SidebarNavItem(id: "bug", symbol: "ladybug.fill", title: "Сообщить о проблеме"),
             ],
             groups: [

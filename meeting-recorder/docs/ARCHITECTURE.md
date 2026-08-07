@@ -87,7 +87,7 @@ MeetingDetector (Auto) / menu bar / ⌘R / UI
 | `MarkdownWriter` / `RecapService` | Экспорт и LLM-конспект + метадата (заголовок/темы/теги) |
 | `Preferences` | UserDefaults + Keychain для API-ключей |
 | `LiveTranscriptService` / `GigasttLiveSession` | Живой слой встречи: две WS-сессии к gigastt (микрофон и система) из кадров `ProcessTapCapture.onLiveFrames`; складываются чистым `LiveTranscript` |
-| UI | `MainView` (рельс + панель), `RecordingPaneView` (идущая запись), `SettingsSheet`, `SetupView` + `Onboarding{Container,PanelController}` (одна плашка первого запуска), `SearchPalette`, `MenuBarContentView`. Презентация — в `PropellerUI/`: `Sidebar`, `MeetingPane`, `SummaryEditor` + `SummaryActionBar`, `RecordingPane`, `Tokens` |
+| UI | `MainView` (рельс + панель), `RecordingPaneView` (идущая запись), `SettingsPane` (настройки как состояние панели), `SetupView` + `Onboarding{Container,PanelController}` (одна плашка первого запуска), `SearchPalette`, `MenuBarContentView`. Презентация — в `PropellerUI/`: `Sidebar`, `MeetingPane`, `SummaryEditor` + `SummaryActionBar`, `RecordingPane`, `Tokens` |
 
 ## Хранилище
 

@@ -19,6 +19,10 @@ public struct MenuBarPopover: View {
     var onStop: () -> Void
     var onDiscard: (() -> Void)?
     var onSettings: () -> Void
+    /// Убрать иконку из строки меню. Отсюда её можно только убрать: вернуть
+    /// нечем — поповера без иконки не существует, — и возврат живёт в настройках
+    /// («Основное»), а не здесь. Absent — строки нет.
+    var onHideFromMenuBar: (() -> Void)?
     var onQuit: () -> Void
 
     public init(
@@ -29,6 +33,7 @@ public struct MenuBarPopover: View {
         onStop: @escaping () -> Void,
         onDiscard: (() -> Void)? = nil,
         onSettings: @escaping () -> Void,
+        onHideFromMenuBar: (() -> Void)? = nil,
         onQuit: @escaping () -> Void
     ) {
         self.version = version
@@ -38,6 +43,7 @@ public struct MenuBarPopover: View {
         self.onStop = onStop
         self.onDiscard = onDiscard
         self.onSettings = onSettings
+        self.onHideFromMenuBar = onHideFromMenuBar
         self.onQuit = onQuit
     }
 
@@ -54,6 +60,13 @@ public struct MenuBarPopover: View {
                 action: onSettings
             )
             .keyboardShortcut(",", modifiers: .command)
+            if let onHideFromMenuBar {
+                MenuRow(
+                    title: "Скрыть из меню-бара",
+                    symbol: "eye.slash",
+                    action: onHideFromMenuBar
+                )
+            }
             MenuRow(
                 title: "Выйти",
                 symbol: "xmark.circle",

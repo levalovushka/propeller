@@ -109,6 +109,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 struct MeetingRecorderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var state = AppState()
+    @AppStorage("menuBarIconVisible") private var menuBarIconVisible = true
 
     init() {
 #if GALLERY
@@ -141,11 +142,13 @@ struct MeetingRecorderApp: App {
                 }
                 .disabled(!SparkleUpdater.shared.canCheckForUpdates)
             }
-        }
-
-        Settings {
-            SettingsView()
-                .environmentObject(state)
+            // ⌘, там, где его ищут, — но открывает оно панель, а не сцену
+            // `Settings`: этой сцены больше нет. `replacing:`, иначе AppKit
+            // оставит рядом собственный пункт, который никуда не ведёт.
+            CommandGroup(replacing: .appSettings) {
+                Button("Настройки…") { SettingsOpener.open() }
+                    .keyboardShortcut(",", modifiers: .command)
+            }
         }
 
 #if GALLERY
@@ -158,7 +161,10 @@ struct MeetingRecorderApp: App {
         .windowResizability(.contentSize)
 #endif
 
-        MenuBarExtra {
+        // Иконку можно убрать из строки меню — «Основное» в настройках, и
+        // «Скрыть из меню-бара» в самом поповере. `isInserted` читает тот же
+        // ключ, что и оба выключателя.
+        MenuBarExtra(isInserted: $menuBarIconVisible) {
             MenuBarContentView(state: state)
         } label: {
             Image(nsImage: Self.menuBarIcon)

@@ -456,9 +456,9 @@ class TranscriptionService {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // MARK: - Engine info (Settings UI)
-
-    static let engineDescription = "GigaAM v3 (e2e_rnnt) через локальный gigastt"
+    // `engineDescription` жила здесь ради строки в настройках. Строки нет
+    // (2026-08-07): движок ровно один, выбрать другой нельзя, и назвать его
+    // человеку было нечем, кроме имени файла — это не настройка, а справка.
 
     enum TranscriptionError: LocalizedError {
         case modelNotLoaded

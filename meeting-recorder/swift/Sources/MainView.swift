@@ -277,9 +277,7 @@ struct MainView: View {
             showSearchPalette = true
             Analytics.signal("Search.opened")
         case .settings:
-            // Handled by the row itself — it is a `SettingsLink`, because
-            // nothing callable opens the Settings scene from an accessory app.
-            break
+            state.openSettings()
         case .feedback:
             NSWorkspace.shared.open(Self.issuesURL)
         case .micAccess:
@@ -323,7 +321,15 @@ struct MainView: View {
     /// navigation bar it already had.
     @ViewBuilder
     private var topBar: some View {
-        if let entry = state.selectedRecording, isBeingRecorded(entry) {
+        if state.paneRoute == .settings {
+            HStack(spacing: 0) {
+                if !sidebarVisible {
+                    collapsedChrome
+                }
+                SettingsPaneHeader()
+            }
+            .frame(height: Tokens.Sidebar.headerHeight)
+        } else if let entry = state.selectedRecording, isBeingRecorded(entry) {
             HStack(spacing: 0) {
                 if !sidebarVisible {
                     collapsedChrome
@@ -472,7 +478,13 @@ struct MainView: View {
                         .frame(height: 32)
                 }
 
-                MinimalIconSettingsLink()
+                IconButton(
+                    systemName: "gearshape.fill",
+                    prominence: .minimal,
+                    iconSize: 14,
+                    weight: .regular
+                ) { state.openSettings() }
+                .help("Настройки")
             }
         }
         .frame(height: 32)
@@ -557,7 +569,12 @@ struct MainView: View {
     /// an archive with nothing in it yet.
     @ViewBuilder
     private var mainArea: some View {
-        if let entry = state.selectedRecording, isBeingRecorded(entry) {
+        if state.paneRoute == .settings {
+            // Настройки занимают всю панель: заметок у них нет, делить не с чем.
+            // Ширина — саммарийная, её держит `SettingsColumn`.
+            SettingsPane(state: state)
+                .frame(maxWidth: .infinity)
+        } else if let entry = state.selectedRecording, isBeingRecorded(entry) {
             RecordingPaneView(
                 live: state.live,
                 entry: entry,
@@ -896,12 +913,16 @@ struct MainView: View {
 
 }
 
+/// «Настройки» откуда угодно снаружи окна — меню-бар, ⌘,.
+///
+/// Раньше это была попытка попасть в сцену `Settings` через приватный селектор,
+/// и она молча ничего не делала, пока приложение было `.accessory`. Теперь
+/// открывать нечего: настройки — состояние панели, значит надо показать окно и
+/// поставить панель на них.
 enum SettingsOpener {
+    @MainActor
     static func open() {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        if !NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) {
-            NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-        }
+        AppWindowRegistry.showMain(centered: true)
+        AppStateRegistry.shared?.openSettings()
     }
 }

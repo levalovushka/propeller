@@ -99,7 +99,7 @@ public struct IconButton: View {
     }
 }
 
-/// Icon-only chrome for `Menu` / `SettingsLink` labels (no nested `Button`).
+/// Icon-only chrome for `Menu` labels (no nested `Button`).
 /// Same opacity ramp as `ButtonProminence.minimal`.
 public struct MinimalIconGlyph: View {
     let systemName: String
@@ -183,43 +183,9 @@ public struct MinimalIconMenu<Content: View>: View {
     }
 }
 
-/// `SettingsLink` has the same accent-tint problem as `Menu`.
-public struct MinimalIconSettingsLink: View {
-    var systemName: String = "gearshape.fill"
-    var iconSize: CGFloat = 15
-    var weight: Font.Weight = .regular
-    var helpText: String? = "Настройки"
-
-    @State private var hovering = false
-
-    public init(
-        systemName: String = "gearshape.fill",
-        iconSize: CGFloat = 15,
-        weight: Font.Weight = .regular,
-        help helpText: String? = "Настройки"
-    ) {
-        self.systemName = systemName
-        self.iconSize = iconSize
-        self.weight = weight
-        self.helpText = helpText
-    }
-
-    public var body: some View {
-        SettingsLink {
-            MinimalIconGlyph(
-                systemName: systemName,
-                iconSize: iconSize,
-                weight: weight,
-                emphasized: hovering
-            )
-        }
-        .buttonStyle(.plain)
-        .tint(ButtonProminence.minimal.foreground(hovering: hovering))
-        .onHover { hovering = $0 }
-        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
-        .modifier(OptionalHelp(helpText))
-    }
-}
+// `MinimalIconSettingsLink` — a `SettingsLink` in the minimal ramp — lived here
+// until the Settings scene was removed (2026-08-07). Settings are a state of
+// the content pane now, so the gear is an ordinary `IconButton`.
 
 private struct OptionalHelp: ViewModifier {
     let text: String?

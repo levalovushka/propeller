@@ -10,10 +10,16 @@ import PropellerPure
 /// как нет гейта на скачивание модели (`CLAUDE.md`: «нет LLM» не является
 /// законным состоянием приложения).
 ///
-/// Сохранённое `"off"` переписывается на `.auto` при чтении —
+/// «Авто» ушло следом (2026-08-07). Оно означало «Ollama, а если её нет — тот
+/// облачный, у кого нашёлся ключ», то есть настройку, по которой нельзя было
+/// сказать, куда уедет транскрипт. Для локального по умолчанию приложения это
+/// не удобство, а неопределённость в самом чувствительном месте. Локальная
+/// модель приезжает сама и чинится сама, так что дефолт — `ollama`, и он
+/// означает ровно себя.
+///
+/// Сохранённые `"off"` и `"auto"` переписываются на `.ollama` при чтении —
 /// `Preferences.recapProvider`.
 enum RecapProviderKind: String, CaseIterable, Identifiable {
-    case auto
     case ollama
     case openai
     case claude
@@ -22,7 +28,6 @@ enum RecapProviderKind: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .auto: return "Авто"
         case .ollama: return "Ollama"
         case .openai: return "OpenAI"
         case .claude: return "Claude"
@@ -166,11 +171,6 @@ actor RecapService {
             return (openAIKey?.isEmpty == false) ? .success("openai") : .failure(.noProvider)
         case .claude:
             return (claudeKey?.isEmpty == false) ? .success("claude") : .failure(.noProvider)
-        case .auto:
-            if await ollamaUsable(model: ollamaModel) { return .success("ollama") }
-            if openAIKey?.isEmpty == false { return .success("openai") }
-            if claudeKey?.isEmpty == false { return .success("claude") }
-            return .failure(.noProvider)
         }
     }
 
