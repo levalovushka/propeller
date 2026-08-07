@@ -94,6 +94,21 @@ public struct LiveTranscriptColumn: View {
     private let turns: [LiveTranscript.Turn]
     private let ownerName: String
     private let remoteName: String
+    /// Есть ли из чего выводить, кто говорит.
+    ///
+    /// Имя здесь **зарабатывается контрастом**, а не назначается. Дорожек две,
+    /// и разделить людей можно ровно потому, что их две: в микрофон говорит
+    /// владелец, из системного стема — дальняя сторона. Когда системной дорожки
+    /// нет (захват не прицепился к звонку, встреча вживую, запись руками), канал
+    /// остаётся один — и он слышит всех в комнате. Подписать этот единственный
+    /// канал именем владельца значит приписать ему каждую чужую реплику до
+    /// конца встречи, а имя человека — самая убедительная форма вранья, какая у
+    /// нас есть.
+    ///
+    /// Поэтому без второй дорожки подписи нет вовсе. Реплики всё равно разделены
+    /// паузой и подписаны временем; кто говорил — скажет диаризация после
+    /// встречи, и это единственное место, где мы это знаем.
+    private let namesSpeakers: Bool
     /// Что стоит на месте текста, пока его нет. Не «ошибка» и не «ожидание»:
     /// встреча пишется, а живой строки может не быть вовсе (микрофонный путь).
     private let placeholder: String
@@ -105,12 +120,14 @@ public struct LiveTranscriptColumn: View {
         turns: [LiveTranscript.Turn],
         ownerName: String,
         remoteName: String = SourceAwareSpeaker.defaultRemoteName,
+        namesSpeakers: Bool = true,
         placeholder: String = "Пока тихо",
         isPaused: Bool = false
     ) {
         self.turns = turns
         self.ownerName = ownerName
         self.remoteName = remoteName
+        self.namesSpeakers = namesSpeakers
         self.placeholder = placeholder
         self.isPaused = isPaused
     }
@@ -125,9 +142,11 @@ public struct LiveTranscriptColumn: View {
             ForEach(turns) { turn in
                 VStack(alignment: .leading, spacing: Tokens.Pane.transcriptLineGap) {
                     HStack(spacing: Tokens.Pane.transcriptMetaGap) {
-                        Text(name(of: turn.channel))
-                            .typoBlock(Tokens.Pane.Typo.transcriptMeta)
-                            .lineLimit(1)
+                        if namesSpeakers {
+                            Text(name(of: turn.channel))
+                                .typoBlock(Tokens.Pane.Typo.transcriptMeta)
+                                .lineLimit(1)
+                        }
                         Text(turn.timestamp)
                             .typoBlock(Tokens.Pane.Typo.transcriptMeta, monospacedDigit: true)
                             .frame(width: Tokens.Pane.transcriptTimeWidth, alignment: .leading)
@@ -273,6 +292,7 @@ private final class LiveTypewriter: ObservableObject {
 public struct RecordingPaneBody: View {
     private let turns: [LiveTranscript.Turn]
     private let ownerName: String
+    private let namesSpeakers: Bool
     private let placeholder: String
     private let isPaused: Bool
     private let notes: [MeetingNote]
@@ -284,6 +304,7 @@ public struct RecordingPaneBody: View {
     public init(
         turns: [LiveTranscript.Turn],
         ownerName: String,
+        namesSpeakers: Bool = true,
         placeholder: String = "Пока тихо",
         isPaused: Bool = false,
         notes: [MeetingNote],
@@ -294,6 +315,7 @@ public struct RecordingPaneBody: View {
     ) {
         self.turns = turns
         self.ownerName = ownerName
+        self.namesSpeakers = namesSpeakers
         self.placeholder = placeholder
         self.isPaused = isPaused
         self.notes = notes
@@ -318,6 +340,7 @@ public struct RecordingPaneBody: View {
             LiveTranscriptColumn(
                 turns: turns,
                 ownerName: ownerName,
+                namesSpeakers: namesSpeakers,
                 placeholder: placeholder,
                 isPaused: isPaused
             )

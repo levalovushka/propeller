@@ -24,6 +24,10 @@ struct RecordingPaneView: View {
         RecordingPaneBody(
             turns: live.recordingID == entry.id ? live.transcript.turns : [],
             ownerName: ownerName,
+            // Без системной дорожки канал один, и он слышит всех: подписывать
+            // его владельцем — значит отдать ему каждую чужую реплику до конца
+            // встречи. Имена появляются только там, где их есть из чего вывести.
+            namesSpeakers: live.attributesSpeakers,
             placeholder: placeholder,
             isPaused: isPaused,
             notes: notes,

@@ -21,6 +21,12 @@ final class LiveTranscriptService: ObservableObject {
     /// Чья это встреча — id записи, к которой относится текст. Нужен, чтобы
     /// текст ушедшей встречи не показался поверх следующей.
     @Published private(set) var recordingID: String?
+    /// Можно ли по этому тексту сказать, кто говорил.
+    ///
+    /// Ровно тогда, когда дорожек две: разделение людей здесь и есть разница
+    /// между дорожками, а не диаризация. Один канал слышит всех сразу, и
+    /// подписать его владельцем — значит отдать ему каждую чужую реплику.
+    @Published private(set) var attributesSpeakers = false
 
     /// Сессии живут вне главного актора: кадры приходят с очереди записи.
     private let sessions = LiveSessionPair()
@@ -38,6 +44,7 @@ final class LiveTranscriptService: ObservableObject {
         transcript = LiveTranscript()
         recordingID = id
         self.hasSystemAudio = hasSystemAudio
+        attributesSpeakers = hasSystemAudio
         openSessions(at: elapsed)
     }
 
@@ -65,6 +72,7 @@ final class LiveTranscriptService: ObservableObject {
         sessions.close()
         transcript = LiveTranscript()
         recordingID = nil
+        attributesSpeakers = false
     }
 
     /// Кадры 16 кГц моно с очереди записи. Не `@MainActor`: звук не ходит через
@@ -80,6 +88,9 @@ final class LiveTranscriptService: ObservableObject {
         sessions.close()
         recordingID = id
         transcript = posed
+        // Позе неоткуда взять признак: у неё нет захвата. Но он выводится из
+        // самого текста — две дорожки в нём и есть то, из чего берутся имена.
+        attributesSpeakers = Set(posed.turns.map(\.channel)).count > 1
     }
 #endif
 
