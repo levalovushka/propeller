@@ -26,14 +26,21 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     private override init() { super.init() }
 
-    /// Request authorization, register the delegate, and install the
-    /// interactive category. Call once at app startup.
+    /// Register the delegate and the interactive category, and read back what
+    /// the user has already decided. Call once at app startup.
+    ///
+    /// **Does not ask.** macOS shows the authorization prompt once per install,
+    /// and this used to spend it here — at bootstrap, five lines before
+    /// `showOnboarding` was even computed, so the system asked before the screen
+    /// that promises to ask had appeared. Whatever was answered to that prompt
+    /// was final, and the «Разрешить» row was left with nothing to show: pressing
+    /// it either did nothing or bounced the user into System Settings for a
+    /// decision they had already made without being told what it was for.
+    /// The one place that asks is `requestAuthorization` — the setup row.
     func configure() {
         let center = UNUserNotificationCenter.current()
         center.delegate = self
-        center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
-            self?.isAuthorized = granted
-        }
+        refreshAuthorization()
 
         let cancel = UNNotificationAction(
             identifier: Self.cancelAction,
@@ -47,6 +54,26 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             options: []
         )
         center.setNotificationCategories([category])
+    }
+
+    /// Spend the one prompt macOS gives us, from the row that promised it.
+    ///
+    /// Already decided either way — the prompt will not appear again, so there is
+    /// nothing to spend and nothing to wait for; the caller sends the user to
+    /// System Settings instead. `completion` runs on the main queue.
+    func requestAuthorization(completion: (() -> Void)? = nil) {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { [weak self] granted, _ in
+            self?.isAuthorized = granted
+            DispatchQueue.main.async { completion?() }
+        }
+    }
+
+    /// Read the current authorization into `isAuthorized` without asking.
+    func refreshAuthorization() {
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
+            self?.isAuthorized = settings.authorizationStatus == .authorized
+        }
     }
 
     /// Post the actionable "recording started automatically" notification.

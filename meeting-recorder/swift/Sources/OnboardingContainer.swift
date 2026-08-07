@@ -35,11 +35,13 @@ struct OnboardingContainer: View {
                 }
             },
             onGrantNotifications: {
-                let center = UNUserNotificationCenter.current()
-                center.getNotificationSettings { settings in
+                // The prompt is `NotificationManager`'s to spend, and this row is
+                // the only thing that spends it — bootstrap deliberately no longer
+                // asks, so the one prompt macOS gives us is still here to give.
+                UNUserNotificationCenter.current().getNotificationSettings { settings in
                     switch settings.authorizationStatus {
                     case .notDetermined:
-                        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+                        NotificationManager.shared.requestAuthorization { refreshGrants() }
                     case .denied:
                         DispatchQueue.main.async { openNotificationSettings() }
                     default:
