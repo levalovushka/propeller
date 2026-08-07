@@ -36,7 +36,6 @@ final class TempNotchShotTests: XCTestCase {
                 screen: screen,
                 stage: stage,
                 paused: false,
-                savedCount: nil,
                 level: { 0.3 },
                 onNote: {}, onCommit: { _ in }, onCancel: {}
             )

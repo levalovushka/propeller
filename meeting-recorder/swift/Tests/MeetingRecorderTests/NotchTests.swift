@@ -56,14 +56,12 @@ final class NotchGeometryTests: XCTestCase {
         }
     }
 
-    func testЗаметкаРаскрываетНаВосемьдесятВнизИШестнадцатьВширь() {
+    func testЗаметкаОпускаетЧёлкуВнизИНеРаздаётЕёВширь() {
         let rest = NotchGeometry.frame(on: mbp14, stage: .resting)
         let compose = NotchGeometry.frame(on: mbp14, stage: .composing)
-        XCTAssertEqual(compose.width - rest.width, 16)
-        XCTAssertEqual(compose.height - rest.height, 80)
-        XCTAssertEqual(compose.originX + compose.width / 2,
-                       rest.originX + rest.width / 2, accuracy: 0.001,
-                       "раскрытие симметрично: центр не едет")
+        XCTAssertEqual(compose.width, rest.width, "вширь чёлка не расходится вовсе")
+        XCTAssertEqual(compose.height - rest.height, 40)
+        XCTAssertEqual(compose.originX, rest.originX, "и, значит, никуда не едет")
     }
 
     func testБезВырезаОстаётсяТаЖеФигураПилюлей() {

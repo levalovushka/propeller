@@ -125,7 +125,6 @@ public struct NotchFace: View {
     private let screen: NotchGeometry.Screen
     private let stage: NotchGeometry.Stage
     private let paused: Bool
-    private let savedCount: Int?
     private let level: () -> Float
     private let onNote: () -> Void
     private let onCommit: (String) -> Void
@@ -135,7 +134,6 @@ public struct NotchFace: View {
         screen: NotchGeometry.Screen,
         stage: NotchGeometry.Stage,
         paused: Bool,
-        savedCount: Int?,
         level: @escaping () -> Float,
         onNote: @escaping () -> Void,
         onCommit: @escaping (String) -> Void,
@@ -144,7 +142,6 @@ public struct NotchFace: View {
         self.screen = screen
         self.stage = stage
         self.paused = paused
-        self.savedCount = savedCount
         self.level = level
         self.onNote = onNote
         self.onCommit = onCommit
@@ -187,7 +184,7 @@ public struct NotchFace: View {
                     .frame(width: frame.bodyWidth, height: frame.notchHeight)
                     .allowsHitTesting(false)
 
-                NoteEar(size: glyphSize, active: composing, savedCount: savedCount, onTap: onNote)
+                NoteEar(size: glyphSize, composing: composing, onTap: onNote)
                     .frame(width: frame.earWidth, height: frame.notchHeight)
             }
             // Оптический центр уха выше геометрического: снизу у плиты есть
@@ -222,15 +219,15 @@ public struct NotchFace: View {
     }
 }
 
-/// Правое ухо: вход в заметку, и оно же подтверждение.
+/// Правое ухо: вход в заметку, а в раскрытой чёлке — то, чем она кончается.
 ///
-/// Сохранённая заметка не подтверждается сообщением — на 0,7 с значок
-/// становится числом заметок за эту встречу. Подтверждение принадлежит тому
-/// месту, где печатали, и говорит не «сохранено», а «их теперь три».
+/// Счётчика заметок здесь больше нет. Он задумывался подтверждением, а оказался
+/// вопросом: человек, печатающий на встрече, свои заметки не считает, и число,
+/// которое он не спрашивал, читается как «а это что». Подтверждение осталось
+/// одно и достаточное — поле закрылось.
 private struct NoteEar: View {
     var size: CGFloat
-    var active: Bool
-    var savedCount: Int?
+    var composing: Bool
     var onTap: () -> Void
 
     @State private var hovering = false
@@ -238,21 +235,22 @@ private struct NoteEar: View {
     /// Подложки нет: в чёрной плите любое пятно читается как вторая фигура, а
     /// не как мишень. Наведение объявляет себя яркостью — этого хватает, потому
     /// что кроме знака слева здесь не с чем спутать.
-    private var opacity: Double {
-        if active || savedCount != nil || hovering { return 0.95 }
-        return 0.55
-    }
+    private var opacity: Double { hovering || composing ? 0.95 : 0.55 }
 
     var body: some View {
         Button(action: onTap) {
-            Group {
-                if let savedCount {
-                    Text("\(savedCount)")
-                        .font(.system(size: size - 2, weight: .medium, design: .rounded))
-                        .monospacedDigit()
+            ZStack {
+                // Один знак сменяет другой не подстановкой, а уходом: старый
+                // уменьшается, размывается и гаснет, новый приходит тем же
+                // путём назад. `blurReplace` — ровно эта пара.
+                if composing {
+                    Image(systemName: "return")
+                        .font(.system(size: size, weight: .regular))
+                        .transition(.blurReplace)
                 } else {
                     Image(systemName: "square.and.pencil")
                         .font(.system(size: size - 2, weight: .regular))
+                        .transition(.blurReplace)
                 }
             }
             .foregroundStyle(.white.opacity(opacity))
@@ -262,6 +260,7 @@ private struct NoteEar: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(.smooth(duration: 0.28), value: composing)
     }
 }
 
@@ -275,7 +274,7 @@ private struct NotchNoteField: View {
 
     var body: some View {
         TextField("", text: $text, prompt:
-            Text("Заметка…").foregroundStyle(.white.opacity(0.35))
+            Text("Начните печатать…").foregroundStyle(.white.opacity(0.35))
         )
         .textFieldStyle(.plain)
         .font(.system(size: 13))

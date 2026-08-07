@@ -19,12 +19,11 @@ public enum NotchGeometry {
     /// что мишень заметки перестанет быть мишенью.
     public static let earWidth: CGFloat = 36
 
-    /// Насколько чёлка расходится вширь, когда в ней печатают. По 8 pt в
-    /// каждую сторону: поле должно стать полем, а не разъехаться в панель.
-    public static let composeWidening: CGFloat = 16
-
-    /// Насколько она при этом опускается. Строка ввода и её воздух.
-    public static let composeDrop: CGFloat = 80
+    /// Насколько чёлка опускается, когда в ней печатают. Строка ввода и её
+    /// воздух, и ни пикселем больше: вширь она при этом не расходится вовсе —
+    /// движение в одну сторону читается как «опустилась», в две читалось как
+    /// «выросла панель».
+    public static let composeDrop: CGFloat = 40
 
     /// Машина без чёлки: та же фигура, но вырезу неоткуда взяться, поэтому она
     /// становится пилюлей под меню-баром той же высоты. Заметка не может
@@ -116,8 +115,7 @@ public enum NotchGeometry {
         // Свёрнутая плита — это и есть вырез: ниже галтелей от неё остаётся
         // ровно `body`, поэтому рост начинается из железа, а не из точки.
         case .sealed: width = body + 2 * topCornerRadius
-        case .resting: width = restingWidth
-        case .composing: width = restingWidth + composeWidening
+        case .resting, .composing: width = restingWidth
         }
         let fullHeight = height + (stage == .composing ? composeDrop : 0)
 

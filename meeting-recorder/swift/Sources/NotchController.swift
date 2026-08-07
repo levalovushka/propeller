@@ -25,15 +25,9 @@ final class NotchController {
     private var hosting: NSHostingView<NotchFace>?
     private var globalMonitor: Any?
     private var localMonitor: Any?
-    private var confirmTask: Task<Void, Never>?
     private var screenObserver: NSObjectProtocol?
 
     private var stage: NotchGeometry.Stage = .resting
-    /// Сколько заметок вписано в эту встречу. Счётчик сессии, а не файла: он
-    /// нужен как подтверждение («их теперь три»), а не как учёт.
-    private var noteCount = 0
-    /// Число, которое ухо показывает вместо значка сразу после сохранения.
-    private var confirming: Int?
 
     /// ⌃⌥N — keyCode 45 это «n».
     private let noteKeyCode: UInt16 = 45
@@ -46,8 +40,6 @@ final class NotchController {
 
     /// Запись пошла: плита вырастает, монитор клавиши встаёт.
     func startRecording() {
-        noteCount = 0
-        confirming = nil
         stage = .resting
         show()
         startMonitoring()
@@ -56,8 +48,6 @@ final class NotchController {
     /// Запись кончилась любым способом — плита уходит целиком.
     func stopRecording() {
         stopMonitoring()
-        confirmTask?.cancel()
-        confirmTask = nil
         hide()
     }
 
@@ -120,7 +110,6 @@ final class NotchController {
         panel = nil
         hosting = nil
         stage = .resting
-        confirming = nil
     }
 
     // MARK: - Заметка
@@ -159,8 +148,6 @@ final class NotchController {
 
     private func openNote() {
         guard panel != nil else { return }
-        confirmTask?.cancel()
-        confirming = nil
         stage = .composing
         render()
         // Фокус клавиатуры без активации приложения: человек в звонке, и
@@ -174,24 +161,12 @@ final class NotchController {
         panel?.resignKey()
     }
 
+    /// Заметка записана — и это всё, что об этом сообщается: поле закрылось.
     private func commitNote(_ text: String) {
-        let saved = state?.appendTimestampedNote(text) == true
+        _ = state?.appendTimestampedNote(text)
         stage = .resting
-        if saved {
-            noteCount += 1
-            confirming = noteCount
-        }
         render()
         panel?.resignKey()
-
-        guard saved else { return }
-        confirmTask?.cancel()
-        confirmTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(700))
-            guard !Task.isCancelled else { return }
-            self?.confirming = nil
-            self?.render()
-        }
     }
 
     // MARK: - Геометрия и отрисовка
@@ -242,7 +217,6 @@ final class NotchController {
                 ?? NotchGeometry.Screen(width: 0, top: 0, notchWidth: 0, notchHeight: 0),
             stage: stage,
             paused: state?.isRecordingPaused == true,
-            savedCount: confirming,
             level: { [weak recorder] in
                 guard let recorder else { return 0 }
                 return max(recorder.micLevelHistory.last ?? 0,
