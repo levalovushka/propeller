@@ -71,7 +71,10 @@ public enum MeetingRest: Equatable, Sendable {
         case .done(.complete):
             return nil
         case .done(.noSpeech):
-            return "В записи не нашлось речи"
+            // Человеческим языком и про людей, а не про распознавание: «речи не
+            // нашлось» звучит как отчёт движка о неудаче, хотя движок отработал
+            // ровно правильно — говорить было некому.
+            return "Никто ничего не сказал"
         case .done(.summariesOff):
             return "Саммари выключено в\u{00A0}настройках"
         }

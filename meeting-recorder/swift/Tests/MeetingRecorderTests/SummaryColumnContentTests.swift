@@ -54,7 +54,7 @@ final class SummaryColumnContentTests: XCTestCase {
         )
         XCTAssertEqual(
             decide(hasTranscript: true, rest: .done(.noSpeech)),
-            .nothing("В записи не нашлось речи")
+            .nothing("Никто ничего не сказал")
         )
     }
 

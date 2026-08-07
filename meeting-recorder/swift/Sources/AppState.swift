@@ -1833,6 +1833,17 @@ class AppState: ObservableObject {
             // thing holding the cancellation.
             restoreStageAfterInterruptedASR(recordingID, phase: phase)
             debugLog("[pipeline] \(phase) cancelled (transport) for \(recordingID)")
+        } catch let error where Self.meansNobodySpoke(error) {
+            // Сайдкар отработал до конца и вернул ноль слов. Это не отказ и не
+            // «попробуем ещё раз»: следующая попытка прочитает тот же файл и
+            // получит тот же ноль. Терминал объявляется здесь, потому что здесь
+            // единственное место, которое смотрело на вход, — `classify` по
+            // сообщению этого делать не имеет права.
+            modelDownloadProgress = nil
+            restoreStageAfterInterruptedASR(recordingID, phase: phase)
+            Analytics.transcriptionFinished(ok: false, reason: "no_speech")
+            settleSilentRecording(recordingID)
+            NSLog("[AppState] \(phase): в \(recordingID) не нашлось речи — \(error.localizedDescription)")
         } catch {
             modelDownloadProgress = nil
             let msg = error.localizedDescription
@@ -1847,6 +1858,49 @@ class AppState: ObservableObject {
         endPipelineWork(recordingID)
         transcriptionService.releaseHeavyResources()
         kickPipeline("asr done")
+    }
+
+    /// Ошибка, которая на самом деле означает «в аудио нет слов».
+    ///
+    /// Два пути к одному и тому же факту: пустой ответ сайдкара
+    /// (`BoundaryResponses.readASR` → `.empty`) и защита в самом сервисе на
+    /// случай, если пустой набор сегментов всё же доедет. Оба — про вход, и ни
+    /// один не про сеть, поэтому разбирается это по типу ошибки, а не по
+    /// подстроке в сообщении.
+    private static func meansNobodySpoke(_ error: Error) -> Bool {
+        if let asr = error as? GigasttClient.ClientError, case .emptyResult = asr { return true }
+        if let svc = error as? TranscriptionService.TranscriptionError, case .noResults = svc { return true }
+        return false
+    }
+
+    /// Куда девается встреча, в которой никто не говорил (`SilentRecording`).
+    ///
+    /// Одна из двух дверей, и обе ведут наружу из очереди: промах по кнопке
+    /// приложение убирает за собой само, настоящая тишина остаётся в списке и
+    /// говорит, что она тишина. Третьей двери — «стоит и ждёт» — здесь нет,
+    /// ровно потому, что она тут и была (`design/no-dead-ends.md`).
+    private func settleSilentRecording(_ recordingID: String) {
+        guard let rec = recordingStore.recording(for: recordingID) else { return }
+        let verdict = SilentRecording.verdict(
+            duration: rec.duration,
+            hasTranscript: rec.transcript?.isEmpty == false,
+            hasNotes: MeetingNotes.resolved(items: rec.noteItems, blob: rec.notes).isEmpty == false
+        )
+        switch verdict {
+        case .discard:
+            // Без ⌘Z и без анимации пепла: это не удаление, сделанное человеком,
+            // а уборка следа от нажатой мимо кнопки. Предложить вернуть пустой
+            // wav значило бы сообщить о нём — то самое сообщение, которого в
+            // приложении нет (`design/notifications.md` §3).
+            Analytics.signal("Pipeline.silentDiscarded")
+            NSLog("[AppState] \(recordingID) — \(Int(rec.duration))s тишины, удаляем")
+            if selectedRecordingID == recordingID { selectNeighbor(afterRemoving: rec) }
+            recordingStore.remove(rec)
+            refreshStorageUsage()
+        case .rest:
+            Analytics.signal("Pipeline.silentRested")
+            recordTerminal(recordingID, phase: .transcribing, reason: .noSpeech)
+        }
     }
 
     /// Put the stage back where an unfinished ASR pass leaves it — never below

@@ -162,7 +162,11 @@ enum GigasttClient {
         let chunkFrames = AVAudioFrameCount(GigasttChunking.chunkSeconds * rate)
         let totalFrames = AVAudioFramePosition(source.length)
         let chunkCount = Int(ceil(Double(totalFrames) / Double(chunkFrames)))
-        guard chunkCount > 0 else { throw ClientError.emptyResult }
+        // Не `emptyResult`: у того теперь ровно один смысл — «сайдкар ответил, и
+        // слов в аудио нет», по которому запись выводится из очереди навсегда
+        // (`SilentRecording`). Ноль кусков при ненулевой длине — арифметика
+        // чанкера, то есть наша, и она обязана остаться ретраибельной.
+        guard chunkCount > 0 else { throw ClientError.chunkFailed("нечего резать") }
 
         let tmpDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("propeller-asr-\(UUID().uuidString)", isDirectory: true)
