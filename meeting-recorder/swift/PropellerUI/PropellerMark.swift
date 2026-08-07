@@ -20,13 +20,26 @@ public struct PropellerMark: View {
 }
 
 /// The brand glyph in a nav-sized slot. Spins counter-clockwise while the row
-/// is hovered, and coasts to the next full turn when the pointer leaves —
-/// never snaps back mid-petal.
+/// is hovered, and coasts to the next pose that looks like the resting one when
+/// the pointer leaves — never snaps back mid-petal, and never has to unwind a
+/// whole turn after a pointer that only brushed past.
 struct PropellerNavMark: View {
     var spinning: Bool
 
     /// One full turn every two seconds — slow enough to read as a mark, not a fan.
     private let degreesPerSecond: Double = 180
+
+    /// Six petals, one every 60°, so a sixth of a turn is already the mark again.
+    /// The exact symmetry is 180° (the petals sit in three 180°-opposed pairs,
+    /// spaced 58.9 / 62.4 / 58.7 rather than a clean 60), but at
+    /// `Tokens.Sidebar.navIconSize` a petal tip lives ~5 pt out, so the worst
+    /// 1.7° of error is 0.15 pt — under a retina pixel, and worth trading for a
+    /// coast a third as long.
+    private static let symmetryPeriod: Double = 60
+
+    /// The coast runs at two thirds of the spin, so the stop reads as the blade
+    /// running out of momentum rather than the animation ending.
+    private let settleDegreesPerSecond: Double = 120
 
     @State private var parkedAngle: Double = 0
     @State private var spinStartedAt: Date?
@@ -56,18 +69,12 @@ struct PropellerNavMark: View {
             } else {
                 let current = angle(at: t)
                 spinStartedAt = nil
-                let target = Self.nextFullTurnCCW(from: current)
-                if abs(target - current) < 0.5 {
-                    parkedAngle = target
-                    settleTo = nil
-                    settleStartedAt = nil
-                } else {
-                    settleFrom = current
-                    settleTo = target
-                    settleStartedAt = t
-                    settleDuration = abs(target - current) / degreesPerSecond
-                    parkedAngle = current
-                }
+                let target = Self.settleTarget(from: current)
+                settleFrom = current
+                settleTo = target
+                settleStartedAt = t
+                settleDuration = abs(target - current) / settleDegreesPerSecond
+                parkedAngle = current
             }
         }
         .task(id: settleTo) {
@@ -87,16 +94,38 @@ struct PropellerNavMark: View {
         }
         if let target = settleTo, let start = settleStartedAt {
             let u = min(1, date.timeIntervalSince(start) / max(settleDuration, 0.05))
-            // Ease-out cubic — same feel as the row's hover, without a hard stop.
-            let eased = 1 - pow(1 - u, 3)
-            return settleFrom + (target - settleFrom) * eased
+            return settleFrom + (target - settleFrom) * Self.easeOutBack(u)
         }
         return parkedAngle
     }
 
-    /// Continues counter-clockwise to the next pose that matches the resting mark.
-    private static func nextFullTurnCCW(from current: Double) -> Double {
-        -360.0 * ceil((-current) / 360.0)
+    /// Overshoots the resting pose by an eighth of the way it had left to travel,
+    /// then eases back onto it — one soft bounce, no oscillation. Proportional
+    /// rather than a fixed number of degrees, so a coast that had little left to
+    /// unwind doesn't gain a kick it never earned.
+    private static func easeOutBack(_ u: Double) -> Double {
+        let c1 = 2.0
+        let t = u - 1
+        return 1 + (c1 + 1) * pow(t, 3) + c1 * pow(t, 2)
+    }
+
+    /// Where the coast lands: the next pose that matches the resting mark, unless
+    /// it is so close that stopping there would be a twitch rather than a coast —
+    /// then the blade borrows one more petal and travels 60–75° instead.
+    private static func settleTarget(from current: Double) -> Double {
+        let next = nextRestingPoseCCW(from: current)
+        guard abs(next - current) < twitchThreshold else { return next }
+        return next - symmetryPeriod
+    }
+
+    /// A quarter of a petal. Under this the settle has no room to ease in or out,
+    /// and the bounce lands inside it — the eye reads a snap, not a stop.
+    private static let twitchThreshold: Double = 15
+
+    /// Continues counter-clockwise to the next pose that matches the resting mark
+    /// — a petal step away at most, not a whole turn away.
+    private static func nextRestingPoseCCW(from current: Double) -> Double {
+        -symmetryPeriod * ceil((-current) / symmetryPeriod)
     }
 }
 
