@@ -23,6 +23,11 @@ public struct MeetingPlatform: Equatable, Sendable {
     public let idleTitles: Set<String>
     /// Web address of the service, for calls held in a browser tab.
     public let webHostFragments: [String]
+    /// Does a `PreventUserIdleDisplaySleep` assertion from this app mean a call?
+    /// Only for apps measured to hold it for the call itself — an app that also
+    /// holds it while sharing a screen answers `false`, because then the signal
+    /// says "the display must stay awake", not "a call is on".
+    public let sleepAssertionMeansCall: Bool
 
     public init(
         id: String,
@@ -32,7 +37,8 @@ public struct MeetingPlatform: Equatable, Sendable {
         callHelperProcesses: [String],
         meetingTitleMarkers: [String],
         idleTitles: Set<String>,
-        webHostFragments: [String] = []
+        webHostFragments: [String] = [],
+        sleepAssertionMeansCall: Bool = false
     ) {
         self.id = id
         self.displayName = displayName
@@ -42,6 +48,7 @@ public struct MeetingPlatform: Equatable, Sendable {
         self.meetingTitleMarkers = meetingTitleMarkers
         self.idleTitles = idleTitles
         self.webHostFragments = webHostFragments
+        self.sleepAssertionMeansCall = sleepAssertionMeansCall
     }
 }
 
@@ -65,7 +72,10 @@ extension MeetingPlatform {
             "", "zoom", "zoom.us", "zoom workplace", "zoom - free account",
             "login", "sign in", "settings", "preferences", "chat", "contacts",
             "войти", "вход", "настройки", "параметры", "чат", "контакты", "зум",
-        ]
+        ],
+        // Zoom holds the assertion for the call — it is the fallback behind
+        // `CptHost`, and it shipped that way since phase 6.
+        sleepAssertionMeansCall: true
     )
 
     /// Контур.Толк.
@@ -118,7 +128,15 @@ extension MeetingPlatform {
             "settings", "preferences", "chat", "contacts", "calendar",
             "вход", "войти", "login", "sign in",
         ],
-        webHostFragments: ["talk.kontur.ru", "контур.толк"]
+        webHostFragments: ["talk.kontur.ru", "контур.толк"],
+        // Толк держит `PreventUserIdleDisplaySleep`, пока кто-нибудь на звонке
+        // демонстрирует экран, — Chromium внутри Electron берёт display wake
+        // lock на всё время захвата экрана. Для звонка как такового ассерта
+        // нет. На 1.15 это значило, что автозапись включалась на старте шера и
+        // выключалась на его остановке: тестер получал запись куска чужой
+        // демонстрации вместо встречи и обрыв записи посреди разговора.
+        // Поэтому у Толка автодетекта нет — встречу в нём начинают руками.
+        sleepAssertionMeansCall: false
     )
 
     public static let all: [MeetingPlatform] = [.zoom, .konturTalk]
@@ -139,6 +157,20 @@ extension MeetingPlatform {
             if windowOwners.contains(name) { return true }
         }
         return false
+    }
+
+    /// Does a process with this executable name belong to this platform?
+    ///
+    /// Substring match, because helpers are named after the app they serve
+    /// («Толк Helper (Renderer)», `zoom.us`). Used to attribute a power
+    /// assertion to the app holding it.
+    public func ownsProcess(named rawName: String) -> Bool {
+        let name = rawName.lowercased()
+        if windowOwners.contains(where: { name.contains($0) }) { return true }
+        return bundleIDs.contains { id in
+            guard let last = id.split(separator: ".").last else { return false }
+            return name.contains(last)
+        }
     }
 
     /// Does this window title mean a call is up?

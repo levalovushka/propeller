@@ -74,7 +74,7 @@ MeetingDetector (Auto) / menu bar / ⌘R / UI
 | `CoreAudioObjects` | Чтение свойств Core Audio без церемонии: устройства, процессы, тапы, состав агрегата |
 | `TapProbe` | Отладочный `--tap-probe`: шесть ступеней от сырого устройства до смены устройств на живой записи, с пиком по каждому каналу. Существует потому, что порядок каналов агрегата нигде не задокументирован, а промах по нему молчаливый |
 | `LiveProbe` | Отладочный `--live-probe`: живой слой на записанном звуке, чтобы порцию и задержку можно было мерить повторяемо (`tools/live-bench/`) |
-| `MeetingDetector` | Поллинг звонка в любой платформе из `MeetingPlatform.all` (Zoom, Контур.Толк): helper-процесс, заголовок окна, вкладка браузера, display-sleep assertion |
+| `MeetingDetector` | Поллинг звонка в любой платформе из `MeetingPlatform.all` (Zoom, Контур.Толк): helper-процесс, заголовок окна, вкладка браузера, display-sleep assertion — последний только у платформ с `sleepAssertionMeansCall` (у Толка этот ассерт означает демонстрацию экрана, а не звонок) |
 | `PipelineBoundaries` | `Transcriber` / `RecapBackend` — две подменяемые границы наружу |
 | `CalendarService` | EventKit read-only: `suggestedRecordingTitle` и `CalendarMeta` при старте записи. Списка «Скоро» больше нет — календарь называет записи, а не рисует экран |
 | `NoteOverlayController` | Оверлей быстрых заметок ⌃⌥N во время записи |

@@ -183,9 +183,13 @@ final class MeetingDetector {
             signals.append("\(platform.id):browser")
             detected = detected ?? platform.id
         }
-        // Weakest signal: says a call is on, not which app — so it only counts
-        // when exactly one conferencing app is running to attribute it to.
-        if detected == nil, live.count == 1, hasDisplaySleepAssertion() {
+        // Weakest signal: says the display must stay awake, not that a call is
+        // on. It counts only for a platform measured to hold it for the call
+        // itself (`sleepAssertionMeansCall`) — Контур.Толк holds it while
+        // someone shares a screen, and reading that as a call started and
+        // stopped recordings on screen share alone (1.15).
+        if detected == nil, live.count == 1, live[0].sleepAssertionMeansCall,
+           hasDisplaySleepAssertion(for: live[0]) {
             signals.append("display-sleep-assertion")
             detected = live[0].id
         }
@@ -271,10 +275,14 @@ final class MeetingDetector {
         windows.contains { platform.browserTitleMeansCall($0.title) }
     }
 
-    /// Video calls typically hold a PreventUserIdleDisplaySleep assertion.
+    /// Is `platform` holding a PreventUserIdleDisplaySleep assertion right now?
     /// Reads system power assertions straight from IOKit (same data `pmset -g
     /// assertions` prints) instead of spawning a subprocess every poll.
-    static func hasDisplaySleepAssertion() -> Bool {
+    ///
+    /// Attributed to one platform on purpose: the assertion only ever meant
+    /// anything as *this app is keeping the display awake*, and which app holds
+    /// it is the whole content of the signal.
+    static func hasDisplaySleepAssertion(for platform: MeetingPlatform) -> Bool {
         var cfAssertionsRef: Unmanaged<CFDictionary>?
         guard IOPMCopyAssertionsByProcess(&cfAssertionsRef) == kIOReturnSuccess,
               let cfAssertionsRef else {
@@ -285,11 +293,7 @@ final class MeetingDetector {
             guard let pidNumber = key as? NSNumber,
                   let assertions = value as? [NSDictionary] else { continue }
             guard let name = processName(forPID: pid_t(pidNumber.intValue)) else { continue }
-            let lower = name.lowercased()
-            guard MeetingPlatform.all.contains(where: { platform in
-                platform.windowOwners.contains { lower.contains($0) }
-                    || platform.bundleIDs.contains { lower.contains($0.split(separator: ".").last.map(String.init) ?? $0) }
-            }) else { continue }
+            guard platform.ownsProcess(named: name) else { continue }
             for assertion in assertions {
                 guard let type = assertion[kIOPMAssertionTypeKey as String] as? String else { continue }
                 if type.contains("PreventUserIdleDisplaySleep") || type.contains("NoDisplaySleepAssertion") {

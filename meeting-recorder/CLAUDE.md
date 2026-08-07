@@ -166,9 +166,11 @@ Which apps count as a call, and which window titles mean "in one", is **data** i
   something nobody wanted. Idle titles always win over markers — that regression already shipped once
   (RU panels «Настройки»/«Чат» triggered auto-record).
 - Store every identifier lowercased; matching lowercases the input, not the table.
-- **Контур.Толк identifiers are unverified** — no install was available when they were written. Confirm
-  them during a real call with `./tools/detect-meeting-signals.sh толк talk kontur`, then update the row
-  and its tests.
+- **A signal must mean "a call is on", not "this app is busy".** The display-sleep assertion is the
+  weakest one and only counts for a platform whose row says `sleepAssertionMeansCall` — Контур.Толк
+  holds it while *someone shares a screen*, so trusting it started a recording at the start of a share
+  and stopped it when the share ended (1.15). Talk therefore has no call signal at all and is started
+  by hand; before adding one, check it is absent while the app merely sits open.
 
 ## Principles
 

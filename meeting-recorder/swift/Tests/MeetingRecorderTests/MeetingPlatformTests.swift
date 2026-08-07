@@ -56,6 +56,42 @@ final class MeetingPlatformTests: XCTestCase {
         XCTAssertFalse(MeetingPlatform.zoom.browserTitleMeansCall("Zoom Meeting — zoom.us"))
     }
 
+    /// 1.15, живой тестер: Толк держит display-sleep assertion, пока кто-нибудь
+    /// на звонке демонстрирует экран. Пока этот ассерт считался звонком,
+    /// автозапись включалась на старте шера и останавливалась на его остановке —
+    /// запись куска чужой демонстрации и обрыв посреди разговора.
+    func testTalkNeverCountsADisplaySleepAssertionAsACall() {
+        XCTAssertFalse(MeetingPlatform.konturTalk.sleepAssertionMeansCall)
+    }
+
+    /// Zoom's fallback behind `CptHost` — shipped since phase 6, must stay.
+    func testZoomStillTrustsTheDisplaySleepAssertion() {
+        XCTAssertTrue(MeetingPlatform.zoom.sleepAssertionMeansCall)
+    }
+
+    /// The assertion is held by whichever process took it, and Electron helpers
+    /// are named after the app: attribution has to see through the suffix.
+    func testAnAssertionIsAttributedToTheAppWhoseHelperHoldsIt() {
+        let talk = MeetingPlatform.konturTalk
+        XCTAssertTrue(talk.ownsProcess(named: "Толк"))
+        XCTAssertTrue(talk.ownsProcess(named: "Толк Helper (Renderer)"))
+        XCTAssertFalse(talk.ownsProcess(named: "zoom.us"))
+        XCTAssertTrue(MeetingPlatform.zoom.ownsProcess(named: "zoom.us"))
+        XCTAssertFalse(MeetingPlatform.zoom.ownsProcess(named: "Толк Helper"))
+    }
+
+    /// A platform that trusts the assertion must be identifiable by process
+    /// name — otherwise the signal is held by somebody the table cannot name and
+    /// fires for nobody.
+    func testEveryPlatformTrustingTheAssertionCanBeAttributedByProcessName() {
+        for platform in MeetingPlatform.all where platform.sleepAssertionMeansCall {
+            XCTAssertFalse(
+                platform.windowOwners.isEmpty && platform.bundleIDs.isEmpty,
+                platform.id
+            )
+        }
+    }
+
     // MARK: - Registry
 
     func testEveryPlatformIsDistinctAndFindable() {
