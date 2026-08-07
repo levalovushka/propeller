@@ -297,18 +297,6 @@ class RecordingStore: ObservableObject {
         return targets.count
     }
 
-    /// Drop audio (and stems) but keep the meeting index + markdown.
-    func deleteAudioKeepingMeeting(_ entry: RecordingEntry) {
-        let fm = FileManager.default
-        for url in audioFileURLs(for: entry) {
-            try? fm.removeItem(at: url)
-        }
-        if let i = recordings.firstIndex(where: { $0.id == entry.id }) {
-            recordings[i].duration = 0
-            save()
-        }
-    }
-
     /// Drop parked failures for one phase across the archive, returning how many
     /// meetings went back into the queue.
     ///

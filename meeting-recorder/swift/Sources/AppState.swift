@@ -1256,12 +1256,6 @@ class AppState: ObservableObject {
         }
     }
 
-    func deleteAudioKeepingMeeting(_ entry: RecordingEntry) {
-        player.stop()
-        recordingStore.deleteAudioKeepingMeeting(entry)
-        refreshStorageUsage()
-    }
-
     /// «Очистить» в настройках: аудио уходит у всех, у кого оно уже лишнее.
     ///
     /// Ни одной встречи при этом не пропадает и ни одна не встаёт — за это
