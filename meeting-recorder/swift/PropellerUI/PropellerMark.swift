@@ -19,15 +19,40 @@ public struct PropellerMark: View {
     }
 }
 
-/// The brand glyph in a nav-sized slot. Spins counter-clockwise while the row
-/// is hovered, and coasts to the next pose that looks like the resting one when
-/// the pointer leaves — never snaps back mid-petal, and never has to unwind a
-/// whole turn after a pointer that only brushed past.
+/// The brand glyph in a nav-sized slot, driven as a blade with mass rather than
+/// as an animation with a duration.
+///
+/// Hover feeds it power: the speed climbs towards `topSpeed` instead of arriving
+/// there, so a pointer crossing the row hands over less energy than one that
+/// rests on it. Taking the pointer away cuts the power — nothing steers the blade
+/// home after that, it spends the speed it had against friction and stops at the
+/// last pose its momentum reached.
+///
+/// Every phase is a closed-form curve of the clock, so a frame is a pure function
+/// of `context.date` and there is nothing to integrate between frames — and the
+/// hand-off from power to coast carries the speed across exactly, which is the
+/// whole reason the stop reads as physics and not as an ease.
 struct PropellerNavMark: View {
     var spinning: Bool
 
-    /// One full turn every two seconds — slow enough to read as a mark, not a fan.
-    private let degreesPerSecond: Double = 180
+    /// Top speed under power — one turn every two seconds, slow enough to read as
+    /// a mark rather than a fan. Negative: the blade turns counter-clockwise.
+    private static let topSpeed: Double = -180
+
+    /// How fast the power arrives: 63 % of top speed in this long, 95 % in three
+    /// times it. Long enough that a brush past the row spins the blade a little
+    /// and a deliberate hover spins it fully.
+    private static let spinUpTime: Double = 0.18
+
+    /// Friction, as the time the blade would take to stop if it kept decaying at
+    /// its initial rate — so `speed × spinDownTime` is the travel its momentum is
+    /// worth. At top speed that is 81°, a petal and a third.
+    private static let spinDownTime: Double = 0.45
+
+    /// How thoroughly the coast decays before we call it stopped: the curve ends at
+    /// `e^-4` of the speed it began with, 1.8 %, which at these speeds is under
+    /// 4°/s — slower than a frame can show.
+    private static let spinDownDecay: Double = 4
 
     /// Six petals, one every 60°, so a sixth of a turn is already the mark again.
     /// The exact symmetry is 180° (the petals sit in three 180°-opposed pairs,
@@ -37,95 +62,120 @@ struct PropellerNavMark: View {
     /// coast a third as long.
     private static let symmetryPeriod: Double = 60
 
-    /// The coast runs at two thirds of the spin, so the stop reads as the blade
-    /// running out of momentum rather than the animation ending.
-    private let settleDegreesPerSecond: Double = 120
+    /// A blade that never got going has nothing to coast on: rather than drift for
+    /// three seconds to reach the pose ahead, it settles onto the one it just left.
+    /// Only allowed while that is 6° away or less — 0.5 pt of petal tip, and only
+    /// reachable by a pointer that crossed the row in under 130 ms.
+    private static let settleBackLimit: Double = 6
 
-    @State private var parkedAngle: Double = 0
-    @State private var spinStartedAt: Date?
-    @State private var settleFrom: Double = 0
-    @State private var settleTo: Double?
-    @State private var settleStartedAt: Date?
-    @State private var settleDuration: TimeInterval = 0
+    @State private var motion: Motion = .parked(0)
+    /// Bumped on every hand-off, so the task that parks a finished coast is
+    /// cancelled by the next one instead of landing in the middle of it.
+    @State private var handOff = 0
 
     var body: some View {
         TimelineView(
-            .animation(
-                minimumInterval: 1.0 / 60.0,
-                paused: spinStartedAt == nil && settleTo == nil
-            )
+            .animation(minimumInterval: 1.0 / 60.0, paused: motion.isParked)
         ) { context in
             PropellerMark(size: Tokens.Sidebar.navIconSize)
-                .rotationEffect(.degrees(angle(at: context.date)))
+                .rotationEffect(.degrees(motion.angle(at: context.date)))
         }
         .frame(width: Tokens.Sidebar.navIconSide, height: Tokens.Sidebar.navIconSide)
         .onChange(of: spinning) { _, now in
             let t = Date()
-            if now {
-                parkedAngle = angle(at: t)
-                settleTo = nil
-                settleStartedAt = nil
-                spinStartedAt = t
-            } else {
-                let current = angle(at: t)
-                spinStartedAt = nil
-                let target = Self.settleTarget(from: current)
-                settleFrom = current
-                settleTo = target
-                settleStartedAt = t
-                settleDuration = abs(target - current) / settleDegreesPerSecond
-                parkedAngle = current
+            let angle = motion.angle(at: t)
+            let speed = motion.speed(at: t)
+            motion = now
+                ? .powered(from: angle, speed: speed, since: t)
+                : Self.coast(from: angle, speed: speed, at: t)
+            handOff += 1
+        }
+        .task(id: handOff) {
+            guard case .coasting(let from, let travel, let duration, _) = motion else { return }
+            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            motion = .parked(from + travel)
+        }
+    }
+
+    /// Power off. The blade keeps the speed it had, spends it against friction, and
+    /// stops at the last pose inside that budget — which is why a long hover ends
+    /// with a long coast and a brush ends with a short one, without either being
+    /// asked for.
+    private static func coast(from angle: Double, speed: Double, at t: Date) -> Motion {
+        let past = degreesPastPose(angle)
+        let toNextPose = (symmetryPeriod - past).truncatingRemainder(dividingBy: symmetryPeriod)
+        let budget = abs(speed) * spinDownTime
+
+        // Not enough left to reach the pose ahead — and near enough behind that
+        // giving up on it costs half a point of movement.
+        if past > 0, past <= settleBackLimit, budget < toNextPose {
+            return .parked(angle + past)
+        }
+        let wholePetals = max(0, (budget - toNextPose) / symmetryPeriod).rounded(.down)
+        let travel = -(toNextPose + wholePetals * symmetryPeriod)
+        guard travel < 0, abs(speed) > 1 else { return .parked(angle + past) }
+
+        // The curve below starts at exactly `speed`, so its length fixes how long
+        // it runs. Time is the derived quantity here, never the designed one.
+        let duration = abs(travel) * spinDownDecay
+            / (abs(speed) * (1 - exp(-spinDownDecay)))
+        return .coasting(from: angle, travel: travel, duration: duration, since: t)
+    }
+
+    /// How far the blade sits past the last pose that matches the resting mark,
+    /// measured in the direction it turns.
+    private static func degreesPastPose(_ angle: Double) -> Double {
+        let travelled = -angle
+        return travelled - symmetryPeriod * (travelled / symmetryPeriod).rounded(.down)
+    }
+
+    /// The three things the blade can be doing, each as a curve rather than a
+    /// per-frame state — see the note on `PropellerNavMark`.
+    private enum Motion {
+        case parked(Double)
+        /// Speed approaching `topSpeed` from whatever it was when the power came on.
+        case powered(from: Double, speed: Double, since: Date)
+        /// Speed decaying from `travel × decay / duration` to almost nothing, laid
+        /// out so the blade covers exactly `travel` by the time it runs out.
+        case coasting(from: Double, travel: Double, duration: TimeInterval, since: Date)
+
+        var isParked: Bool {
+            if case .parked = self { return true }
+            return false
+        }
+
+        func angle(at date: Date) -> Double {
+            switch self {
+            case .parked(let angle):
+                return angle
+            case .powered(let from, let speed, let since):
+                let t = date.timeIntervalSince(since)
+                let tau = PropellerNavMark.spinUpTime
+                let top = PropellerNavMark.topSpeed
+                return from + top * t + (speed - top) * tau * (1 - exp(-t / tau))
+            case .coasting(let from, let travel, let duration, let since):
+                let u = min(1, date.timeIntervalSince(since) / duration)
+                let k = PropellerNavMark.spinDownDecay
+                return from + travel * (1 - exp(-k * u)) / (1 - exp(-k))
             }
         }
-        .task(id: settleTo) {
-            guard settleTo != nil else { return }
-            let ns = UInt64(max(settleDuration, 0.05) * 1_000_000_000)
-            try? await Task.sleep(nanoseconds: ns)
-            guard let target = settleTo else { return }
-            parkedAngle = target
-            settleTo = nil
-            settleStartedAt = nil
+
+        func speed(at date: Date) -> Double {
+            switch self {
+            case .parked:
+                return 0
+            case .powered(_, let speed, let since):
+                let t = date.timeIntervalSince(since)
+                let tau = PropellerNavMark.spinUpTime
+                let top = PropellerNavMark.topSpeed
+                return top + (speed - top) * exp(-t / tau)
+            case .coasting(_, let travel, let duration, let since):
+                let u = min(1, date.timeIntervalSince(since) / duration)
+                let k = PropellerNavMark.spinDownDecay
+                return travel * k / (duration * (1 - exp(-k))) * exp(-k * u)
+            }
         }
-    }
-
-    private func angle(at date: Date) -> Double {
-        if let start = spinStartedAt {
-            return parkedAngle - date.timeIntervalSince(start) * degreesPerSecond
-        }
-        if let target = settleTo, let start = settleStartedAt {
-            let u = min(1, date.timeIntervalSince(start) / max(settleDuration, 0.05))
-            return settleFrom + (target - settleFrom) * Self.easeOutBack(u)
-        }
-        return parkedAngle
-    }
-
-    /// Overshoots the resting pose by an eighth of the way it had left to travel,
-    /// then eases back onto it — one soft bounce, no oscillation. Proportional
-    /// rather than a fixed number of degrees, so a coast that had little left to
-    /// unwind doesn't gain a kick it never earned.
-    private static func easeOutBack(_ u: Double) -> Double {
-        let c1 = 2.0
-        let t = u - 1
-        return 1 + (c1 + 1) * pow(t, 3) + c1 * pow(t, 2)
-    }
-
-    /// Where the coast lands: the next pose that matches the resting mark, unless
-    /// it is so close that stopping there would be a twitch rather than a coast —
-    /// then the blade borrows one more petal and travels 60–75° instead.
-    private static func settleTarget(from current: Double) -> Double {
-        let next = nextRestingPoseCCW(from: current)
-        guard abs(next - current) < twitchThreshold else { return next }
-        return next - symmetryPeriod
-    }
-
-    /// A quarter of a petal. Under this the settle has no room to ease in or out,
-    /// and the bounce lands inside it — the eye reads a snap, not a stop.
-    private static let twitchThreshold: Double = 15
-
-    /// Continues counter-clockwise to the next pose that matches the resting mark
-    /// — a petal step away at most, not a whole turn away.
-    private static func nextRestingPoseCCW(from current: Double) -> Double {
-        -symmetryPeriod * ceil((-current) / symmetryPeriod)
     }
 }
 
