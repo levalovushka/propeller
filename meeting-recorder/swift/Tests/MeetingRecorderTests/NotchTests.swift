@@ -28,6 +28,15 @@ final class NotchGeometryTests: XCTestCase {
         XCTAssertEqual(f.earWidth, 36)
     }
 
+    func testСвёрнутаяПлитаЭтоРовноВырез() {
+        // Ниже галтелей от неё остаётся ширина выреза — поэтому рост при старте
+        // записи начинается из железа, а не из точки посреди кромки.
+        let f = NotchGeometry.frame(on: mbp14, stage: .sealed)
+        XCTAssertEqual(f.width - 2 * f.contentInset, 185)
+        XCTAssertEqual(f.height, 32)
+        XCTAssertEqual(f.earWidth, 0, "ушей ещё нет — значкам негде стоять")
+    }
+
     func testУхоНеЗаезжаетНаГалтель() {
         // Первый снимок показал обрезанный значок заметки: у самой кромки
         // фигура шире, чем ниже, и содержимое в этот клин ставить нельзя.

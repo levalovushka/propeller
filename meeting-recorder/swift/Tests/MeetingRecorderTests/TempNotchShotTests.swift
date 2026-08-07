@@ -21,7 +21,6 @@ final class TempNotchShotTests: XCTestCase {
 
         // 14″ MacBook Pro, half scale across so the plate is not lost on the strip.
         let screen = NotchGeometry.Screen(width: 1512, top: 982, notchWidth: 185, notchHeight: 32)
-        let frame = NotchGeometry.frame(on: screen, stage: stage)
         let size = CGSize(width: 760, height: 220)
 
         let root = ZStack(alignment: .top) {
@@ -34,8 +33,8 @@ final class TempNotchShotTests: XCTestCase {
                 .fill(.black)
                 .frame(width: screen.notchWidth, height: screen.notchHeight)
             NotchFace(
-                frame: frame,
-                composing: composing,
+                screen: screen,
+                stage: stage,
                 paused: false,
                 savedCount: nil,
                 level: { 0.3 },

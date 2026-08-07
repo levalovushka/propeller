@@ -74,6 +74,10 @@ public enum NotchGeometry {
 
     /// Во что развёрнута чёлка.
     public enum Stage: Equatable {
+        /// Ровно вырез: ушей нет, содержимого нет. Состояние, из которого плита
+        /// вырастает при старте записи и в которое ей некуда деваться, — а не
+        /// «скрытая панель»: скрытой панели тут не бывает, есть только чёлка.
+        case sealed
         /// Идёт запись: знак и заметка, больше ничего.
         case resting
         /// В ней печатают заметку.
@@ -107,7 +111,14 @@ public enum NotchGeometry {
         // Тело, два уха и по галтели с каждой стороны: клин у кромки — не место
         // для содержимого, поэтому фигура на него шире, а не уши уже.
         let restingWidth = body + 2 * earWidth + 2 * topCornerRadius
-        let width = restingWidth + (stage == .composing ? composeWidening : 0)
+        let width: CGFloat
+        switch stage {
+        // Свёрнутая плита — это и есть вырез: ниже галтелей от неё остаётся
+        // ровно `body`, поэтому рост начинается из железа, а не из точки.
+        case .sealed: width = body + 2 * topCornerRadius
+        case .resting: width = restingWidth
+        case .composing: width = restingWidth + composeWidening
+        }
         let fullHeight = height + (stage == .composing ? composeDrop : 0)
 
         return Frame(

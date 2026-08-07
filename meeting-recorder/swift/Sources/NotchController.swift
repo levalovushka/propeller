@@ -70,7 +70,10 @@ final class NotchController {
     private func show() {
         guard panel == nil, let screen = Self.notchScreen() else { return }
 
-        let frame = Self.geometry(for: screen, stage: stage)
+        // Окно сразу максимального габарита и больше не двигается: всё движение
+        // плиты — внутри SwiftUI (`NotchFace`). Анимировать `setFrame` мы уже
+        // пробовали, и на сворачивании плита отлипала от кромки экрана.
+        let frame = Self.geometry(for: screen, stage: .composing)
         let panel = NotchPanel(
             contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -91,7 +94,7 @@ final class NotchController {
             .canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle,
         ]
 
-        let hosting = NSHostingView(rootView: face(frame: frame))
+        let hosting = NSHostingView(rootView: face())
         panel.contentView = hosting
         self.hosting = hosting
         self.panel = panel
@@ -104,7 +107,7 @@ final class NotchController {
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.relayout(animated: false) }
+            MainActor.assumeIsolated { self?.relayout() }
         }
     }
 
@@ -159,7 +162,7 @@ final class NotchController {
         confirmTask?.cancel()
         confirming = nil
         stage = .composing
-        relayout(animated: true)
+        render()
         // Фокус клавиатуры без активации приложения: человек в звонке, и
         // выдёргивать Zoom из-под него ради одной строки нельзя.
         panel?.makeKeyAndOrderFront(nil)
@@ -167,7 +170,7 @@ final class NotchController {
 
     private func cancelNote() {
         stage = .resting
-        relayout(animated: true)
+        render()
         panel?.resignKey()
     }
 
@@ -178,7 +181,7 @@ final class NotchController {
             noteCount += 1
             confirming = noteCount
         }
-        relayout(animated: true)
+        render()
         panel?.resignKey()
 
         guard saved else { return }
@@ -219,38 +222,25 @@ final class NotchController {
         )
     }
 
-    private func relayout(animated: Bool) {
+    /// Экраны переставили — окно переезжает целиком, без анимации: это не
+    /// движение интерфейса, а смена железа под ним.
+    private func relayout() {
         guard let panel, let screen = Self.notchScreen() else { return }
-        let rect = Self.geometry(for: screen, stage: stage)
-        render(frame: rect)
-        guard animated else {
-            panel.setFrame(rect, display: true)
-            return
-        }
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.22
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            panel.animator().setFrame(rect, display: true)
-        }
+        panel.setFrame(Self.geometry(for: screen, stage: .composing), display: true)
+        render()
     }
 
-    private func render(frame: NSRect? = nil) {
-        guard let hosting, let screen = Self.notchScreen() else { return }
-        let rect = frame ?? Self.geometry(for: screen, stage: stage)
-        hosting.rootView = face(frame: rect)
+    private func render() {
+        hosting?.rootView = face()
     }
 
-    private func face(frame rect: NSRect) -> NotchFace {
+    private func face() -> NotchFace {
         let screen = Self.notchScreen()
-        let layout = screen.map { NotchGeometry.frame(on: Self.model(of: $0), stage: stage) }
         let recorder = state?.recorder
         return NotchFace(
-            frame: layout ?? NotchGeometry.frame(
-                on: NotchGeometry.Screen(width: rect.width, top: rect.maxY,
-                                         notchWidth: 0, notchHeight: rect.height),
-                stage: stage
-            ),
-            composing: stage == .composing,
+            screen: screen.map { Self.model(of: $0) }
+                ?? NotchGeometry.Screen(width: 0, top: 0, notchWidth: 0, notchHeight: 0),
+            stage: stage,
             paused: state?.isRecordingPaused == true,
             savedCount: confirming,
             level: { [weak recorder] in

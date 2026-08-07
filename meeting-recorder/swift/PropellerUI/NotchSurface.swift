@@ -81,7 +81,9 @@ public struct NotchBlade: View {
     @State private var still = false
 
     public var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: still)) { context in
+        // 60, а не 30: на полной мощности лопасть проходит 7° за кадр, и на
+        // тридцати это уже видно ступенями.
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: still)) { context in
             PropellerMark(size: size)
                 .rotationEffect(.degrees(advance(to: context.date)))
         }
@@ -112,9 +114,16 @@ public struct NotchBlade: View {
 }
 
 /// Что нарисовано на плите.
+///
+/// Плита меняет размер сама, внутри SwiftUI, а окно под ней стоит неподвижно и
+/// всегда максимального габарита. Первая версия анимировала `NSWindow.setFrame`
+/// — и раскрытие дёргалось, а сворачивание выглядело как отлипание от кромки:
+/// окно и его содержимое ехали по разным кривым. Единственный способ, которым
+/// плита может смыкаться с железом всё время движения, — быть одной анимируемой
+/// фигурой, а не окном, внутри которого что-то ещё перекладывается.
 public struct NotchFace: View {
-    private let frame: NotchGeometry.Frame
-    private let composing: Bool
+    private let screen: NotchGeometry.Screen
+    private let stage: NotchGeometry.Stage
     private let paused: Bool
     private let savedCount: Int?
     private let level: () -> Float
@@ -123,8 +132,8 @@ public struct NotchFace: View {
     private let onCancel: () -> Void
 
     public init(
-        frame: NotchGeometry.Frame,
-        composing: Bool,
+        screen: NotchGeometry.Screen,
+        stage: NotchGeometry.Stage,
         paused: Bool,
         savedCount: Int?,
         level: @escaping () -> Float,
@@ -132,8 +141,8 @@ public struct NotchFace: View {
         onCommit: @escaping (String) -> Void,
         onCancel: @escaping () -> Void
     ) {
-        self.frame = frame
-        self.composing = composing
+        self.screen = screen
+        self.stage = stage
         self.paused = paused
         self.savedCount = savedCount
         self.level = level
@@ -142,8 +151,26 @@ public struct NotchFace: View {
         self.onCancel = onCancel
     }
 
+    /// Плита вырастает из выреза, а не появляется в готовом виде: запись
+    /// начинается тихо, и её знак не имеет права возникнуть щелчком.
+    @State private var grown = false
+
+    /// Раскрытие и сворачивание — одна пружина без перелёта: чёлка не пружинит,
+    /// она раздаётся.
+    private static let move = Animation.spring(response: 0.34, dampingFraction: 0.9)
+    /// Рост при старте длиннее: это единственное движение, которое человек
+    /// увидит краем глаза, уже сидя в звонке.
+    private static let arrive = Animation.spring(response: 0.62, dampingFraction: 0.92)
+
+    private var shown: NotchGeometry.Stage { grown ? stage : .sealed }
+    private var frame: NotchGeometry.Frame { NotchGeometry.frame(on: screen, stage: shown) }
+    /// Габарит окна — всегда максимальный; плита живёт внутри него.
+    private var bounds: NotchGeometry.Frame { NotchGeometry.frame(on: screen, stage: .composing) }
+
     /// Знак и значок в ухе: 16 pt при высоте выреза 32.
     private var glyphSize: CGFloat { min(16, frame.notchHeight - 14) }
+    private var composing: Bool { shown == .composing }
+    private var revealed: Bool { shown != .sealed }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -163,17 +190,35 @@ public struct NotchFace: View {
                 NoteEar(size: glyphSize, active: composing, savedCount: savedCount, onTap: onNote)
                     .frame(width: frame.earWidth, height: frame.notchHeight)
             }
+            // Оптический центр уха выше геометрического: снизу у плиты есть
+            // скругление, сверху — прямая кромка экрана.
+            .offset(y: -1)
             .padding(.horizontal, frame.contentInset)
+            .frame(height: frame.notchHeight)
+            .opacity(revealed ? 1 : 0)
+            .clipped()
 
             if composing {
                 NotchNoteField(onCommit: onCommit, onCancel: onCancel)
                     .frame(height: NotchGeometry.composeDrop)
                     .padding(.horizontal, frame.contentInset)
+                    .transition(.opacity)
             }
         }
-        .frame(width: frame.width, height: frame.height)
+        .frame(width: frame.width, height: frame.height, alignment: .top)
         .background(Color.black, in: NotchShape())
         .clipShape(NotchShape())
+        // Плита прижата к верхней кромке окна: расти и уменьшаться она может
+        // только вниз и вбок, иначе отрывается от железа.
+        .frame(width: bounds.width, height: bounds.height, alignment: .top)
+        .animation(Self.move, value: stage)
+        .animation(Self.arrive, value: grown)
+        .onAppear {
+            guard !grown else { return }
+            // Следующим тактом, а не этим: рост, начатый в том же проходе, что
+            // и первая укладка, случается мгновенно и без анимации.
+            DispatchQueue.main.async { grown = true }
+        }
     }
 }
 
@@ -190,12 +235,17 @@ private struct NoteEar: View {
 
     @State private var hovering = false
 
+    /// Подложки нет: в чёрной плите любое пятно читается как вторая фигура, а
+    /// не как мишень. Наведение объявляет себя яркостью — этого хватает, потому
+    /// что кроме знака слева здесь не с чем спутать.
+    private var opacity: Double {
+        if active || savedCount != nil || hovering { return 0.95 }
+        return 0.55
+    }
+
     var body: some View {
         Button(action: onTap) {
-            ZStack {
-                Circle()
-                    .fill(.white.opacity(hovering || active ? 0.16 : 0))
-                    .frame(width: size + 10, height: size + 10)
+            Group {
                 if let savedCount {
                     Text("\(savedCount)")
                         .font(.system(size: size - 2, weight: .medium, design: .rounded))
@@ -205,8 +255,9 @@ private struct NoteEar: View {
                         .font(.system(size: size - 2, weight: .regular))
                 }
             }
-            .foregroundStyle(.white.opacity(active || savedCount != nil ? 0.95 : 0.7))
-            .contentShape(Circle().size(width: size + 14, height: size + 14))
+            .foregroundStyle(.white.opacity(opacity))
+            .frame(width: size + 14, height: size + 14)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
