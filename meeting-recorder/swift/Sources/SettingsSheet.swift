@@ -143,7 +143,9 @@ private struct GeneralSettingsPane: View {
         case .off:
             return "Звонки игнорируются. Запись — вручную."
         case .auto:
-            return "Запись стартует при обнаружении звонка (Zoom, Контур.Толк) — без подтверждения. В уведомлении можно отказаться; остановить можно из меню или приложения. Запись останавливается с концом звонка."
+            // Names Zoom alone: Толк has no signal that says a call is on, so
+            // promising it here meant promising a start that never comes.
+            return "Запись стартует при обнаружении звонка Zoom — без подтверждения. В уведомлении можно отказаться; остановить можно из меню или приложения. Запись останавливается с концом звонка."
         }
     }
 
