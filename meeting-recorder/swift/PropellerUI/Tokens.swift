@@ -251,18 +251,22 @@ public enum Tokens {
 
     // MARK: - 4. Radiuses
 
+    /// The whole scale sits 4 pt tighter than the Figma comps: the corners there
+    /// were drawn against a 48 pt window header and read as too soft once the
+    /// same shapes carry 12 pt rows. `none` and `full` are not on the scale —
+    /// one is a square corner, the other a pill — so neither moves.
     public enum Radius {
         public static let none: CGFloat = 0
-        public static let xxxxs: CGFloat = 6
-        public static let xxxs: CGFloat = 8
-        public static let xxs: CGFloat = 10
-        public static let xs: CGFloat = 12
-        public static let sm: CGFloat = 14
-        public static let md: CGFloat = 16
-        public static let lg: CGFloat = 18
-        public static let xl: CGFloat = 30
-        public static let x2l: CGFloat = 38
-        public static let x3l: CGFloat = 46
+        public static let xxxxs: CGFloat = 2
+        public static let xxxs: CGFloat = 4
+        public static let xxs: CGFloat = 6
+        public static let xs: CGFloat = 8
+        public static let sm: CGFloat = 10
+        public static let md: CGFloat = 12
+        public static let lg: CGFloat = 14
+        public static let xl: CGFloat = 26
+        public static let x2l: CGFloat = 34
+        public static let x3l: CGFloat = 42
         public static let full: CGFloat = 9999
     }
 
@@ -938,10 +942,11 @@ public enum Tokens {
     public enum Setup {
         public static let width: CGFloat = 400
         public static let height: CGFloat = 410
-        /// The comps say 20. The scale's nearest step is 18, and the rule in this
-        /// file is that an off-scale literal snaps rather than mints a step —
-        /// two points of corner is under the threshold of noticing, a tenth step
-        /// on the radius scale is not.
+        /// The comps say 20; the plate takes the top step of the scale, which now
+        /// sits at 14. The rule in this file is that an off-scale literal snaps
+        /// rather than mints a step, and the whole scale tightening by 4 is a
+        /// decision about corners in general — not something this one plate opts
+        /// out of by keeping the drawn number.
         public static let radius = Radius.lg
         /// The plate has no titlebar row. Everything lives in one column inset
         /// from all four edges — mark, sentence, rows, and the button at the foot.
