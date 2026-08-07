@@ -16,8 +16,11 @@ class AudioRecorder: ObservableObject {
 
     // Mic recording (legacy AVAudioRecorder path).
     private var avRecorder: AVAudioRecorder?
-    /// is true. Provides Apple's built-in echo cancellation so speaker-on
-    /// meetings don't bleed remote audio back into the mic stem.
+    /// Эхоподавления здесь нет и не будет: Apple VPIO перенастраивает **общее**
+    /// устройство ввода, и его AGC достаётся всем, кто держит микрофон, —
+    /// тестировщик стал почти не слышен собеседникам (удалено 2026-07-28,
+    /// `9c0ae44`). Эхо динамика в микрофонной дорожке остаётся; из транскрипта
+    /// его убирает сравнение дорожек (`StemDominance`), а не фильтр на звуке.
     private(set) var startTime: Date?
     private(set) var recordingID: String?
     private(set) var filePath: URL?
