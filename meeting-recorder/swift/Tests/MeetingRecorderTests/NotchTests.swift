@@ -1,0 +1,167 @@
+import XCTest
+import PropellerPure
+
+/// Чёлка: сколько места она занимает и как ведёт себя лопасть.
+///
+/// Оба вопроса проверяются здесь, потому что глазами их проверить негде: у
+/// автора один ноутбук из четырёх геометрий, а поведение лопасти в тишине
+/// становится видно только через сорок минут встречи.
+final class NotchGeometryTests: XCTestCase {
+
+    /// 14″ MacBook Pro в родном масштабе — 1512×982, вырез 185×32.
+    private let mbp14 = NotchGeometry.Screen(
+        width: 1512, top: 982, notchWidth: 185, notchHeight: 32
+    )
+    /// 16″ — 1728×1117, вырез 220×38.
+    private let mbp16 = NotchGeometry.Screen(
+        width: 1728, top: 1117, notchWidth: 220, notchHeight: 38
+    )
+    /// Внешний монитор или Air M1: выреза нет.
+    private let plain = NotchGeometry.Screen(
+        width: 1920, top: 1080, notchWidth: 0, notchHeight: 24
+    )
+
+    func testВПокоеЧёлкаОтрастаетНаДваУхаИНеСвисаетВниз() {
+        let f = NotchGeometry.frame(on: mbp14, stage: .resting)
+        XCTAssertEqual(f.width, 185 + 72 + 16, "тело, два уха и по галтели с краёв")
+        XCTAssertEqual(f.height, 32, "в покое фигура ровно на высоту выреза")
+        XCTAssertEqual(f.earWidth, 36)
+    }
+
+    func testУхоНеЗаезжаетНаГалтель() {
+        // Первый снимок показал обрезанный значок заметки: у самой кромки
+        // фигура шире, чем ниже, и содержимое в этот клин ставить нельзя.
+        let f = NotchGeometry.frame(on: mbp14, stage: .resting)
+        XCTAssertEqual(f.contentInset * 2 + f.earWidth * 2 + f.bodyWidth, f.width)
+    }
+
+    func testФигураСтоитПоЦентруЭкранаТамЖеГдеВырез() {
+        let f = NotchGeometry.frame(on: mbp16, stage: .resting)
+        XCTAssertEqual(f.originX + f.width / 2, 1728 / 2, accuracy: 0.001)
+    }
+
+    func testВерхФигурыСовпадаетСВерхомЭкрана() {
+        for stage in [NotchGeometry.Stage.resting, .composing] {
+            let f = NotchGeometry.frame(on: mbp14, stage: stage)
+            XCTAssertEqual(f.originY + f.height, 982, "стык с железом не даёт зазора")
+        }
+    }
+
+    func testЗаметкаРаскрываетНаВосемьдесятВнизИШестнадцатьВширь() {
+        let rest = NotchGeometry.frame(on: mbp14, stage: .resting)
+        let compose = NotchGeometry.frame(on: mbp14, stage: .composing)
+        XCTAssertEqual(compose.width - rest.width, 16)
+        XCTAssertEqual(compose.height - rest.height, 80)
+        XCTAssertEqual(compose.originX + compose.width / 2,
+                       rest.originX + rest.width / 2, accuracy: 0.001,
+                       "раскрытие симметрично: центр не едет")
+    }
+
+    func testБезВырезаОстаётсяТаЖеФигураПилюлей() {
+        let f = NotchGeometry.frame(on: plain, stage: .resting)
+        XCTAssertFalse(f.hasNotch)
+        XCTAssertEqual(f.width, 96 + 72 + 16, "ухо со знаком и ухо с заметкой на месте")
+        XCTAssertEqual(f.earWidth, 36)
+        XCTAssertEqual(f.height, 24)
+    }
+
+    func testУВырезаШиринаСчитаетсяПоСвободнымУглам() {
+        // 14″: два угла по 663.5 pt, между ними 185.
+        XCTAssertEqual(
+            NotchGeometry.notchWidth(screenWidth: 1512,
+                                     auxiliaryLeftWidth: 663.5,
+                                     auxiliaryRightWidth: 663.5),
+            185
+        )
+    }
+
+    func testПогрешностьВПолпиксаНеСтановитсяВырезом() {
+        XCTAssertEqual(
+            NotchGeometry.notchWidth(screenWidth: 1920,
+                                     auxiliaryLeftWidth: 960,
+                                     auxiliaryRightWidth: 959.5),
+            0,
+            "экран без чёлки не должен отрастить вырез в полпикселя"
+        )
+    }
+}
+
+/// Лопасть: чем она питается и что означает её остановка.
+final class BladeDriveTests: XCTestCase {
+
+    func testВТишинеЛопастьИдётХолостымХодомАНеВстаёт() {
+        let target = BladeDrive.targetSpeed(level: 0, paused: false)
+        XCTAssertEqual(target, BladeDrive.idleSpeed)
+        XCTAssertNotEqual(target, 0, "остановка в тишине читалась бы как поломка")
+    }
+
+    func testНольЭтоТолькоПауза() {
+        XCTAssertEqual(BladeDrive.targetSpeed(level: 0.4, paused: true), 0)
+        XCTAssertEqual(BladeDrive.targetSpeed(level: 0, paused: true), 0)
+    }
+
+    func testГромкийРазговорДаётПолнуюМощность() {
+        XCTAssertEqual(BladeDrive.targetSpeed(level: 0.8, paused: false), BladeDrive.topSpeed)
+    }
+
+    func testМощностьРастётВместеСУровнем() {
+        var previous = -1.0
+        for level in stride(from: Float(0), through: 1, by: 0.05) {
+            let power = BladeDrive.power(level: level)
+            XCTAssertGreaterThanOrEqual(power, previous)
+            XCTAssertTrue((0...1).contains(power))
+            previous = power
+        }
+    }
+
+    func testОбычнаяРечьЖивётВСерединеШкалыАНеУПола() {
+        // Пик 0.1 — разговорная громкость в метре от микрофона.
+        let power = BladeDrive.power(level: 0.1)
+        XCTAssertGreaterThan(power, 0.4, "на линейной шкале здесь было бы 0.1")
+        XCTAssertLessThan(power, 0.8)
+    }
+
+    func testМощностьПриходитЗаСекундуАУходитВтроеДольше() {
+        // Приход: 63 % пути за `attack`.
+        let started = BladeDrive.advance(speed: BladeDrive.idleSpeed, level: 0.8,
+                                         paused: false, dt: BladeDrive.attack)
+        let full = BladeDrive.topSpeed - BladeDrive.idleSpeed
+        XCTAssertEqual(started, BladeDrive.idleSpeed + full * 0.632, accuracy: 1)
+
+        // Уход: за то же время лопасть теряет заметно меньше.
+        let coasting = BladeDrive.advance(speed: BladeDrive.topSpeed, level: 0,
+                                          paused: false, dt: BladeDrive.attack)
+        XCTAssertLessThan(abs(coasting - BladeDrive.topSpeed), abs(started - BladeDrive.idleSpeed))
+    }
+
+    func testЛопастьНеПерескакиваетЦельНаДлинномКадре() {
+        let speed = BladeDrive.advance(speed: BladeDrive.idleSpeed, level: 1,
+                                       paused: false, dt: 10)
+        XCTAssertGreaterThanOrEqual(speed, BladeDrive.topSpeed)
+        XCTAssertLessThanOrEqual(speed, BladeDrive.idleSpeed)
+    }
+
+    func testПаузаОстанавливаетЛопастьСовсем() {
+        var speed = BladeDrive.topSpeed
+        for _ in 0..<120 { speed = BladeDrive.advance(speed: speed, level: 0.5,
+                                                      paused: true, dt: 1.0 / 60) }
+        XCTAssertEqual(speed, 0, "не «почти ноль»: медленный дрейф означает идущую запись")
+    }
+
+    func testПаузаДочитываетсяЗаСекунду() {
+        var speed = BladeDrive.topSpeed
+        for _ in 0..<60 { speed = BladeDrive.advance(speed: speed, level: 0.5,
+                                                     paused: true, dt: 1.0 / 60) }
+        XCTAssertEqual(speed, 0)
+    }
+
+    func testДлительностьКадраНеМеняетИсход() {
+        // Тот же результат за секунду, набранную шестьюдесятью кадрами и шестью.
+        var fast = BladeDrive.idleSpeed, slow = BladeDrive.idleSpeed
+        for _ in 0..<60 { fast = BladeDrive.advance(speed: fast, level: 0.3,
+                                                    paused: false, dt: 1.0 / 60) }
+        for _ in 0..<6 { slow = BladeDrive.advance(speed: slow, level: 0.3,
+                                                   paused: false, dt: 1.0 / 6) }
+        XCTAssertEqual(fast, slow, accuracy: 1)
+    }
+}

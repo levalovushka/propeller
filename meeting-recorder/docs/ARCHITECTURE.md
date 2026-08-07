@@ -77,7 +77,7 @@ MeetingDetector (Auto) / menu bar / ⌘R / UI
 | `MeetingDetector` | Поллинг звонка в любой платформе из `MeetingPlatform.all` (Zoom, Контур.Толк): helper-процесс, заголовок окна, вкладка браузера, display-sleep assertion — последний только у платформ с `sleepAssertionMeansCall` (у Толка этот ассерт означает демонстрацию экрана, а не звонок) |
 | `PipelineBoundaries` | `Transcriber` / `RecapBackend` — две подменяемые границы наружу |
 | `CalendarService` | EventKit read-only: `suggestedRecordingTitle` и `CalendarMeta` при старте записи. Списка «Скоро» больше нет — календарь называет записи, а не рисует экран |
-| `NoteOverlayController` | Оверлей быстрых заметок ⌃⌥N во время записи |
+| `NotchController` | Чёлка на время записи: лопасть по уровню звука + заметка ⌃⌥N, раскрывающаяся из выреза |
 | `NotificationManager` | UNUserNotificationCenter: интерактивная отмена авто-записи + баннеры |
 | `StateGallery` · `GalleryExport` · `GalleryFixture` | Только под `-DGALLERY` (`./build.sh --gallery`): окно со всеми состояниями из `UIStateCatalog`, экспорт в PNG, фикстурный архив под съёмку. Архив подменяется через `Preferences.galleryArchiveRoot` — ключа нет в обычной сборке, реальные записи не читаются. См. [design/state-gallery.md](../../design/state-gallery.md) |
 | `TranscriptionService` | ASR → diarize → `Speaker N` + владелец-по-микрофону |
