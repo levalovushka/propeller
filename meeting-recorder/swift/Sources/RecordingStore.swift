@@ -259,9 +259,42 @@ class RecordingStore: ObservableObject {
         }
     }
 
-    /// Oldest-first candidates when the library is over the size nudge threshold.
-    func storageNudgeCandidates(limit: Int = 12) -> [RecordingEntry] {
-        recordings.sorted { $0.date < $1.date }.prefix(limit).map { $0 }
+    /// Встречи, у которых аудио уже ничего не держит (`AudioReclaim`).
+    func reclaimableAudioEntries() -> [RecordingEntry] {
+        recordings.filter {
+            AudioReclaim.isExpendable(
+                stage: $0.status,
+                hasTranscript: $0.transcript?.isEmpty == false
+            )
+        }
+    }
+
+    /// Сколько освободит «Очистить». Не `totalLibraryBytes`: у идущей записи и у
+    /// встречи, которую ещё не расшифровали, аудио не забирают, и обещать их
+    /// байты нельзя.
+    func reclaimableAudioBytes() -> Int64 {
+        reclaimableAudioEntries().reduce(Int64(0)) { $0 + byteSize(of: $1) }
+    }
+
+    /// Убрать аудио у всех, у кого оно лишнее. Возвращает, у скольких встреч.
+    @discardableResult
+    func deleteAllReclaimableAudio() -> Int {
+        let targets = reclaimableAudioEntries()
+        guard !targets.isEmpty else { return 0 }
+        let fm = FileManager.default
+        for entry in targets {
+            for url in audioFileURLs(for: entry) {
+                try? fm.removeItem(at: url)
+            }
+            if let i = recordings.firstIndex(where: { $0.id == entry.id }) {
+                recordings[i].duration = 0
+            }
+        }
+        // Один `save()` на всю чистку, а не по файлу: индекс переписывается
+        // целиком, и делать это сто раз подряд — сто шансов поймать половину
+        // записанного файла.
+        save()
+        return targets.count
     }
 
     /// Drop audio (and stems) but keep the meeting index + markdown.

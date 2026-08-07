@@ -412,11 +412,24 @@ private struct RecapSettingsPane: View {
 
 private struct ExportSettingsPane: View {
     @EnvironmentObject private var appState: AppState
-    @Environment(\.undoManager) private var undoManager
     @AppStorage("markdownOutputFormat") private var markdownOutputFormat = MarkdownOutputFormat.simple.rawValue
     @AppStorage("meetingsPath") private var meetingsPath = ""
     @AppStorage("recordingsPath") private var recordingsPath = ""
     @AppStorage("peoplePagesPath") private var peoplePagesPath = ""
+    @State private var showingClearConfirm = false
+
+    /// Сколько заберёт «Очистить» — не то же, что «Аудио на диске»: у идущей
+    /// записи и у нерасшифрованной встречи звук не забирают (`AudioReclaim`).
+    private var reclaimable: Int64 { appState.storageReclaimableBytes }
+
+    /// Байты человеку. `ByteCountFormatter` ставит между числом и единицей
+    /// обычный пробел (U+0020), а в тексте диалога он попадает под перенос —
+    /// «1,64» на одной строке, «ГБ» на следующей. `principles.md` §6 это
+    /// запрещает, и починить это можно только здесь: строку собирает система.
+    private func bytes(_ count: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
+            .replacingOccurrences(of: " ", with: "\u{00A0}")
+    }
 
     var body: some View {
         Form {
@@ -456,40 +469,37 @@ private struct ExportSettingsPane: View {
             }
 
             Section("Размер библиотеки") {
-                let used = ByteCountFormatter.string(
-                    fromByteCount: appState.storageLibraryBytes,
-                    countStyle: .file
-                )
-                LabeledContent("Аудио на диске", value: used)
+                let used = bytes(appState.storageLibraryBytes)
                 // No threshold and no reminder any more: the app does not decide
-                // when this becomes a problem. The list below is the tool — it is
-                // here, it is sorted, and it is only ever opened on purpose.
-                Text("Propeller никогда не удаляет сам. Удаление аудио сохраняет расшифровки и\u{00A0}саммари.")
-                    .typo(Tokens.Typography.Label.smRegular)
-                    .foregroundStyle(.secondary)
-                ForEach(appState.recordingStore.storageNudgeCandidates(limit: 8)) { entry in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.title.isEmpty ? "Без названия" : entry.title)
-                                .lineLimit(1)
-                            Text("\(entry.dateFormatted) · \(ByteCountFormatter.string(fromByteCount: appState.recordingStore.byteSize(of: entry), countStyle: .file))")
-                                .typo(Tokens.Typography.Label.smRegular)
-                                .foregroundStyle(.secondary)
+                // when this becomes a problem. Порога нет и у кнопки: пока чистить
+                // нечего, её просто нет, а не «есть, но не работает».
+                LabeledContent("Аудио на диске") {
+                    HStack(spacing: 8) {
+                        Text(used)
+                        if reclaimable > 0 {
+                            Button("Очистить") { showingClearConfirm = true }
+                                .controlSize(.small)
                         }
-                        Spacer()
-                        Button("Удалить аудио") {
-                            appState.deleteAudioKeepingMeeting(entry)
-                        }
-                        .controlSize(.small)
-                        Button("Удалить встречу", role: .destructive) {
-                            appState.removeRecording(entry, undoManager: undoManager)
-                        }
-                        .controlSize(.small)
                     }
                 }
             }
         }
         .formStyle(.grouped)
+        // Подтверждение необратимого действия, начатого человеком: он за
+        // клавиатурой, окно возможности — его же клик. Единственная роль, в
+        // которой `design/notifications.md` §5 разрешает модалку.
+        .confirmationDialog(
+            "Удалить аудио встреч?",
+            isPresented: $showingClearConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Удалить", role: .destructive) {
+                appState.deleteAllReclaimableAudio()
+            }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text("Освободится \(bytes(reclaimable)). Расшифровки и саммари останутся, аудио вернуть будет нельзя.")
+        }
         .onAppear {
             if meetingsPath.isEmpty { meetingsPath = Preferences.shared.meetingsPath }
             if recordingsPath.isEmpty { recordingsPath = Preferences.shared.recordingsPath }

@@ -137,6 +137,10 @@ class AppState: ObservableObject {
     private var didBootstrap = false
     @Published var meetingDetected = false
     @Published var storageLibraryBytes: Int64 = 0
+    /// Из них — то, что «Очистить» действительно заберёт. Кэшируется рядом с
+    /// общим числом, а не считается на каждый рендер: это проход по архиву со
+    /// `stat` на каждый файл, а секция настроек перерисовывается от любой мелочи.
+    @Published var storageReclaimableBytes: Int64 = 0
     /// When set, MainView switches to this sidebar section (e.g. after pipeline).
     @Published var preferredSidebarSection: String?
     /// When set, RecordingDetailView selects this tab (`transcript` / `notes` / `recap`).
@@ -859,10 +863,10 @@ class AppState: ObservableObject {
     /// There is no nudge any more. «Библиотека разрослась» named a number and
     /// offered a button to the screen the user was already able to open, on a
     /// schedule of the app's choosing rather than theirs — and Settings shows the
-    /// same number, the threshold and a list of the biggest meetings with their
-    /// own delete buttons.
+    /// same number with one «Очистить» beside it.
     func refreshStorageUsage() {
         storageLibraryBytes = recordingStore.totalLibraryBytes()
+        storageReclaimableBytes = recordingStore.reclaimableAudioBytes()
     }
 
     /// Open the Summary tab for a finished meeting — without taking the front.
@@ -1256,6 +1260,18 @@ class AppState: ObservableObject {
         player.stop()
         recordingStore.deleteAudioKeepingMeeting(entry)
         refreshStorageUsage()
+    }
+
+    /// «Очистить» в настройках: аудио уходит у всех, у кого оно уже лишнее.
+    ///
+    /// Ни одной встречи при этом не пропадает и ни одна не встаёт — за это
+    /// отвечает `AudioReclaim`, а не эта функция.
+    @discardableResult
+    func deleteAllReclaimableAudio() -> Int {
+        player.stop()
+        let cleared = recordingStore.deleteAllReclaimableAudio()
+        refreshStorageUsage()
+        return cleared
     }
 
     // MARK: - Pipeline
