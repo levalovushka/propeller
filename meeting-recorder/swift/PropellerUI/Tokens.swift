@@ -922,7 +922,7 @@ public enum Tokens {
             /// разном кегле читается как перерисовка встречи, а не как её
             /// уточнение. Читаемость важнее компактности: это речь, а не список.
             public static let transcriptBody = body
-            /// 12 / 16 regular — «Добавьте заметку...».
+            /// 12 / 16 regular — «Добавьте заметку…».
             public static let notePlaceholder = Typography.Style(
                 size: 12, lineHeight: 16, weight: .regular,
                 weightTrim: Typography.railWeightTrim

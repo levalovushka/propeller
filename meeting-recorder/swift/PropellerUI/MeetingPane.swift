@@ -791,13 +791,13 @@ public struct MeetingPaneBody: View {
     private let onSummaryChange: ((MeetingSummary) -> Void)?
     private let onSummaryRewrite: ((SummaryRewrite, String) -> Void)?
 
-    /// The «Добавьте заметку...» row, when notes can be written.
+    /// The «Добавьте заметку…» row, when notes can be written.
     public struct NoteComposer {
         public let placeholder: String
         public let text: Binding<String>
         public let onCommit: () -> Void
 
-        public init(placeholder: String = "Добавьте заметку...",
+        public init(placeholder: String = "Добавьте заметку…",
                     text: Binding<String>,
                     onCommit: @escaping () -> Void) {
             self.placeholder = placeholder
