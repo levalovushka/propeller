@@ -152,22 +152,36 @@ public struct NotchFace: View {
     /// начинается тихо, и её знак не имеет права возникнуть щелчком.
     @State private var grown = false
 
-    /// Раскрытие и сворачивание — одна пружина без перелёта: чёлка не пружинит,
+    /// Раскрытие и сворачивание поля — пружина без перелёта: чёлка не пружинит,
     /// она раздаётся.
-    private static let move = Animation.spring(response: 0.34, dampingFraction: 0.9)
+    private static let move = Animation.spring(response: 0.34, dampingFraction: 0.92)
     /// Рост при старте длиннее: это единственное движение, которое человек
     /// увидит краем глаза, уже сидя в звонке.
-    private static let arrive = Animation.spring(response: 0.62, dampingFraction: 0.92)
+    private static let arrive = Animation.spring(response: 0.58, dampingFraction: 0.94)
+    /// Уход в железо на стопе — ещё спокойнее и без единого колебания: последнее,
+    /// что делает запись, не должно выглядеть как захлопнувшаяся дверь.
+    private static let leave = Animation.spring(response: 0.46, dampingFraction: 1.0)
+    /// Значки идут за плитой, а не вместе с ней: сначала место, потом то, что в
+    /// нём стоит. Задержка меньше половины хода — иначе читается как рассинхрон.
+    private static let glyphs = Animation.spring(response: 0.4, dampingFraction: 0.9).delay(0.1)
 
     private var shown: NotchGeometry.Stage { grown ? stage : .sealed }
     private var frame: NotchGeometry.Frame { NotchGeometry.frame(on: screen, stage: shown) }
     /// Габарит окна — всегда максимальный; плита живёт внутри него.
     private var bounds: NotchGeometry.Frame { NotchGeometry.frame(on: screen, stage: .composing) }
 
-    /// Знак и значок в ухе: 16 pt при высоте выреза 32.
-    private var glyphSize: CGFloat { min(16, frame.notchHeight - 14) }
+    /// Знак и значок в ухе: 16 pt при высоте выреза 32, меньше — на экранах,
+    /// где вырез ниже (масштабированное разрешение, Air).
+    private var glyphSize: CGFloat { max(11, min(16, frame.notchHeight - 14)) }
     private var composing: Bool { shown == .composing }
     private var revealed: Bool { shown != .sealed }
+
+    /// Насколько ход плиты сейчас плавен — по нему же идут значки и поле, чтобы
+    /// всё движение читалось одним жестом, а не тремя.
+    private var motion: Animation {
+        if !grown { return Self.arrive }
+        return stage == .sealed ? Self.leave : Self.move
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
@@ -178,28 +192,35 @@ public struct NotchFace: View {
                     // Знак ничего не обещает и ничего не принимает: клик по нему
                     // уходит в меню-бар под плитой, как если бы её не было.
                     .allowsHitTesting(false)
+                    .modifier(EarReveal(revealed: revealed, from: 10))
 
                 // Сам вырез. Под ним камера — рисовать здесь нельзя ничего.
                 Color.clear
-                    .frame(width: frame.bodyWidth, height: frame.notchHeight)
+                    .frame(width: frame.notchWidth, height: frame.notchHeight)
                     .allowsHitTesting(false)
 
                 NoteEar(size: glyphSize, composing: composing, onTap: onNote)
                     .frame(width: frame.earWidth, height: frame.notchHeight)
+                    .modifier(EarReveal(revealed: revealed, from: -10))
             }
             // Оптический центр уха выше геометрического: снизу у плиты есть
             // скругление, сверху — прямая кромка экрана.
             .offset(y: -1)
             .padding(.horizontal, frame.contentInset)
             .frame(height: frame.notchHeight)
-            .opacity(revealed ? 1 : 0)
             .clipped()
+            // Появляются с задержкой — место сначала, содержимое следом;
+            // уходят без неё, вместе с плитой, чтобы не оставаться висеть в
+            // воздухе там, где уха уже нет.
+            .animation(revealed ? Self.glyphs : Self.leave, value: revealed)
 
             if composing {
                 NotchNoteField(onCommit: onCommit, onCancel: onCancel)
                     .frame(height: NotchGeometry.composeDrop)
                     .padding(.horizontal, frame.contentInset)
-                    .transition(.opacity)
+                    // Поле не возникает в опустившейся чёлке, а проявляется в
+                    // ней: тем же размытием, каким меняются значки.
+                    .transition(.blurReplace)
             }
         }
         .frame(width: frame.width, height: frame.height, alignment: .top)
@@ -208,14 +229,33 @@ public struct NotchFace: View {
         // Плита прижата к верхней кромке окна: расти и уменьшаться она может
         // только вниз и вбок, иначе отрывается от железа.
         .frame(width: bounds.width, height: bounds.height, alignment: .top)
-        .animation(Self.move, value: stage)
-        .animation(Self.arrive, value: grown)
+        .animation(motion, value: stage)
+        .animation(motion, value: grown)
         .onAppear {
             guard !grown else { return }
             // Следующим тактом, а не этим: рост, начатый в том же проходе, что
             // и первая укладка, случается мгновенно и без анимации.
             DispatchQueue.main.async { grown = true }
         }
+    }
+}
+
+/// Как значок появляется, когда плита отращивает под него ухо, и как уходит,
+/// когда она сворачивается обратно в вырез.
+///
+/// Не просто прозрачность: значок выезжает из-под выреза наружу, растёт из 0.7
+/// и на ходу теряет размытие — то есть выглядит вынесенным движением плиты, а
+/// не проявленным поверх неё. `from` — сторона, с которой он приходит.
+private struct EarReveal: ViewModifier {
+    var revealed: Bool
+    var from: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(revealed ? 1 : 0.7)
+            .offset(x: revealed ? 0 : from)
+            .blur(radius: revealed ? 0 : 3)
+            .opacity(revealed ? 1 : 0)
     }
 }
 
@@ -234,8 +274,9 @@ private struct NoteEar: View {
 
     /// Подложки нет: в чёрной плите любое пятно читается как вторая фигура, а
     /// не как мишень. Наведение объявляет себя яркостью — этого хватает, потому
-    /// что кроме знака слева здесь не с чем спутать.
-    private var opacity: Double { hovering || composing ? 0.95 : 0.55 }
+    /// что кроме знака слева здесь не с чем спутать. Открытое поле яркости не
+    /// добавляет: знак ⏎ там не активен, он просто называет, чем это кончится.
+    private var opacity: Double { hovering ? 0.95 : 0.55 }
 
     var body: some View {
         Button(action: onTap) {
@@ -244,8 +285,11 @@ private struct NoteEar: View {
                 // уменьшается, размывается и гаснет, новый приходит тем же
                 // путём назад. `blurReplace` — ровно эта пара.
                 if composing {
+                    // ⏎ у SF рисуется в полную высоту кегля, а карандаш — с
+                    // полями, поэтому на одном размере он выглядит крупнее.
+                    // Сравнивались по видимой высоте, а не по числу.
                     Image(systemName: "return")
-                        .font(.system(size: size, weight: .regular))
+                        .font(.system(size: size - 5, weight: .medium))
                         .transition(.blurReplace)
                 } else {
                     Image(systemName: "square.and.pencil")
@@ -273,12 +317,21 @@ private struct NotchNoteField: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        TextField("", text: $text, prompt:
-            Text("Начните печатать…").foregroundStyle(.white.opacity(0.35))
-        )
-        .textFieldStyle(.plain)
+        // Подсказка своя, а не `prompt:`: у поля без рамки AppKit рисует
+        // placeholder собственным слоем и не убирает его под набранным текстом
+        // — буквы ложатся поверх подсказки. Здесь она просто исчезает, как
+        // только появляется первый символ.
+        ZStack(alignment: .leading) {
+            if text.isEmpty {
+                Text("Начните печатать…")
+                    .foregroundStyle(.white.opacity(0.35))
+                    .allowsHitTesting(false)
+            }
+            TextField("", text: $text)
+                .textFieldStyle(.plain)
+                .foregroundStyle(.white)
+        }
         .font(.system(size: 13))
-        .foregroundStyle(.white)
         .tint(.white.opacity(0.6))
         .focused($focused)
         .onSubmit {

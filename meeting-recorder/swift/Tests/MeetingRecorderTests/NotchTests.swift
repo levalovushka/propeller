@@ -8,18 +8,21 @@ import PropellerPure
 /// становится видно только через сорок минут встречи.
 final class NotchGeometryTests: XCTestCase {
 
+    /// Как это приходит из `NSScreen`: ширина экрана, свободные углы и
+    /// `safeAreaInsets.top`. Ничего из этого мы не знаем заранее.
+    private func screen(
+        width: CGFloat, top: CGFloat, safeTop: CGFloat, aux: CGFloat?
+    ) -> NotchGeometry.Screen? {
+        NotchGeometry.screen(
+            width: width, top: top, safeAreaTop: safeTop,
+            auxiliaryLeftWidth: aux, auxiliaryRightWidth: aux
+        )
+    }
+
     /// 14″ MacBook Pro в родном масштабе — 1512×982, вырез 185×32.
-    private let mbp14 = NotchGeometry.Screen(
-        width: 1512, top: 982, notchWidth: 185, notchHeight: 32
-    )
+    private lazy var mbp14 = screen(width: 1512, top: 982, safeTop: 32, aux: 663.5)!
     /// 16″ — 1728×1117, вырез 220×38.
-    private let mbp16 = NotchGeometry.Screen(
-        width: 1728, top: 1117, notchWidth: 220, notchHeight: 38
-    )
-    /// Внешний монитор или Air M1: выреза нет.
-    private let plain = NotchGeometry.Screen(
-        width: 1920, top: 1080, notchWidth: 0, notchHeight: 24
-    )
+    private lazy var mbp16 = screen(width: 1728, top: 1117, safeTop: 38, aux: 754)!
 
     func testВПокоеЧёлкаОтрастаетНаДваУхаИНеСвисаетВниз() {
         let f = NotchGeometry.frame(on: mbp14, stage: .resting)
@@ -41,7 +44,7 @@ final class NotchGeometryTests: XCTestCase {
         // Первый снимок показал обрезанный значок заметки: у самой кромки
         // фигура шире, чем ниже, и содержимое в этот клин ставить нельзя.
         let f = NotchGeometry.frame(on: mbp14, stage: .resting)
-        XCTAssertEqual(f.contentInset * 2 + f.earWidth * 2 + f.bodyWidth, f.width)
+        XCTAssertEqual(f.contentInset * 2 + f.earWidth * 2 + f.notchWidth, f.width)
     }
 
     func testФигураСтоитПоЦентруЭкранаТамЖеГдеВырез() {
@@ -64,32 +67,65 @@ final class NotchGeometryTests: XCTestCase {
         XCTAssertEqual(compose.originX, rest.originX, "и, значит, никуда не едет")
     }
 
-    func testБезВырезаОстаётсяТаЖеФигураПилюлей() {
-        let f = NotchGeometry.frame(on: plain, stage: .resting)
-        XCTAssertFalse(f.hasNotch)
-        XCTAssertEqual(f.width, 96 + 72 + 16, "ухо со знаком и ухо с заметкой на месте")
-        XCTAssertEqual(f.earWidth, 36)
-        XCTAssertEqual(f.height, 24)
-    }
+    // MARK: - Есть ли вообще чёлка
 
     func testУВырезаШиринаСчитаетсяПоСвободнымУглам() {
         // 14″: два угла по 663.5 pt, между ними 185.
-        XCTAssertEqual(
-            NotchGeometry.notchWidth(screenWidth: 1512,
-                                     auxiliaryLeftWidth: 663.5,
-                                     auxiliaryRightWidth: 663.5),
-            185
-        )
+        let s = screen(width: 1512, top: 982, safeTop: 32, aux: 663.5)
+        XCTAssertEqual(s?.notchWidth, 185)
+        XCTAssertEqual(s?.notchHeight, 32)
+    }
+
+    func testНаЭкранеБезВырезаЧёлкиНетВовсе() {
+        // Внешний монитор, iMac, Air M1: `safeAreaInsets.top` нулевой.
+        XCTAssertNil(screen(width: 1920, top: 1080, safeTop: 0, aux: 960))
+    }
+
+    func testБезСвободныхУгловЧёлкиНет() {
+        // На экране без выреза AppKit не отдаёт `auxiliaryTop*Area` вовсе.
+        // Подставлять полэкрана вместо них нельзя: получится вырез шириной ноль
+        // на машине, где его нет.
+        XCTAssertNil(NotchGeometry.screen(
+            width: 1920, top: 1080, safeAreaTop: 32,
+            auxiliaryLeftWidth: nil, auxiliaryRightWidth: nil
+        ))
     }
 
     func testПогрешностьВПолпиксаНеСтановитсяВырезом() {
-        XCTAssertEqual(
-            NotchGeometry.notchWidth(screenWidth: 1920,
-                                     auxiliaryLeftWidth: 960,
-                                     auxiliaryRightWidth: 959.5),
-            0,
+        XCTAssertNil(
+            NotchGeometry.screen(width: 1920, top: 1080, safeAreaTop: 24,
+                                 auxiliaryLeftWidth: 960, auxiliaryRightWidth: 959.5),
             "экран без чёлки не должен отрастить вырез в полпикселя"
         )
+    }
+
+    // MARK: - Вырезы бывают разные
+
+    func testРазмерыСчитаютсяИзЭкранаАНеИзКонстант() {
+        // 14″, 16″ и масштабированное разрешение «Больше места», где тот же
+        // вырез приходит другими числами. Ни одно из них мы не знаем заранее.
+        let cases: [(w: CGFloat, top: CGFloat, safeTop: CGFloat, aux: CGFloat, notch: CGFloat)] = [
+            (1512, 982, 32, 663.5, 185),     // 14″ по умолчанию
+            (1728, 1117, 38, 754, 220),      // 16″ по умолчанию
+            (1800, 1169, 38, 790, 220),      // 16″, «Больше места»
+            (1710, 1107, 29, 762.5, 185),    // 14″, «Больше места»
+        ]
+        for c in cases {
+            guard let s = screen(width: c.w, top: c.top, safeTop: c.safeTop, aux: c.aux) else {
+                return XCTFail("вырез \(c.notch) не распознан")
+            }
+            XCTAssertEqual(s.notchWidth, c.notch)
+            let f = NotchGeometry.frame(on: s, stage: .resting)
+            XCTAssertEqual(f.width, c.notch + 72 + 16)
+            XCTAssertEqual(f.height, c.safeTop, "плита ровно по высоте выреза")
+            XCTAssertEqual(f.earWidth, 36, "ухо не зависит от того, какой ноутбук")
+            XCTAssertEqual(f.originY + f.height, c.top, "и всегда стоит на кромке")
+        }
+    }
+
+    func testУзкийВырезНеПринимаетсяЗаЧёлку() {
+        // Ниже 120 pt вырезов не бывает; всё, что уже, — арифметика.
+        XCTAssertNil(screen(width: 1512, top: 982, safeTop: 32, aux: 706))
     }
 }
 

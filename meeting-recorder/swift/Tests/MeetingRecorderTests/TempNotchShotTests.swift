@@ -20,7 +20,10 @@ final class TempNotchShotTests: XCTestCase {
         let stage: NotchGeometry.Stage = composing ? .composing : .resting
 
         // 14″ MacBook Pro, half scale across so the plate is not lost on the strip.
-        let screen = NotchGeometry.Screen(width: 1512, top: 982, notchWidth: 185, notchHeight: 32)
+        let screen = try XCTUnwrap(NotchGeometry.screen(
+            width: 1512, top: 982, safeAreaTop: 32,
+            auxiliaryLeftWidth: 663.5, auxiliaryRightWidth: 663.5
+        ))
         let size = CGSize(width: 760, height: 220)
 
         let root = ZStack(alignment: .top) {

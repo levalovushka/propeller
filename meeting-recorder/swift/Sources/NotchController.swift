@@ -16,6 +16,16 @@ import PropellerPure
 /// Плита ловит мышь только своим правым ухом: всё остальное пропускает клик в
 /// меню-бар под собой, потому что перекрывать меню чужого приложения на время
 /// встречи мы права не имеем.
+///
+/// **Нет выреза — нет фичи, целиком.** Air M1, iMac, ноутбук с закрытой крышкой
+/// на внешнем мониторе — там не поднимается ни панель, ни монитор ⌃⌥N. Второе
+/// важнее первого: горячая клавиша, открывающая поле, которого не видно, — это
+/// клавиатура, проваливающаяся в никуда посреди встречи. Заметки в таком случае
+/// живут в колонке окна, где они есть всегда.
+///
+/// Вырез может появиться и исчезнуть посреди записи (крышку открыли, монитор
+/// отключили, разрешение переключили) — поэтому наблюдатель за экранами живёт
+/// всю запись, а не пока стоит панель.
 @MainActor
 final class NotchController {
     static let shared = NotchController()
@@ -26,6 +36,8 @@ final class NotchController {
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var screenObserver: NSObjectProtocol?
+    /// Плита уходит в вырез и только потом снимается — таск ждёт конца хода.
+    private var dismissTask: Task<Void, Never>?
 
     private var stage: NotchGeometry.Stage = .resting
 
@@ -38,18 +50,33 @@ final class NotchController {
 
     // MARK: - Жизнь панели
 
-    /// Запись пошла: плита вырастает, монитор клавиши встаёт.
+    /// Запись пошла: если на этой машине есть вырез — плита вырастает из него.
     func startRecording() {
-        stage = .resting
+        dismissTask?.cancel()
+        dismissTask = nil
+        observeScreens()
         show()
-        startMonitoring()
     }
 
-    /// Запись кончилась любым способом — плита уходит целиком.
+    /// Запись кончилась любым способом. Плита не исчезает, а уходит обратно в
+    /// вырез: появилась она оттуда же.
     func stopRecording() {
+        stopObservingScreens()
         stopMonitoring()
-        hide()
+        guard panel != nil else { return }
+        stage = .sealed
+        render()
+        dismissTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.dismissDelayMs))
+            guard !Task.isCancelled else { return }
+            self?.hide()
+        }
     }
+
+    /// Ход `NotchFace.leave` плюс запас: снять окно раньше — значит оборвать
+    /// уход на середине, позже — оставить на экране чёрный прямоугольник,
+    /// который уже ничего не показывает.
+    private static let dismissDelayMs = 620
 
     /// Пауза меняет только лопасть, но перерисовать плиту всё равно надо.
     func refresh() {
@@ -59,11 +86,12 @@ final class NotchController {
 
     private func show() {
         guard panel == nil, let screen = Self.notchScreen() else { return }
+        stage = .resting
 
         // Окно сразу максимального габарита и больше не двигается: всё движение
         // плиты — внутри SwiftUI (`NotchFace`). Анимировать `setFrame` мы уже
         // пробовали, и на сворачивании плита отлипала от кромки экрана.
-        let frame = Self.geometry(for: screen, stage: .composing)
+        let frame = Self.geometry(on: screen, stage: .composing)
         let panel = NotchPanel(
             contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -84,32 +112,62 @@ final class NotchController {
             .canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle,
         ]
 
-        let hosting = NSHostingView(rootView: face())
+        let hosting = NSHostingView(rootView: face(on: screen))
         panel.contentView = hosting
         self.hosting = hosting
         self.panel = panel
 
         panel.orderFrontRegardless()
-
-        // Экраны переставили, крышку закрыли, монитор отключили — геометрия
-        // выреза меняется под нами, и плита обязана переехать вместе с ней.
-        screenObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification,
-            object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.relayout() }
-        }
+        startMonitoring()
     }
 
     private func hide() {
-        if let screenObserver {
-            NotificationCenter.default.removeObserver(screenObserver)
-            self.screenObserver = nil
-        }
+        stopMonitoring()
+        panel?.resignKey()
         panel?.orderOut(nil)
         panel = nil
         hosting = nil
         stage = .resting
+    }
+
+    /// Экраны переставили, крышку открыли или закрыли, разрешение переключили —
+    /// вырез появляется, исчезает и меняет размер под нами, всё это посреди
+    /// записи. Одна точка, которая на это отвечает.
+    private func observeScreens() {
+        guard screenObserver == nil else { return }
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.screensChanged() }
+        }
+    }
+
+    private func stopObservingScreens() {
+        guard let screenObserver else { return }
+        NotificationCenter.default.removeObserver(screenObserver)
+        self.screenObserver = nil
+    }
+
+    private func screensChanged() {
+        guard state?.isRecording == true else { return }
+        guard let screen = Self.notchScreen() else {
+            // Крышку закрыли или встроенный экран ушёл: чёлки нет, а значит нет
+            // и фичи — вместе с горячей клавишей, которой больше некуда открыть
+            // поле. Уходим молча, запись при этом идёт.
+            hide()
+            return
+        }
+        guard let panel else {
+            // Крышку открыли посреди записи — вырез появился, плита вырастает
+            // из него так же, как вырастала бы на старте.
+            show()
+            return
+        }
+        // Тот же вырез другого размера (переключили разрешение) — окно
+        // переезжает без анимации: это движение железа, а не интерфейса.
+        panel.setFrame(Self.geometry(on: screen, stage: .composing), display: true)
+        render()
     }
 
     // MARK: - Заметка
@@ -171,50 +229,44 @@ final class NotchController {
 
     // MARK: - Геометрия и отрисовка
 
-    /// Экран с вырезом; без него — главный, там плита живёт пилюлей.
-    private static func notchScreen() -> NSScreen? {
-        NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main
+    /// Единственный экран, на котором эта фича может существовать: тот, у
+    /// которого физически есть вырез. Подставлять `NSScreen.main` нельзя —
+    /// именно так плита однажды и оказывалась плашкой на внешнем мониторе.
+    private static func notchScreen() -> NotchGeometry.Screen? {
+        for screen in NSScreen.screens {
+            if let model = NotchGeometry.screen(
+                width: screen.frame.width,
+                top: screen.frame.maxY,
+                safeAreaTop: screen.safeAreaInsets.top,
+                auxiliaryLeftWidth: screen.auxiliaryTopLeftArea?.width,
+                auxiliaryRightWidth: screen.auxiliaryTopRightArea?.width
+            ) {
+                return model
+            }
+        }
+        return nil
     }
 
-    private static func geometry(for screen: NSScreen, stage: NotchGeometry.Stage) -> NSRect {
-        let frame = NotchGeometry.frame(on: model(of: screen), stage: stage)
+    private static func geometry(on screen: NotchGeometry.Screen, stage: NotchGeometry.Stage) -> NSRect {
+        let frame = NotchGeometry.frame(on: screen, stage: stage)
         return NSRect(x: frame.originX, y: frame.originY,
                       width: frame.width, height: frame.height)
     }
 
-    private static func model(of screen: NSScreen) -> NotchGeometry.Screen {
-        let f = screen.frame
-        let notchWidth = NotchGeometry.notchWidth(
-            screenWidth: f.width,
-            auxiliaryLeftWidth: screen.auxiliaryTopLeftArea?.width ?? f.width / 2,
-            auxiliaryRightWidth: screen.auxiliaryTopRightArea?.width ?? f.width / 2
-        )
-        return NotchGeometry.Screen(
-            width: f.width,
-            top: f.maxY,
-            notchWidth: notchWidth,
-            notchHeight: screen.safeAreaInsets.top
-        )
-    }
-
-    /// Экраны переставили — окно переезжает целиком, без анимации: это не
-    /// движение интерфейса, а смена железа под ним.
-    private func relayout() {
-        guard let panel, let screen = Self.notchScreen() else { return }
-        panel.setFrame(Self.geometry(for: screen, stage: .composing), display: true)
-        render()
-    }
-
     private func render() {
-        hosting?.rootView = face()
+        guard let hosting else { return }
+        // Вырез мог исчезнуть между кадром и кадром — рисовать плиту не на чем.
+        guard let screen = Self.notchScreen() else {
+            hide()
+            return
+        }
+        hosting.rootView = face(on: screen)
     }
 
-    private func face() -> NotchFace {
-        let screen = Self.notchScreen()
+    private func face(on screen: NotchGeometry.Screen) -> NotchFace {
         let recorder = state?.recorder
         return NotchFace(
-            screen: screen.map { Self.model(of: $0) }
-                ?? NotchGeometry.Screen(width: 0, top: 0, notchWidth: 0, notchHeight: 0),
+            screen: screen,
             stage: stage,
             paused: state?.isRecordingPaused == true,
             level: { [weak recorder] in
