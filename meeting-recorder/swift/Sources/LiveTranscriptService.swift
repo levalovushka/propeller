@@ -30,6 +30,9 @@ final class LiveTranscriptService: ObservableObject {
 
     /// Сессии живут вне главного актора: кадры приходят с очереди записи.
     private let sessions = LiveSessionPair()
+    /// Кто из дорожек звучал громче, по окнам. Пишется с очереди записи,
+    /// читается с главного актора — отсюда замок.
+    private let loudness = LoudnessLog()
     /// Была ли системная дорожка у этого захвата. На микрофонном пути её нет,
     /// и вторую сессию открывать не за чем.
     private var hasSystemAudio = false
@@ -73,11 +76,14 @@ final class LiveTranscriptService: ObservableObject {
         transcript = LiveTranscript()
         recordingID = nil
         attributesSpeakers = false
+        // Счётчик кадров — часы записи: у следующей встречи они свои.
+        loudness.reset()
     }
 
     /// Кадры 16 кГц моно с очереди записи. Не `@MainActor`: звук не ходит через
     /// главный поток.
     nonisolated func ingest(mic: [Float], system: [Float]) {
+        loudness.note(mic: mic, system: system)
         sessions.feed(mic: mic, system: system)
     }
 
@@ -127,12 +133,70 @@ final class LiveTranscriptService: ObservableObject {
         case .ready:
             debugLog("[Live] сессия \(channel.rawValue) слушает")
         case .text(let text, let start, let end):
+            // Микрофонная сессия слышит владельца — и, если человек на колонках,
+            // дальнюю сторону тоже: 95.2 % её слов распознаётся из одного
+            // микрофона (`ECHO_AND_MIX_EXPERIMENTS.md` §1). Тогда её речь
+            // приезжает сюда под именем владельца. Сравнение громкостей на
+            // выровненных дорожках это отсекает; «не знаем» — оставляем.
+            if channel == .owner, loudness.ownerSpoke(from: start, to: end) == false {
+                debugLog("[Live] эхо на \(Int(start)) с — \(text.count) знаков не владельца, не показываю")
+                return
+            }
             transcript.absorb(channel: channel, start: start, end: end, text: text)
             // Длина, не текст: это лог, а встреча — не его дело.
             debugLog(
                 "[Live] \(channel.rawValue) +\(text.count) знаков на \(Int(start)) с, реплик \(transcript.turns.count)"
             )
         }
+    }
+}
+
+/// Громкость обеих дорожек по кадрам, за замком.
+///
+/// Часы здесь — сами кадры: 16 кГц, и счётчик прошедших кадров и есть секунды
+/// записи, то есть та же шкала, на которой движок отдаёт времена реплик. Пауза
+/// останавливает захват, значит останавливает и этот счётчик — ровно как таймер
+/// встречи.
+private final class LoudnessLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var dominance = StemDominance()
+    private var framesSeen = 0
+
+    private static let sampleRate = 16_000.0
+
+    func note(mic: [Float], system: [Float]) {
+        guard !mic.isEmpty else { return }
+        // Системной дорожки может не быть вовсе — тогда сравнивать не с чем и
+        // отбирать не у кого: пустой стем читается как тишина, микрофон
+        // выигрывает всегда, и правило молча ничего не делает.
+        let micLevel = Self.rms(mic)
+        let systemLevel = Self.rms(system)
+        lock.lock()
+        let start = Double(framesSeen) / Self.sampleRate
+        framesSeen += mic.count
+        let end = Double(framesSeen) / Self.sampleRate
+        dominance.note(from: start, to: end, mic: micLevel, system: systemLevel)
+        lock.unlock()
+    }
+
+    func ownerSpoke(from start: Double, to end: Double) -> Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        return dominance.ownerSpoke(from: start, to: end)
+    }
+
+    func reset() {
+        lock.lock()
+        dominance = StemDominance()
+        framesSeen = 0
+        lock.unlock()
+    }
+
+    private static func rms(_ samples: [Float]) -> Float {
+        guard !samples.isEmpty else { return 0 }
+        var sum: Float = 0
+        for s in samples { sum += s * s }
+        return (sum / Float(samples.count)).squareRoot()
     }
 }
 
