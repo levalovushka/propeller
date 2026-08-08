@@ -35,6 +35,7 @@ def corpus() -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--variant", default="current", help="current | имя файла в prompts/")
+    ap.add_argument("--out", default=None, help="каталог прогона (по умолчанию — имя версии)")
     ap.add_argument("--only", default=None, help="подстрока id встречи")
     ap.add_argument("--model", default=MODEL)
     ap.add_argument("--force", action="store_true", help="перегенерировать уже готовые")
@@ -46,7 +47,7 @@ def main() -> int:
         return 1
 
     system = p.system_prompt(args.variant)
-    out_dir = HERE / "out" / args.variant
+    out_dir = HERE / "out" / (args.out or args.variant)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     ids = [m for m in corpus() if not args.only or args.only in m]
