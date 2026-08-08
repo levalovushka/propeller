@@ -37,49 +37,31 @@ public struct SummaryActionBar: View {
         self.onRewrite = onRewrite
     }
 
+    /// Стекло, угол и тень — в `SummonedPlate`, общей с переключателем встреч:
+    /// это один предмет приложения в двух ролях, и выглядеть он обязан одинаково.
+    /// Здесь остаётся только ряд.
     public var body: some View {
-        HStack(spacing: Tokens.Pane.Bar.groupGap) {
-            kindMenu
-            divider
-            HStack(spacing: Tokens.Pane.Bar.itemGap) {
-                BarIcon(symbol: "bold", help: "Полужирный", isOn: selection.bold, action: onBold)
-                BarIcon(symbol: "italic", help: "Курсив", isOn: selection.italic, action: onItalic)
-            }
-            // Без модели этой группы просто нет: кнопка, которая не может
-            // сработать, — хуже отсутствующей.
-            if let onRewrite {
+        SummonedPlate(minHeight: Tokens.Pane.Bar.height) {
+            HStack(spacing: Tokens.Pane.Bar.groupGap) {
+                kindMenu
                 divider
                 HStack(spacing: Tokens.Pane.Bar.itemGap) {
-                    ForEach(SummaryRewrite.allCases, id: \.self) { rewrite in
-                        BarLabel(title: rewrite.title) { onRewrite(rewrite) }
+                    BarIcon(symbol: "bold", help: "Полужирный", isOn: selection.bold, action: onBold)
+                    BarIcon(symbol: "italic", help: "Курсив", isOn: selection.italic, action: onItalic)
+                }
+                // Без модели этой группы просто нет: кнопка, которая не может
+                // сработать, — хуже отсутствующей.
+                if let onRewrite {
+                    divider
+                    HStack(spacing: Tokens.Pane.Bar.itemGap) {
+                        ForEach(SummaryRewrite.allCases, id: \.self) { rewrite in
+                            BarLabel(title: rewrite.title) { onRewrite(rewrite) }
+                        }
                     }
                 }
             }
         }
-        .padding(Tokens.Pane.Bar.padding)
-        .frame(minHeight: Tokens.Pane.Bar.height)
-        .background { barGlass }
-        .clipShape(barShape)
-        .shadow(color: Tokens.Pane.Bar.shadow,
-                radius: Tokens.Pane.Bar.shadowRadius,
-                y: Tokens.Pane.Bar.shadowY)
         .fixedSize()
-    }
-
-    private var barShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: Tokens.Pane.Bar.radius, style: .continuous)
-    }
-
-    /// Same stack as the window: material + tint. Liquid glass on 26+, the
-    /// shared `GlassBackground` below that — a solid `#212121` plate over the
-    /// summary was a different material from everything else in the app.
-    @ViewBuilder
-    private var barGlass: some View {
-        if #available(macOS 26.0, *) {
-            LiquidGlassBackdrop(cornerRadius: Tokens.Pane.Bar.radius)
-        } else {
-            GlassBackground(material: .regularMaterial, tinted: true)
-        }
     }
 
     private var divider: some View {

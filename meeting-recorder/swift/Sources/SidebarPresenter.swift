@@ -144,6 +144,13 @@ enum SidebarPresenter {
         }
     }
 
+    /// The same rows as the rail, flat and in the rail's order — what the ⌥Tab
+    /// panel shows. One producer, so the panel cannot describe a meeting
+    /// differently from the list it is a view of.
+    static func switcherRows(state: AppState, store: RecordingStore) -> [SidebarMeetingRowModel] {
+        store.recordings.filter(\.hasSomethingToShow).map { row(for: $0, state: state) }
+    }
+
     private static func row(for entry: RecordingEntry, state: AppState) -> SidebarMeetingRowModel {
         let involvement = state.activity.involvement(with: entry.id)
         let rest = state.rest(of: entry)

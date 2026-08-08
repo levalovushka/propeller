@@ -760,14 +760,11 @@ public struct SidebarMeetingRow: View {
     }
 
     private var titleColor: Color {
-        // A deleted meeting reads like a working one — quiet. It is on its way
-        // out, and the loud thing in the row has to be «Вернуть».
-        (isWorking || isDeleted) ? Tokens.Sidebar.meetingPreview : Tokens.Sidebar.meetingTitle
+        SidebarMeetingParagraph.inks(for: row.state, isSelected: row.state.isSelected).title
     }
 
     private var previewColor: Color {
-        if isWorking { return Tokens.Sidebar.meetingPreview }
-        return row.state.isSelected ? Tokens.Sidebar.meetingTitle : Tokens.Sidebar.meetingPreview
+        SidebarMeetingParagraph.inks(for: row.state, isSelected: row.state.isSelected).preview
     }
 
     public var body: some View {
@@ -1000,14 +997,8 @@ public struct SidebarMeetingRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// One `Text`, two colours. Built as an `AttributedString` rather than two
-    /// views so the preview keeps flowing on the title's last line — the comps
-    /// wrap mid-sentence, and an `HStack` of two labels cannot do that.
     private var paragraph: some View {
-        Text(attributed)
-            .typoBlock(Tokens.Sidebar.Typo.meetingTitle)
-            .multilineTextAlignment(.leading)
-            .fixedSize(horizontal: false, vertical: true)
+        SidebarMeetingParagraph(row: row, isSelected: row.state.isSelected)
     }
 
     private var workingParagraph: some View {
@@ -1015,16 +1006,6 @@ public struct SidebarMeetingRow: View {
             .typoBlock(Tokens.Sidebar.Typo.meetingTitle)
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private var attributed: AttributedString {
-        var title = AttributedString(row.title)
-        title.foregroundColor = titleColor
-        guard !row.preview.isEmpty else { return title }
-        var preview = AttributedString((row.title.isEmpty ? "" : " ") + row.preview)
-        preview.foregroundColor = previewColor
-        title.append(preview)
-        return title
     }
 
     /// Title static; phase line soft-typewritten so a new status arrives.
@@ -1152,6 +1133,64 @@ public enum SidebarTrafficLightLayout {
         top: CGFloat = Tokens.Sidebar.trafficLightTop
     ) -> CGFloat {
         top + buttonHeight / 2
+    }
+}
+
+// MARK: - The meeting line
+
+/// One `Text`, two colours: the meeting's name, then what it is about (or what is
+/// being done to it). Built as an `AttributedString` rather than two views so the
+/// quiet half keeps flowing on the loud half's last line — the comps wrap
+/// mid-sentence, and an `HStack` of two labels cannot do that.
+///
+/// Its own view because the rail is not the only thing that draws it: the ⌥Tab
+/// switcher is another view of the same list, and a second copy of this rule is a
+/// second place for the two halves to drift apart.
+public struct SidebarMeetingParagraph: View {
+    private let row: SidebarMeetingRowModel
+    private let isSelected: Bool
+
+    /// `isSelected` is passed rather than read off `row.state`: in the rail it
+    /// means «панель показывает эту встречу», and in the switcher it means «сюда
+    /// попадёшь, если отпустить ⌥» — the same ink, two different questions.
+    public init(row: SidebarMeetingRowModel, isSelected: Bool) {
+        self.row = row
+        self.isSelected = isSelected
+    }
+
+    /// The rail's rule for the two inks. Static so the switcher's rows and the
+    /// rail's working row read it instead of restating it.
+    public static func inks(
+        for state: SidebarRowState,
+        isSelected: Bool
+    ) -> (title: Color, preview: Color) {
+        let working = state.activity.isInFlight
+        // A deleted meeting reads like a working one — quiet. It is on its way
+        // out, and the loud thing in the row has to be «Вернуть».
+        let deleted = state.activity == .deletedUndoable
+        let title = (working || deleted)
+            ? Tokens.Sidebar.meetingPreview
+            : Tokens.Sidebar.meetingTitle
+        if working { return (title, Tokens.Sidebar.meetingPreview) }
+        return (title, isSelected ? Tokens.Sidebar.meetingTitle : Tokens.Sidebar.meetingPreview)
+    }
+
+    public var body: some View {
+        Text(attributed)
+            .typoBlock(Tokens.Sidebar.Typo.meetingTitle)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var attributed: AttributedString {
+        let inks = Self.inks(for: row.state, isSelected: isSelected)
+        var title = AttributedString(row.title)
+        title.foregroundColor = inks.title
+        guard !row.preview.isEmpty else { return title }
+        var preview = AttributedString((row.title.isEmpty ? "" : " ") + row.preview)
+        preview.foregroundColor = inks.preview
+        title.append(preview)
+        return title
     }
 }
 

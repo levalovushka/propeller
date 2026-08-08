@@ -862,6 +862,27 @@ public enum Tokens {
             public static let fadeInDelay: Double = 0.06
         }
 
+        // MARK: Meeting switcher (⌥Tab)
+
+        /// The panel is the action bar's brother: same plate (`SummonedPlate`),
+        /// same corner, same drop, and the rows are the rail's own rows at the
+        /// rail's own width. So there are only three numbers here — the ones that
+        /// are about walking a list rather than about being a summoned tool.
+        public enum Switcher {
+            /// The list is *whole*, so it has to stop somewhere. Six or seven rows
+            /// at the rail's line height: enough that the walk has visible context
+            /// below it, short enough that the panel stays a HUD and not a second
+            /// window over the one you are reading.
+            public static let maxHeight: CGFloat = 320
+            /// The step: the pill stays where it is and the list slides under it.
+            /// Faster than the rail's own reflow (0.28) — that one answers a
+            /// meeting arriving, this one answers a key, and a key that repeats.
+            public static let step: Double = 0.18
+            /// Called by a key, gone when the key comes up. Same order of
+            /// magnitude as the action bar's fade, for the same reason.
+            public static let fade: Double = 0.12
+        }
+
         // MARK: The summary arriving
 
         /// Soft typewriter on the `NSTextView` — appear and dismiss.

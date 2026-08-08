@@ -56,6 +56,10 @@ struct MainView: View {
     /// это удаление необратимо, в отличие от всех остальных.
     @State private var discardConfirmation: RecordingEntry?
 
+    /// ⌥Tab между встречами. Живёт у окна, а не у рельса: жест работает и когда
+    /// рельс убран, и именно поэтому у него есть своя панель.
+    @StateObject private var switching = MeetingSwitchController()
+
     /// The summary being read and edited, and which meeting it belongs to.
     ///
     /// Held here rather than re-read from disk on every draw — which is what the
@@ -79,6 +83,11 @@ struct MainView: View {
             contentPane
         }
         .animation(.easeOut(duration: 0.18), value: sidebarVisible)
+        // Over both columns, because ⌥Tab is a window gesture and the panel is
+        // what the rail would have shown if it were up. Centred rather than
+        // docked: it is not part of either column, and with the rail away there
+        // is no column it could belong to.
+        .overlay { switcherPanel }
         // Both columns start at the top of the window, not under the titlebar.
         // This has to be here rather than on the pane alone: the traffic lights
         // are AppKit's and sit where we put them regardless, so a rail that
@@ -91,6 +100,16 @@ struct MainView: View {
             state.isWindowOpen = true
             NSApp.setActivationPolicy(.regular)
             selectNewestIfNothingChosen()
+            switching.start(
+                // The rail's own order: the same list, filtered the same way, so
+                // walking it with the key and reading it with the eye agree.
+                order: { recordingStore.recordings.filter(\.hasSomethingToShow).map(\.id) },
+                selectedID: { state.selectedRecordingID },
+                openMeeting: { id in
+                    guard let entry = recordingStore.recordings.first(where: { $0.id == id }) else { return }
+                    state.selectRecording(entry)
+                }
+            )
         }
         .onChange(of: recordingStore.recordings.count) { _, _ in
             // The first meeting to arrive in an empty archive opens itself; so
@@ -99,6 +118,7 @@ struct MainView: View {
         }
         .onDisappear {
             flushSummarySave()
+            switching.stop()
             state.isWindowOpen = false
             NSApp.setActivationPolicy(.accessory)
         }
@@ -269,6 +289,29 @@ struct MainView: View {
                 state.setOwnerNameFromRail(value)
             }
         )
+    }
+
+    // MARK: - ⌥Tab
+
+    /// Present exactly while ⌥ is held after the first Tab. Nothing under it is
+    /// clickable: the gesture that called it is the one that dismisses it, and a
+    /// panel you can click but not scroll would promise the wrong thing.
+    private var switcherPanel: some View {
+        ZStack {
+            if let walk = switching.walk {
+                MeetingSwitcherPanel(
+                    rows: SidebarPresenter.switcherRows(state: state, store: recordingStore),
+                    currentID: walk.currentID,
+                    anchorID: walk.anchorID
+                )
+                .allowsHitTesting(false)
+                .transition(.opacity)
+            }
+        }
+        // On the presence of the panel, not on the walk: a step inside it is
+        // animated by the panel, and animating both would run two clocks on one
+        // movement.
+        .animation(.easeOut(duration: Tokens.Pane.Switcher.fade), value: switching.walk != nil)
     }
 
     private func performNav(_ id: String) {
