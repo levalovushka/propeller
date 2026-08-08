@@ -158,13 +158,19 @@ public struct NotchFace: View {
 
     private func submit() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        draft = ""
         if text.isEmpty { onCancel() } else { onCommit(text) }
     }
 
-    /// Плита вырастает из выреза, а не появляется в готовом виде: запись
-    /// начинается тихо, и её знак не имеет права возникнуть щелчком.
-    @State private var grown = false
+    /// Стадия, по которой плита нарисована сейчас.
+    ///
+    /// Отдельная от входящей намеренно. Стадию меняет контроллер — снаружи
+    /// SwiftUI, заменой всего дерева, — и такое изменение анимируется через раз:
+    /// у отправки заметки рядом менялось состояние поля и вытягивало ход за
+    /// собой, а у отмены менять было нечего, и плита схлопывалась рывком.
+    /// Здесь любой приход стадии становится обычной транзакцией с явной
+    /// пружиной, поэтому Enter, ⏎, Esc, повторный ⌃⌥N и конец записи идут по
+    /// одной кривой.
+    @State private var shownStage: NotchGeometry.Stage = .sealed
 
     /// Раскрытие и сворачивание поля — пружина без перелёта: чёлка не пружинит,
     /// она раздаётся.
@@ -179,7 +185,7 @@ public struct NotchFace: View {
     /// нём стоит. Задержка меньше половины хода — иначе читается как рассинхрон.
     private static let glyphs = Animation.spring(response: 0.4, dampingFraction: 0.9).delay(0.1)
 
-    private var shown: NotchGeometry.Stage { grown ? stage : .sealed }
+    private var shown: NotchGeometry.Stage { shownStage }
     private var frame: NotchGeometry.Frame { NotchGeometry.frame(on: screen, stage: shown) }
     /// Габарит окна — всегда максимальный; плита живёт внутри него.
     private var bounds: NotchGeometry.Frame { NotchGeometry.frame(on: screen, stage: .composing) }
@@ -190,11 +196,12 @@ public struct NotchFace: View {
     private var composing: Bool { shown == .composing }
     private var revealed: Bool { shown != .sealed }
 
-    /// Насколько ход плиты сейчас плавен — по нему же идут значки и поле, чтобы
-    /// всё движение читалось одним жестом, а не тремя.
-    private var motion: Animation {
-        if !grown { return Self.arrive }
-        return stage == .sealed ? Self.leave : Self.move
+    /// Каким ходом плита идёт к стадии, в которую её позвали. По нему же идут
+    /// значки и поле, чтобы всё движение читалось одним жестом, а не тремя.
+    private func motion(from: NotchGeometry.Stage, to: NotchGeometry.Stage) -> Animation {
+        if from == .sealed { return Self.arrive }
+        if to == .sealed { return Self.leave }
+        return Self.move
     }
 
     public var body: some View {
@@ -252,14 +259,22 @@ public struct NotchFace: View {
         // внутри неё сам — курсор, выделение, контекстное меню поля, — должно
         // считать себя тёмным.
         .environment(\.colorScheme, .dark)
-        .animation(motion, value: stage)
-        .animation(motion, value: grown)
         .onAppear {
-            guard !grown else { return }
+            guard shownStage == .sealed, stage != .sealed else { return }
             // Следующим тактом, а не этим: рост, начатый в том же проходе, что
             // и первая укладка, случается мгновенно и без анимации.
-            DispatchQueue.main.async { grown = true }
+            DispatchQueue.main.async { go(to: stage) }
         }
+        .onChange(of: stage) { _, now in go(to: now) }
+    }
+
+    private func go(to next: NotchGeometry.Stage) {
+        guard next != shownStage else { return }
+        // Черновик не переживает закрытие чёлки ни одним из путей: заметка,
+        // всплывшая в поле через полчаса после того, как её бросили, — это уже
+        // не заметка, а чужая реплика из прошлой встречи.
+        if next != .composing { draft = "" }
+        withAnimation(motion(from: shownStage, to: next)) { shownStage = next }
     }
 }
 
