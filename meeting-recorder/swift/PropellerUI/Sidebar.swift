@@ -27,12 +27,22 @@ public struct SidebarNavItem: Identifiable, Equatable, Sendable {
     // (2026-08-07): settings are a state of the content pane, so every nav row
     // is now the same thing — a button that reports its id.
 
+    /// What the row's trailing slot says about the click. One tenant, two kinds:
+    /// a key that does the same thing, or the fact that the click leaves the app.
+    /// The second cannot be spelled as a shortcut string — there is no key for
+    /// «откроется браузер» — and a row that lands somewhere else has to say so
+    /// before it is pressed.
+    public enum Hint: Equatable, Sendable {
+        case shortcut(String)
+        case opensBrowser
+    }
+
     public let id: String
     /// SF Symbol name — or `SidebarNavItem.propellerMarkSymbol` for the brand glyph.
     public let symbol: String
     public let title: String
     /// Revealed on hover. The comps reserve the slot and paint it transparent.
-    public let shortcut: String?
+    public let hint: Hint?
     public let isSelected: Bool
     /// A *forced* hover pose, OR-ed with the live pointer. Only the state
     /// gallery sets it — a still frame has no pointer, and a second "looks
@@ -47,14 +57,14 @@ public struct SidebarNavItem: Identifiable, Equatable, Sendable {
         id: String,
         symbol: String,
         title: String,
-        shortcut: String? = nil,
+        hint: Hint? = nil,
         isSelected: Bool = false,
         isHovered: Bool = false
     ) {
         self.id = id
         self.symbol = symbol
         self.title = title
-        self.shortcut = shortcut
+        self.hint = hint
         self.isSelected = isSelected
         self.isHovered = isHovered
     }
@@ -150,6 +160,10 @@ public struct PropellerSidebar: View {
     /// The row's hover action, by meeting id. Absent means the rows show none.
     private let onDeleteMeeting: ((String) -> Void)?
     private let onToggle: (() -> Void)?
+    /// Search lives in the header rather than in the list: it is chrome, like the
+    /// toggle beside it, and a row that opens a palette was the one nav item that
+    /// did not lead anywhere in the rail. Absent means no button.
+    private let onSearch: (() -> Void)?
     /// Bring back a meeting whose deletion is still undoable. Absent means the
     /// rows don't offer it.
     private let onRestoreMeeting: ((String) -> Void)?
@@ -179,6 +193,7 @@ public struct PropellerSidebar: View {
         dissolvingMeetingID: String? = nil,
         onDissolveFinished: (() -> Void)? = nil,
         onToggle: (() -> Void)? = nil,
+        onSearch: (() -> Void)? = nil,
         onPromptAction: @escaping (String) -> Void = { _ in },
         onPromptSubmit: @escaping (String, String) -> Void = { _, _ in }
     ) {
@@ -194,6 +209,7 @@ public struct PropellerSidebar: View {
         self.dissolvingMeetingID = dissolvingMeetingID
         self.onDissolveFinished = onDissolveFinished
         self.onToggle = onToggle
+        self.onSearch = onSearch
         self.onPromptAction = onPromptAction
         self.onPromptSubmit = onPromptSubmit
     }
@@ -234,12 +250,20 @@ public struct PropellerSidebar: View {
 
     // MARK: Header (Frame 104) — h 48, p 12
 
+    /// The toggle sits beside the traffic lights and stays there whether the rail
+    /// is up or away — a control that moves when you use it makes you look for it
+    /// the second time. What changes with the rail is the *other* end of the row:
+    /// with the rail up it holds search, and with the rail away there is no row to
+    /// hold anything, which is the whole point of collapsing it.
     private var header: some View {
         HStack(spacing: 0) {
             trafficLightSlot
-            Spacer(minLength: Tokens.Space.s8)
             if let onToggle {
                 SidebarChromeButton(symbol: "sidebar.left", help: "Скрыть список", action: onToggle)
+            }
+            Spacer(minLength: Tokens.Space.s8)
+            if let onSearch {
+                SidebarChromeButton(symbol: "magnifyingglass", help: "Поиск (⌘K)", action: onSearch)
             }
         }
         .padding(Tokens.Space.s12)
@@ -597,12 +621,11 @@ public struct SidebarNavRow: View {
                 .padding(.horizontal, Tokens.Sidebar.navLabelInset)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if let shortcut = item.shortcut {
+            if let hint = item.hint {
                 // The comps reserve this slot and paint it transparent, so
                 // the row's width never moves; showing it under the pointer
                 // is the only way the reservation earns its keep.
-                Text(shortcut)
-                    .typo(Tokens.Sidebar.Typo.meta)
+                hintView(hint)
                     .foregroundStyle(Tokens.Sidebar.navShortcut)
                     .opacity(isHovered ? 1 : 0)
                     .frame(height: Tokens.Sidebar.navIconSide)
@@ -620,6 +643,20 @@ public struct SidebarNavRow: View {
             in: RoundedRectangle(cornerRadius: Tokens.Sidebar.rowRadius, style: .continuous)
         )
         .contentShape(RoundedRectangle(cornerRadius: Tokens.Sidebar.rowRadius, style: .continuous))
+    }
+
+    /// Both tenants of the slot draw at the meta size, so the arrow sits on the
+    /// same optical line as a «⌘R» and the slot never changes width between rows.
+    @ViewBuilder
+    private func hintView(_ hint: SidebarNavItem.Hint) -> some View {
+        switch hint {
+        case .shortcut(let keys):
+            Text(keys)
+                .typo(Tokens.Sidebar.Typo.meta)
+        case .opensBrowser:
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: Tokens.Sidebar.Typo.meta.size, weight: .regular))
+        }
     }
 
     @ViewBuilder

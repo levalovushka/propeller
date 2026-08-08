@@ -28,9 +28,8 @@ final class TempRailShotTests: XCTestCase {
         let model = SidebarModel(
             nav: [
                 SidebarNavItem(id: "new", symbol: SidebarNavItem.propellerMarkSymbol, title: "Новая запись"),
-                SidebarNavItem(id: "search", symbol: "magnifyingglass", title: "Поиск", shortcut: "⌘K"),
                 SidebarNavItem(id: "settings", symbol: "gearshape.fill", title: "Настройки", isHovered: true),
-                SidebarNavItem(id: "bug", symbol: "ladybug.fill", title: "Сообщить о проблеме"),
+                SidebarNavItem(id: "bug", symbol: "ladybug.fill", title: "Сообщить о проблеме", hint: .opensBrowser),
             ],
             groups: [
                 SidebarMeetingGroup(id: "g0", header: "Вчера, 3 августа", rows: [
@@ -61,7 +60,7 @@ final class TempRailShotTests: XCTestCase {
         let size = CGSize(width: Tokens.Sidebar.width, height: 560)
         let root = ZStack {
             Color(red: 0.07, green: 0.07, blue: 0.08)
-            PropellerSidebar(model: model, trafficLights: .drawn, onToggle: {})
+            PropellerSidebar(model: model, trafficLights: .drawn, onToggle: {}, onSearch: {})
         }
         .environment(\.colorScheme, .dark)
         .frame(width: size.width, height: size.height)

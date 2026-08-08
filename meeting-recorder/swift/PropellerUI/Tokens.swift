@@ -427,7 +427,7 @@ public enum Tokens {
         /// Soft alpha fade at the foot of the meeting list — always on. When a
         /// docked prompt is present the clear zone under this fade grows to the
         /// prompt's measured height; the fade itself stays this tall.
-        public static let listBottomFade: CGFloat = 44
+        public static let listBottomFade: CGFloat = 36
 
         /// Nav rows — `list-item`, h-32 rounded-8.
         public static let navRowHeight = Space.s32

@@ -333,7 +333,7 @@ final class SidebarTests: XCTestCase {
     func testANavRowIsThirtyTwoPoints() {
         let height = measure(
             SidebarNavRow(
-                item: SidebarNavItem(id: "x", symbol: "magnifyingglass", title: "Поиск", shortcut: "⌘K"),
+                item: SidebarNavItem(id: "x", symbol: "magnifyingglass", title: "Поиск", hint: .shortcut("⌘K")),
                 action: {}
             ),
             width: Tokens.Sidebar.width - Tokens.Sidebar.bodyHPadding * 2
@@ -425,7 +425,7 @@ final class SidebarTests: XCTestCase {
     }
 
     private static let railModel = SidebarModel(
-        nav: [.init(id: "record", symbol: SidebarNavItem.propellerMarkSymbol, title: "Новая запись", shortcut: "⌘R")],
+        nav: [.init(id: "record", symbol: SidebarNavItem.propellerMarkSymbol, title: "Новая запись", hint: .shortcut("⌘R"))],
         groups: [.init(id: "today", header: nil, rows: [
             SidebarMeetingRowModel(
                 id: "1", meta: "17:30 · 45 мин", title: "Тактика.", preview: "", state: .rest

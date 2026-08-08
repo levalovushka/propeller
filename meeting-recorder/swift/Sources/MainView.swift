@@ -254,6 +254,10 @@ struct MainView: View {
             dissolvingMeetingID: state.dissolvingMeetingID,
             onDissolveFinished: { state.finishDissolvingDeletion() },
             onToggle: { sidebarVisible = false },
+            onSearch: {
+                showSearchPalette = true
+                Analytics.signal("Search.opened")
+            },
             onPromptAction: { id in
                 // Only the calendar step has a button; the id comes back so the
                 // window is not guessing which question it just answered.
@@ -273,9 +277,6 @@ struct MainView: View {
             // Stop lives in the recording pane (and ⌘.). This row only starts.
             guard !state.isRecording else { return }
             state.startRecording()
-        case .search:
-            showSearchPalette = true
-            Analytics.signal("Search.opened")
         case .settings:
             state.openSettings()
         case .feedback:

@@ -16,7 +16,7 @@ enum SidebarPresenter {
     /// Where the fixed rows go. Ids rather than closures so the view stays
     /// value-typed and the window keeps the actions.
     enum NavAction: String {
-        case record, search, settings, feedback
+        case record, settings, feedback
         /// The record row when the microphone is not ours: same slot, different
         /// job — it goes to the permission instead of starting a recording.
         case micAccess
@@ -64,12 +64,9 @@ enum SidebarPresenter {
     private static func nav(state: AppState) -> [SidebarNavItem] {
         [
             recordRow(state: state),
-            SidebarNavItem(
-                id: NavAction.search.rawValue,
-                symbol: "magnifyingglass",
-                title: "Поиск",
-                shortcut: "⌘K"
-            ),
+            // Поиска здесь нет: он стал кнопкой в шапке рельса, рядом с
+            // тумблером. Строка списка обещает место, куда ведёт, а палитра —
+            // не место.
             SidebarNavItem(
                 id: NavAction.settings.rawValue,
                 symbol: "gearshape.fill",
@@ -83,7 +80,11 @@ enum SidebarPresenter {
             SidebarNavItem(
                 id: NavAction.feedback.rawValue,
                 symbol: "ladybug.fill",
-                title: "Сообщить о проблеме"
+                title: "Сообщить о проблеме",
+                // Единственная строка, которая уводит из приложения. Стрелка в
+                // слоте шортката говорит это до клика — там, где у остальных
+                // написано, какой клавишей то же самое.
+                hint: .opensBrowser
             ),
         ]
     }
@@ -110,7 +111,7 @@ enum SidebarPresenter {
             id: NavAction.record.rawValue,
             symbol: SidebarNavItem.propellerMarkSymbol,
             title: "Новая запись",
-            shortcut: "⌘R"
+            hint: .shortcut("⌘R")
         )
     }
 

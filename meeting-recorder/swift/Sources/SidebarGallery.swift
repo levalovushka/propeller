@@ -154,7 +154,7 @@ enum SidebarGallery {
                         SidebarNavRow(
                             item: SidebarNavItem(
                                 id: "sample", symbol: SidebarNavItem.propellerMarkSymbol,
-                                title: "Новая запись", shortcut: "⌘R",
+                                title: "Новая запись", hint: .shortcut("⌘R"),
                                 isSelected: item.state.isSelected,
                                 isHovered: item.state.isHovered
                             ),
@@ -206,10 +206,9 @@ enum SidebarGallery {
 
         static let model = SidebarModel(
             nav: [
-                .init(id: "record", symbol: SidebarNavItem.propellerMarkSymbol, title: "Новая запись", shortcut: "⌘R"),
-                .init(id: "search", symbol: "magnifyingglass", title: "Поиск", shortcut: "⌘K"),
-                .init(id: "settings", symbol: "gearshape.fill", title: "Настройки", shortcut: "⌘,"),
-                .init(id: "feedback", symbol: "ladybug.fill", title: "Сообщить о проблеме"),
+                .init(id: "record", symbol: SidebarNavItem.propellerMarkSymbol, title: "Новая запись", hint: .shortcut("⌘R")),
+                .init(id: "settings", symbol: "gearshape.fill", title: "Настройки"),
+                .init(id: "feedback", symbol: "ladybug.fill", title: "Сообщить о проблеме", hint: .opensBrowser),
             ],
             groups: [
                 .init(id: "today", header: nil, rows: [
