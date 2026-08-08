@@ -25,6 +25,31 @@ public enum WindowReveal {
         }
     }
 
+    /// A window on its way somewhere, and everything the pane has to hold still
+    /// until it gets there.
+    ///
+    /// Two facts that are only true together, so they are one value: which
+    /// summary width is being kept, and how wide the column is for the whole
+    /// trip. Kept as two separate flags they went out of step — a width that
+    /// outlives the hold is a column that reflows once, at the end, which is
+    /// exactly the twitch the whole arrangement exists to avoid.
+    public struct NotesTravel: Equatable, Sendable {
+        /// The left column stays this wide while the window moves. Without it
+        /// every intermediate width re-decides the split and the summary
+        /// stretches, then snaps.
+        public var left: CGFloat
+        /// The column is laid out this wide for the entire journey — the width
+        /// it will have when the window arrives, not the width of the gap it
+        /// currently sits in. Laying it out in the gap re-breaks its lines on
+        /// every frame: the text boils instead of the column arriving.
+        public var notes: CGFloat
+
+        public init(left: CGFloat, notes: CGFloat) {
+            self.left = left
+            self.notes = notes
+        }
+    }
+
     /// The frame that leaves at least `contentWidth` points of content.
     ///
     /// Grows to the right while the screen allows and pulls the left edge back
@@ -110,12 +135,12 @@ public enum WindowReveal {
 
     /// Left / notes widths for a pane of `width`.
     ///
-    /// `pinnedLeft` is set for the duration of a reveal: the left column stays
-    /// put while the window grows and the notes take whatever appears on the
-    /// right. Without it, every intermediate width below `openAt` still looks
-    /// collapsed, so the summary widens and then snaps in. It holds the same
-    /// column still through a hide, where the window is travelling the other
-    /// way and the summary would otherwise narrow by 52 pt on the way down.
+    /// `travel` is set for as long as the window is moving, in either
+    /// direction: the left column stays where `travel.left` puts it and the
+    /// notes take whatever lies to the right of it. Without it, every
+    /// intermediate width below `openAt` still looks collapsed, so the summary
+    /// widens and then snaps in on the way out, and narrows by 52 pt and comes
+    /// back on the way home.
     ///
     /// `hidden` is the one thing width cannot say: the notes were *put away*.
     /// Room is not the question there — a 1200 pt pane has plenty and the
@@ -123,7 +148,7 @@ public enum WindowReveal {
     /// arithmetic.
     public static func paneSplit(
         width pane: CGFloat,
-        pinnedLeft: CGFloat?,
+        travel: NotesTravel?,
         hidden: Bool = false,
         summaryMin: CGFloat,
         notesMin: CGFloat,
@@ -131,13 +156,11 @@ public enum WindowReveal {
         collapsedSlot: CGFloat,
         openAt: CGFloat
     ) -> PaneSplit {
-        // The pin is on while the window is travelling — in *either* direction.
-        // The column is on screen for the whole trip, taking whatever lies to
-        // the right of the held column, so a hide is a departure rather than a
-        // disappearance: the button cannot arrive before the window has
-        // finished moving, because until then there is still a column there.
-        if let pinned = pinnedLeft {
-            return PaneSplit(left: pinned, notes: max(0, pane - pinned), open: true)
+        // Mid-travel the column is on screen the whole way — a hide is a
+        // departure rather than a disappearance, so the button that replaces it
+        // cannot arrive before the window has finished moving.
+        if let travel {
+            return PaneSplit(left: travel.left, notes: max(0, pane - travel.left), open: true)
         }
         if hidden {
             return PaneSplit(left: max(0, pane - collapsedSlot), notes: collapsedSlot, open: false)
@@ -151,25 +174,5 @@ public enum WindowReveal {
         }
         let notes = min(notesMax, max(notesMin, pane - summaryMin))
         return PaneSplit(left: pane - notes, notes: notes, open: true)
-    }
-
-    /// How far along the column is between «сложена в кнопку» and «стоит целиком».
-    ///
-    /// The window's travel is the clock: a column 52 pt wide has just left the
-    /// button and a column at its floor width is fully here. Anything that
-    /// should not simply be wiped into view by the moving window edge — the
-    /// ink, the last few points of travel — hangs off this.
-    ///
-    /// It is symmetric on purpose. Hide and reveal are the same journey in
-    /// opposite directions, and a departure that faded differently from an
-    /// arrival would read as two unrelated animations on one control.
-    public static func notesArrival(
-        notes: CGFloat,
-        collapsedSlot: CGFloat,
-        notesMin: CGFloat
-    ) -> CGFloat {
-        let span = notesMin - collapsedSlot
-        guard span > 0 else { return notes > collapsedSlot ? 1 : 0 }
-        return min(1, max(0, (notes - collapsedSlot) / span))
     }
 }

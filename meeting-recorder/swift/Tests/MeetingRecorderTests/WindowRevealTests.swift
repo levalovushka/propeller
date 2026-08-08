@@ -69,15 +69,7 @@ final class WindowRevealTests: XCTestCase {
             minimumPane: Tokens.Pane.notesCollapseBelow
         )
         let targetPane = target - sidebar
-        let settled = WindowReveal.paneSplit(
-            width: targetPane,
-            pinnedLeft: nil,
-            summaryMin: Tokens.Pane.summaryMinWidth,
-            notesMin: Tokens.Pane.notesMinWidth,
-            notesMax: Tokens.Pane.notesMaxWidth,
-            collapsedSlot: Tokens.Pane.notesCollapsedSide,
-            openAt: Tokens.Pane.notesCollapseBelow
-        )
+        let settled = split(width: targetPane)
         XCTAssertTrue(settled.open)
         XCTAssertEqual(settled.left, leftBefore, accuracy: 0.5)
         XCTAssertEqual(settled.notes, Tokens.Pane.notesMaxWidth, accuracy: 0.5)
@@ -87,29 +79,14 @@ final class WindowRevealTests: XCTestCase {
     /// window is still below the ordinary open threshold.
     func testPinnedSplitHoldsTheLeftColumnWhileTheWindowGrows() {
         let leftBefore: CGFloat = 568
-        let mid = WindowReveal.paneSplit(
-            width: 700,
-            pinnedLeft: leftBefore,
-            summaryMin: Tokens.Pane.summaryMinWidth,
-            notesMin: Tokens.Pane.notesMinWidth,
-            notesMax: Tokens.Pane.notesMaxWidth,
-            collapsedSlot: Tokens.Pane.notesCollapsedSide,
-            openAt: Tokens.Pane.notesCollapseBelow
-        )
+        let trip = WindowReveal.NotesTravel(left: leftBefore, notes: 280)
+        let mid = split(width: 700, travel: trip)
         XCTAssertTrue(mid.open)
         XCTAssertEqual(mid.left, leftBefore)
         XCTAssertEqual(mid.notes, 700 - leftBefore, accuracy: 0.5)
 
-        let unpinned = WindowReveal.paneSplit(
-            width: 700,
-            pinnedLeft: nil,
-            summaryMin: Tokens.Pane.summaryMinWidth,
-            notesMin: Tokens.Pane.notesMinWidth,
-            notesMax: Tokens.Pane.notesMaxWidth,
-            collapsedSlot: Tokens.Pane.notesCollapsedSide,
-            openAt: Tokens.Pane.notesCollapseBelow
-        )
-        XCTAssertFalse(unpinned.open, "Without the pin, 700 is still a button.")
+        let unpinned = split(width: 700)
+        XCTAssertFalse(unpinned.open, "Without the travel, 700 is still a button.")
     }
 
     func testTheDefaultPaneKeepsNotesCollapsed() {
@@ -187,7 +164,8 @@ final class WindowRevealTests: XCTestCase {
     /// that replaces it can arrive after the movement instead of before.
     func testTheColumnIsStillOnScreenWhileTheWindowNarrows() {
         let left: CGFloat = 920
-        let mid = split(width: 1100, pinned: left, hidden: true)
+        let trip = WindowReveal.NotesTravel(left: left, notes: 280)
+        let mid = split(width: 1100, travel: trip, hidden: true)
         XCTAssertTrue(mid.open, "Уходит, а не исчезает.")
         XCTAssertEqual(mid.left, left)
         XCTAssertEqual(mid.notes, 180, accuracy: 0.5)
@@ -196,49 +174,6 @@ final class WindowRevealTests: XCTestCase {
         let settled = split(width: left + Tokens.Pane.notesCollapsedSide, hidden: true)
         XCTAssertFalse(settled.open)
         XCTAssertEqual(settled.left, left, accuracy: 0.5)
-    }
-
-    /// Both journeys are read off the column's own width, so a departure fades
-    /// exactly like an arrival played backwards.
-    func testArrivalIsReadOffTheColumnsWidth() {
-        let arrival = { (notes: CGFloat) in
-            WindowReveal.notesArrival(
-                notes: notes,
-                collapsedSlot: Tokens.Pane.notesCollapsedSide,
-                notesMin: Tokens.Pane.notesMinWidth
-            )
-        }
-        XCTAssertEqual(arrival(Tokens.Pane.notesCollapsedSide), 0, "Ещё кнопка.")
-        XCTAssertEqual(arrival(Tokens.Pane.notesMinWidth), 1, "Уже колонка.")
-        XCTAssertEqual(arrival(Tokens.Pane.notesMaxWidth), 1, "И шире — тоже колонка.")
-        XCTAssertEqual(arrival(0), 0, "Ниже кнопки не бывает.")
-        let half = (Tokens.Pane.notesCollapsedSide + Tokens.Pane.notesMinWidth) / 2
-        XCTAssertEqual(arrival(half), 0.5, accuracy: 0.001)
-    }
-
-    func testAWindowGivesBackOnlyTheRoomTheNotesTook() {
-        let window = CGRect(x: 100, y: 100, width: 1240, height: 640)
-        let narrowed = WindowReveal.frame(hiding: 1012, window: window, visible: screen)
-        XCTAssertEqual(narrowed.width, 1012)
-        XCTAssertEqual(narrowed.minX, 100, "Room came off the right edge; it goes back there.")
-        XCTAssertEqual(narrowed.height, 640)
-    }
-
-    func testHidingNeverWidensAWindow() {
-        let window = CGRect(x: 100, y: 100, width: 900, height: 640)
-        XCTAssertEqual(
-            WindowReveal.frame(hiding: 1060, window: window, visible: screen),
-            window,
-            "«Скрыть» не может сделать окно шире."
-        )
-    }
-
-    func testTitlebarChromeIsCountedInWhenNarrowing() {
-        let window = CGRect(x: 100, y: 100, width: 1240, height: 640)
-        let narrowed = WindowReveal.frame(
-            hiding: 1012, window: window, chromeWidth: 16, visible: screen
-        )
-        XCTAssertEqual(narrowed.width, 1028, "1012 pt of content is still 1012 pt of content.")
     }
 
     // MARK: - Ordinary adaptivity (pin is nil — every path but the button click)
@@ -287,11 +222,11 @@ final class WindowRevealTests: XCTestCase {
     }
 
     private func split(
-        width: CGFloat, pinned: CGFloat? = nil, hidden: Bool = false
+        width: CGFloat, travel: WindowReveal.NotesTravel? = nil, hidden: Bool = false
     ) -> WindowReveal.PaneSplit {
         WindowReveal.paneSplit(
             width: width,
-            pinnedLeft: pinned,
+            travel: travel,
             hidden: hidden,
             summaryMin: Tokens.Pane.summaryMinWidth,
             notesMin: Tokens.Pane.notesMinWidth,

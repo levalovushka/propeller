@@ -19,8 +19,9 @@ struct RecordingPaneView: View {
     let onRevealNotes: () -> Void
     let onHideNotes: () -> Void
     let notesHidden: Bool
+    let notesInk: Double
     @Binding var notesFocusRequest: Bool
-    @Binding var pinnedLeftWidth: CGFloat?
+    @Binding var travel: WindowReveal.NotesTravel?
 
     var body: some View {
         RecordingPaneBody(
@@ -37,8 +38,9 @@ struct RecordingPaneView: View {
             onRevealNotes: onRevealNotes,
             onHideNotes: onHideNotes,
             notesHidden: notesHidden,
+            notesInk: notesInk,
             notesFocusRequest: $notesFocusRequest,
-            pinnedLeftWidth: $pinnedLeftWidth
+            travel: $travel
         )
     }
 

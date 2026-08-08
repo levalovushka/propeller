@@ -300,8 +300,9 @@ public struct RecordingPaneBody: View {
     private let onRevealNotes: (() -> Void)?
     private let onHideNotes: (() -> Void)?
     private let notesHidden: Bool
+    private let notesInk: Double
     private let notesFocusRequest: Binding<Bool>?
-    private let pinnedLeftWidth: Binding<CGFloat?>?
+    private let travel: Binding<WindowReveal.NotesTravel?>?
 
     public init(
         turns: [LiveTranscript.Turn],
@@ -314,8 +315,9 @@ public struct RecordingPaneBody: View {
         onRevealNotes: (() -> Void)? = nil,
         onHideNotes: (() -> Void)? = nil,
         notesHidden: Bool = false,
+        notesInk: Double = 1,
         notesFocusRequest: Binding<Bool>? = nil,
-        pinnedLeftWidth: Binding<CGFloat?>? = nil
+        travel: Binding<WindowReveal.NotesTravel?>? = nil
     ) {
         self.turns = turns
         self.ownerName = ownerName
@@ -327,8 +329,9 @@ public struct RecordingPaneBody: View {
         self.onRevealNotes = onRevealNotes
         self.onHideNotes = onHideNotes
         self.notesHidden = notesHidden
+        self.notesInk = notesInk
         self.notesFocusRequest = notesFocusRequest
-        self.pinnedLeftWidth = pinnedLeftWidth
+        self.travel = travel
     }
 
     public var body: some View {
@@ -338,8 +341,9 @@ public struct RecordingPaneBody: View {
             onRevealNotes: onRevealNotes,
             onHideNotes: onHideNotes,
             notesHidden: notesHidden,
+            notesInk: notesInk,
             notesFocusRequest: notesFocusRequest,
-            pinnedLeftWidth: pinnedLeftWidth,
+            travel: travel,
             // Дописали реплику или начали новую — колонка доезжает до низа.
             // Отпечаток по последней реплике, а не по всему тексту: перебирать
             // всю встречу на каждый партиал незачем.

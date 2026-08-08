@@ -833,12 +833,14 @@ public struct MeetingPaneBody: View {
     private let onHideNotes: (() -> Void)?
     /// Их убрали руками, а не по нехватке места.
     private let notesHidden: Bool
+    /// Насколько заметки сейчас видны. Ведёт их тот же, кто двинул окно.
+    private let notesInk: Double
     /// Set by whoever answers that request, cleared by the composer once it has
     /// the caret. See `MeetingNotesColumn.focusRequest`.
     private let notesFocusRequest: Binding<Bool>?
     /// Left column width held while the window grows for the notes. See
-    /// `PaneColumns.pinnedLeftWidth`.
-    private let pinnedLeftWidth: Binding<CGFloat?>?
+    /// `PaneColumns.travel`.
+    private let travel: Binding<WindowReveal.NotesTravel?>?
     /// The summary's caret and what the action bar does to it. Owned above the
     /// pane, because the pane is rebuilt on every keystroke in the notes.
     private let summaryController: SummaryEditorController
@@ -882,8 +884,9 @@ public struct MeetingPaneBody: View {
         onRevealNotes: (() -> Void)? = nil,
         onHideNotes: (() -> Void)? = nil,
         notesHidden: Bool = false,
+        notesInk: Double = 1,
         notesFocusRequest: Binding<Bool>? = nil,
-        pinnedLeftWidth: Binding<CGFloat?>? = nil,
+        travel: Binding<WindowReveal.NotesTravel?>? = nil,
         summaryController: SummaryEditorController = SummaryEditorController(),
         onSummaryChange: ((MeetingSummary) -> Void)? = nil,
         onSummaryRewrite: ((SummaryRewrite, String) -> Void)? = nil
@@ -899,8 +902,9 @@ public struct MeetingPaneBody: View {
         self.onRevealNotes = onRevealNotes
         self.onHideNotes = onHideNotes
         self.notesHidden = notesHidden
+        self.notesInk = notesInk
         self.notesFocusRequest = notesFocusRequest
-        self.pinnedLeftWidth = pinnedLeftWidth
+        self.travel = travel
         self.summaryController = summaryController
         self.onSummaryChange = onSummaryChange
         self.onSummaryRewrite = onSummaryRewrite
@@ -913,8 +917,9 @@ public struct MeetingPaneBody: View {
             onRevealNotes: onRevealNotes,
             onHideNotes: onHideNotes,
             notesHidden: notesHidden,
+            notesInk: notesInk,
             notesFocusRequest: notesFocusRequest,
-            pinnedLeftWidth: pinnedLeftWidth
+            travel: travel
         ) {
             // Смена того, что стоит в колонке, — не перерисовка, а смена
             // содержания: старое уходит, новое приходит на его место. Ключ
@@ -1004,10 +1009,13 @@ struct PaneColumns<Left: View>: View {
     /// Их убрали руками. Ширина этого сказать не может: на панели в 1200 pt
     /// места вдоволь, а колонка всё равно должна уйти.
     var notesHidden: Bool = false
+    /// Сколько чернил колонки на экране. Ведётся не отсюда: приезд заметок —
+    /// отдельное от окна событие, и заводит его тот же, кто двинул окно.
+    var notesInk: Double = 1
     let notesFocusRequest: Binding<Bool>?
-    /// Left width held while the window grows for a notes reveal. Nil outside
-    /// that animation — ordinary split rules apply.
-    var pinnedLeftWidth: Binding<CGFloat?>? = nil
+    /// Окно едет за заметками или от них. Nil вне этой поездки — тогда работают
+    /// обычные правила деления.
+    var travel: Binding<WindowReveal.NotesTravel?>? = nil
     /// Отпечаток растущего содержимого левой колонки. Меняется — колонка
     /// доезжает до низа. Нужен живому транскрипту: строка, которая появляется
     /// ниже края окна, не показана. Nil у всего остального: саммари и готовый
@@ -1026,7 +1034,7 @@ struct PaneColumns<Left: View>: View {
         GeometryReader { geo in
             let split = WindowReveal.paneSplit(
                 width: geo.size.width,
-                pinnedLeft: pinnedLeftWidth?.wrappedValue,
+                travel: travel?.wrappedValue,
                 hidden: notesHidden,
                 summaryMin: Tokens.Pane.summaryMinWidth,
                 notesMin: Tokens.Pane.notesMinWidth,
@@ -1071,19 +1079,16 @@ struct PaneColumns<Left: View>: View {
 
     /// Заметки, пока окно ещё едет и когда уже приехало.
     ///
-    /// Колонка всё это время свёрстана по своей настоящей ширине и подрезана
-    /// слотом — не сжата в него. Сжатая колонка перебирала бы переносы на каждом
-    /// кадре анимации окна, и вместо приезда колонки был бы кипящий текст.
-    /// Приезжает она справа и проявляется: край окна тогда не «вскрывает» её, а
-    /// приводит с собой.
+    /// Колонка всю поездку свёрстана по одной ширине — той, что будет в конце, —
+    /// и подрезана слотом, а не сжата в него. Сжатая перебирала бы переносы на
+    /// каждом кадре: вместо приезда колонки получался кипящий текст.
+    ///
+    /// Сколько её видно — не её дело: `ink` приходит сверху, оттуда же, откуда
+    /// поехало окно, потому что приезд колонки и приезд окна — два события, а
+    /// не одно (`Tokens.Motion.notesInkDelay` / `notesInkLead`).
     @ViewBuilder
     private func notesColumn(in split: WindowReveal.PaneSplit) -> some View {
-        let arrival = WindowReveal.notesArrival(
-            notes: split.notes,
-            collapsedSlot: Tokens.Pane.notesCollapsedSide,
-            notesMin: Tokens.Pane.notesMinWidth
-        )
-        let layout = max(split.notes, Tokens.Pane.notesMinWidth)
+        let layout = travel?.wrappedValue?.notes ?? split.notes
         ScrollView(.vertical) {
             MeetingNotesColumn(
                 notes: notes,
@@ -1094,20 +1099,20 @@ struct PaneColumns<Left: View>: View {
             .frame(width: layout)
         }
         .frame(width: layout)
-        .opacity(arrival)
-        .offset(x: (1 - arrival) * Tokens.Pane.notesArrivalShift)
+        .opacity(notesInk)
+        .offset(x: (1 - notesInk) * Tokens.Pane.notesArrivalShift)
         .frame(width: split.notes, alignment: .leading)
         .clipped()
     }
 
-    /// Drop the pin once the ordinary split would keep the same left width —
-    /// the animation has arrived, and pinning further would freeze the summary
-    /// against later resizes.
+    /// End the travel once the ordinary split would keep the same left width —
+    /// the window has arrived, and holding it any longer would freeze the
+    /// summary against later resizes.
     private func clearPinIfSettled(paneWidth: CGFloat) {
-        guard let pinned = pinnedLeftWidth?.wrappedValue else { return }
+        guard let trip = travel?.wrappedValue else { return }
         let natural = WindowReveal.paneSplit(
             width: paneWidth,
-            pinnedLeft: nil,
+            travel: nil,
             hidden: notesHidden,
             summaryMin: Tokens.Pane.summaryMinWidth,
             notesMin: Tokens.Pane.notesMinWidth,
@@ -1115,8 +1120,8 @@ struct PaneColumns<Left: View>: View {
             collapsedSlot: Tokens.Pane.notesCollapsedSide,
             openAt: Tokens.Pane.notesCollapseBelow
         )
-        guard natural.open == !notesHidden, abs(natural.left - pinned) < 1 else { return }
-        pinnedLeftWidth?.wrappedValue = nil
+        guard natural.open == !notesHidden, abs(natural.left - trip.left) < 1 else { return }
+        travel?.wrappedValue = nil
     }
 }
 
