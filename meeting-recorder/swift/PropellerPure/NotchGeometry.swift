@@ -33,14 +33,20 @@ public enum NotchGeometry {
     /// которой не видно того, что только что написал.
     public static let noteVisibleLines: Int = 3
 
-    /// Воздух над первой строкой и под последней.
-    public static let notePadding: CGFloat = 10
+    /// Воздух над первой строкой. Маленький: верхняя строка и так почти
+    /// погашена градиентом, отступать от неё нечего.
+    public static let notePaddingTop: CGFloat = 4
+
+    /// Воздух под последней — той, по которой идёт набор. Больше верхнего:
+    /// снизу у плиты скругление, и оно съедает часть просвета, из-за чего
+    /// строка кажется прижатой к краю сильнее, чем стоит.
+    public static let notePaddingBottom: CGFloat = 12
 
     /// Насколько чёлка опускается, когда в ней печатают: ровно три строки и их
     /// воздух. Вширь она при этом не расходится вовсе — движение в одну сторону
     /// читается как «опустилась», в две читалось как «выросла панель».
     public static var composeDrop: CGFloat {
-        noteLineHeight * CGFloat(noteVisibleLines) + 2 * notePadding
+        noteLineHeight * CGFloat(noteVisibleLines) + notePaddingTop + notePaddingBottom
     }
 
     /// Вогнутая галтель там, где фигура встречает верхнюю кромку экрана. У

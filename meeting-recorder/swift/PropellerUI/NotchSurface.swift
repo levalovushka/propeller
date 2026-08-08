@@ -125,7 +125,6 @@ public struct NotchFace: View {
     private let screen: NotchGeometry.Screen
     private let stage: NotchGeometry.Stage
     private let paused: Bool
-    private let noteDraft: String
     private let level: () -> Float
     private let onNote: () -> Void
     private let onCommit: (String) -> Void
@@ -146,11 +145,21 @@ public struct NotchFace: View {
         self.screen = screen
         self.stage = stage
         self.paused = paused
-        self.noteDraft = noteDraft
         self.level = level
         self.onNote = onNote
         self.onCommit = onCommit
         self.onCancel = onCancel
+        _draft = State(initialValue: noteDraft)
+    }
+
+    /// Набираемая заметка. Живёт здесь, а не в поле, потому что отправить её
+    /// умеют двое: Enter и знак ⏎ в ухе.
+    @State private var draft: String
+
+    private func submit() {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        draft = ""
+        if text.isEmpty { onCancel() } else { onCommit(text) }
     }
 
     /// Плита вырастает из выреза, а не появляется в готовом виде: запись
@@ -204,7 +213,12 @@ public struct NotchFace: View {
                     .frame(width: frame.notchWidth, height: frame.notchHeight)
                     .allowsHitTesting(false)
 
-                NoteEar(size: glyphSize, composing: composing, onTap: onNote)
+                // В покое ухо открывает заметку, в раскрытой чёлке — отправляет
+                // её. Знак там ⏎, и делать он обязан ровно то, что называет:
+                // клик по нему сначала отменял набранное, что читалось как
+                // «нажал Enter — текст пропал».
+                NoteEar(size: glyphSize, composing: composing,
+                        onTap: composing ? submit : onNote)
                     .frame(width: frame.earWidth, height: frame.notchHeight)
                     .modifier(EarReveal(revealed: revealed, from: -10))
             }
@@ -220,7 +234,7 @@ public struct NotchFace: View {
             .animation(revealed ? Self.glyphs : Self.leave, value: revealed)
 
             if composing {
-                NotchNoteField(initial: noteDraft, onCommit: onCommit, onCancel: onCancel)
+                NotchNoteField(text: $draft, onSubmit: submit, onCancel: onCancel)
                     .frame(height: NotchGeometry.composeDrop)
                     .padding(.horizontal, frame.contentInset)
                     // Поле не возникает в опустившейся чёлке, а проявляется в
@@ -324,22 +338,22 @@ private struct NoteEar: View {
 /// набор в верхней строке, текст вниз — ставил бы курсор в самое тёмное место
 /// плиты и упирал бы его в кромку, из-под которой ничего не видно.
 public struct NotchNoteField: View {
-    private let onCommit: (String) -> Void
+    /// Текст живёт снаружи: его должен уметь отправить не только Enter, но и
+    /// знак ⏎ в ухе, который стоит вне поля.
+    @Binding private var text: String
+    private let onSubmit: () -> Void
     private let onCancel: () -> Void
 
-    /// `initial` — только для съёмки состояния: в приложении поле всегда
-    /// открывается пустым.
     public init(
-        initial: String = "",
-        onCommit: @escaping (String) -> Void,
+        text: Binding<String>,
+        onSubmit: @escaping () -> Void,
         onCancel: @escaping () -> Void
     ) {
-        self.onCommit = onCommit
+        _text = text
+        self.onSubmit = onSubmit
         self.onCancel = onCancel
-        _text = State(initialValue: initial)
     }
 
-    @State private var text: String
     @FocusState private var focused: Bool
 
     public var body: some View {
@@ -377,15 +391,12 @@ public struct NotchNoteField: View {
         .lineSpacing(NotchGeometry.noteLineHeight - 13)
         .tint(.white.opacity(0.6))
         .focused($focused)
-        .onSubmit {
-            let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            text = ""
-            if t.isEmpty { onCancel() } else { onCommit(t) }
-        }
+        .onSubmit(onSubmit)
         // Esc выходит из заметки и ничего не сохраняет.
         .onExitCommand { onCancel() }
         .padding(.horizontal, 16)
-        .padding(.vertical, NotchGeometry.notePadding)
+        .padding(.top, NotchGeometry.notePaddingTop)
+        .padding(.bottom, NotchGeometry.notePaddingBottom)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         // Уехавшая наверх строка не обрезается кромкой, а гаснет: обрез читается
         // как «поле кончилось», угасание — как «это было раньше».
