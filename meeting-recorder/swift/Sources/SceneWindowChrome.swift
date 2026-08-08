@@ -249,37 +249,62 @@ struct SceneWindowChrome: NSViewRepresentable {
                 containerHeight: container.bounds.height,
                 buttonHeight: button.bounds.height
             )
-            button.setFrameOrigin(NSPoint(x: origin.x, y: origin.y))
-            keepInPlace(button)
+            // Only when it is actually elsewhere. This runs after every update of
+            // the window, and a frame set to the value it already holds still
+            // costs a layout pass and still posts.
+            let wanted = NSPoint(x: origin.x, y: origin.y)
+            if abs(button.frame.origin.x - wanted.x) > 0.5
+                || abs(button.frame.origin.y - wanted.y) > 0.5 {
+                button.setFrameOrigin(wanted)
+            }
         }
+        keepCorrecting(window)
     }
 
     /// Placing the buttons once only holds until AppKit lays the titlebar out for
     /// itself — and at launch that happens *after* us, which put them back at the
     /// system position: measured `x 9, y 9` instead of `24, 18`, so the discs sat
     /// higher and further left than every other element in the top row. Resizing
-    /// the window fixed it, because that ran our pass again — which is exactly the
-    /// shape of a race, not of a wrong number.
+    /// the window fixed them, because that ran our pass again — the shape of a
+    /// race, not of a wrong number.
     ///
-    /// So the buttons are *watched* rather than placed. When one moves and it is
-    /// not where the design says, it goes back; setting a frame to the value it
-    /// already has posts nothing, so this settles in one step instead of
-    /// ping-ponging with AppKit. One observer per button, for the app's lifetime —
-    /// the window outlives everything here.
-    private static var watchedButtons = Set<ObjectIdentifier>()
+    /// The correction therefore repeats, and **from outside the layout**: once per
+    /// window update, which is after AppKit has finished whatever it was doing.
+    ///
+    /// Watching each button's own frame instead — the obvious idea — is what broke
+    /// this the first time. Reacting to a move from inside the pass that is making
+    /// moves interleaves with it, and the measured result was two discs placed and
+    /// the third left in the system slot, overlapping its neighbour.
+    private static var correctedWindows = Set<ObjectIdentifier>()
 
-    private static func keepInPlace(_ button: NSButton) {
-        let key = ObjectIdentifier(button)
-        guard !watchedButtons.contains(key) else { return }
-        watchedButtons.insert(key)
-        button.postsFrameChangedNotifications = true
-        NotificationCenter.default.addObserver(
-            forName: NSView.frameDidChangeNotification,
-            object: button,
-            queue: .main
-        ) { note in
-            guard let moved = note.object as? NSView, let window = moved.window else { return }
-            positionTrafficLights(on: window)
+    private static func keepCorrecting(_ window: NSWindow) {
+        let key = ObjectIdentifier(window)
+        guard !correctedWindows.contains(key) else { return }
+        correctedWindows.insert(key)
+        // `didUpdate` covers everything that happens while the window is being
+        // used. The two key notifications cover the one moment it does not: losing
+        // and regaining focus visibly re-draws these buttons, so AppKit lays them
+        // out then — and if nothing else happens afterwards, no update follows to
+        // correct it. Measured: a window left alone for three seconds after launch
+        // came back with the zoom button in the system slot, overlapping its
+        // neighbour, and stayed that way until touched.
+        //
+        // A hop through the main queue on those two, so the correction lands after
+        // AppKit has finished its own response to the same notification.
+        for name in [NSWindow.didUpdateNotification,
+                     NSWindow.didBecomeKeyNotification,
+                     NSWindow.didResignKeyNotification] {
+            let deferred = name != NSWindow.didUpdateNotification
+            NotificationCenter.default.addObserver(
+                forName: name, object: window, queue: .main
+            ) { note in
+                guard let window = note.object as? NSWindow else { return }
+                if deferred {
+                    DispatchQueue.main.async { positionTrafficLights(on: window) }
+                } else {
+                    positionTrafficLights(on: window)
+                }
+            }
         }
     }
 }
