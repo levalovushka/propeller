@@ -345,12 +345,30 @@ struct MainView: View {
     // MARK: - Content pane
 
     private var contentPane: some View {
-        VStack(spacing: 0) {
-            topBar
-                .zIndex(2)
-            mainArea
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Смена того, про кого панель, — одно событие, а не три. Уходит всё, что
+        // про встречу: её заголовок, её колонка, её заметки. Раньше уезжала одна
+        // левая колонка (по своему ключу «что показано»), а заголовок и заметки
+        // подменялись в тот же кадр — и переход читался как «одно не успело уйти,
+        // а второе уже здесь».
+        //
+        // По очереди, а не крест-накрест: сначала пусто, потом новое. Два текста,
+        // проступающие друг сквозь друга, и есть то самое мигание.
+        ZStack(alignment: .top) {
+            paneSubjectContent
+                .id(paneSubject)
+                .transition(
+                    .asymmetric(
+                        insertion: .opacity.animation(
+                            .easeOut(duration: Tokens.Pane.meetingSwapIn)
+                                .delay(Tokens.Pane.meetingSwapOut)
+                        ),
+                        removal: .opacity.animation(
+                            .easeIn(duration: Tokens.Pane.meetingSwapOut)
+                        )
+                    )
+                )
         }
+        .animation(.default, value: paneSubject)
         // Свечения по краям окна во время записи больше нет. Оно светилось
         // уровнями двух дорожек — то есть отвечало на вопрос «работает ли
         // захват» тем, что красило края экрана всю встречу. На этот вопрос
@@ -359,6 +377,26 @@ struct MainView: View {
         // is said by that meeting's row.
         // The rail carries its own 300; the pane only has to stay readable.
         .frame(minWidth: Tokens.Window.contentPaneMinWidth, minHeight: 560)
+    }
+
+    private var paneSubjectContent: some View {
+        VStack(spacing: 0) {
+            topBar
+                .zIndex(2)
+            mainArea
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// Про кого панель — не «что в ней показано». Переключение колонки
+    /// (Расшифровка / Саммари) этого не меняет: там своя, более медленная замена,
+    /// потому что там меняется смысл, а здесь — только адресат, и его уже назвал
+    /// рельс. Идущая запись и та же встреча после стопа — разные предметы: между
+    /// ними в панели не остаётся ничего общего.
+    private var paneSubject: String {
+        if state.paneRoute == .settings { return "settings" }
+        guard let entry = state.selectedRecording else { return "empty" }
+        return isBeingRecorded(entry) ? "recording-\(entry.id)" : "meeting-\(entry.id)"
     }
 
     // MARK: - Top bar — Figma 31:4625 (48 tall, same row as the rail's header)
@@ -644,16 +682,17 @@ struct MainView: View {
             )
             .frame(maxWidth: .infinity)
         } else if let entry = state.selectedRecording {
+            let document = summaryDocument(for: entry)
             MeetingPaneBody(
                 mode: paneMode,
-                summary: summary,
+                summary: document,
                 turns: transcriptTurns(for: entry),
                 notes: noteModels(for: entry),
                 composer: .init(text: $draftNote) { commitNote(for: entry) },
                 // Что стоит на месте саммари, пока саммари нет, — решает
                 // `SummaryColumnContent`, и это правило, а не отрисовка.
                 summaryContent: SummaryColumnContent.decide(
-                    hasSummary: !summary.isEmpty && summaryOf == entry.id,
+                    hasSummary: !document.isEmpty,
                     hasTranscript: !transcriptTurns(for: entry).isEmpty,
                     rest: state.rest(of: entry)
                 ),
@@ -777,6 +816,21 @@ struct MainView: View {
     /// Only when it is a *different* summary than the one already loaded: this
     /// runs on every pipeline heartbeat, and reloading the same text would drop
     /// the caret out of the sentence being typed once a second.
+    /// Саммари этой встречи — из буфера правок, если он про неё, иначе прямо с
+    /// диска.
+    ///
+    /// Без второй половины панель успевает нарисовать один кадр новой встречи со
+    /// старым буфером: `loadSummary` живёт в `onChange`, а тот приходит после того,
+    /// как тело уже посчитано с новым `selectedRecordingID`. Кадр этот теперь
+    /// невидим — он попадает внутрь замены, — но колонка успевала *решить* по нему,
+    /// что саммари нет, и на смене буфера играла свою вторую замену. Из-за неё
+    /// левая колонка приезжала на две десятых позже заголовка и заметок, то есть
+    /// ровно тем рассогласованием, которое всё это чинит.
+    private func summaryDocument(for entry: RecordingEntry) -> SummaryDocument {
+        if summaryOf == entry.id { return summary }
+        return SummaryDocument.parse(markdown: Self.recapMarkdown(for: entry))
+    }
+
     private func loadSummary() {
         guard let entry = state.selectedRecording else {
             summary = .empty

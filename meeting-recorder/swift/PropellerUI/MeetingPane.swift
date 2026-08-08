@@ -146,6 +146,12 @@ struct MeetingPaneIdentity: View {
                 commit()
                 focused = false
             }
+            // The same save for when the header is *replaced* rather than handed a
+            // new meeting: the pane swaps its whole subject on a switch now, so
+            // this view is destroyed and the `onChange` above never runs. The edit
+            // carries the id it was typed into, so a commit on the way out lands in
+            // the right meeting — and `commit` is a no-op when nothing was typed.
+            .onDisappear { commit() }
     }
 
     private var identity: some View {
