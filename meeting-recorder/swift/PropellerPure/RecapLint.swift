@@ -19,10 +19,14 @@ public enum RecapLint {
         /// «**Система**», «участник с ответственностью» — читается как
         /// назначение и не называет никого.
         case ghostOwner
+        /// «Сторонники согласились» — подлежащее, которого на встрече не было.
+        case inventedActor
         /// «Проведите очистку». Конспект рассказывает, что было, а не раздаёт
         /// указания; появилось, когда редактору дали инструкции в приказном
         /// тоне, и он перенёс тон в документ.
         case imperative
+        /// «(срок: ~6 дней)» — арифметика вместо того, что прозвучало.
+        case computedDeadline
         case passive
         case clerical
         case filler
@@ -68,6 +72,22 @@ public enum RecapLint {
         #"\bследующие шаги\b"#, #"\bприоритеты\b"#, #"\bключев\w+\b"#,
         #"\bсоответствующ\w+\b"#, #"\bопределённ\w+\b"#,
     ]
+
+    /// Выдуманное действующее лицо: «Сторонники согласились», «Стороны решили».
+    ///
+    /// Порождено правилом «пассив → глагол с действующим лицом»: редактору
+    /// сказали найти подлежащее, и там, где его не было, он его сочинил. На
+    /// встрече не было никаких «сторонников» — было двое людей с именами.
+    /// Ловится только в связке с глаголом договорённости: «участники» само по
+    /// себе — обычное слово.
+    private static let inventedActor =
+        #"\b(Сторонник\w*|Сторон[ыа]|Участники|Коллеги|Команда|Стейкхолдер\w*)\s+(?:соглас\w+|отказ\w+|реши\w+|договор\w+|подтверд\w+|дообуч\w+|переда\w+|определи\w+)"#
+
+    /// Срок, посчитанный в днях или неделях. На встрече говорят «к пятнице» или
+    /// «сегодня к шести»; «~6 дней» и «в течение 2 недель» — это арифметика
+    /// модели поверх того, чего она не знает.
+    private static let computedDeadline =
+        #"срок:?\s*~?\s*\d+\s*(?:дн|недел|месяц)\w*|в течение\s+\d+\s*(?:дн|недел|месяц)\w*"#
 
     /// Два паттерна, а не один с `|`: цитата берётся из группы, а у альтернатив
     /// верхнего уровня своей группы нет — половина находок молча терялась.
@@ -115,6 +135,10 @@ public enum RecapLint {
                 found.append(Finding(kind: .ghostOwner, text: quote))
             }
         }
+        for quote in matches(inventedActor, in: body, group: 1) {
+            found.append(Finding(kind: .inventedActor, text: quote))
+        }
+        found += matches(computedDeadline, in: body).map { Finding(kind: .computedDeadline, text: $0) }
         for quote in matches(imperative, in: body, group: 1) {
             found.append(Finding(kind: .imperative, text: quote))
         }
@@ -134,6 +158,50 @@ public enum RecapLint {
             }
         }
         return found
+    }
+
+    /// Из чего состоит конспект: заголовки секций и число пунктов.
+    ///
+    /// Нужно, чтобы поймать редактуру, которая «улучшила» текст, выбросив кусок.
+    /// Первая версия считала только пункты — и пропустила, как редактор целиком
+    /// удалил «Ход обсуждения»: секция состоит из абзацев, счётчик пунктов её не
+    /// видел. Проверять надо то, что можно потерять, а не то, что легче счесть.
+    public struct Shape: Equatable {
+        public let sections: [String]
+        public let bullets: Int
+
+        public init(sections: [String], bullets: Int) {
+            self.sections = sections
+            self.bullets = bullets
+        }
+
+        /// Потеряла ли правка содержание. Треть пунктов — порог замера: в
+        /// лаборатории здоровая редактура ужимала список на 2–3 пункта из 17,
+        /// а сорвавшаяся выбрасывала половину.
+        public func lostContentComparedTo(_ before: Shape) -> String? {
+            let missing = before.sections.filter { !sections.contains($0) }
+            if !missing.isEmpty {
+                return "пропала секция «\(missing.joined(separator: "», «"))»"
+            }
+            if before.bullets > 0, bullets * 3 < before.bullets * 2 {
+                return "пунктов стало \(bullets) вместо \(before.bullets)"
+            }
+            return nil
+        }
+    }
+
+    public static func shape(of recap: String) -> Shape {
+        let body = withoutSystemBlocks(recap)
+        let sections = body
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { $0.hasPrefix("## ") }
+            .map { String($0.dropFirst(3)).trimmingCharacters(in: .whitespaces) }
+        let bullets = body
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("- ") }
+            .count
+        return Shape(sections: sections, bullets: bullets)
     }
 
     /// Указания редактору: описывают результат, а не приказывают.
@@ -165,6 +233,10 @@ public enum RecapLint {
             return "срок «\(finding.text)» на встрече не звучал — в исправленном тексте его нет, задача осталась"
         case .ghostOwner:
             return "«\(finding.text)» — не ответственный: в исправленном тексте пункт стоит без имени"
+        case .inventedActor:
+            return "«\(finding.text)» — такого участника на встрече не было: в исправленном тексте здесь «Договорились…» или имя, которое звучало"
+        case .computedDeadline:
+            return "срок «\(finding.text)» посчитан, а не назван: в исправленном тексте срока нет, задача осталась"
         case .imperative:
             return "«\(finding.text)» — приказ читателю: в исправленном тексте здесь рассказ о том, что было"
         case .passive:

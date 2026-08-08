@@ -116,4 +116,60 @@ final class RecapLintTests: XCTestCase {
         XCTAssertEqual(kinds(recap), [])
         XCTAssertEqual(RecapLint.editorNotes([]), "")
     }
+
+    /// Редактура однажды выбросила «Ход обсуждения» целиком, и страховка этого
+    /// не заметила: она считала пункты, а секция состояла из абзацев.
+    func testПропавшаяСекцияЭтоПотеряСодержания() {
+        let before = RecapLint.shape(of: """
+        ## Решения
+        - Отказались от диплинков.
+
+        ## Ход обсуждения
+        [12:45] Спорили про хостинг и остановились на бесплатном.
+        """)
+        let after = RecapLint.shape(of: """
+        ## Решения
+        - Отказались от диплинков.
+        """)
+        XCTAssertEqual(after.lostContentComparedTo(before), "пропала секция «Ход обсуждения»")
+    }
+
+    func testПотеряТретиПунктов() {
+        let before = RecapLint.Shape(sections: ["Решения"], bullets: 17)
+        let after = RecapLint.Shape(sections: ["Решения"], bullets: 10)
+        XCTAssertEqual(after.lostContentComparedTo(before), "пунктов стало 10 вместо 17")
+    }
+
+    /// Здоровая редактура ужимает список на пункт-другой — это не потеря, и
+    /// откатывать её значит выбрасывать всю проделанную работу над формой.
+    func testНебольшоеСокращениеНеСчитаетсяПотерей() {
+        let before = RecapLint.Shape(sections: ["Итог", "Решения"], bullets: 17)
+        let after = RecapLint.Shape(sections: ["Итог", "Решения"], bullets: 15)
+        XCTAssertNil(after.lostContentComparedTo(before))
+    }
+
+    /// Побочный эффект правила «пассив → глагол с действующим лицом»: редактору
+    /// велели найти подлежащее, и он его сочинил. Никаких «сторонников» на
+    /// встрече двух человек не было.
+    func testВыдуманноеДействующееЛицо() {
+        let recap = """
+        ## Решения
+        - Сторонники согласились внедрить единую компонентную базу.
+        - Команда дообучится по созданию иконок.
+        """
+        XCTAssertEqual(kinds(recap).filter { $0 == .inventedActor }.count, 2)
+    }
+
+    /// «Участники» само по себе — обычное слово, и правило не должно портить
+    /// нормальную фразу ради красивой находки.
+    func testОбычноеУпоминаниеУчастниковНеСчитаетсяВыдумкой() {
+        XCTAssertFalse(kinds("- Ссылку получили все участники встречи.").contains(.inventedActor))
+    }
+
+    /// На встрече говорят «сегодня к шести», а не «~6 дней»: посчитанный срок —
+    /// арифметика поверх того, чего модель не знает.
+    func testПосчитанныйСрок() {
+        XCTAssertEqual(kinds("- Левон готовит доки (срок: ~6 дней)."), [.computedDeadline])
+        XCTAssertEqual(kinds("- Иконки в течение 2 недель."), [.computedDeadline])
+    }
 }
