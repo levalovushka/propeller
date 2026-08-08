@@ -181,11 +181,39 @@ final class WindowRevealTests: XCTestCase {
     /// The pin holds through a hide too — the window is travelling the other
     /// way, and without it the summary narrows by 52 pt on the way down and
     /// comes back at the end.
-    func testPinnedSplitHoldsTheLeftColumnWhileTheWindowNarrows() {
+    ///
+    /// And the column is still *there* while it travels: it leaves with the
+    /// window rather than vanishing under it, which is the only way the button
+    /// that replaces it can arrive after the movement instead of before.
+    func testTheColumnIsStillOnScreenWhileTheWindowNarrows() {
         let left: CGFloat = 920
         let mid = split(width: 1100, pinned: left, hidden: true)
-        XCTAssertFalse(mid.open)
+        XCTAssertTrue(mid.open, "Уходит, а не исчезает.")
         XCTAssertEqual(mid.left, left)
+        XCTAssertEqual(mid.notes, 180, accuracy: 0.5)
+
+        // Доехали: шпильку сняли — вот теперь кнопка.
+        let settled = split(width: left + Tokens.Pane.notesCollapsedSide, hidden: true)
+        XCTAssertFalse(settled.open)
+        XCTAssertEqual(settled.left, left, accuracy: 0.5)
+    }
+
+    /// Both journeys are read off the column's own width, so a departure fades
+    /// exactly like an arrival played backwards.
+    func testArrivalIsReadOffTheColumnsWidth() {
+        let arrival = { (notes: CGFloat) in
+            WindowReveal.notesArrival(
+                notes: notes,
+                collapsedSlot: Tokens.Pane.notesCollapsedSide,
+                notesMin: Tokens.Pane.notesMinWidth
+            )
+        }
+        XCTAssertEqual(arrival(Tokens.Pane.notesCollapsedSide), 0, "Ещё кнопка.")
+        XCTAssertEqual(arrival(Tokens.Pane.notesMinWidth), 1, "Уже колонка.")
+        XCTAssertEqual(arrival(Tokens.Pane.notesMaxWidth), 1, "И шире — тоже колонка.")
+        XCTAssertEqual(arrival(0), 0, "Ниже кнопки не бывает.")
+        let half = (Tokens.Pane.notesCollapsedSide + Tokens.Pane.notesMinWidth) / 2
+        XCTAssertEqual(arrival(half), 0.5, accuracy: 0.001)
     }
 
     func testAWindowGivesBackOnlyTheRoomTheNotesTook() {

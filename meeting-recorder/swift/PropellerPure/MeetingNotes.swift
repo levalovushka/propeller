@@ -53,6 +53,18 @@ public enum MeetingNotes {
         return migrate(from: blob)
     }
 
+    /// The order the column shows them in: newest first.
+    ///
+    /// Storage stays chronological — the blob is what `MarkdownWriter` pours
+    /// into the «Заметки» block of a transcript, and a transcript reads
+    /// forward. Only the reading on screen is reversed, and it has to be: the
+    /// composer sits at the top, so a note written there appearing at the
+    /// bottom of a long list is a note you have to go looking for right after
+    /// writing it.
+    public static func newestFirst(_ notes: [MeetingNoteRecord]) -> [MeetingNoteRecord] {
+        notes.reversed()
+    }
+
     static func paragraphs(of text: String) -> [String] {
         text.replacingOccurrences(of: "\r\n", with: "\n")
             .components(separatedBy: "\n\n")

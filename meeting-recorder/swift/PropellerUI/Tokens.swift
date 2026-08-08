@@ -294,6 +294,17 @@ public enum Tokens {
         public static let hover: Double = 0.12
         public static let press: Double = 0.065
         public static let release: Double = 0.13
+        /// Окно едет само — за заметками, и обратно.
+        ///
+        /// Своя длительность и своя кривая, потому что у AppKit'овского
+        /// `setFrame(animate:)` их нет: он считает время от величины прыжка и
+        /// ведёт кадр линейно, а линейное движение окна в 280 pt читается как
+        /// рывок. Замедление в конце — то, из-за чего край окна кажется
+        /// тяжёлым, а не дёрганым.
+        public static let windowResize: Double = 0.32
+        /// Кнопка на месте ушедшей колонки. Позже окна на полкорпуса: она
+        /// появляется в опустевшем слоте, а не летит вместе с ним.
+        public static let notesButtonFade: Double = 0.18
         /// List insert/remove reflow when ash is not driving the slot.
         public static let listReflow: Double = 0.28
         /// Legacy alias.
@@ -817,6 +828,13 @@ public enum Tokens {
         /// Отступ заголовка слева. Как в настройках, чуть меньше внутреннего
         /// отступа плашки: совпадение до пикселя склеило бы их в один блок.
         public static let notesHeaderLeadingInset = Space.s12
+        /// Сколько колонка не доезжает до своего места, пока окно едет.
+        ///
+        /// Одна ширина плашечного отступа. Без неё колонку просто открывал
+        /// движущийся край окна — шторка: текст стоит, а по нему ползёт вырез.
+        /// Со сдвигом она приезжает вместе с краем и на последних точках
+        /// становится на место сама.
+        public static let notesArrivalShift = Space.s12
 
         // MARK: Paint
 

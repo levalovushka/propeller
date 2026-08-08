@@ -1057,16 +1057,7 @@ struct PaneColumns<Left: View>: View {
                 }
                 .frame(width: split.left)
                 if split.open {
-                    ScrollView(.vertical) {
-                        MeetingNotesColumn(
-                            notes: notes,
-                            composer: composer,
-                            focusRequest: notesFocusRequest,
-                            onCollapse: onHideNotes
-                        )
-                        .frame(width: split.notes)
-                    }
-                    .frame(width: split.notes)
+                    notesColumn(in: split)
                 } else {
                     CollapsedNotesButton(count: notes.count, onReveal: onRevealNotes)
                 }
@@ -1076,6 +1067,37 @@ struct PaneColumns<Left: View>: View {
                 clearPinIfSettled(paneWidth: width)
             }
         }
+    }
+
+    /// Заметки, пока окно ещё едет и когда уже приехало.
+    ///
+    /// Колонка всё это время свёрстана по своей настоящей ширине и подрезана
+    /// слотом — не сжата в него. Сжатая колонка перебирала бы переносы на каждом
+    /// кадре анимации окна, и вместо приезда колонки был бы кипящий текст.
+    /// Приезжает она справа и проявляется: край окна тогда не «вскрывает» её, а
+    /// приводит с собой.
+    @ViewBuilder
+    private func notesColumn(in split: WindowReveal.PaneSplit) -> some View {
+        let arrival = WindowReveal.notesArrival(
+            notes: split.notes,
+            collapsedSlot: Tokens.Pane.notesCollapsedSide,
+            notesMin: Tokens.Pane.notesMinWidth
+        )
+        let layout = max(split.notes, Tokens.Pane.notesMinWidth)
+        ScrollView(.vertical) {
+            MeetingNotesColumn(
+                notes: notes,
+                composer: composer,
+                focusRequest: notesFocusRequest,
+                onCollapse: onHideNotes
+            )
+            .frame(width: layout)
+        }
+        .frame(width: layout)
+        .opacity(arrival)
+        .offset(x: (1 - arrival) * Tokens.Pane.notesArrivalShift)
+        .frame(width: split.notes, alignment: .leading)
+        .clipped()
     }
 
     /// Drop the pin once the ordinary split would keep the same left width —
@@ -1113,6 +1135,13 @@ struct CollapsedNotesButton: View {
     var onReveal: (() -> Void)?
 
     @State private var hovering = false
+    /// Кнопка не стоит в опустевшем слоте с первого кадра, а проявляется в нём.
+    ///
+    /// Слот пустеет ровно тогда, когда окно доехало, — до этого на её месте всё
+    /// ещё стоит уходящая колонка (`WindowReveal.paneSplit`, ветка со шпилькой).
+    /// Раньше кнопка возникала в момент нажатия и уже на конечном месте, пока
+    /// окно только начинало ехать: конец движения показывали до самого движения.
+    @State private var arrived = false
 
     var body: some View {
         Button { onReveal?() } label: {
@@ -1140,6 +1169,10 @@ struct CollapsedNotesButton: View {
             height: Tokens.Pane.notesCollapsedSide,
             alignment: .trailing
         )
+        .opacity(arrived ? 1 : 0)
+        .onAppear {
+            withAnimation(.easeOut(duration: Tokens.Motion.notesButtonFade)) { arrived = true }
+        }
         .onHover { hovering = $0 && onReveal != nil }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
         .help(hint)

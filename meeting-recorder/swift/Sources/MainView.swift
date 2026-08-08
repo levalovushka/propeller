@@ -753,7 +753,7 @@ struct MainView: View {
     }
 
     private func noteModels(for entry: RecordingEntry) -> [MeetingNote] {
-        MeetingNotes.resolved(items: entry.noteItems, blob: entry.notes)
+        MeetingNotes.newestFirst(MeetingNotes.resolved(items: entry.noteItems, blob: entry.notes))
             .map { MeetingNote(id: $0.id, text: $0.text) }
     }
 
@@ -951,6 +951,13 @@ struct MainView: View {
         #endif
     }
 
+    /// Сколько шпилька держится, если её некому снять по месту.
+    ///
+    /// Чуть дольше самой поездки окна: край может упереться в границу экрана и
+    /// не доехать до расчётной ширины, и тогда обычное правило никогда не
+    /// совпадёт со шпилькой (`PaneColumns.clearPinIfSettled`).
+    private static let pinFallback = Tokens.Motion.windowResize + 0.12
+
     /// The collapsed notes button was pressed. The pane cannot widen itself —
     /// its width is the window's — so the window grows to the right by the
     /// notes' width while the left column keeps the width it already had. The
@@ -979,7 +986,7 @@ struct MainView: View {
         // Fallback: a screen edge can clamp the grow short of the settled
         // width, so the ordinary split never matches the pin. Drop it after
         // the window animation either way — by then the pin has done its job.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pinFallback) {
             notesRevealLeft = nil
         }
     }
@@ -1013,7 +1020,7 @@ struct MainView: View {
                 collapsedSlot: Tokens.Pane.notesCollapsedSide
             )
         )
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pinFallback) {
             notesRevealLeft = nil
         }
     }

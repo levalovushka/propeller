@@ -100,9 +100,7 @@ enum AppWindowRegistry {
             chromeWidth: chrome,
             visible: visible
         )
-        guard target != frame else { return }
-        window.setFrame(target, display: true, animate: true)
-        persistFrame(window)
+        travel(window, to: target)
     }
 
     /// Give back the room a column took — what «скрыть заметки» asks for, and
@@ -121,9 +119,27 @@ enum AppWindowRegistry {
             chromeWidth: chrome,
             visible: visible
         )
-        guard target != frame else { return }
-        window.setFrame(target, display: true, animate: true)
-        persistFrame(window)
+        travel(window, to: target)
+    }
+
+    /// Move the window there, on our clock rather than AppKit's.
+    ///
+    /// `setFrame(_:display:animate:)` derives its duration from the size of the
+    /// jump and runs it flat, and a flat 280 pt of window reads as a jerk: the
+    /// edge starts at full speed and stops dead. An ease-out of a fixed length
+    /// is what makes the edge feel like it has weight — and the pane's own
+    /// arrival hangs off the same travel, so it has to be a length we know.
+    private static func travel(_ window: NSWindow, to target: CGRect) {
+        guard target != window.frame else { return }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = Tokens.Motion.windowResize
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            window.animator().setFrame(target, display: true)
+        }, completionHandler: {
+            // After, not before: the animator moves the frame over time, so
+            // saving on the way out would remember where the window started.
+            MainActor.assumeIsolated { persistFrame(window) }
+        })
     }
 
     static func placeCentered(_ window: NSWindow, contentSize: CGSize) {

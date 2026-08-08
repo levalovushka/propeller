@@ -131,15 +131,16 @@ public enum WindowReveal {
         collapsedSlot: CGFloat,
         openAt: CGFloat
     ) -> PaneSplit {
-        if hidden {
-            return PaneSplit(
-                left: pinnedLeft ?? max(0, pane - collapsedSlot),
-                notes: collapsedSlot,
-                open: false
-            )
-        }
+        // The pin is on while the window is travelling — in *either* direction.
+        // The column is on screen for the whole trip, taking whatever lies to
+        // the right of the held column, so a hide is a departure rather than a
+        // disappearance: the button cannot arrive before the window has
+        // finished moving, because until then there is still a column there.
         if let pinned = pinnedLeft {
             return PaneSplit(left: pinned, notes: max(0, pane - pinned), open: true)
+        }
+        if hidden {
+            return PaneSplit(left: max(0, pane - collapsedSlot), notes: collapsedSlot, open: false)
         }
         guard pane >= openAt else {
             return PaneSplit(
@@ -150,5 +151,25 @@ public enum WindowReveal {
         }
         let notes = min(notesMax, max(notesMin, pane - summaryMin))
         return PaneSplit(left: pane - notes, notes: notes, open: true)
+    }
+
+    /// How far along the column is between «сложена в кнопку» and «стоит целиком».
+    ///
+    /// The window's travel is the clock: a column 52 pt wide has just left the
+    /// button and a column at its floor width is fully here. Anything that
+    /// should not simply be wiped into view by the moving window edge — the
+    /// ink, the last few points of travel — hangs off this.
+    ///
+    /// It is symmetric on purpose. Hide and reveal are the same journey in
+    /// opposite directions, and a departure that faded differently from an
+    /// arrival would read as two unrelated animations on one control.
+    public static func notesArrival(
+        notes: CGFloat,
+        collapsedSlot: CGFloat,
+        notesMin: CGFloat
+    ) -> CGFloat {
+        let span = notesMin - collapsedSlot
+        guard span > 0 else { return notes > collapsedSlot ? 1 : 0 }
+        return min(1, max(0, (notes - collapsedSlot) / span))
     }
 }

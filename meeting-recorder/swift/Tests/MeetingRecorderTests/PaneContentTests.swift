@@ -55,5 +55,30 @@ final class PaneContentTests: XCTestCase {
             ["старое"]
         )
     }
+
+    /// The composer is at the top of the column, so what you just wrote has to
+    /// appear under it — not at the foot of everything written before.
+    func testTheColumnShowsTheNewestNoteFirst() {
+        let stored = [
+            MeetingNoteRecord(id: "1", text: "Первая"),
+            MeetingNoteRecord(id: "2", text: "Вторая"),
+            MeetingNoteRecord(id: "3", text: "Третья"),
+        ]
+        XCTAssertEqual(
+            MeetingNotes.newestFirst(stored).map(\.text),
+            ["Третья", "Вторая", "Первая"]
+        )
+    }
+
+    /// And the file does not turn around with it: the blob is poured into the
+    /// «Заметки» block of a transcript, and a transcript reads forward.
+    func testStorageStaysInTheOrderItWasWritten() {
+        let stored = [
+            MeetingNoteRecord(id: "1", text: "Первая"),
+            MeetingNoteRecord(id: "2", text: "Вторая"),
+        ]
+        _ = MeetingNotes.newestFirst(stored)
+        XCTAssertEqual(MeetingNotes.blob(from: stored), "Первая\n\nВторая")
+    }
 }
 
