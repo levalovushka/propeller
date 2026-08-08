@@ -248,8 +248,13 @@ actor RecapService {
                 return .failure(.noProvider)
             }
 
-            let cleaned = RecapMetadataParser.stripCodeFences(raw)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            // Термины канонизируются здесь, а не промптом: модель не может
+            // починить то, чего не видела — в транскрипте уже стоит «майплайн».
+            // Правится только конспект; транскрипт остаётся как сказано.
+            let cleaned = TermCanon.normalize(
+                RecapMetadataParser.stripCodeFences(raw)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            )
             guard !cleaned.isEmpty else { throw RecapError.emptyResponse }
 
             let body = wrapRecapDocument(
@@ -337,8 +342,10 @@ actor RecapService {
             throw RecapSkipReason.noProvider
         }
 
-        let cleaned = RecapMetadataParser.stripCodeFences(raw)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleaned = TermCanon.normalize(
+            RecapMetadataParser.stripCodeFences(raw)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        )
         guard !cleaned.isEmpty else { throw RecapError.emptyResponse }
         return cleaned
     }
