@@ -10,15 +10,20 @@ import PropellerPure
 /// по мелочам, а это один и тот же список.
 ///
 /// Плита под ним — `SummonedPlate`, общая с панелью действий над выделением:
-/// оба вызваны жестом и оба живут, только пока жест держат.
+/// оба вызваны жестом и оба живут, только пока жест держат. Угол у плиты свой,
+/// концентричный строке (`Tokens.Pane.Switcher.radius`).
 ///
 /// # Что двигается
 ///
 /// Выделение стоит на месте — **второй строкой** — а список едет под ним. Так
 /// видно и то, откуда уходишь, и то, куда идёшь, и глазу не приходится каждый шаг
 /// заново искать подсветку. У краёв списка ехать больше некуда, и тогда двигается
-/// уже подсветка: это ровно то, что делает любой список, доехавший до конца, и
-/// поэтому не требует объяснения.
+/// уже подсветка: это ровно то, что делает любой список, доехавший до конца.
+///
+/// **Всё это — один такт.** Подсветка не заливка строки, а одна плашка, которая
+/// едет вместе со списком; чернила переключаются перекрёстным затуханием той же
+/// длительности. Пока это было двумя анимациями — заливка гасла в одной строке и
+/// зажигалась в другой, пока список ехал, — шаг читался как мигание.
 ///
 /// Панель ничего не принимает мышью (`allowsHitTesting(false)` ставит хозяин): её
 /// позвала клавиша, ей и распоряжаться.
@@ -31,9 +36,8 @@ public struct MeetingSwitcherPanel: View {
     /// Какая строка должна стоять сверху — решение `MeetingSwitch.anchorID`.
     private let anchorID: String
 
-    /// Измеренные высоты строк. Строка встречи — от одной до трёх строк текста,
-    /// так что сложить их можно только после раскладки; до этого панель прозрачна
-    /// (см. `isMeasured`), а не мигает не той высотой.
+    /// Измеренные высоты строк: строка встречи — от одной до трёх строк текста,
+    /// сложить их можно только после раскладки.
     @State private var rowHeights: [String: CGFloat] = [:]
 
     public init(rows: [SidebarMeetingRowModel], currentID: String, anchorID: String) {
@@ -50,42 +54,58 @@ public struct MeetingSwitcherPanel: View {
     }
 
     public var body: some View {
-        SummonedPlate {
+        SummonedPlate(cornerRadius: Tokens.Pane.Switcher.radius) {
             list
         }
+        // Первый кадр уходит на замер, и показывать его нельзя: высоты строк ещё
+        // неизвестны. Открывается панель сразу в своём размере — вторым кадром,
+        // и в нём же начинает проявляться.
         .opacity(isMeasured ? 1 : 0)
         .animation(.easeOut(duration: Tokens.Pane.Switcher.fade), value: isMeasured)
     }
 
     private var list: some View {
-        VStack(spacing: 0) {
-            ForEach(rows) { row in
-                MeetingSwitcherRow(row: row, isCurrent: row.id == currentID)
-                    .background {
-                        GeometryReader { geo in
-                            Color.clear.preference(
-                                key: RowHeights.self,
-                                value: [row.id: geo.size.height]
-                            )
+        ZStack(alignment: .topLeading) {
+            highlight
+            VStack(spacing: 0) {
+                ForEach(rows) { row in
+                    MeetingSwitcherRow(row: row, isCurrent: row.id == currentID)
+                        .background {
+                            GeometryReader { geo in
+                                Color.clear.preference(
+                                    key: RowHeights.self,
+                                    value: [row.id: geo.size.height]
+                                )
+                            }
                         }
-                    }
+                }
             }
         }
         .frame(width: Self.rowWidth, alignment: .top)
         .offset(y: -offset)
         .frame(width: Self.rowWidth, height: viewport, alignment: .top)
-        // Тот же приём, что у списка в рельсе, и по той же причине: у края список
-        // не обрывается на полуслове, а гаснет — и сам этим говорит, что за краем
-        // ещё есть строки. Маска, а не `clipped`: обрез по букве читается как
-        // сломанная вёрстка, а не как продолжение.
+        // Высота — не движение, а факт: она становится известна на замере и
+        // больше не меняется. Анимированная, она читалась бы как «панель
+        // открылась огромной и сжалась».
+        .animation(nil, value: viewport)
+        // Тот же приём, что у списка в рельсе: у обрезанного края список не
+        // обрывается на полуслове, а гаснет.
         .mask { edgeFades }
-        // Keyed on the top row rather than on the offset: the offset also moves
-        // once, from nothing to its first value, when the heights land — and that
-        // one is not a step, it is the panel finding out how tall its rows are.
-        .animation(.easeOut(duration: Tokens.Pane.Switcher.step), value: anchorID)
+        // Один такт на всё, что двигает шаг: список, плашка, чернила.
+        .animation(.easeOut(duration: Tokens.Pane.Switcher.step), value: currentID)
         .onPreferenceChange(RowHeights.self) { heights in
             rowHeights.merge(heights, uniquingKeysWith: { $1 })
         }
+    }
+
+    /// Одна плашка на всю панель, а не заливка у каждой строки: она **едет**, а не
+    /// зажигается на новом месте. Вместе со сдвигом списка на тот же вектор это и
+    /// даёт ощущение, что подсветка стоит, а список идёт под ней.
+    private var highlight: some View {
+        RoundedRectangle(cornerRadius: Tokens.Sidebar.meetingRadius, style: .continuous)
+            .fill(Tokens.Pane.Bar.itemOnFill)
+            .frame(width: Self.rowWidth, height: rowHeights[currentID] ?? 0)
+            .offset(y: top(of: currentID))
     }
 
     /// Гаснет ровно тот край, где строку правда режет.
@@ -104,12 +124,9 @@ public struct MeetingSwitcherPanel: View {
         }
     }
 
-    private var cutsAtTop: Bool { !sitsOnRowEdge(offset) }
+    private var cutsAtTop: Bool { isMeasured && !sitsOnRowEdge(offset) }
 
-    private var cutsAtBottom: Bool {
-        guard let viewport else { return false }
-        return !sitsOnRowEdge(offset + viewport)
-    }
+    private var cutsAtBottom: Bool { isMeasured && !sitsOnRowEdge(offset + viewport) }
 
     /// Совпадает ли эта высота с границей между строками (или с концом списка).
     private func sitsOnRowEdge(_ y: CGFloat) -> Bool {
@@ -128,46 +145,48 @@ public struct MeetingSwitcherPanel: View {
         rows.reduce(0) { $0 + (rowHeights[$1.id] ?? 0) }
     }
 
-    /// Высота панели за время одной прогулки не меняется: список тот же, и плита,
-    /// которая дышит на каждый шаг, — это уже не переключатель, а анимация про себя.
-    private var viewport: CGFloat? {
-        guard isMeasured else { return nil }
-        return min(contentHeight, Tokens.Pane.Switcher.maxHeight)
+    /// Высота панели за время одной прогулки не меняется: список тот же. До замера
+    /// — предел, а не натуральная высота: тогда единственный неизмеренный кадр
+    /// заведомо не выше итогового, и промахнуться можно только в невидимую сторону.
+    private var viewport: CGFloat {
+        isMeasured ? min(contentHeight, Tokens.Pane.Switcher.maxHeight)
+                   : Tokens.Pane.Switcher.maxHeight
     }
 
     /// Насколько список уехал вверх. Зажат с двух сторон: выше первой строки и
     /// ниже последней ехать некуда.
     private var offset: CGFloat {
-        guard isMeasured, let viewport else { return 0 }
-        guard let index = rows.firstIndex(where: { $0.id == anchorID }) else { return 0 }
-        let above = rows.prefix(index).reduce(0) { $0 + (rowHeights[$1.id] ?? 0) }
-        return max(0, min(above, contentHeight - viewport))
+        guard isMeasured else { return 0 }
+        return max(0, min(top(of: anchorID), contentHeight - viewport))
+    }
+
+    /// Где начинается эта строка, в координатах списка.
+    private func top(of id: String) -> CGFloat {
+        guard let index = rows.firstIndex(where: { $0.id == id }) else { return 0 }
+        return rows.prefix(index).reduce(0) { $0 + (rowHeights[$1.id] ?? 0) }
     }
 }
 
 /// Строка рельса без всего, что нужно только рельсу: ни ховера, ни меню по правой
 /// кнопке, ни пепла удаления, ни бегущего блика — панель живёт секунду под
-/// нажатой клавишей, и всё это в ней было бы шумом. Остаётся то, что отличает
-/// одну встречу от другой: её абзац и то, выбрана ли она.
+/// нажатой клавишей, и всё это в ней было бы шумом. Остаётся абзац; выбранность
+/// рисует общая плашка сверху.
 private struct MeetingSwitcherRow: View {
     let row: SidebarMeetingRowModel
     let isCurrent: Bool
 
     var body: some View {
-        SidebarMeetingParagraph(row: row, isSelected: isCurrent)
-            .padding(.horizontal, Tokens.Sidebar.meetingHPadding)
-            .padding(.vertical, Tokens.Sidebar.meetingVPadding)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                // Заливка кнопки бара в состоянии «включено» — панель стоит на
-                // стекле, и заливка строки рельса под ним другой плотности.
-                isCurrent ? Tokens.Pane.Bar.itemOnFill : .clear,
-                in: RoundedRectangle(cornerRadius: Tokens.Sidebar.meetingRadius, style: .continuous)
-            )
-            // Two rows swap the pill on a step where the list itself does not move
-            // (walking off the first meeting). Cross-fading it there is what keeps
-            // that step from being the only silent one.
-            .animation(.easeOut(duration: Tokens.Pane.Switcher.step), value: isCurrent)
+        // Два одинаковых по раскладке абзаца, разные только чернилами: цвет внутри
+        // `AttributedString` не анимируется, а перекрёстное затухание — да. Иначе
+        // чернила щёлкали бы в первом кадре шага, пока плашка едет ещё 0,18 с.
+        ZStack(alignment: .topLeading) {
+            SidebarMeetingParagraph(row: row, isSelected: false)
+            SidebarMeetingParagraph(row: row, isSelected: true)
+                .opacity(isCurrent ? 1 : 0)
+        }
+        .padding(.horizontal, Tokens.Sidebar.meetingHPadding)
+        .padding(.vertical, Tokens.Sidebar.meetingVPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

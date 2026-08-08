@@ -250,23 +250,29 @@ public struct PropellerSidebar: View {
 
     // MARK: Header (Frame 104) — h 48, p 12
 
-    /// The toggle sits beside the traffic lights and stays there whether the rail
-    /// is up or away — a control that moves when you use it makes you look for it
-    /// the second time. What changes with the rail is the *other* end of the row:
-    /// with the rail up it holds search, and with the rail away there is no row to
-    /// hold anything, which is the whole point of collapsing it.
+    /// The toggle's slot is always reserved here and usually **empty**: in the app
+    /// the button belongs to the window (`Tokens.Window.chromeToggleLeading`), so
+    /// that putting the rail away cannot move the control that puts it away. The
+    /// rail draws its own only when handed an `onToggle` — the state gallery, which
+    /// photographs the rail on its own and has no window around it.
+    ///
+    /// What does change with the rail is the *other* end of this row: with the rail
+    /// up it holds search, and with the rail away there is no row to hold anything,
+    /// which is the whole point of collapsing it.
     private var header: some View {
         HStack(spacing: 0) {
             trafficLightSlot
             if let onToggle {
                 SidebarChromeButton(symbol: "sidebar.left", help: "Скрыть список", action: onToggle)
+            } else {
+                Color.clear.frame(width: Tokens.Sidebar.toggleSide, height: Tokens.Sidebar.toggleSide)
             }
             Spacer(minLength: Tokens.Space.s8)
             if let onSearch {
                 SidebarChromeButton(symbol: "magnifyingglass", help: "Поиск (⌘K)", action: onSearch)
             }
         }
-        .padding(Tokens.Space.s12)
+        .padding(Tokens.Sidebar.headerPadding)
         .frame(height: Tokens.Sidebar.headerHeight)
         .background {
             GeometryReader { geo in
@@ -303,7 +309,7 @@ public struct PropellerSidebar: View {
                 alignment: .leading
             )
             // Discs start at x 24 in the window; the slot itself starts at 12.
-            .padding(.leading, Tokens.Sidebar.trafficLightLeading - Tokens.Space.s12)
+            .padding(.leading, Tokens.Sidebar.trafficLightLeading - Tokens.Sidebar.headerPadding)
         }
     }
 

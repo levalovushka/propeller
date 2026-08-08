@@ -58,6 +58,17 @@ final class TempSwitcherShotTests: XCTestCase {
         let hosting = NSHostingView(rootView: root.frame(width: size.width, height: size.height))
         window.contentView = hosting
         hosting.layoutSubtreeIfNeeded()
+
+        // The first frame is the one that has not measured its rows yet. Shot on
+        // its own, because «opens straight at its size» is a claim about *that*
+        // frame: nothing of the panel may be visible in it.
+        if let early = ProcessInfo.processInfo.environment["SWITCHER_SHOT_FIRST_FRAME"] {
+            let firstRep = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+            hosting.cacheDisplay(in: hosting.bounds, to: firstRep)
+            let firstPNG = try XCTUnwrap(firstRep.representation(using: .png, properties: [:]))
+            try firstPNG.write(to: URL(fileURLWithPath: early))
+        }
+
         RunLoop.current.run(until: Date().addingTimeInterval(0.6))
         hosting.layoutSubtreeIfNeeded()
 

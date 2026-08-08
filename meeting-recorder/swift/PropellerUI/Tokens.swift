@@ -377,6 +377,25 @@ public enum Tokens {
         public static let defaultPaneWidth: CGFloat = 620
         public static let chromePadding: CGFloat = Space.s12
         public static let trafficLightSlotWidth: CGFloat = 76
+
+        /// Where the rail toggle sits, measured from the window's top-left — and
+        /// it sits there whatever the rail is doing.
+        ///
+        /// The button used to be drawn twice: once inside the rail's header and
+        /// once in the pane's, eight points further along, so putting the rail away
+        /// slid it sideways *and* swapped one view for another — which reset its
+        /// hover and made it blink at the moment you were looking straight at it.
+        /// One button, owned by the window, is the only arrangement in which the
+        /// rail can come and go without the control that does it moving at all.
+        /// Derived from the rail's own header, not from this group's copy of the
+        /// same numbers: the button has to land exactly where the rail's reserved
+        /// slot ends, and two independent 76s are two chances to drift.
+        public static let chromeToggleLeading =
+            Sidebar.headerPadding + Sidebar.trafficLightSlotWidth
+        /// Centred on the 48 pt header row, same as the traffic lights beside it.
+        public static let chromeToggleTop = (Sidebar.headerHeight - Sidebar.toggleSide) / 2
+        /// What a pane header has to leave clear for the two of them.
+        public static let chromeReserve = chromeToggleLeading + Sidebar.toggleSide
         public static let trafficLightLeading: CGFloat = Space.s24
         public static let trafficLightSpacing: CGFloat = Space.s20
         public static let topBarHeight: CGFloat = 56
@@ -401,8 +420,13 @@ public enum Tokens {
         public static let width: CGFloat = 300
         public static let minWidth: CGFloat = 240
         public static let maxWidth: CGFloat = 420
-        /// Titlebar row: traffic lights on the left, collapse toggle on the right.
+        /// Titlebar row: traffic lights and the collapse toggle on the left, search
+        /// on the right.
         public static let headerHeight: CGFloat = 48
+        /// Inset of that row. Read by the window too, which draws the toggle at
+        /// `Tokens.Window.chromeToggleLeading` — one number, so the button cannot
+        /// land beside the slot instead of after it.
+        public static let headerPadding = Space.s12
         /// Body inset — `py-10` on Frame 123, but 10 across rather than the
         /// comps' 12.
         ///
@@ -881,6 +905,15 @@ public enum Tokens {
             /// Called by a key, gone when the key comes up. Same order of
             /// magnitude as the action bar's fade, for the same reason.
             public static let fade: Double = 0.12
+            /// How long ⌥Tab has to be held before the panel is worth showing.
+            /// A tap-and-release is a switch, not a browse: it should land on the
+            /// next meeting without a plate flashing over the window on the way.
+            public static let appearDelay: Double = 0.2
+            /// Concentric with the row's own corner: the plate's radius is the
+            /// row's plus the gap the row is inset by. Any other number and the
+            /// two arcs stop being parallel — visible on exactly the row that is
+            /// highlighted, which is the one being looked at.
+            public static let radius = Tokens.Sidebar.meetingRadius + Bar.padding
         }
 
         // MARK: The summary arriving

@@ -13,12 +13,22 @@ import SwiftUI
 /// заводит своих токенов: он берёт `Tokens.Pane.Bar`, потому что это метрики
 /// плиты, а не метрики кнопок на ней.
 public struct SummonedPlate<Content: View>: View {
+    private let cornerRadius: CGFloat
     private let minHeight: CGFloat?
     private let content: Content
 
     /// `minHeight` — для инструмента в один ряд: он задаёт высоту плиты, когда
     /// содержимое ниже её (панель действий — 40 при items 32 + padding 4).
-    public init(minHeight: CGFloat? = nil, @ViewBuilder content: () -> Content) {
+    ///
+    /// `cornerRadius` — свой у каждого инструмента, потому что он не про плиту, а
+    /// про то, что на ней лежит: угол должен быть концентричен углу содержимого,
+    /// то есть его радиус плюс `padding`.
+    public init(
+        cornerRadius: CGFloat = Tokens.Pane.Bar.radius,
+        minHeight: CGFloat? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.cornerRadius = cornerRadius
         self.minHeight = minHeight
         self.content = content()
     }
@@ -35,7 +45,7 @@ public struct SummonedPlate<Content: View>: View {
     }
 
     private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: Tokens.Pane.Bar.radius, style: .continuous)
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
     }
 
     /// Тот же стек, что у окна: материал + подкрас. Liquid glass на 26+, общий
@@ -44,7 +54,7 @@ public struct SummonedPlate<Content: View>: View {
     @ViewBuilder
     private var glass: some View {
         if #available(macOS 26.0, *) {
-            LiquidGlassBackdrop(cornerRadius: Tokens.Pane.Bar.radius)
+            LiquidGlassBackdrop(cornerRadius: cornerRadius)
         } else {
             GlassBackground(material: .regularMaterial, tinted: true)
         }

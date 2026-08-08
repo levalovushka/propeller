@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import PropellerPure
+import PropellerUI
 
 /// # ⌥Tab между встречами
 ///
@@ -23,8 +24,16 @@ import PropellerPure
 @MainActor
 final class MeetingSwitchController: ObservableObject {
 
-    /// Прогулка, если она идёт. Панель есть ровно тогда, когда есть это.
+    /// Прогулка, если она идёт.
     @Published private(set) var walk: MeetingSwitch?
+
+    /// Стоит ли уже показывать панель. Не то же самое, что «идёт прогулка»:
+    /// стукнуть ⌥Tab и отпустить — это переключиться, а не листать, и плита,
+    /// мигнувшая над окном по дороге, там только мешает. Поэтому панель ждёт
+    /// `appearDelay` и не появляется вовсе, если ⌥ отпустили раньше.
+    @Published private(set) var showsPanel = false
+
+    private var panelTimer: Task<Void, Never>?
 
     private var order: () -> [String] = { [] }
     private var selectedID: () -> String? = { nil }
@@ -55,7 +64,7 @@ final class MeetingSwitchController: ObservableObject {
 
             // Уйти из прогулки, ничего не открыв — как в любом переключателе.
             if event.keyCode == Self.escapeKeyCode, self.walk != nil {
-                self.walk = nil
+                self.end()
                 return nil
             }
             guard event.keyCode == Self.tabKeyCode, flags.contains(.option) else { return event }
@@ -67,7 +76,9 @@ final class MeetingSwitchController: ObservableObject {
             // Нечего листать — пусть Tab останется Tab'ом: съеденная клавиша,
             // которая ничего не сделала, это сломанная клавиша.
             guard let started else { return event }
+            let isFirstStep = self.walk == nil
             self.walk = started.stepped(by: step)
+            if isFirstStep { self.armPanel() }
             // Съедаем Tab целиком: иначе он же уедет в поле саммари и вставит
             // там табуляцию.
             return nil
@@ -77,7 +88,7 @@ final class MeetingSwitchController: ObservableObject {
             guard let self, let walk = self.walk else { return event }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             guard !flags.contains(.option) else { return event }
-            self.walk = nil
+            self.end()
             // Вернуться туда, откуда ушёл, — это не переход: открывать заново уже
             // открытое значит остановить плеер и положить в историю пустой шаг.
             guard walk.currentID != self.selectedID() else { return event }
@@ -86,11 +97,30 @@ final class MeetingSwitchController: ObservableObject {
         }
     }
 
+    /// Панель ждёт своей задержки. Отсчёт один на прогулку, от первого шага: если
+    /// перезапускать его на каждом Tab, панель не появится, пока по списку идут, —
+    /// то есть ровно тогда, когда она и нужна.
+    private func armPanel() {
+        panelTimer?.cancel()
+        panelTimer = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(Tokens.Pane.Switcher.appearDelay))
+            guard !Task.isCancelled, let self, self.walk != nil else { return }
+            self.showsPanel = true
+        }
+    }
+
+    private func end() {
+        panelTimer?.cancel()
+        panelTimer = nil
+        walk = nil
+        showsPanel = false
+    }
+
     func stop() {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
         keyMonitor = nil
         flagsMonitor = nil
-        walk = nil
+        end()
     }
 }

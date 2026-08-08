@@ -83,6 +83,7 @@ struct MainView: View {
             contentPane
         }
         .animation(.easeOut(duration: 0.18), value: sidebarVisible)
+        .overlay(alignment: .topLeading) { windowChrome }
         // Over both columns, because ⌥Tab is a window gesture and the panel is
         // what the rail would have shown if it were up. Centred rather than
         // docked: it is not part of either column, and with the rail away there
@@ -273,7 +274,8 @@ struct MainView: View {
             },
             dissolvingMeetingID: state.dissolvingMeetingID,
             onDissolveFinished: { state.finishDissolvingDeletion() },
-            onToggle: { sidebarVisible = false },
+            // No toggle: the window draws the only one there is (`windowChrome`).
+            onToggle: nil,
             onSearch: {
                 showSearchPalette = true
                 Analytics.signal("Search.opened")
@@ -293,12 +295,17 @@ struct MainView: View {
 
     // MARK: - ⌥Tab
 
-    /// Present exactly while ⌥ is held after the first Tab. Nothing under it is
-    /// clickable: the gesture that called it is the one that dismisses it, and a
-    /// panel you can click but not scroll would promise the wrong thing.
+    /// Only with the rail away. With the rail up the list is already on screen and
+    /// a plate repeating it over the window reads as a second list rather than as
+    /// the same one — the panel exists because the rail cannot be seen, not because
+    /// the walk needs a stage.
+    ///
+    /// Nothing under it is clickable: the gesture that called it is the one that
+    /// dismisses it, and a panel you can click but not scroll would promise the
+    /// wrong thing.
     private var switcherPanel: some View {
         ZStack {
-            if let walk = switching.walk {
+            if let walk = switching.walk, switching.showsPanel, !sidebarVisible {
                 MeetingSwitcherPanel(
                     rows: SidebarPresenter.switcherRows(state: state, store: recordingStore),
                     currentID: walk.currentID,
@@ -311,7 +318,7 @@ struct MainView: View {
         // On the presence of the panel, not on the walk: a step inside it is
         // animated by the panel, and animating both would run two clocks on one
         // movement.
-        .animation(.easeOut(duration: Tokens.Pane.Switcher.fade), value: switching.walk != nil)
+        .animation(.easeOut(duration: Tokens.Pane.Switcher.fade), value: switching.showsPanel)
     }
 
     private func performNav(_ id: String) {
@@ -455,28 +462,33 @@ struct MainView: View {
         return plain.isEmpty ? nil : plain
     }
 
-    /// Traffic-light slot and the re-open toggle, for when the rail is away.
+    /// What a pane header leaves clear for the traffic lights and the toggle when
+    /// the rail is away. Space only — the toggle itself is `windowChrome`, drawn
+    /// over both columns at one fixed place.
     private var collapsedChrome: some View {
-        HStack(spacing: 8) {
-            Color.clear
-                .frame(width: Tokens.Sidebar.trafficLightSlotWidth, height: 32)
-            SidebarChromeButton(symbol: "sidebar.left", help: "Показать список") {
-                sidebarVisible = true
-            }
+        Color.clear
+            .frame(width: Tokens.Window.chromeReserve, height: Tokens.Sidebar.toggleSide)
+    }
+
+    /// The one rail toggle. Not in the rail and not in the pane's header: it is the
+    /// window's, so the rail slides out from under it and the button neither moves
+    /// nor loses the hover it is under at the moment you press it.
+    private var windowChrome: some View {
+        SidebarChromeButton(
+            symbol: "sidebar.left",
+            help: sidebarVisible ? "Скрыть список" : "Показать список"
+        ) {
+            sidebarVisible.toggle()
         }
-        .padding(.leading, Tokens.Window.chromePadding)
+        .padding(.leading, Tokens.Window.chromeToggleLeading)
+        .padding(.top, Tokens.Window.chromeToggleTop)
     }
 
     private var listTopBar: some View {
         HStack(spacing: 0) {
             HStack(spacing: 8) {
                 if !sidebarVisible {
-                    Color.clear
-                        .frame(width: Tokens.Sidebar.trafficLightSlotWidth, height: 32)
-
-                    SidebarChromeButton(symbol: "sidebar.left", help: "Показать список") {
-                        sidebarVisible = true
-                    }
+                    collapsedChrome
                 }
 
                 HStack(spacing: 0) {
