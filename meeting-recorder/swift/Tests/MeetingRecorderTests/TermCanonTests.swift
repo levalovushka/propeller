@@ -65,4 +65,29 @@ final class TermCanonTests: XCTestCase {
         let text = "Договорились: Пётр готовит смету к пятнице."
         XCTAssertEqual(TermCanon.normalize(text), text)
     }
+
+    /// Найдено замером по конспектам, а не по расшифровкам: эти поломки рождаются
+    /// уже после распознавания, и горячие слова до них не достают.
+    func testПоломкиРодомИзКонспекта() {
+        XCTAssertEqual(TermCanon.normalize("десять инстантов"), "десять инстансов")
+        XCTAssertEqual(TermCanon.normalize("инстанты упали"), "инстансы упали")
+        XCTAssertEqual(TermCanon.normalize("ритч-текст в карточке"), "рич-текст в карточке")
+    }
+
+    /// Storybook звучит четырьмя способами и ни разу своим: «стурибук» и
+    /// «стрибук» в расшифровке, «стейтбук» — уже в конспекте, где модель
+    /// подтянула знакомое слово «стейт».
+    func testStorybookВЛюбомИзЧетырёхНаписаний() {
+        for wrong in ["стейтбук", "стрибук", "стурибук", "сторибук"] {
+            XCTAssertEqual(TermCanon.normalize("собрали в \(wrong)е"), "собрали в Storybook")
+        }
+        XCTAssertEqual(TermCanon.normalize("Стейтбук готов"), "Storybook готов")
+    }
+
+    /// «Инстант-кофе» и «стрижка» под правило не попадают: одно короче основы,
+    /// другое начинается иначе. Проверяем, что замена не расползлась.
+    func testСоседниеСловаНеЗадеты() {
+        XCTAssertEqual(TermCanon.normalize("стрижка ежиком"), "стрижка ежиком")
+        XCTAssertEqual(TermCanon.normalize("рич-текст остаётся"), "рич-текст остаётся")
+    }
 }
