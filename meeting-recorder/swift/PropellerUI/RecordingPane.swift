@@ -298,6 +298,8 @@ public struct RecordingPaneBody: View {
     private let notes: [MeetingNote]
     private let composer: MeetingPaneBody.NoteComposer?
     private let onRevealNotes: (() -> Void)?
+    private let onHideNotes: (() -> Void)?
+    private let notesHidden: Bool
     private let notesFocusRequest: Binding<Bool>?
     private let pinnedLeftWidth: Binding<CGFloat?>?
 
@@ -310,6 +312,8 @@ public struct RecordingPaneBody: View {
         notes: [MeetingNote],
         composer: MeetingPaneBody.NoteComposer? = nil,
         onRevealNotes: (() -> Void)? = nil,
+        onHideNotes: (() -> Void)? = nil,
+        notesHidden: Bool = false,
         notesFocusRequest: Binding<Bool>? = nil,
         pinnedLeftWidth: Binding<CGFloat?>? = nil
     ) {
@@ -321,6 +325,8 @@ public struct RecordingPaneBody: View {
         self.notes = notes
         self.composer = composer
         self.onRevealNotes = onRevealNotes
+        self.onHideNotes = onHideNotes
+        self.notesHidden = notesHidden
         self.notesFocusRequest = notesFocusRequest
         self.pinnedLeftWidth = pinnedLeftWidth
     }
@@ -330,6 +336,8 @@ public struct RecordingPaneBody: View {
             notes: notes,
             composer: composer,
             onRevealNotes: onRevealNotes,
+            onHideNotes: onHideNotes,
+            notesHidden: notesHidden,
             notesFocusRequest: notesFocusRequest,
             pinnedLeftWidth: pinnedLeftWidth,
             // Дописали реплику или начали новую — колонка доезжает до низа.

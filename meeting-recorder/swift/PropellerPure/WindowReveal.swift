@@ -55,6 +55,25 @@ public enum WindowReveal {
         return CGRect(x: x, y: window.minY, width: width, height: window.height)
     }
 
+    /// The frame that leaves exactly `contentWidth` points of content.
+    ///
+    /// The counterpart of `frame(revealing:)`, and only ever narrower: the
+    /// notes were put away, so the room they took goes back. The window keeps
+    /// its left edge — growth went rightwards, so the giving back has to come
+    /// off the same edge, or hiding a column would walk the window across the
+    /// screen. Never grows: a window already narrower than the target is one
+    /// whose notes were a button to begin with.
+    public static func frame(
+        hiding contentWidth: CGFloat,
+        window: CGRect,
+        chromeWidth: CGFloat = 0,
+        visible: CGRect
+    ) -> CGRect {
+        let wanted = contentWidth + chromeWidth
+        guard wanted < window.width else { return window }
+        return CGRect(x: window.minX, y: window.minY, width: wanted, height: window.height)
+    }
+
     /// Content width that opens the notes beside the column that was already
     /// showing.
     ///
@@ -74,21 +93,51 @@ public enum WindowReveal {
         return sidebar + max(left + notesWidth, minimumPane)
     }
 
+    /// Content width that folds the notes into their button and leaves the left
+    /// column exactly where it is.
+    ///
+    /// The mirror of `contentWidth(revealingNotesBeside:)`, and deliberately not
+    /// «minus the notes' width»: the button takes `collapsedSlot` of the room
+    /// the column had, so giving back all of it would slide the summary
+    /// leftwards by 52 pt. What the eye is watching is the text, not the edge.
+    public static func contentWidth(
+        hidingNotes split: PaneSplit,
+        sidebar: CGFloat,
+        collapsedSlot: CGFloat
+    ) -> CGFloat {
+        sidebar + split.left + collapsedSlot
+    }
+
     /// Left / notes widths for a pane of `width`.
     ///
     /// `pinnedLeft` is set for the duration of a reveal: the left column stays
     /// put while the window grows and the notes take whatever appears on the
     /// right. Without it, every intermediate width below `openAt` still looks
-    /// collapsed, so the summary widens and then snaps in.
+    /// collapsed, so the summary widens and then snaps in. It holds the same
+    /// column still through a hide, where the window is travelling the other
+    /// way and the summary would otherwise narrow by 52 pt on the way down.
+    ///
+    /// `hidden` is the one thing width cannot say: the notes were *put away*.
+    /// Room is not the question there — a 1200 pt pane has plenty and the
+    /// column still has to go — so it is asked first and answered before any
+    /// arithmetic.
     public static func paneSplit(
         width pane: CGFloat,
         pinnedLeft: CGFloat?,
+        hidden: Bool = false,
         summaryMin: CGFloat,
         notesMin: CGFloat,
         notesMax: CGFloat,
         collapsedSlot: CGFloat,
         openAt: CGFloat
     ) -> PaneSplit {
+        if hidden {
+            return PaneSplit(
+                left: pinnedLeft ?? max(0, pane - collapsedSlot),
+                notes: collapsedSlot,
+                open: false
+            )
+        }
         if let pinned = pinnedLeft {
             return PaneSplit(left: pinned, notes: max(0, pane - pinned), open: true)
         }

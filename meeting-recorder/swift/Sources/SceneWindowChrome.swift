@@ -105,6 +105,27 @@ enum AppWindowRegistry {
         persistFrame(window)
     }
 
+    /// Give back the room a column took — what «скрыть заметки» asks for, and
+    /// the exact counterpart of `widenMain`. Never grows, keeps the left edge;
+    /// the arithmetic is `WindowReveal`. AppKit's own `minSize` is the floor,
+    /// so a target under it lands on it rather than being refused here.
+    static func narrowMain(toContentWidth contentWidth: CGFloat) {
+        guard let window = mainWindow(),
+              let visible = (window.screen ?? NSScreen.main)?.visibleFrame
+        else { return }
+        let frame = window.frame
+        let chrome = frame.width - window.contentRect(forFrameRect: frame).width
+        let target = WindowReveal.frame(
+            hiding: contentWidth,
+            window: frame,
+            chromeWidth: chrome,
+            visible: visible
+        )
+        guard target != frame else { return }
+        window.setFrame(target, display: true, animate: true)
+        persistFrame(window)
+    }
+
     static func placeCentered(_ window: NSWindow, contentSize: CGSize) {
         guard let visible = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
         window.setContentSize(contentSize)

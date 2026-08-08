@@ -121,6 +121,98 @@ final class WindowRevealTests: XCTestCase {
         )
     }
 
+    // MARK: - Putting the notes away
+
+    /// The whole point of the button: what you are reading does not move. Only
+    /// the right edge of the window does.
+    func testHidingTheNotesLeavesTheSummaryExactlyWhereItWas() {
+        let sidebar = Tokens.Sidebar.width
+        let pane: CGFloat = 1200
+        let open = split(width: pane)
+        XCTAssertTrue(open.open)
+
+        let target = WindowReveal.contentWidth(
+            hidingNotes: open,
+            sidebar: sidebar,
+            collapsedSlot: Tokens.Pane.notesCollapsedSide
+        )
+        let settled = split(width: target - sidebar, hidden: true)
+        XCTAssertFalse(settled.open)
+        XCTAssertEqual(
+            settled.left, open.left, accuracy: 0.5,
+            "Саммари стоит там же — сузился только правый край окна."
+        )
+    }
+
+    /// Hide, then press the button that brings them back: the summary is the
+    /// width it started at. A round trip that drifts by 52 pt walks the text
+    /// sideways every time you use the control.
+    func testHideThenRevealIsARoundTrip() {
+        let sidebar = Tokens.Sidebar.width
+        let before = split(width: 1200)
+
+        let hiddenContent = WindowReveal.contentWidth(
+            hidingNotes: before,
+            sidebar: sidebar,
+            collapsedSlot: Tokens.Pane.notesCollapsedSide
+        )
+        let backContent = WindowReveal.contentWidth(
+            revealingNotesBeside: hiddenContent,
+            sidebar: sidebar,
+            collapsedSlot: Tokens.Pane.notesCollapsedSide,
+            notesWidth: Tokens.Pane.notesMaxWidth,
+            minimumPane: Tokens.Pane.notesCollapseBelow
+        )
+        let after = split(width: backContent - sidebar)
+        XCTAssertTrue(after.open)
+        XCTAssertEqual(after.left, before.left, accuracy: 0.5)
+        XCTAssertEqual(after.notes, before.notes, accuracy: 0.5)
+    }
+
+    /// Room is not the question. A pane with 1200 pt of it still has to put the
+    /// notes away when it is asked to — that is what width alone cannot say.
+    func testHiddenNotesStayHiddenHoweverWideThePaneIs() {
+        let wide = split(width: 1200, hidden: true)
+        XCTAssertFalse(wide.open)
+        XCTAssertEqual(wide.notes, Tokens.Pane.notesCollapsedSide)
+        XCTAssertEqual(wide.left, 1200 - Tokens.Pane.notesCollapsedSide, accuracy: 0.5)
+    }
+
+    /// The pin holds through a hide too — the window is travelling the other
+    /// way, and without it the summary narrows by 52 pt on the way down and
+    /// comes back at the end.
+    func testPinnedSplitHoldsTheLeftColumnWhileTheWindowNarrows() {
+        let left: CGFloat = 920
+        let mid = split(width: 1100, pinned: left, hidden: true)
+        XCTAssertFalse(mid.open)
+        XCTAssertEqual(mid.left, left)
+    }
+
+    func testAWindowGivesBackOnlyTheRoomTheNotesTook() {
+        let window = CGRect(x: 100, y: 100, width: 1240, height: 640)
+        let narrowed = WindowReveal.frame(hiding: 1012, window: window, visible: screen)
+        XCTAssertEqual(narrowed.width, 1012)
+        XCTAssertEqual(narrowed.minX, 100, "Room came off the right edge; it goes back there.")
+        XCTAssertEqual(narrowed.height, 640)
+    }
+
+    func testHidingNeverWidensAWindow() {
+        let window = CGRect(x: 100, y: 100, width: 900, height: 640)
+        XCTAssertEqual(
+            WindowReveal.frame(hiding: 1060, window: window, visible: screen),
+            window,
+            "«Скрыть» не может сделать окно шире."
+        )
+    }
+
+    func testTitlebarChromeIsCountedInWhenNarrowing() {
+        let window = CGRect(x: 100, y: 100, width: 1240, height: 640)
+        let narrowed = WindowReveal.frame(
+            hiding: 1012, window: window, chromeWidth: 16, visible: screen
+        )
+        XCTAssertEqual(narrowed.width, 1028, "1012 pt of content is still 1012 pt of content.")
+    }
+
     // MARK: - Ordinary adaptivity (pin is nil — every path but the button click)
 
     /// The pin is a reveal-only latch. With it off, the split is the same
@@ -166,10 +258,13 @@ final class WindowRevealTests: XCTestCase {
         XCTAssertEqual(mid.left, Tokens.Pane.summaryMinWidth, accuracy: 0.5)
     }
 
-    private func split(width: CGFloat, pinned: CGFloat? = nil) -> WindowReveal.PaneSplit {
+    private func split(
+        width: CGFloat, pinned: CGFloat? = nil, hidden: Bool = false
+    ) -> WindowReveal.PaneSplit {
         WindowReveal.paneSplit(
             width: width,
             pinnedLeft: pinned,
+            hidden: hidden,
             summaryMin: Tokens.Pane.summaryMinWidth,
             notesMin: Tokens.Pane.notesMinWidth,
             notesMax: Tokens.Pane.notesMaxWidth,

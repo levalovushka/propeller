@@ -580,6 +580,12 @@ public struct MeetingNote: Identifiable, Equatable, Sendable {
 }
 
 /// What you wrote while it was happening, and a place to write more.
+///
+/// Every entry is a plate — the rail's meeting row, in the other column: same
+/// fill, same corner, same insets. Before them the column was text on a
+/// background, and two short notes in a row read as one paragraph with a
+/// strange line break in it. Where one ends is a thing the eye should not have
+/// to work out from the meaning.
 public struct MeetingNotesColumn: View {
     private let notes: [MeetingNote]
     private let composer: MeetingPaneBody.NoteComposer?
@@ -587,21 +593,27 @@ public struct MeetingNotesColumn: View {
     /// composer takes the caret the moment it exists. Lowered as soon as it is
     /// honoured — a request left standing steals the caret on every re-layout.
     private let focusRequest: Binding<Bool>?
+    /// Puts the column away. Absent in the gallery, where there is no window to
+    /// shrink — the header then carries its title and nothing else.
+    private let onCollapse: (() -> Void)?
 
     @FocusState private var composerFocused: Bool
 
     public init(
         notes: [MeetingNote],
         composer: MeetingPaneBody.NoteComposer? = nil,
-        focusRequest: Binding<Bool>? = nil
+        focusRequest: Binding<Bool>? = nil,
+        onCollapse: (() -> Void)? = nil
     ) {
         self.notes = notes
         self.composer = composer
         self.focusRequest = focusRequest
+        self.onCollapse = onCollapse
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: Tokens.Pane.noteGap) {
+            header
             if let composer {
                 NoteComposerRow(composer: composer, focused: $composerFocused)
             }
@@ -617,6 +629,28 @@ public struct MeetingNotesColumn: View {
         // would listen for happens before there is anything to listen with.
         .onAppear { claimFocus() }
         .onChange(of: focusRequest?.wrappedValue ?? false) { _, _ in claimFocus() }
+    }
+
+    /// Says what the column is, and holds the one control that can take it
+    /// away. The button sits hard against the column's inset, which is the
+    /// pane's inset too — so it stands in the same vertical line as «поделиться»
+    /// in the header above and as the folded button that replaces this column.
+    private var header: some View {
+        HStack(spacing: 0) {
+            Text("Заметки")
+                .typoBlock(Tokens.Pane.Typo.notesHeader)
+                .foregroundStyle(Tokens.Pane.placeholder)
+                .padding(.leading, Tokens.Pane.notesHeaderLeadingInset)
+            Spacer(minLength: Tokens.Space.s8)
+            if let onCollapse {
+                PaneIconButton(
+                    symbol: "chevron.right.2",
+                    help: "Скрыть заметки — окно станет уже",
+                    action: onCollapse
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: Tokens.Pane.notesHeaderHeight)
     }
 
     private func claimFocus() {
@@ -643,9 +677,7 @@ private struct NoteComposerRow: View {
             .foregroundStyle(Tokens.Pane.body)
             .lineLimit(1...6)
             .onSubmit(composer.onCommit)
-            .padding(.horizontal, Tokens.Pane.noteHPadding)
-            .padding(.vertical, Tokens.Pane.noteVPadding)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .notePlate()
     }
 }
 
@@ -660,9 +692,23 @@ private struct NoteRow: View {
             .foregroundStyle(colour)
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
+            .notePlate()
+    }
+}
+
+private extension View {
+    /// One note's plate. The composer wears it too: what you are writing and
+    /// what you wrote are the same kind of thing, and a field that looks unlike
+    /// its own output reads as a search box.
+    func notePlate() -> some View {
+        self
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, Tokens.Pane.noteHPadding)
             .padding(.vertical, Tokens.Pane.noteVPadding)
+            .background(
+                Tokens.Pane.notePlateFill,
+                in: RoundedRectangle(cornerRadius: Tokens.Pane.noteRadius, style: .continuous)
+            )
     }
 }
 
@@ -783,6 +829,10 @@ public struct MeetingPaneBody: View {
     /// What the collapsed notes button asks for: room. The pane cannot make
     /// any — its width is the window's — so it hands the request up.
     private let onRevealNotes: (() -> Void)?
+    /// The same request the other way round: give the room back.
+    private let onHideNotes: (() -> Void)?
+    /// Их убрали руками, а не по нехватке места.
+    private let notesHidden: Bool
     /// Set by whoever answers that request, cleared by the composer once it has
     /// the caret. See `MeetingNotesColumn.focusRequest`.
     private let notesFocusRequest: Binding<Bool>?
@@ -830,6 +880,8 @@ public struct MeetingPaneBody: View {
         transcriptSource: TranscriptSource = .stored,
         transcriptDisclosure: String? = nil,
         onRevealNotes: (() -> Void)? = nil,
+        onHideNotes: (() -> Void)? = nil,
+        notesHidden: Bool = false,
         notesFocusRequest: Binding<Bool>? = nil,
         pinnedLeftWidth: Binding<CGFloat?>? = nil,
         summaryController: SummaryEditorController = SummaryEditorController(),
@@ -845,6 +897,8 @@ public struct MeetingPaneBody: View {
         self.transcriptSource = transcriptSource
         self.transcriptDisclosure = transcriptDisclosure
         self.onRevealNotes = onRevealNotes
+        self.onHideNotes = onHideNotes
+        self.notesHidden = notesHidden
         self.notesFocusRequest = notesFocusRequest
         self.pinnedLeftWidth = pinnedLeftWidth
         self.summaryController = summaryController
@@ -857,6 +911,8 @@ public struct MeetingPaneBody: View {
             notes: notes,
             composer: composer,
             onRevealNotes: onRevealNotes,
+            onHideNotes: onHideNotes,
+            notesHidden: notesHidden,
             notesFocusRequest: notesFocusRequest,
             pinnedLeftWidth: pinnedLeftWidth
         ) {
@@ -942,6 +998,12 @@ struct PaneColumns<Left: View>: View {
     let notes: [MeetingNote]
     let composer: MeetingPaneBody.NoteComposer?
     let onRevealNotes: (() -> Void)?
+    /// Убирает колонку по просьбе человека, а не по нехватке места. Nil там, где
+    /// окна нет и сужать нечего.
+    var onHideNotes: (() -> Void)? = nil
+    /// Их убрали руками. Ширина этого сказать не может: на панели в 1200 pt
+    /// места вдоволь, а колонка всё равно должна уйти.
+    var notesHidden: Bool = false
     let notesFocusRequest: Binding<Bool>?
     /// Left width held while the window grows for a notes reveal. Nil outside
     /// that animation — ordinary split rules apply.
@@ -965,6 +1027,7 @@ struct PaneColumns<Left: View>: View {
             let split = WindowReveal.paneSplit(
                 width: geo.size.width,
                 pinnedLeft: pinnedLeftWidth?.wrappedValue,
+                hidden: notesHidden,
                 summaryMin: Tokens.Pane.summaryMinWidth,
                 notesMin: Tokens.Pane.notesMinWidth,
                 notesMax: Tokens.Pane.notesMaxWidth,
@@ -998,7 +1061,8 @@ struct PaneColumns<Left: View>: View {
                         MeetingNotesColumn(
                             notes: notes,
                             composer: composer,
-                            focusRequest: notesFocusRequest
+                            focusRequest: notesFocusRequest,
+                            onCollapse: onHideNotes
                         )
                         .frame(width: split.notes)
                     }
@@ -1022,13 +1086,14 @@ struct PaneColumns<Left: View>: View {
         let natural = WindowReveal.paneSplit(
             width: paneWidth,
             pinnedLeft: nil,
+            hidden: notesHidden,
             summaryMin: Tokens.Pane.summaryMinWidth,
             notesMin: Tokens.Pane.notesMinWidth,
             notesMax: Tokens.Pane.notesMaxWidth,
             collapsedSlot: Tokens.Pane.notesCollapsedSide,
             openAt: Tokens.Pane.notesCollapseBelow
         )
-        guard natural.open, abs(natural.left - pinned) < 1 else { return }
+        guard natural.open == !notesHidden, abs(natural.left - pinned) < 1 else { return }
         pinnedLeftWidth?.wrappedValue = nil
     }
 }
@@ -1057,12 +1122,24 @@ struct CollapsedNotesButton: View {
                 .frame(width: Tokens.Pane.headerButtonSide, height: Tokens.Pane.headerButtonSide)
                 .background(
                     hovering ? Tokens.Sidebar.rowHover : .clear,
-                    in: RoundedRectangle(cornerRadius: Tokens.Pane.noteRadius, style: .continuous)
+                    in: RoundedRectangle(
+                        cornerRadius: Tokens.Pane.headerButtonRadius, style: .continuous
+                    )
                 )
         }
         .buttonStyle(.plain)
         .disabled(onReveal == nil)
-        .frame(width: Tokens.Pane.notesCollapsedSide, height: Tokens.Pane.notesCollapsedSide)
+        // Прижата к правому краю тем же отступом, что и кластер шапки, а не
+        // отцентрована в своём слоте: по центру она стояла на 26 pt от края
+        // окна против 24 pt у «поделиться» прямо над ней, и две иконки в одном
+        // столбце расходились на два пункта — ровно столько, чтобы это было
+        // видно и нечем было объяснить.
+        .padding(.trailing, Tokens.Pane.headerActionsPadding)
+        .frame(
+            width: Tokens.Pane.notesCollapsedSide,
+            height: Tokens.Pane.notesCollapsedSide,
+            alignment: .trailing
+        )
         .onHover { hovering = $0 && onReveal != nil }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
         .help(hint)

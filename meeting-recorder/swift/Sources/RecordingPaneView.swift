@@ -17,6 +17,8 @@ struct RecordingPaneView: View {
     let notes: [MeetingNote]
     let composer: MeetingPaneBody.NoteComposer
     let onRevealNotes: () -> Void
+    let onHideNotes: () -> Void
+    let notesHidden: Bool
     @Binding var notesFocusRequest: Bool
     @Binding var pinnedLeftWidth: CGFloat?
 
@@ -33,6 +35,8 @@ struct RecordingPaneView: View {
             notes: notes,
             composer: composer,
             onRevealNotes: onRevealNotes,
+            onHideNotes: onHideNotes,
+            notesHidden: notesHidden,
             notesFocusRequest: $notesFocusRequest,
             pinnedLeftWidth: $pinnedLeftWidth
         )

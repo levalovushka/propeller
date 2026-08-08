@@ -37,6 +37,15 @@ struct MainView: View {
     /// collapse toggle and the traffic lights move into the content header.
     @AppStorage("sidebarVisible") private var sidebarVisible = true
 
+    /// Так же можно убрать и заметки — и это состояние, а не ширина.
+    ///
+    /// Свернуть колонку по ширине нельзя: на широком окне места хватает, и
+    /// сколько окно ни сужай, оно останется шире порога — то есть просьбу
+    /// «убери заметки» негде было бы записать. Живёт рядом с рельсом и хранится
+    /// так же: окно помнит свой размер между запусками, и если бы заметки не
+    /// помнили своё, они возвращались бы сами.
+    @AppStorage("notesVisible") private var notesVisible = true
+
     /// Which column the pane is showing. The comps switch this from the action
     /// bar; until that is built it lives in the header's «ещё» menu.
     @State private var paneMode: MeetingPaneMode = .summary
@@ -677,6 +686,8 @@ struct MainView: View {
                 notes: noteModels(for: entry),
                 composer: .init(text: $draftNote) { commitNote(for: entry) },
                 onRevealNotes: revealNotes,
+                onHideNotes: hideNotes,
+                notesHidden: !notesVisible,
                 notesFocusRequest: $focusNoteComposer,
                 pinnedLeftWidth: $notesRevealLeft
             )
@@ -699,6 +710,8 @@ struct MainView: View {
                 transcriptSource: liveTurnsStandIn(for: entry) ? .live : .stored,
                 transcriptDisclosure: entry.depthDisclosure,
                 onRevealNotes: revealNotes,
+                onHideNotes: hideNotes,
+                notesHidden: !notesVisible,
                 notesFocusRequest: $focusNoteComposer,
                 pinnedLeftWidth: $notesRevealLeft,
                 summaryController: summaryEditing,
@@ -937,14 +950,15 @@ struct MainView: View {
     /// composer takes the caret as soon as the column exists.
     private func revealNotes() {
         focusNoteComposer = true
+        notesVisible = true
         let sidebar = sidebarVisible ? Tokens.Sidebar.width : 0
-        let contentWidth: CGFloat
-        if let window = AppWindowRegistry.mainWindow() {
-            contentWidth = window.contentRect(forFrameRect: window.frame).width
-        } else {
-            contentWidth = sidebar + Tokens.Window.defaultPaneWidth
-        }
+        let contentWidth = mainContentWidth(sidebar: sidebar)
         let pane = contentWidth - sidebar
+        // Room is asked for only when there is none. A pane that could already
+        // hold the notes — they were put away by hand, not for want of space —
+        // opens them by itself, and growing it anyway would push the window
+        // 280 pt wider to protect a summary nobody asked to keep that wide.
+        guard pane < Tokens.Pane.notesCollapseBelow else { return }
         notesRevealLeft = max(0, pane - Tokens.Pane.notesCollapsedSide)
         AppWindowRegistry.widenMain(
             toContentWidth: WindowReveal.contentWidth(
@@ -961,6 +975,49 @@ struct MainView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
             notesRevealLeft = nil
         }
+    }
+
+    /// «Скрыть заметки» — раскрытие наоборот. Окно отдаёт обратно ту ширину,
+    /// которую заняла колонка, забирая её с правого края, а левая колонка стоит
+    /// там же, где стояла: то, что человек читает, не двигается вовсе, двигается
+    /// край окна. Пришпилена она по той же причине, что и при раскрытии — по
+    /// дороге вниз обычное правило сузило бы саммари на 52 pt и вернуло обратно.
+    private func hideNotes() {
+        notesVisible = false
+        let sidebar = sidebarVisible ? Tokens.Sidebar.width : 0
+        let contentWidth = mainContentWidth(sidebar: sidebar)
+        let split = WindowReveal.paneSplit(
+            width: contentWidth - sidebar,
+            pinnedLeft: nil,
+            summaryMin: Tokens.Pane.summaryMinWidth,
+            notesMin: Tokens.Pane.notesMinWidth,
+            notesMax: Tokens.Pane.notesMaxWidth,
+            collapsedSlot: Tokens.Pane.notesCollapsedSide,
+            openAt: Tokens.Pane.notesCollapseBelow
+        )
+        // Already a button for want of room: there is nothing to give back, and
+        // narrowing the window on top of that would eat the summary.
+        guard split.open else { return }
+        notesRevealLeft = split.left
+        AppWindowRegistry.narrowMain(
+            toContentWidth: WindowReveal.contentWidth(
+                hidingNotes: split,
+                sidebar: sidebar,
+                collapsedSlot: Tokens.Pane.notesCollapsedSide
+            )
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            notesRevealLeft = nil
+        }
+    }
+
+    /// Ширина содержимого окна. Окна может не быть — панель рисуют и в галерее,
+    /// где спрашивать не у кого; тогда это та ширина, с которой окно открывается.
+    private func mainContentWidth(sidebar: CGFloat) -> CGFloat {
+        guard let window = AppWindowRegistry.mainWindow() else {
+            return sidebar + Tokens.Window.defaultPaneWidth
+        }
+        return window.contentRect(forFrameRect: window.frame).width
     }
 
     private func commitNote(for entry: RecordingEntry) {

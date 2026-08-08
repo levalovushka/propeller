@@ -795,10 +795,28 @@ public enum Tokens {
         /// squeezing the text — at 601 the comps give the summary 549 and the
         /// notes a button.
         public static let notesCollapseBelow: CGFloat = summaryMinWidth + notesMinWidth
-        /// One note: `px-12 py-8 rounded-6`.
-        public static let noteHPadding = Space.s12
-        public static let noteVPadding = Space.s8
-        public static let noteRadius = Radius.xxs
+        /// Одна заметка — плашка, буквально строка встречи под ховером: тот же
+        /// оттенок, то же скругление, те же отступы, что у групп настроек
+        /// (`Settings.plateFill`). Не «похожая», а та же — в одном окне две
+        /// разные плашки читаются как два разных приложения.
+        ///
+        /// До этого заметки были голым текстом с отступами, и подряд идущие
+        /// короткие записи сливались в один абзац: где кончилась одна и
+        /// началась вторая, было видно только по смыслу.
+        public static let notePlateFill = Sidebar.rowHover
+        public static let noteRadius = Sidebar.meetingRadius
+        public static let noteHPadding = Sidebar.meetingHPadding
+        public static let noteVPadding = Sidebar.meetingVPadding
+        /// Между плашками. Меньше их внутреннего отступа: зазор обязан читаться
+        /// как шов между двумя записями, а не как ещё одна пустая строка.
+        public static let noteGap = Space.s8
+        /// Шапка колонки: «Заметки» и кнопка, которая её убирает. Высоту задаёт
+        /// кнопка, а не заголовок, — иначе 32 pt иконки распирали бы 22 pt
+        /// строки и зазор до первой плашки поехал бы.
+        public static let notesHeaderHeight = headerButtonSide
+        /// Отступ заголовка слева. Как в настройках, чуть меньше внутреннего
+        /// отступа плашки: совпадение до пикселя склеило бы их в один блок.
+        public static let notesHeaderLeadingInset = Space.s12
 
         // MARK: Paint
 
@@ -807,7 +825,6 @@ public enum Tokens {
         public static let body = Sidebar.navLabelSelected
         public static let placeholder = Sidebar.sectionHeader
         public static let buttonIcon = Sidebar.chromeIcon
-        public static let noteHoverFill = Sidebar.rowHover
 
         // MARK: The summary as an editor
 
@@ -986,6 +1003,9 @@ public enum Tokens {
             public static let sectionTracking: CGFloat = -0.14
             /// 14 / 18 regular — a note.
             public static let note = Sidebar.Typo.meetingTitle
+            /// 11 / 14 regular — «Заметки» over the column. The rail's date
+            /// header, sideways: same face, same job, same quiet.
+            public static let notesHeader = Sidebar.Typo.sectionHeader
             /// 11 / 14 regular — the speaker and timecode over a remark.
             public static let transcriptMeta = Sidebar.Typo.meta
             /// Реплика — тем же кеглем, что и саммари.
