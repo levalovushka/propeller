@@ -377,7 +377,14 @@ struct MainView: View {
                     )
                 )
         }
-        .animation(.default, value: paneSubject)
+        // Not while a meeting is burning. Deleting the open one moves the selection
+        // on purpose *without* an animation (`removeRecording` wraps that call in a
+        // transaction that disables them), because during a deletion the rail is
+        // already the thing in motion and a second show beside it reads as the
+        // layout flinching before it slides. Keying the swap on `paneSubject` put
+        // that animation back — which is why the jerk came back at the *start* of a
+        // deletion, and only when the meeting being deleted was the open one.
+        .animation(state.dissolvingMeetingID == nil ? .default : nil, value: paneSubject)
         // Свечения по краям окна во время записи больше нет. Оно светилось
         // уровнями двух дорожек — то есть отвечало на вопрос «работает ли
         // захват» тем, что красило края экрана всю встречу. На этот вопрос
