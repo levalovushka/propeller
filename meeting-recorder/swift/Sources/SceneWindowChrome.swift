@@ -250,6 +250,36 @@ struct SceneWindowChrome: NSViewRepresentable {
                 buttonHeight: button.bounds.height
             )
             button.setFrameOrigin(NSPoint(x: origin.x, y: origin.y))
+            keepInPlace(button)
+        }
+    }
+
+    /// Placing the buttons once only holds until AppKit lays the titlebar out for
+    /// itself — and at launch that happens *after* us, which put them back at the
+    /// system position: measured `x 9, y 9` instead of `24, 18`, so the discs sat
+    /// higher and further left than every other element in the top row. Resizing
+    /// the window fixed it, because that ran our pass again — which is exactly the
+    /// shape of a race, not of a wrong number.
+    ///
+    /// So the buttons are *watched* rather than placed. When one moves and it is
+    /// not where the design says, it goes back; setting a frame to the value it
+    /// already has posts nothing, so this settles in one step instead of
+    /// ping-ponging with AppKit. One observer per button, for the app's lifetime —
+    /// the window outlives everything here.
+    private static var watchedButtons = Set<ObjectIdentifier>()
+
+    private static func keepInPlace(_ button: NSButton) {
+        let key = ObjectIdentifier(button)
+        guard !watchedButtons.contains(key) else { return }
+        watchedButtons.insert(key)
+        button.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            forName: NSView.frameDidChangeNotification,
+            object: button,
+            queue: .main
+        ) { note in
+            guard let moved = note.object as? NSView, let window = moved.window else { return }
+            positionTrafficLights(on: window)
         }
     }
 }
