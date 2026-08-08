@@ -490,6 +490,12 @@ private struct SidebarMeetingScroll: View {
     /// store — the list slid up gently and jumped the last 46 pt. It only ever
     /// showed on the last meeting of a day, because that is the only time this
     /// furniture goes anywhere.
+    /// **Nothing here animates the rows.** Each collapsing piece carries its own
+    /// `.animation`, and neither of them is an ancestor of a row — one on the
+    /// container would have covered the rows too, and a row is already animating
+    /// its own height from its own transaction. Two clocks on one property is what
+    /// the note above `listSignature` is about, and what made the list jump at the
+    /// start of a deletion instead of the end of one.
     @ViewBuilder
     private func dayGroup(_ group: SidebarMeetingGroup) -> some View {
         let vanishing = isVanishing(group)
@@ -509,6 +515,7 @@ private struct SidebarMeetingScroll: View {
                     )
                     .clipped()
                     .opacity(vanishing ? 0 : 1)
+                    .animation(collapse(vanishing), value: vanishing)
             }
             ForEach(group.rows) { row in
                 SidebarMeetingRow(
@@ -525,16 +532,22 @@ private struct SidebarMeetingScroll: View {
                 // Opacity only — move transitions shove neighbours.
                 .transition(.opacity)
             }
+            // The gap to the next group, as a view rather than as the stack's
+            // spacing: spacing belongs to nobody, and this has to leave with the
+            // group it follows. A view can also carry its own animation, which
+            // padding on the container could not do without wrapping the rows.
+            Color.clear
+                .frame(height: vanishing ? 0 : Tokens.Sidebar.groupGap)
+                .animation(collapse(vanishing), value: vanishing)
         }
-        .padding(.bottom, vanishing ? 0 : Tokens.Sidebar.groupGap)
-        // Only on the way out. Undo mid-ash snaps the row back without animation
-        // (`resetSlotCollapse`), and a date easing back in over half a second
-        // while the row it heads is already there would be the same mismatch
-        // pointing the other way.
-        .animation(
-            vanishing ? .easeInOut(duration: Tokens.Motion.Ash.duration) : nil,
-            value: vanishing
-        )
+    }
+
+    /// The ash's own clock — so the date, the gap and the slot under them are one
+    /// movement. Nil on the way back: undo mid-ash snaps the row into place with
+    /// animations disabled (`resetSlotCollapse`), and a date easing in over half a
+    /// second above a row that is already there is the same mismatch reversed.
+    private func collapse(_ vanishing: Bool) -> Animation? {
+        vanishing ? .easeInOut(duration: Tokens.Motion.Ash.duration) : nil
     }
 
     /// Is this whole group on its way out — the meeting burning being the only one
