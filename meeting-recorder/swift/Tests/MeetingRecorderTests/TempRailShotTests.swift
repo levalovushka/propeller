@@ -51,7 +51,15 @@ final class TempRailShotTests: XCTestCase {
                         preview: "Пересборка главной под Rich Text, VK Микс уступает место кластерам",
                         state: .rest
                     ),
-                ])
+                ]),
+                SidebarMeetingGroup(id: "g1", header: "Четверг, 31 июля", rows: [
+                    SidebarMeetingRowModel(
+                        id: "4", meta: "11:00 · 21 мин",
+                        title: "Один в своём дне.",
+                        preview: "Единственная встреча под этой датой",
+                        state: .rest
+                    ),
+                ]),
             ]
         )
 
@@ -60,7 +68,13 @@ final class TempRailShotTests: XCTestCase {
         let size = CGSize(width: Tokens.Sidebar.width, height: 560)
         let root = ZStack {
             Color(red: 0.07, green: 0.07, blue: 0.08)
-            PropellerSidebar(model: model, trafficLights: .drawn, onToggle: {}, onSearch: {})
+            PropellerSidebar(
+                model: model, trafficLights: .drawn,
+                // Set to «4» to photograph the group that is on its way out: its
+                // date and its gap must already be gone.
+                dissolvingMeetingID: ProcessInfo.processInfo.environment["RAIL_SHOT_DISSOLVING"],
+                onToggle: {}, onSearch: {}
+            )
         }
         .environment(\.colorScheme, .dark)
         .frame(width: size.width, height: size.height)

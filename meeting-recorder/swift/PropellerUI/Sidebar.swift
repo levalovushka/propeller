@@ -431,32 +431,13 @@ private struct SidebarMeetingScroll: View {
         ScrollView(.vertical) {
             // `VStack`, not `LazyVStack`: the rail is short enough, and lazy
             // stacks skip insert/remove transitions — neighbours just teleport.
-            VStack(alignment: .leading, spacing: Tokens.Sidebar.groupGap) {
+            // Spacing 0: the gap between groups is each group's own bottom
+            // padding, so a group that leaves takes its gap with it. As stack
+            // spacing it belonged to nobody, and vanished in one frame after the
+            // ash — see `dayGroup`.
+            VStack(alignment: .leading, spacing: 0) {
                 ForEach(groups) { group in
-                    VStack(alignment: .leading, spacing: 0) {
-                        if let header = group.header {
-                            Text(header)
-                                .typoBlock(Tokens.Sidebar.Typo.sectionHeader)
-                                .foregroundStyle(Tokens.Sidebar.sectionHeader)
-                                .padding(.horizontal, Tokens.Sidebar.meetingHPadding)
-                                .padding(.bottom, Tokens.Sidebar.sectionHeaderBottomGap)
-                        }
-                        ForEach(group.rows) { row in
-                            SidebarMeetingRow(
-                                row: row,
-                                action: { onSelectMeeting(row.id) },
-                                onDelete: onDeleteMeeting.map { delete in { delete(row.id) } },
-                                onRestore: onRestoreMeeting.map { restore in { restore(row.id) } },
-                                onCopySummary: onCopySummary.map { copy in { copy(row.id) } },
-                                onShare: onShareMeeting.map { share in { share(row.id) } },
-                                onRevealInFinder: onRevealMeeting.map { reveal in { reveal(row.id) } },
-                                isDissolving: row.id == dissolvingMeetingID,
-                                onDissolveFinished: reportDissolveFinished
-                            )
-                            // Opacity only — move transitions shove neighbours.
-                            .transition(.opacity)
-                        }
-                    }
+                    dayGroup(group)
                 }
             }
             .padding(.horizontal, Tokens.Sidebar.bodyHPadding)
@@ -495,6 +476,72 @@ private struct SidebarMeetingScroll: View {
                     .frame(height: max(0, bottomClear))
             }
         }
+    }
+
+    /// One day's meetings, under its date.
+    ///
+    /// The group carries its own furniture: the date above it and the gap below it.
+    /// Both collapse on the ash's clock when the meeting burning is the last one
+    /// left in the group, because then there is nothing for the date to head and
+    /// nothing for the gap to separate.
+    ///
+    /// Without that, a row would collapse smoothly to nothing and *then* 22 pt of
+    /// date and 24 pt of gap would leave in a single frame as the entry left the
+    /// store — the list slid up gently and jumped the last 46 pt. It only ever
+    /// showed on the last meeting of a day, because that is the only time this
+    /// furniture goes anywhere.
+    @ViewBuilder
+    private func dayGroup(_ group: SidebarMeetingGroup) -> some View {
+        let vanishing = isVanishing(group)
+        VStack(alignment: .leading, spacing: 0) {
+            if let header = group.header {
+                Text(header)
+                    .typoBlock(Tokens.Sidebar.Typo.sectionHeader)
+                    .foregroundStyle(Tokens.Sidebar.sectionHeader)
+                    .padding(.horizontal, Tokens.Sidebar.meetingHPadding)
+                    .padding(.bottom, Tokens.Sidebar.sectionHeaderBottomGap)
+                    // The block's own height, stated so it can be animated to
+                    // nothing. Equal to what it measures anyway, so a group that is
+                    // staying is laid out exactly as before.
+                    .frame(
+                        height: vanishing ? 0 : Tokens.Sidebar.sectionHeaderBlockHeight,
+                        alignment: .top
+                    )
+                    .clipped()
+                    .opacity(vanishing ? 0 : 1)
+            }
+            ForEach(group.rows) { row in
+                SidebarMeetingRow(
+                    row: row,
+                    action: { onSelectMeeting(row.id) },
+                    onDelete: onDeleteMeeting.map { delete in { delete(row.id) } },
+                    onRestore: onRestoreMeeting.map { restore in { restore(row.id) } },
+                    onCopySummary: onCopySummary.map { copy in { copy(row.id) } },
+                    onShare: onShareMeeting.map { share in { share(row.id) } },
+                    onRevealInFinder: onRevealMeeting.map { reveal in { reveal(row.id) } },
+                    isDissolving: row.id == dissolvingMeetingID,
+                    onDissolveFinished: reportDissolveFinished
+                )
+                // Opacity only — move transitions shove neighbours.
+                .transition(.opacity)
+            }
+        }
+        .padding(.bottom, vanishing ? 0 : Tokens.Sidebar.groupGap)
+        // Only on the way out. Undo mid-ash snaps the row back without animation
+        // (`resetSlotCollapse`), and a date easing back in over half a second
+        // while the row it heads is already there would be the same mismatch
+        // pointing the other way.
+        .animation(
+            vanishing ? .easeInOut(duration: Tokens.Motion.Ash.duration) : nil,
+            value: vanishing
+        )
+    }
+
+    /// Is this whole group on its way out — the meeting burning being the only one
+    /// left under its date.
+    private func isVanishing(_ group: SidebarMeetingGroup) -> Bool {
+        guard let dissolvingMeetingID else { return false }
+        return group.rows.count == 1 && group.rows.first?.id == dissolvingMeetingID
     }
 
     private func reportDissolveFinished() {
