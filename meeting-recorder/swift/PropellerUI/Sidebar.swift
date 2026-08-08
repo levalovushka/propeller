@@ -457,6 +457,9 @@ private struct SidebarMeetingScroll: View {
             }
         }
         .scrollIndicators(.automatic)
+        // Told to the whole list, not to the row being deleted: the row that has to
+        // hold still is the *neighbour*, which is about to be selected in its place.
+        .environment(\.sidebarDeletionInFlight, dissolvingMeetingID != nil)
         .mask {
             VStack(spacing: 0) {
                 LinearGradient(
@@ -788,6 +791,7 @@ public struct SidebarMeetingRow: View {
     @StateObject private var statusTypewriter = SoftTypewriterSession()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.sidebarSweepFrozen) private var sweepFrozen
+    @Environment(\.sidebarDeletionInFlight) private var deletionInFlight
 
     public init(
         row: SidebarMeetingRowModel,
@@ -859,7 +863,14 @@ public struct SidebarMeetingRow: View {
         }
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
-        .animation(.easeOut(duration: Tokens.Motion.hover), value: row.state)
+        // Nil while anything in the list is being deleted: that is when the
+        // selection is moved to a neighbour on purpose *without* an animation, and
+        // a pill fading in half a second before the row it belongs to arrives at
+        // its new place is a flash in the wrong spot. See `sidebarDeletionInFlight`.
+        .animation(
+            deletionInFlight ? nil : .easeOut(duration: Tokens.Motion.hover),
+            value: row.state
+        )
         .opacity(isVanishing ? 0 : 1)
         // Measured as an *action*, not a preference. A preference arrives after
         // the layout that produced it, and a row can be born already dissolving —

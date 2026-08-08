@@ -34,6 +34,29 @@ private struct SummaryRevealFrozenKey: EnvironmentKey {
     static let defaultValue = false
 }
 
+extension EnvironmentValues {
+    /// Идёт ли в списке удаление — чьё угодно, не обязательно этой строки.
+    ///
+    /// Пока оно идёт, строки не проигрывают смену своего состояния. Дело в том,
+    /// что удаление **переводит выбор на соседа**, и делает это намеренно без
+    /// анимации (`removeRecording` оборачивает вызов в транзакцию с
+    /// `disablesAnimations`). Но `.animation(_:value:)` на строке заводит свою
+    /// анимацию поверх этой транзакции — и заливка загорается под соседом сразу,
+    /// за полсекунды до того, как сосед приедет на освободившееся место. Глаз
+    /// видит вспышку не там, где потом окажется строка, и читает это как рывок.
+    ///
+    /// Флаг, а не параметр: строку рисуют ещё галерея и тесты, и ни одной из них
+    /// это знание не нужно.
+    public var sidebarDeletionInFlight: Bool {
+        get { self[SidebarDeletionInFlightKey.self] }
+        set { self[SidebarDeletionInFlightKey.self] = newValue }
+    }
+}
+
+private struct SidebarDeletionInFlightKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 /// How the processing band paints.
 public enum SidebarSweepMode: Sendable {
     /// Brighten the view's own pixels toward `peak` — for `Text` in the rail.
