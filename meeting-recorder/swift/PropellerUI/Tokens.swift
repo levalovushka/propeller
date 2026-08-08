@@ -921,11 +921,15 @@ public enum Tokens {
             /// A tap-and-release is a switch, not a browse: it should land on the
             /// next meeting without a plate flashing over the window on the way.
             public static let appearDelay: Double = 0.2
+            /// Four more than the action bar's. That bar is a row of 32 pt controls
+            /// and 4 is the whole gap it needs; here the plate holds *paragraphs*,
+            /// three lines deep, and at 4 they sat against the glass.
+            public static let padding = Bar.padding + Space.s4
             /// Concentric with the row's own corner: the plate's radius is the
             /// row's plus the gap the row is inset by. Any other number and the
             /// two arcs stop being parallel — visible on exactly the row that is
             /// highlighted, which is the one being looked at.
-            public static let radius = Tokens.Sidebar.meetingRadius + Bar.padding
+            public static let radius = Tokens.Sidebar.meetingRadius + padding
         }
 
         // MARK: The summary arriving

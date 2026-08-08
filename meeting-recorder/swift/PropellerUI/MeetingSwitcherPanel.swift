@@ -54,7 +54,10 @@ public struct MeetingSwitcherPanel: View {
     }
 
     public var body: some View {
-        SummonedPlate(cornerRadius: Tokens.Pane.Switcher.radius) {
+        SummonedPlate(
+            cornerRadius: Tokens.Pane.Switcher.radius,
+            padding: Tokens.Pane.Switcher.padding
+        ) {
             list
         }
         // Первый кадр уходит на замер, и показывать его нельзя: высоты строк ещё

@@ -14,28 +14,32 @@ import SwiftUI
 /// плиты, а не метрики кнопок на ней.
 public struct SummonedPlate<Content: View>: View {
     private let cornerRadius: CGFloat
+    private let padding: CGFloat
     private let minHeight: CGFloat?
     private let content: Content
 
     /// `minHeight` — для инструмента в один ряд: он задаёт высоту плиты, когда
     /// содержимое ниже её (панель действий — 40 при items 32 + padding 4).
     ///
-    /// `cornerRadius` — свой у каждого инструмента, потому что он не про плиту, а
-    /// про то, что на ней лежит: угол должен быть концентричен углу содержимого,
-    /// то есть его радиус плюс `padding`.
+    /// `cornerRadius` и `padding` — свои у каждого инструмента, потому что они не
+    /// про плиту, а про то, что на ней лежит: ряду кнопок хватает четырёх, абзацу
+    /// в три строки — нет. Радиус должен быть концентричен углу содержимого, то
+    /// есть его радиус плюс этот отступ.
     public init(
         cornerRadius: CGFloat = Tokens.Pane.Bar.radius,
+        padding: CGFloat = Tokens.Pane.Bar.padding,
         minHeight: CGFloat? = nil,
         @ViewBuilder content: () -> Content
     ) {
         self.cornerRadius = cornerRadius
+        self.padding = padding
         self.minHeight = minHeight
         self.content = content()
     }
 
     public var body: some View {
         content
-            .padding(Tokens.Pane.Bar.padding)
+            .padding(padding)
             .frame(minHeight: minHeight)
             .background { glass }
             .clipShape(shape)
