@@ -76,48 +76,80 @@ struct RecapResult {
 actor RecapService {
     static let shared = RecapService()
 
+    /// Промпт извлечения. Короткий — и это замер, а не вкус.
+    ///
+    /// Предыдущая версия была втрое длиннее и подробно объясняла стиль. Прогон по
+    /// восьми встречам (`tools/recap-lab`) показал, чего это стоило: 2525 → 5183
+    /// символа правил уронили число найденных договорённостей с 28 до 18, и на
+    /// трёх встречах из восьми конспект не нашёл ни одного решения. На
+    /// четырёхмиллиардной модели **длина промпта конкурирует с полнотой**:
+    /// внимание, потраченное на соблюдение запрета, не тратится на поиск пятой
+    /// договорённости.
+    ///
+    /// Поэтому здесь только то, что нельзя перенести во второй проход: что
+    /// искать, чего не выдумывать и какой формы должен быть ответ. Стиль —
+    /// `polishPrompt`, термины — `TermCanon`. Эта версия находит 36
+    /// договорённостей там, где длинная находила 18, а прежняя — 28.
     static let defaultPrompt = """
-    Ты — эксперт по ведению конспектов встреч. На основе транскрипта ниже составь конспект, по которому человек, не присутствовавший на встрече, точно поймёт, о чём договорились.
+    Ты ведёшь конспект рабочей встречи. По транскрипту ниже собери то, о чём договорились.
 
-    ГЛАВНЫЙ ПРИНЦИП
-    Конспект — это договорённости и решения, а не стенограмма. Отделяй суть от хаоса разговора: чистые решения и задачи выноси вперёд, ход обсуждения оставляй ниже как справочный слой. Не пересказывай всё подряд — фиксируй то, что меняет положение дел: что решили, кто что делает, что осталось открытым.
+    Собери ВСЕ договорённости, а не первые попавшиеся: они разбросаны по всему разговору, и на рабочей встрече их обычно пять и больше. Пропущенная договорённость — худшая ошибка конспекта.
+    Срок и ответственного пиши, только если они прозвучали вслух. Не «к пятнице», если про пятницу никто не говорил; не «Система» и не «команда» вместо имени.
+    Не выдумывай того, чего нет в транскрипте.
+    Если пользователь приложил свои заметки — это то, что он счёл важным; вплетай их по смыслу, а не отдельным списком.
 
-    ЗАМЕТКИ ПОЛЬЗОВАТЕЛЯ
-    Если пользователь приложил свои заметки со встречи — это маркер того, что он счёл важным. Вплетай их в конспект по смыслу, а не отдельным списком.
-
-    СТИЛЬ (информационный стиль)
-    - Активный залог, конкретные формулировки. «Пётр готовит смету к пятнице», а не «было решено, что смета будет подготовлена».
-    - Без канцелярита, вводных оборотов и воды. Каждая строка несёт факт или договорённость.
-    - Формулировки проверяемы: по ним видно, выполнено или нет.
-    - Слова участников используй там, где важна точная формулировка (спорные места, обещания, цифры).
-
-    СТРУКТУРА (Markdown, заголовки через ##, никогда #; жирный ** и списки -)
+    Формат — Markdown: заголовки через ##, списки через дефис, жирное через **. Пустые секции опускай целиком. Шапку Date / Duration / Participants не добавляй.
 
     ## Итог
-    2–3 предложения: зачем собирались и к чему пришли. Результат, а не повестка.
+    2–3 предложения: зачем собирались и к чему пришли.
 
     ## Решения
     - Что решили. Каждый пункт — завершённая договорённость.
 
     ## Задачи
-    - **Кто** — что делает — **к какому сроку**. Ответственного и срок указывай, если они есть в транскрипте; если не названы — не выдумывай, пиши задачу без них.
+    - **Кто** — что делает — **к какому сроку**.
 
     ## Открытые вопросы
     - Что обсудили, но не решили; что заблокировано и чего ждёт.
 
     ## Ход обсуждения
-    Хронологический разбор по темам, каждая с таймкодом начала (например: «- [00:04:32] Ревью онбординга»). Здесь — контекст, аргументы, детали, которые не попали выше. Это справочный слой; не дублируй сюда решения и задачи целиком.
+    Разбор по темам, каждая с таймкодом начала в том виде, в каком он стоит в транскрипте. Контекст и аргументы, которых нет выше.
 
     ## Прочее
     Всё остальное, что стоит зафиксировать.
+    """
 
-    ПРАВИЛА
-    - Не выдумывай того, чего нет в транскрипте.
-    - Пустые секции полностью опускай — не пиши «Нет» или «—».
-    - Детальность — в служении понятности, а не подробности ради подробности.
-    - Не добавляй шапку Date / Duration / Participants (и аналоги) — дата уже в списке встреч, длительность и участники не дублируются в шапке.
-    - Блок «Заметки» в итоговый файл добавит система отдельно — не дублируй сырые заметки отдельной секцией; их смысл уже вплетён выше.
-    - По контексту аккуратно исправляй очевидные ASR-ошибки (искажённые имена и термины), не меняя смысл.
+    /// Второй проход: форма, и только форма.
+    ///
+    /// Вход — готовый конспект (около 4 000 символов вместо целой встречи),
+    /// поэтому редактору можно рассказать о стиле много и всё равно уложиться в
+    /// полминуты. Замер: пассив 17 → 1, «вода» 8 → 1, и ни одна из восьми встреч
+    /// не потеряла при редактуре ни одного пункта.
+    ///
+    /// К этому тексту `RecapLint.editorNotes` дописывает **адреса** — цитаты тех
+    /// мест, которые нашлись в этом конкретном конспекте. Правило с цитатой
+    /// исполняется, то же правило девятым в списке — нет: общая редактура убрала
+    /// 21 находку из 153, адресная — 49.
+    static let polishPrompt = """
+    Ты — редактор. Перед тобой готовый конспект встречи. Перепиши его по правилам ниже, ничего не добавляя и ничего не выбрасывая.
+
+    НАКЛОНЕНИЕ
+    Конспект рассказывает, что было, а не раздаёт указания. Изъявительное наклонение, третье лицо: «Левон чистит код», «Договорились отказаться от диплинков». Не «проведите очистку», не «используйте компоненты» — читатель конспекта не исполнитель.
+
+    ЧТО НЕЛЬЗЯ ТРОГАТЬ
+    - Состав: сколько пунктов пришло — столько и уходит. Ни одного нового, ни одного убранного, ни одного слитого с соседним.
+    - Факты, имена, числа, таймкоды, названия секций и их порядок.
+    - Термины и англицизмы участников: «дейлик», «флоу», «инстанс», «пайплайн», «джоба», «прод», «фича». Не переводи их и не расшифровывай.
+
+    ЧТО ИСПРАВИТЬ
+    - Пассив — в активный залог. «Было решено перейти» → «Решили перейти». Слова «утверждено», «согласовано», «отмечено», «выявлено», «зафиксировано» замени на глагол с действующим лицом; если лица нет — «Договорились…».
+    - Канцелярит выкинь: «в рамках», «в целях», «с целью», «посредством», «путём», «данный», «является», «осуществляет», «реализация», «в части», «по итогам обсуждения».
+    - Предложения длиннее 20 слов разбей на два, сохранив смысл целиком.
+    - Общие слова («ключевой», «соответствующий», «следующие шаги», «приоритеты») убери, если без них понятно.
+    - Задача, у которой вместо имени стоит «Система», «Команда» или «участник с ответственностью», остаётся без ответственного. Имя не придумывай.
+    - Разметка: заголовки через ##, списки через дефис, жирное через **.
+
+    Верни только переписанный конспект — без предисловий, без пояснений и без markdown-ограждений.
     """
 
     /// Always appended so a custom Settings prompt can't drop the language lock
@@ -236,25 +268,37 @@ actor RecapService {
                 notes: notes
             )
 
-            let raw: String
-            switch backend {
-            case "ollama":
-                raw = try await callOllama(model: prefs.ollamaModel, system: prompt, user: userContent)
-            case "openai":
-                raw = try await callOpenAI(apiKey: prefs.openAIKey ?? "", model: prefs.openAIModel, system: prompt, user: userContent)
-            case "claude":
-                raw = try await callClaude(apiKey: prefs.claudeKey ?? "", model: prefs.claudeModel, system: prompt, user: userContent)
-            default:
-                return .failure(.noProvider)
+            // Окно выбирается **один раз на встречу**, а не на вызов. Замерено:
+            // второй вызов в том же окне платит 0,2 с за модель, в другом — 2,3 с,
+            // потому что Ollama поднимает свежий llama-server (`OllamaContext`).
+            let window = OllamaContext.numCtx(promptCharacters: prompt.count + userContent.count)
+            let cutUp = backend == "ollama"
+                && TranscriptChunking.needed(promptCharacters: prompt.count + userContent.count)
+
+            let draft: String
+            if cutUp {
+                draft = try await recapByChunks(
+                    title: title, transcriptMarkdown: trimmed, notes: notes,
+                    system: prompt, prefs: prefs
+                )
+            } else {
+                draft = try await callBackend(
+                    backend, system: prompt, user: userContent, numCtx: window, prefs: prefs
+                )
             }
+
+            let extracted = RecapMetadataParser.stripCodeFences(draft)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !extracted.isEmpty else { throw RecapError.emptyResponse }
+
+            let edited = await polished(
+                extracted, transcript: trimmed, backend: backend, numCtx: window, prefs: prefs
+            )
 
             // Термины канонизируются здесь, а не промптом: модель не может
             // починить то, чего не видела — в транскрипте уже стоит «майплайн».
             // Правится только конспект; транскрипт остаётся как сказано.
-            let cleaned = TermCanon.normalize(
-                RecapMetadataParser.stripCodeFences(raw)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-            )
+            let cleaned = TermCanon.normalize(edited)
             guard !cleaned.isEmpty else { throw RecapError.emptyResponse }
 
             let body = wrapRecapDocument(
@@ -274,6 +318,161 @@ actor RecapService {
             )
 
             return .success(RecapResult(path: path, provider: backend, body: body))
+        }
+    }
+
+    /// Извлечение фактов из одного фрагмента длинной встречи.
+    ///
+    /// Отдельный, ещё более узкий промпт: фрагменту не нужна структура конспекта,
+    /// ему нужно, чтобы ничего не потерялось. Форму соберёт свод.
+    private static let chunkExtractPrompt = """
+    Ты читаешь фрагмент транскрипта рабочей встречи. Выпиши из него факты — без предисловий и без выводов.
+
+    - ДОГОВОРИЛИСЬ: то, что участники проговорили как решение (кто-то предложил, другой согласился).
+    - ЗАДАЧА: кто что делает. Срок — только если прозвучал вслух.
+    - ОТКРЫТО: что обсудили и не решили.
+    - ТЕМА: о чём говорили, с таймкодом начала в том виде, как он стоит в транскрипте.
+
+    Каждый пункт с новой строки, начиная с метки. Ничего не выдумывай: фрагмент — единственный источник.
+    Если в фрагменте нет ничего, кроме приветствий и болтовни, ответь одним словом: ПУСТО.
+    """
+
+    /// Конспект встречи, которая не помещается в окно.
+    ///
+    /// Раньше такая встреча доходила до модели наполовину — Ollama выбрасывала
+    /// начало разговора, а приложение писало строчку в `NSLog` и отдавало
+    /// уверенный конспект. Теперь транскрипт режется по границам реплик, факты
+    /// собираются с каждого фрагмента, и конспект строится из них.
+    ///
+    /// Все вызовы идут в одном окне (фрагмент подобран так, чтобы влезать в
+    /// 16384): одна загрузка модели на всю встречу и 3,6 ГБ памяти вместо 4,3 ГБ,
+    /// которые стоит окно 32768.
+    private func recapByChunks(
+        title: String,
+        transcriptMarkdown: String,
+        notes: String?,
+        system: String,
+        prefs: RecapPreferences
+    ) async throws -> String {
+        let chunks = TranscriptChunking.split(transcriptMarkdown)
+        let extractSystem = Self.chunkExtractPrompt + Self.languageLock
+        // Окно одно на все фрагменты — иначе каждый платил бы холодную загрузку.
+        let window = OllamaContext.numCtx(
+            promptCharacters: extractSystem.count + TranscriptChunking.charactersPerChunk + 200
+        )
+
+        var facts: [String] = []
+        for (index, chunk) in chunks.enumerated() {
+            try Task.checkCancellation()
+            let user = "Фрагмент \(index + 1) из \(chunks.count).\n\n\(chunk)"
+            let raw: String
+            do {
+                raw = try await callOllama(
+                    model: prefs.ollamaModel, system: extractSystem, user: user, numCtx: window
+                )
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Один упавший фрагмент — это дыра в конспекте, но целая встреча
+                // без конспекта хуже. Дыра называется вслух в логе.
+                NSLog("[RecapService] фрагмент \(index + 1)/\(chunks.count) не разобран: \(error)")
+                continue
+            }
+            let text = RecapMetadataParser.stripCodeFences(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, !text.uppercased().hasPrefix("ПУСТО") else { continue }
+            facts.append(text)
+        }
+
+        guard !facts.isEmpty else { throw RecapError.emptyResponse }
+        NSLog("[RecapService] встреча не влезла в окно: \(chunks.count) фрагментов, разобрано \(facts.count)")
+
+        var parts = ["Встреча: \(title.isEmpty ? "без названия" : title)"]
+        let trimmedNotes = notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedNotes.isEmpty {
+            parts += ["", "Заметки пользователя (якоря — приоритетнее болтовни в транскрипте):", trimmedNotes]
+        }
+        parts += [
+            "",
+            "Ниже — факты, выписанные из транскрипта по частям, по порядку встречи.",
+            "Это единственный источник: транскрипт целиком в контекст не помещается.",
+            "",
+            facts.joined(separator: "\n\n"),
+            "",
+            "Ответь строго на русском языке.",
+        ]
+        return try await callOllama(
+            model: prefs.ollamaModel, system: system, user: parts.joined(separator: "\n"), numCtx: window
+        )
+    }
+
+    /// Второй проход: та же модель правит форму по адресам от `RecapLint`.
+    ///
+    /// Никогда не бросает: конспект уже есть, и лучше отдать его неотредактированным,
+    /// чем не отдать вовсе. Возвращает исходник и в двух случаях, когда редактура
+    /// оказалась вредной:
+    ///
+    /// - **править нечего** — находок нет, и второй вызов был бы платой ни за что
+    ///   (для короткого дейлика это половина всей работы);
+    /// - **редактор съел содержание** — пунктов стало заметно меньше. В замере
+    ///   такое случилось на двух встречах из восьми (17 → 12), и молча отдать
+    ///   обрезанный конспект — ровно то, с чем эта работа боролась.
+    private func polished(
+        _ recap: String,
+        transcript: String,
+        backend: String,
+        numCtx: Int,
+        prefs: RecapPreferences
+    ) async -> String {
+        let findings = RecapLint.findings(recap: recap, transcript: transcript)
+        guard !findings.isEmpty else { return recap }
+
+        let system = Self.polishPrompt + Self.languageLock
+        let user = recap + RecapLint.editorNotes(findings)
+        let raw: String
+        do {
+            raw = try await callBackend(backend, system: system, user: user, numCtx: numCtx, prefs: prefs)
+        } catch {
+            NSLog("[RecapService] редактура не удалась, отдаём конспект как есть: \(error)")
+            return recap
+        }
+
+        let edited = RecapMetadataParser.stripCodeFences(raw)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !edited.isEmpty else { return recap }
+
+        let before = Self.bulletCount(recap)
+        let after = Self.bulletCount(edited)
+        if before > 0, after * 3 < before * 2 {
+            NSLog("[RecapService] редактура потеряла пункты (\(before) → \(after)) — отдаём исходный конспект")
+            return recap
+        }
+        return edited
+    }
+
+    static func bulletCount(_ text: String) -> Int {
+        text.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("- ") }
+            .count
+    }
+
+    private func callBackend(
+        _ backend: String,
+        system: String,
+        user: String,
+        numCtx: Int,
+        prefs: RecapPreferences
+    ) async throws -> String {
+        switch backend {
+        case "ollama":
+            return try await callOllama(model: prefs.ollamaModel, system: system, user: user, numCtx: numCtx)
+        case "openai":
+            return try await callOpenAI(apiKey: prefs.openAIKey ?? "", model: prefs.openAIModel,
+                                        system: system, user: user)
+        case "claude":
+            return try await callClaude(apiKey: prefs.claudeKey ?? "", model: prefs.claudeModel,
+                                        system: system, user: user)
+        default:
+            throw RecapSkipReason.noProvider
         }
     }
 
@@ -547,11 +746,16 @@ actor RecapService {
 
     /// `jsonMode` switches Ollama to constrained JSON decoding. Used for the
     /// metadata pass only — the recap itself is markdown prose.
+    /// `numCtx` задаётся снаружи, когда встреча идёт в несколько вызовов: окно
+    /// должно быть одним на всю встречу, иначе каждый вызов платит холодную
+    /// загрузку модели (2,3 с против 0,2 с, замерено). Без него — как раньше,
+    /// по длине этого запроса.
     private func callOllama(
         model: String,
         system: String,
         user: String,
-        jsonMode: Bool = false
+        jsonMode: Bool = false,
+        numCtx: Int? = nil
     ) async throws -> String {
         let url = URL(string: "http://127.0.0.1:11434/api/chat")!
         var req = URLRequest(url: url)
@@ -564,7 +768,7 @@ actor RecapService {
         // the *oldest* tokens, so the recap silently describes only the tail of
         // the meeting. Size the window from the prompt instead.
         let promptCharacters = system.count + user.count
-        let numCtx = OllamaContext.numCtx(promptCharacters: promptCharacters)
+        let numCtx = numCtx ?? OllamaContext.numCtx(promptCharacters: promptCharacters)
         if OllamaContext.exceedsLargestWindow(promptCharacters: promptCharacters) {
             NSLog("""
             [RecapService] transcript ~\(OllamaContext.estimatedTokens(promptCharacters: promptCharacters)) \
