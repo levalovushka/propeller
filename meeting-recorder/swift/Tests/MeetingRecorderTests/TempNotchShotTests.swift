@@ -24,6 +24,7 @@ final class TempNotchShotTests: XCTestCase {
             width: 1512, top: 982, safeAreaTop: 32,
             auxiliaryLeftWidth: 663.5, auxiliaryRightWidth: 663.5
         ))
+        let draft = ProcessInfo.processInfo.environment["NOTCH_SHOT_TEXT"] ?? ""
         let size = CGSize(width: 760, height: 220)
 
         let root = ZStack(alignment: .top) {
@@ -39,6 +40,7 @@ final class TempNotchShotTests: XCTestCase {
                 screen: screen,
                 stage: stage,
                 paused: false,
+                noteDraft: draft,
                 level: { 0.3 },
                 onNote: {}, onCommit: { _ in }, onCancel: {}
             )

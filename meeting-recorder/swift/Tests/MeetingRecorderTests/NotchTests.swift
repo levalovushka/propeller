@@ -63,8 +63,16 @@ final class NotchGeometryTests: XCTestCase {
         let rest = NotchGeometry.frame(on: mbp14, stage: .resting)
         let compose = NotchGeometry.frame(on: mbp14, stage: .composing)
         XCTAssertEqual(compose.width, rest.width, "вширь чёлка не расходится вовсе")
-        XCTAssertEqual(compose.height - rest.height, 40)
         XCTAssertEqual(compose.originX, rest.originX, "и, значит, никуда не едет")
+        XCTAssertEqual(compose.height, 100, "раскрытая чёлка 14″ — 100 pt, как в макете")
+    }
+
+    func testВРаскрытуюЧёлкуВмещаетсяРовноТриСтроки() {
+        // Высота взята не числом: это три строки 13/16 и воздух над первой и
+        // под последней. Поменяется кегль — поменяется и она, вместе.
+        let lines = CGFloat(NotchGeometry.noteVisibleLines) * NotchGeometry.noteLineHeight
+        XCTAssertEqual(NotchGeometry.composeDrop, lines + 2 * NotchGeometry.notePadding)
+        XCTAssertEqual(NotchGeometry.noteVisibleLines, 3)
     }
 
     // MARK: - Есть ли вообще чёлка

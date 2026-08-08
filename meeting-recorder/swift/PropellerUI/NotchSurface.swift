@@ -125,15 +125,19 @@ public struct NotchFace: View {
     private let screen: NotchGeometry.Screen
     private let stage: NotchGeometry.Stage
     private let paused: Bool
+    private let noteDraft: String
     private let level: () -> Float
     private let onNote: () -> Void
     private let onCommit: (String) -> Void
     private let onCancel: () -> Void
 
+    /// `noteDraft` — только для съёмки состояния с набранным текстом; в
+    /// приложении поле всегда открывается пустым.
     public init(
         screen: NotchGeometry.Screen,
         stage: NotchGeometry.Stage,
         paused: Bool,
+        noteDraft: String = "",
         level: @escaping () -> Float,
         onNote: @escaping () -> Void,
         onCommit: @escaping (String) -> Void,
@@ -142,6 +146,7 @@ public struct NotchFace: View {
         self.screen = screen
         self.stage = stage
         self.paused = paused
+        self.noteDraft = noteDraft
         self.level = level
         self.onNote = onNote
         self.onCommit = onCommit
@@ -215,7 +220,7 @@ public struct NotchFace: View {
             .animation(revealed ? Self.glyphs : Self.leave, value: revealed)
 
             if composing {
-                NotchNoteField(onCommit: onCommit, onCancel: onCancel)
+                NotchNoteField(initial: noteDraft, onCommit: onCommit, onCancel: onCancel)
                     .frame(height: NotchGeometry.composeDrop)
                     .padding(.horizontal, frame.contentInset)
                     // Поле не возникает в опустившейся чёлке, а проявляется в
@@ -229,6 +234,10 @@ public struct NotchFace: View {
         // Плита прижата к верхней кромке окна: расти и уменьшаться она может
         // только вниз и вбок, иначе отрывается от железа.
         .frame(width: bounds.width, height: bounds.height, alignment: .top)
+        // Плита чёрная при любой теме системы, значит и всё, что AppKit рисует
+        // внутри неё сам — курсор, выделение, контекстное меню поля, — должно
+        // считать себя тёмным.
+        .environment(\.colorScheme, .dark)
         .animation(motion, value: stage)
         .animation(motion, value: grown)
         .onAppear {
@@ -308,30 +317,64 @@ private struct NoteEar: View {
     }
 }
 
-/// Строка заметки внутри опустившейся чёлки.
-private struct NotchNoteField: View {
-    var onCommit: (String) -> Void
-    var onCancel: () -> Void
+/// Заметка внутри опустившейся чёлки: три видимые строки, набор идёт по нижней.
+///
+/// Текст растёт **вверх**, а не вниз. Активная строка всегда у нижнего края, а
+/// написанное раньше поднимается и гаснет под градиентом. Обратный порядок —
+/// набор в верхней строке, текст вниз — ставил бы курсор в самое тёмное место
+/// плиты и упирал бы его в кромку, из-под которой ничего не видно.
+public struct NotchNoteField: View {
+    private let onCommit: (String) -> Void
+    private let onCancel: () -> Void
 
-    @State private var text = ""
+    /// `initial` — только для съёмки состояния: в приложении поле всегда
+    /// открывается пустым.
+    public init(
+        initial: String = "",
+        onCommit: @escaping (String) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
+        self.onCommit = onCommit
+        self.onCancel = onCancel
+        _text = State(initialValue: initial)
+    }
+
+    @State private var text: String
     @FocusState private var focused: Bool
 
-    var body: some View {
-        // Подсказка своя, а не `prompt:`: у поля без рамки AppKit рисует
-        // placeholder собственным слоем и не убирает его под набранным текстом
-        // — буквы ложатся поверх подсказки. Здесь она просто исчезает, как
-        // только появляется первый символ.
-        ZStack(alignment: .leading) {
-            if text.isEmpty {
-                Text("Начните печатать…")
-                    .foregroundStyle(.white.opacity(0.35))
-                    .allowsHitTesting(false)
+    public var body: some View {
+        VStack(spacing: 0) {
+            // Пока строк меньше трёх, текст не висит вверху плиты, а стоит там,
+            // куда человек смотрит.
+            Spacer(minLength: 0)
+            ZStack(alignment: .bottomLeading) {
+                // Подсказка своя, а не `prompt:`: у поля без рамки AppKit рисует
+                // placeholder собственным слоем и не убирает его под набранным
+                // текстом — буквы ложатся поверх подсказки.
+                if text.isEmpty {
+                    Text("Начните печатать…")
+                        .foregroundStyle(.white.opacity(0.35))
+                        .allowsHitTesting(false)
+                }
+                TextField("", text: $text, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .foregroundStyle(.white)
+                    .lineLimit(NotchGeometry.noteVisibleLines)
+                    // Многострочное поле подкладывает под себя скролл с фоном по
+                    // теме системы. Плита чёрная всегда, а тема бывает светлой —
+                    // и тогда в ней оказывалось бы белое окно.
+                    .scrollContentBackground(.hidden)
             }
-            TextField("", text: $text)
-                .textFieldStyle(.plain)
-                .foregroundStyle(.white)
+            // Ровно три строки и ни пикселем больше: без явной высоты поле
+            // рисует четвёртую, и она вылезает за нижний край плиты.
+            .frame(
+                height: CGFloat(NotchGeometry.noteVisibleLines) * NotchGeometry.noteLineHeight,
+                alignment: .bottomLeading
+            )
+            .clipped()
         }
         .font(.system(size: 13))
+        .lineSpacing(NotchGeometry.noteLineHeight - 13)
         .tint(.white.opacity(0.6))
         .focused($focused)
         .onSubmit {
@@ -342,7 +385,20 @@ private struct NotchNoteField: View {
         // Esc выходит из заметки и ничего не сохраняет.
         .onExitCommand { onCancel() }
         .padding(.horizontal, 16)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, NotchGeometry.notePadding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        // Уехавшая наверх строка не обрезается кромкой, а гаснет: обрез читается
+        // как «поле кончилось», угасание — как «это было раньше».
+        .mask(
+            LinearGradient(
+                stops: [
+                    .init(color: .black.opacity(0), location: 0),
+                    .init(color: .black.opacity(0.32), location: 0.36),
+                    .init(color: .black, location: 0.74),
+                ],
+                startPoint: .top, endPoint: .bottom
+            )
+        )
         .onAppear { DispatchQueue.main.async { focused = true } }
     }
 }
