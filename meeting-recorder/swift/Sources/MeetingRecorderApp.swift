@@ -169,7 +169,12 @@ struct MeetingRecorderApp: App {
         } label: {
             Image(nsImage: Self.menuBarIcon)
         }
-        .menuBarExtraStyle(.window)
+        // Стиль по умолчанию — `.menu`, и здесь он назван явно, чтобы было
+        // видно, что это решение, а не забытая строка. Был `.window`: тот нужен,
+        // когда внутри ползунки и переключатели, а у нас пять команд, и панель
+        // ценой своей отрисовки промахивалась мимо системной — начиная с
+        // начертания строк.
+        .menuBarExtraStyle(.menu)
     }
 
     /// Template PDF. HIG says 18×18 pt for a menu-bar extra; ours is 17.
