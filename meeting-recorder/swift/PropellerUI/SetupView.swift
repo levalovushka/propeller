@@ -16,13 +16,22 @@ import SwiftUI
 /// The name and the calendar are neither — the app works without both — so they
 /// ask from the rail afterwards (`SidebarPromptBlock`), one small block at a time.
 ///
-/// # No back button, no pager, no «Далее»
+/// # The microphone is required, and «Дальше» says so by not working
 ///
-/// A single plate has nowhere to go back to. «Начать» is the only control that
-/// leaves it, and it is never disabled: a person who declines the microphone
-/// still gets an app — one that says «Нет доступа к микрофону» on the row that
-/// records, which is where that sentence belongs. The old flow disabled «Далее»
-/// until the microphone was granted, which turned a decision into a wall.
+/// Decision 2026-08-07, and a reversal: «Начать» used to leave the plate whatever
+/// the microphone said, on the grounds that a wall is worse than a degraded app.
+/// It is now blocked until the grant lands, because the degraded app is not
+/// really an app — it records nothing, and every screen in it is about a
+/// recording. There is deliberately **no** «продолжить без микрофона»: an escape
+/// that leaves you with a Propeller that cannot propel is a choice nobody would
+/// knowingly make.
+///
+/// The wall has one door and it is always open: refusing the system prompt turns
+/// the row's pill into a route to System Settings, the grant is polled once a
+/// second, and «Дальше» lights up the moment it lands. That door is the whole
+/// reason this does not violate `design/no-dead-ends.md` — but it leads *out of
+/// the app*, which is a stronger claim on a person than anything else here makes,
+/// and it is the one place where the app refuses to go on without them.
 ///
 /// Pure presentation: it knows nothing of TCC, EventKit or `AppState`. Every row
 /// reflects a state handed to it, and every press goes back out as a closure —
@@ -69,44 +78,70 @@ public struct SetupView: View {
             .onChange(of: launchAtLogin) { _, on in launchOn = on }
     }
 
-    // MARK: Body (50:1255) — p 20, one column, the action pinned to the foot
+    // MARK: Body — one centred column, the action and its consequence at the foot
 
-    /// Mark, sentence, rows — three blocks 20 apart, and «Начать» at the foot.
+    /// Mark, sentence, rows, button, and the line about the model.
     ///
-    /// The mark opens the column rather than sitting in a titlebar. There is no
-    /// titlebar: the plate is 400 × 410 of content and nothing else, so the mark
-    /// is on the same left margin as the sentence it introduces and reads as part
-    /// of it (Figma 91:934).
+    /// The column is centred and the rows are not, and that is not an oversight:
+    /// a permission row is a sentence on the left with its answer on the right,
+    /// and centring *that* would put the pills in the middle of the plate with
+    /// nothing to align to. So the head of the plate is centred and the list
+    /// under it keeps its two edges — which is why the silence around the list
+    /// (`listGap`) is bigger than the gaps inside it.
     private var content: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: Tokens.Setup.blockGap) {
-                SetupMark()
+        VStack(spacing: 0) {
+            SetupMark()
+            Spacer().frame(height: Tokens.Setup.markGap)
 
-                SetupText.title("Начался звонок и Propeller уже пишет. Все данные остаются на вашем Mac.")
-                    .fixedSize(horizontal: false, vertical: true)
+            SetupText.title(
+                "Чтобы записать звонок, нужен микрофон. Остальное — по\u{00A0}желанию.",
+                alignment: .center
+            )
+            .fixedSize(horizontal: false, vertical: true)
 
-                cells
-            }
+            // Fixed, not `Spacer(minLength:)`. A flexible gap here divides
+            // whatever the plate has left over between the two silences, so the
+            // 28 the comps draw came out at 38 and drifted again the moment the
+            // headline changed its line count. The column is now exactly as tall
+            // as its contents and the plate centres it.
+            Spacer().frame(height: Tokens.Setup.listGap)
+            cells
+            Spacer().frame(height: Tokens.Setup.listGap)
 
-            // The comps leave 22 pt here at a three-line sentence; a longer one
-            // eats into it. The button never comes closer than the column's own
-            // gap, which is what keeps it from touching the last row.
-            Spacer(minLength: Tokens.Setup.blockGap)
+            SetupActionButton(title: "Дальше", action: onStart, enabled: microphoneGranted)
 
-            SetupActionButton(title: "Начать", action: onStart)
+            Spacer().frame(height: Tokens.Setup.captionGap)
+            // Said once, here, and nowhere else: the first-run screen behind this
+            // one deliberately does not mention it. Not a question and not a
+            // progress bar — the model is part of the install
+            // (`PropellerPure/ModelProvisioning`), and the only thing wrong with
+            // it was that 3,4 ГБ of someone's disk left without a word.
+            Text("После старта скачаем модель\nдля саммари — 3,4\u{00A0}ГБ")
+                .typoBlock(Tokens.Setup.Typo.caption)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Tokens.Setup.caption)
         }
-        .padding(Tokens.Setup.inset)
+        .padding(.horizontal, Tokens.Setup.insetH)
+        .padding(.vertical, Tokens.Setup.insetV)
     }
 
     private var cells: some View {
         VStack(spacing: 0) {
-            cell("Доступ к микрофону", "Без него ничего не запишется") {
+            cell("Доступ к микрофону", "Без него запись не начнётся") {
                 grantControl(granted: microphoneGranted, action: onGrantMicrophone)
             }
-            cell("Push-уведомления", "Скажем, если что-то сломается") {
+            // Not «скажем, если что-то сломается», which was the old line and was
+            // simply untrue: none of the five reasons the app notifies about is a
+            // breakage (`PushPolicy.Kind`). The one that matters is this — without
+            // the grant there is nowhere to press «Не записывать», so an
+            // auto-started recording pulls the window over whatever you are doing
+            // instead (`PushPolicy.surface`).
+            cell("Push-уведомления", "Отказаться, если запись началась") {
                 grantControl(granted: notificationsGranted, action: onGrantNotifications)
             }
-            cell("Запуск при входе", "Чтобы не забыть включить запись") {
+            // Also rewritten: «чтобы не забыть включить запись» described the
+            // manual path, and auto-record is the default.
+            cell("Запуск при входе", "Закрытый Propeller не заметит звонок") {
                 Toggle("", isOn: $launchOn)
                     .labelsHidden()
                     .toggleStyle(.switch)
@@ -215,14 +250,21 @@ private struct SetupGrantButton: View {
     }
 }
 
-/// «Начать» — the full width of the plate's content, 36 pt.
+/// «Дальше» — the full width of the plate's content, 36 pt.
 ///
 /// Not a primary (inverted) fill: it is the only button on the screen, so it has
 /// nothing to out-rank, and a white slab at the foot of a glass plate reads as a
 /// system alert's default button.
+///
+/// Disabled until the microphone is granted, and disabled *visibly* — the label
+/// dims and the hover stops answering, because a button that looks live and does
+/// nothing is worse than one that admits it is waiting. What it is waiting for is
+/// the row directly above it, which is the whole reason the wall is legible: the
+/// only enabled control on the plate is the one that unblocks it.
 private struct SetupActionButton: View {
     let title: String
     let action: () -> Void
+    var enabled: Bool = true
 
     @State private var hovering = false
 
@@ -230,19 +272,23 @@ private struct SetupActionButton: View {
         Button(action: action) {
             Text(title)
                 .typo(Tokens.Setup.Typo.action)
-                .foregroundStyle(Tokens.Setup.controlLabel)
+                .foregroundStyle(enabled ? Tokens.Setup.controlLabel : Tokens.Setup.caption)
                 .frame(maxWidth: .infinity)
                 .frame(height: Tokens.Setup.actionHeight)
                 .background(
-                    hovering ? Tokens.Setup.controlHoverFill : Tokens.Setup.controlFill,
+                    (hovering && enabled) ? Tokens.Setup.controlHoverFill : Tokens.Setup.controlFill,
                     in: RoundedRectangle(cornerRadius: Tokens.Setup.actionRadius, style: .continuous)
                 )
                 .contentShape(RoundedRectangle(cornerRadius: Tokens.Setup.actionRadius, style: .continuous))
         }
         .buttonStyle(.press)
+        .disabled(!enabled)
+        // Enter must not walk past the microphone either — `.defaultAction` on a
+        // disabled button is inert, which is exactly what is wanted here.
         .keyboardShortcut(.defaultAction)
-        .onHover { hovering = $0 }
+        .onHover { hovering = $0 && enabled }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: enabled)
     }
 }
 

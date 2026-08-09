@@ -282,6 +282,9 @@ public enum Tokens {
         public static let s16: CGFloat = 16
         public static let s20: CGFloat = 20
         public static let s24: CGFloat = 24
+        /// Between 24 and 32 — added for the setup plate, whose two silences
+        /// around the permission list the comps draw at 28 (Figma 130:2165).
+        public static let s28: CGFloat = 28
         public static let s32: CGFloat = 32
         public static let s40: CGFloat = 40
         public static let s48: CGFloat = 48
@@ -1248,8 +1251,14 @@ public enum Tokens {
     /// the sentence that says why; the calendar and the name moved into the rail
     /// (`RailPrompt`), where they cost nobody a screen.
     public enum Setup {
-        public static let width: CGFloat = 400
-        public static let height: CGFloat = 410
+        /// The plate grew with the centred layout (2026-08-07) so it reads as a
+        /// relative of the first-run screen rather than a system alert. Two
+        /// numbers, and both are safe to move: nothing here is a breakpoint, and
+        /// `OnboardingPanelController` takes its content size from them.
+        public static let width: CGFloat = 500
+        /// Figma 130:2165. Adds up exactly: 58 + (20 mark + 16 + 78 headline) +
+        /// 28 + 168 rows + 28 + (36 button + 8 + 28 caption) + 58 = 526.
+        public static let height: CGFloat = 526
         /// The comps say 20; the plate takes the top step of the scale, which now
         /// sits at 14. The rule in this file is that an off-scale literal snaps
         /// rather than mints a step, and the whole scale tightening by 4 is a
@@ -1258,10 +1267,25 @@ public enum Tokens {
         public static let radius = Radius.lg
         /// The plate has no titlebar row. Everything lives in one column inset
         /// from all four edges — mark, sentence, rows, and the button at the foot.
-        public static let inset = Space.s20
-        /// Between the three blocks of that column: mark → sentence → rows. Also
-        /// the least the button will leave above itself.
-        public static let blockGap = Space.s20
+        ///
+        /// Not square, and off the scale in both directions, because both numbers
+        /// are load-bearing rather than decorative (Figma 130:2165 — the comp
+        /// nests 50 + 20 to get the 70). The horizontal one sets the measure to
+        /// 360, which is what breaks the headline into three short lines instead
+        /// of two long ones; the vertical one is what makes the plate read as a
+        /// card rather than a dialogue with its content against the walls.
+        public static let insetH: CGFloat = 70
+        public static let insetV: CGFloat = 58
+        /// Mark → sentence. The mark is the opening of the sentence, not a block
+        /// beside it, so this is the tightest gap in the column.
+        public static let markGap = Space.s16
+        /// Headline → rows, and rows → button: the same silence on both sides of
+        /// the list, which is what lets the list read as the middle of three
+        /// blocks rather than as a tail of the headline.
+        public static let listGap = Space.s28
+        /// Button → the line about the model. Eight, because the line is not a
+        /// fourth block: it belongs to the button and says what pressing it does.
+        public static let captionGap = Space.s8
 
         /// A permission row: 12 above and below its 32 pt content.
         public static let cellVPadding = Space.s12
@@ -1276,11 +1300,11 @@ public enum Tokens {
         public static let actionHeight: CGFloat = 36
         public static let actionRadius = Radius.xxs
 
-        /// The mark opens the column, on the same margin as the sentence under
-        /// it — 26 pt, off-scale and from the comps: at 24 it reads as an icon in
-        /// a row, at 32 it becomes a splash screen. It is neither; it is the
-        /// signature on a short note.
-        public static let markSize: CGFloat = 26
+        /// The mark opens the column — 20 pt, centred over the sentence it
+        /// introduces. It shrank when the plate grew (Figma 130:2165) and that is
+        /// the right way round: the bigger the plate, the more a large mark reads
+        /// as a splash screen. It is not one; it is the signature on a short note.
+        public static let markSize: CGFloat = 20
         /// Full-strength ink, like the sentence it introduces. The mark is part
         /// of what the plate says, not chrome around it — the 40 % it wore while
         /// it lived in a titlebar was the colour of a window control.
@@ -1300,6 +1324,11 @@ public enum Tokens {
         /// the rail's own 55 % because it sits directly under a 95 % line.
         public static let cellSubtitle = Primitive.ink(dark: Primitive.AlphaWhite.a50,
                                                        light: Primitive.AlphaBlack.a50)
+        /// The line about the model, under the button — the app's own tertiary
+        /// ink, which is already the 30 % the comp draws. A step quieter than a
+        /// cell's second line: that one explains a control you are looking at,
+        /// this one states a consequence you are not being asked about.
+        public static let caption = Paint.Text.tertiary
         public static let controlFill = Paint.Bg.surface
         public static let controlHoverFill = Paint.Bg.selected
         public static let controlLabel = Paint.Text.primary
@@ -1322,8 +1351,12 @@ public enum Tokens {
                 size: 12, lineHeight: 16, weight: .regular,
                 weightTrim: Typography.railWeightTrim
             )
-            /// 13 / 16 medium — «Начать», the only weighted label on the plate.
+            /// 13 / 16 medium — «Дальше», the only weighted label on the plate.
             public static let action = cell.weight(.medium)
+            /// The line about the model under the button — the rail's 11 / 14,
+            /// not a style of its own. Same job in both places: the smallest,
+            /// quietest thing on a surface, and one face for the whole app.
+            public static let caption = Sidebar.Typo.meta
         }
     }
 
@@ -1594,12 +1627,12 @@ extension View {
 /// text field. Tracking rides along for the same reason: `.kern` is an attribute,
 /// not a modifier.
 enum SetupText {
-    static func title(_ string: String) -> StyledLabel {
+    static func title(_ string: String, alignment: NSTextAlignment = .left) -> StyledLabel {
         let style = Tokens.Setup.Typo.title
         let paragraph = NSMutableParagraphStyle()
         paragraph.minimumLineHeight = style.lineHeight
         paragraph.maximumLineHeight = style.lineHeight
-        paragraph.alignment = .left
+        paragraph.alignment = alignment
         return StyledLabel(attributed: NSAttributedString(string: string, attributes: [
             .font: style.nsFont,
             .paragraphStyle: paragraph,
