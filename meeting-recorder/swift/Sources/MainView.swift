@@ -87,23 +87,23 @@ struct MainView: View {
     @State private var summarySave: DispatchWorkItem?
 
     var body: some View {
-        HStack(spacing: 0) {
-            if sidebarVisible {
-                sidebar
-                    // Единственный `move` в приложении, и он остаётся: рельс
-                    // уходит за собственный край окна, а не разъезжается с
-                    // соседями. Уезжающая строка толкает то, что рядом с ней,
-                    // — уезжающая панель освобождает место, которое занимала.
-                    //
-                    // С «уменьшить движение» — гаснет: 300 pt, идущие сбоку
-                    // через всё окно, это ровно тот размах, ради которого
-                    // настройку включают.
-                    .transition(reduceMotion ? .opacity : .move(edge: .leading))
+        Group {
+            if showsFirstRun {
+                // Вместо колонок, а не поверх них: пустой рельс и пустая панель —
+                // не фон для приглашения, а ровно то, что оно заменяет.
+                FirstRunView(onAction: startFirstRecording)
+            } else {
+                columns
             }
-            contentPane
         }
-        .animation(.easeOut(duration: Tokens.Motion.sidebarToggle), value: sidebarVisible)
-        .overlay(alignment: .topLeading) { windowChrome }
+        // Уход содержимого — `t180` по лестнице. Ровно одно движение: экран
+        // гаснет, окно под ним уже собрано и с непустым рельсом, потому что
+        // запись к этому кадру уже идёт. Разъезжаться тут нечему — это не шаг
+        // мастера, а смена того, чем окно является.
+        .animation(.easeOut(duration: Tokens.Motion.Step.t180), value: showsFirstRun)
+        // Переключателя рельса на пустом экране нет: скрывать нечего, и кнопка
+        // рядом со светофором обещала бы список, которого ещё не существует.
+        .overlay(alignment: .topLeading) { if !showsFirstRun { windowChrome } }
         // Over both columns, because ⌥Tab is a window gesture and the panel is
         // what the rail would have shown if it were up. Centred rather than
         // docked: it is not part of either column, and with the rail away there
@@ -339,6 +339,61 @@ struct MainView: View {
         // animated by the panel, and animating both would run two clocks on one
         // movement.
         .animation(.easeOut(duration: Tokens.Pane.Switcher.fade), value: switching.showsPanel)
+    }
+
+    /// Колонки окна — рельс и панель. Отдельным свойством, потому что теперь у
+    /// окна два вида, и `body` выбирает между ними.
+    private var columns: some View {
+        HStack(spacing: 0) {
+            if sidebarVisible {
+                sidebar
+                    // Единственный `move` в приложении, и он остаётся: рельс
+                    // уходит за собственный край окна, а не разъезжается с
+                    // соседями. Уезжающая строка толкает то, что рядом с ней,
+                    // — уезжающая панель освобождает место, которое занимала.
+                    //
+                    // С «уменьшить движение» — гаснет: 300 pt, идущие сбоку
+                    // через всё окно, это ровно тот размах, ради которого
+                    // настройку включают.
+                    .transition(reduceMotion ? .opacity : .move(edge: .leading))
+            }
+            contentPane
+        }
+        .animation(.easeOut(duration: Tokens.Motion.sidebarToggle), value: sidebarVisible)
+    }
+
+    /// Пуст ли архив настолько, что показывать нечего.
+    ///
+    /// Тот же фильтр, которым живёт рельс (`hasSomethingToShow`), а не
+    /// `recordings.isEmpty`: встреча без звука и без текста в списке не
+    /// показывается, и окно, которое считало бы её, встретило бы человека
+    /// пустым рельсом рядом с пустой панелью — ровно тем, ради чего этот экран
+    /// и заведён.
+    ///
+    /// Идущая запись снимает экран немедленно, ещё до того, как её строка
+    /// доедет до индекса: она уже есть, и приглашать записать первую встречу
+    /// посреди записи — враньё.
+    ///
+    /// Настройки снимают его тоже, и это не мелочь: они живут маршрутом панели
+    /// (`PaneRoute.settings`), а не окном, — значит экран, занявший окно
+    /// целиком, съел бы ⌘, вместе с меню-баром. Пустой архив — не причина
+    /// лишиться настроек; наоборот, это состояние, из которого в них идут за
+    /// автозапуском и папками.
+    private var showsFirstRun: Bool {
+        state.paneRoute == .meeting
+            && !state.isRecording
+            && !recordingStore.recordings.contains(where: \.hasSomethingToShow)
+    }
+
+    /// Кнопка пустого экрана. Делает ровно то же, что строка «Новая запись» в
+    /// рельсе, включая случай отнятого микрофона: одно поведение на два входа,
+    /// потому что разъехавшись они разъедутся молча.
+    private func startFirstRecording() {
+        performNav(
+            (state.micAccessDenied
+                ? SidebarPresenter.NavAction.micAccess
+                : .record).rawValue
+        )
     }
 
     private func performNav(_ id: String) {

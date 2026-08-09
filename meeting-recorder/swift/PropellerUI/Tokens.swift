@@ -1250,6 +1250,28 @@ public enum Tokens {
     /// It replaced six. What is left is what macOS itself has to be asked, and
     /// the sentence that says why; the calendar and the name moved into the rail
     /// (`RailPrompt`), where they cost nobody a screen.
+    /// Экран пустого архива (`FirstRunView`). Свои числа, а не настроечные: это
+    /// не плита в 500 pt, а окно целиком, и то, что на плите было полем, здесь
+    /// стало бы дырой.
+    public enum FirstRun {
+        /// Крупнее, чем на плите настройки (20): там марка открывает короткую
+        /// колонку, здесь — стоит одна посреди окна, и на этом расстоянии 20
+        /// читается как значок, который забыли убрать.
+        public static let markSize: CGFloat = 26
+        /// Марка → заголовок. Шире настроечных 16 по той же причине.
+        public static let markGap = Space.s28
+        /// Заголовок → подзаголовок. Теснее соседних промежутков: это одна мысль
+        /// в два голоса, а не два блока.
+        public static let subtitleGap = Space.s20
+        /// Подзаголовок → кнопка.
+        public static let actionGap = Space.s28
+        /// По бокам «Начать запись». Кнопка обнимает надпись, а не тянется.
+        public static let actionHPadding = Space.s20
+        /// Мера заголовка. Без неё он разъезжается на всю ширину окна в одну
+        /// строку, и вопрос перестаёт читаться как вопрос.
+        public static let measure: CGFloat = 420
+    }
+
     public enum Setup {
         /// The plate grew with the centred layout (2026-08-07) so it reads as a
         /// relative of the first-run screen rather than a system alert. Two

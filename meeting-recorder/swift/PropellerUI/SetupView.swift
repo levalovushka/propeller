@@ -204,13 +204,18 @@ public struct SetupView: View {
 /// waiting, and the download that *is* running has deliberately been given no
 /// indicator at all.
 struct SetupMark: View {
+    /// Настроечная плита и экран пустого архива держат марку разного кегля — на
+    /// плите она открывает колонку, в окне стоит одна. Крутится в обоих случаях
+    /// одинаково: скорость — свойство марки, а не места.
+    var size: CGFloat = Tokens.Setup.markSize
+
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
-            PropellerMark(size: Tokens.Setup.markSize)
+            PropellerMark(size: size)
                 .rotationEffect(.degrees(angle(at: context.date)))
         }
         .foregroundStyle(Tokens.Setup.mark)
-        .frame(width: Tokens.Setup.markSize, height: Tokens.Setup.markSize)
+        .frame(width: size, height: size)
         .accessibilityHidden(true)
     }
 

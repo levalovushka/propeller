@@ -161,7 +161,10 @@ public enum UIStateCatalog {
     ]
 
     public static let library: [Screen] = [
-        .init(id: "lib-empty",     label: "Список встреч — пусто"),
+        // Слаг остаётся прежним намеренно: по нему переснимок заменяет кадр в
+        // Figma. Подпись — новая, потому что пустой архив больше не «список без
+        // строк», а `FirstRunView` вместо обеих колонок.
+        .init(id: "lib-empty",     label: "Пустой архив — «Запишем первую встречу?»"),
         .init(id: "lib-populated", label: "Список встреч — записи по секциям"),
         .init(id: "lib-search",    label: "Поиск ⌘K"),
         // After dissolve: the row is gone; restore is ⌘Z, not a list state.
