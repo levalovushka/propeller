@@ -478,6 +478,17 @@ public enum Tokens {
         public static let chromePadding: CGFloat = Space.s12
         public static let trafficLightSlotWidth: CGFloat = 76
 
+        /// Смена того, **чем окно является**: приглашение записать первую встречу
+        /// уходит, колонки приходят. Те же две ступени, что у подмены содержимого
+        /// колонки (`Pane.columnSwapOut` / `columnSwapIn`), и по той же причине —
+        /// по очереди, а не крест-накрест, уход короче прихода.
+        ///
+        /// Своя пара имён, а не переиспользованная панельная: панельные числа
+        /// правят, думая про колонку, и однажды поправят — а здесь меняется всё
+        /// окно, и это решение принимается отдельно от того.
+        public static let swapOut = Motion.Step.t180
+        public static let swapIn = Motion.Step.t240
+
         /// Where the rail toggle sits, measured from the window's top-left — and
         /// it sits there whatever the rail is doing.
         ///

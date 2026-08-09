@@ -48,6 +48,8 @@ final class MotionScaleTests: XCTestCase {
             ("Pane.Bar.fadeIn", Tokens.Pane.Bar.fadeIn),
             ("Pane.Bar.fadeInDelay", Tokens.Pane.Bar.fadeInDelay),
             ("Pane.Switcher.fade", Tokens.Pane.Switcher.fade),
+            ("Window.swapOut", Tokens.Window.swapOut),
+            ("Window.swapIn", Tokens.Window.swapIn),
         ]
         for (name, value) in named {
             XCTAssertTrue(

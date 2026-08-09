@@ -61,6 +61,27 @@ public struct FirstRunView: View {
     }
 }
 
+public extension AnyTransition {
+    /// Смена того, чем окно является: приглашение ↔ колонки.
+    ///
+    /// Асимметричная и с задержкой на входе, потому что `principles.md` §9
+    /// запрещает крест-накрест: старое уходит, и только на освободившееся место
+    /// приходит новое. Симметричный `.opacity` дал бы два экрана, проступающих
+    /// друг сквозь друга, — то самое мигание, ради устранения которого панель
+    /// уже носит такую же пару.
+    static var windowSwap: AnyTransition {
+        .asymmetric(
+            insertion: .opacity.animation(
+                .easeOut(duration: Tokens.Window.swapIn)
+                    .delay(Tokens.Window.swapOut)
+            ),
+            removal: .opacity.animation(
+                .easeOut(duration: Tokens.Window.swapOut)
+            )
+        )
+    }
+}
+
 /// «Начать запись» — та же кнопка, что на плите настройки, но по размеру текста.
 ///
 /// Растянутая по ширине она там потому, что стоит в колонке шириной 360 и

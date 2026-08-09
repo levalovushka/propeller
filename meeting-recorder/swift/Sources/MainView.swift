@@ -87,23 +87,23 @@ struct MainView: View {
     @State private var summarySave: DispatchWorkItem?
 
     var body: some View {
-        Group {
+        // По очереди, а не крест-накрест (`principles.md` §9): приглашение
+        // уходит, и только на освободившееся место приходят колонки. Задержка
+        // входа равна длительности ухода — ровно та же хореография, что у
+        // подмены содержимого колонки, потому что дефект, от которого она
+        // защищает, тот же: два экрана, проступающие друг сквозь друга.
+        ZStack {
             if showsFirstRun {
                 // Вместо колонок, а не поверх них: пустой рельс и пустая панель —
                 // не фон для приглашения, а ровно то, что оно заменяет.
                 FirstRunView(onAction: startFirstRecording)
+                    .transition(.windowSwap)
             } else {
                 columns
+                    .transition(.windowSwap)
             }
         }
-        // Уход содержимого — `t180` по лестнице. Ровно одно движение: экран
-        // гаснет, окно под ним уже собрано и с непустым рельсом, потому что
-        // запись к этому кадру уже идёт. Разъезжаться тут нечему — это не шаг
-        // мастера, а смена того, чем окно является.
-        .animation(.easeOut(duration: Tokens.Motion.Step.t180), value: showsFirstRun)
-        // Переключателя рельса на пустом экране нет: скрывать нечего, и кнопка
-        // рядом со светофором обещала бы список, которого ещё не существует.
-        .overlay(alignment: .topLeading) { if !showsFirstRun { windowChrome } }
+        .animation(.default, value: showsFirstRun)
         // Over both columns, because ⌥Tab is a window gesture and the panel is
         // what the rail would have shown if it were up. Centred rather than
         // docked: it is not part of either column, and with the rail away there
@@ -360,6 +360,12 @@ struct MainView: View {
             contentPane
         }
         .animation(.easeOut(duration: Tokens.Motion.sidebarToggle), value: sidebarVisible)
+        // Переключатель рельса живёт здесь, а не на всём окне, потому что он
+        // принадлежит колонкам: на экране пустого архива скрывать нечего, и
+        // кнопка рядом со светофором обещала бы список, которого ещё нет. Внутри
+        // колонок он и уходит вместе с ними — вынесенный наружу, он выскакивал
+        // поверх ещё не погасшего приглашения.
+        .overlay(alignment: .topLeading) { windowChrome }
     }
 
     /// Пуст ли архив настолько, что показывать нечего.
