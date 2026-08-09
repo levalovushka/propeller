@@ -66,6 +66,16 @@ final class StemSpeakerSplitTests: XCTestCase {
             XCTAssertFalse(attribution.rawValue.isEmpty)
         }
     }
+
+    func testВстречаИзБолееНовойСборкиНеПропадаетИзСписка() throws {
+        // Без этого `RecordingStore.load()` молча выбрасывает такую встречу из
+        // индекса, а `scanForOrphanRecordings()` тут же заводит её заново с нуля —
+        // без названия, заметок и часа расшифровки, который уже был готов.
+        struct Row: Codable { let speakerAttribution: SpeakerAttribution }
+        let json = #"{"speakerAttribution":"clustered_by_voice_v2"}"#
+        let row = try JSONDecoder().decode(Row.self, from: Data(json.utf8))
+        XCTAssertEqual(row.speakerAttribution, .diarized)
+    }
 }
 
 // MARK: - Э2. Никто не сдаётся

@@ -307,6 +307,14 @@ public enum SpeakerAttribution: String, Codable, Equatable, Sendable, CaseIterab
         case .stems:    return "Спикеры не разделены — только «я» и\u{00A0}собеседник"
         }
     }
+
+    /// Unknown strings decode to `.diarized` rather than throwing: the same value
+    /// `nil` already reads as (see `Models.speakerAttribution`), and a value we
+    /// don't recognise must never cost the user their meeting (I6).
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = SpeakerAttribution(rawValue: raw) ?? .diarized
+    }
 }
 
 public enum MixGain {

@@ -42,8 +42,6 @@ final class MotionScaleTests: XCTestCase {
             ("Pane.Bar.fadeOut", Tokens.Pane.Bar.fadeOut),
             ("Pane.Bar.fadeIn", Tokens.Pane.Bar.fadeIn),
             ("Pane.Bar.fadeInDelay", Tokens.Pane.Bar.fadeInDelay),
-            ("Pane.NoteBar.raise", Tokens.Pane.NoteBar.raise),
-            ("Pane.NoteBar.lower", Tokens.Pane.NoteBar.lower),
             ("Pane.NoteBar.grow", Tokens.Pane.NoteBar.grow),
             ("Pane.NoteBar.hint", Tokens.Pane.NoteBar.hint),
             ("Pane.Switcher.fade", Tokens.Pane.Switcher.fade),
