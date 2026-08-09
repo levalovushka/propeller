@@ -12,9 +12,16 @@ struct MainView: View {
     @State private var showSearchPalette = false
     @ObservedObject private var calendar = CalendarService.shared
 
-    /// Browser-style history: `nil` = meetings list, otherwise a recording id.
-    /// Figma 640:1859 — chevron.left / chevron.right next to traffic lights.
-    @State private var navStack: [String?] = [nil]
+    /// Browser-style history over *meetings*, and only meetings.
+    ///
+    /// It used to be `[String?]`, where `nil` meant «список встреч» — a
+    /// destination that stopped existing when the rail became the list. Its one
+    /// remaining effect was that «Назад» from the first meeting deselected
+    /// everything and left «Пока нет встреч» written across the pane while the
+    /// rail was full of them. A meeting is always open when there is one to
+    /// open, so the absent destination is gone from the type rather than
+    /// guarded at each use.
+    @State private var navStack: [String] = []
     @State private var navIndex: Int = 0
     @State private var suppressNavRecord = false
 
@@ -30,7 +37,7 @@ struct MainView: View {
     /// Запись ничего из этого не запрещает: она идёт своим ходом, а окно всё это
     /// время остаётся окном — можно уйти в другую встречу и вернуться.
     private var canGoBack: Bool {
-        navIndex > 0 || state.selectedRecordingID != nil
+        navIndex > 0
     }
     private var canGoForward: Bool { navIndex + 1 < navStack.count }
 
@@ -678,18 +685,8 @@ struct MainView: View {
 
     private func goBack() {
         guard canGoBack else { return }
-        if navIndex > 0 {
-            navIndex -= 1
-            applyNav()
-            return
-        }
-        // Detail open but history empty (e.g. cold open) — still leave to list.
-        suppressNavRecord = true
-        state.player.stop()
-        state.selectedRecordingID = nil
-        navStack = [nil]
-        navIndex = 0
-        suppressNavRecord = false
+        navIndex -= 1
+        applyNav()
     }
 
     private func goForward() {
@@ -701,26 +698,18 @@ struct MainView: View {
     private func applyNav() {
         suppressNavRecord = true
         defer { suppressNavRecord = false }
-        let dest = navStack[navIndex]
-        if let id = dest,
-           let entry = recordingStore.recordings.first(where: { $0.id == id }) {
-            state.selectRecording(entry)
-        } else {
-            state.player.stop()
-            state.selectedRecordingID = nil
-        }
+        guard navStack.indices.contains(navIndex) else { return }
+        // Шаг истории на удалённую встречу ничего не делает: снимать выбор
+        // здесь значило бы вернуть то самое состояние без выбранной встречи, но
+        // теперь ещё и по кнопке «Назад».
+        guard let entry = recordingStore.recordings
+            .first(where: { $0.id == navStack[navIndex] }) else { return }
+        state.selectRecording(entry)
     }
 
     private func recordNav(to id: String?) {
-        guard !suppressNavRecord else { return }
-        guard navStack.indices.contains(navIndex) else { return }
-        if navStack[navIndex] == id { return }
-        // Keep list under the first recording so Back always has somewhere to go.
-        if id != nil, navStack == [nil], navIndex == 0 {
-            navStack = [nil, id]
-            navIndex = 1
-            return
-        }
+        guard !suppressNavRecord, let id else { return }
+        if navStack.indices.contains(navIndex), navStack[navIndex] == id { return }
         if navIndex + 1 < navStack.count {
             navStack = Array(navStack.prefix(navIndex + 1))
         }
@@ -809,10 +798,16 @@ struct MainView: View {
             )
             .frame(maxWidth: .infinity)
         } else {
-            Text("Пока нет встреч")
-                .typoBlock(Tokens.Pane.Typo.body)
-                .foregroundStyle(Tokens.Pane.placeholder)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Недостижимо, и поэтому пусто. Пока в архиве есть хоть одна
+            // встреча, какая-то выбрана: историю больше нельзя отмотать в
+            // «ничего», а `selectNewestIfNothingChosen` чинит любой другой
+            // способ остаться без выбора. Пустой архив сюда не доходит — там
+            // окно занимает `FirstRunView`, ещё до колонок.
+            //
+            // Здесь стояло «Пока нет встреч», и это была единственная строка в
+            // приложении, которая врала прямым текстом: её видели, отмотав
+            // «Назад» с полным рельсом встреч рядом.
+            Color.clear
         }
     }
 

@@ -55,7 +55,7 @@ struct RecordingPaneView: View {
     /// (`design/no-dead-ends.md`).
     private var placeholder: String {
         live.recordingID == entry.id
-            ? "Пока тихо"
+            ? "Слушаю…"
             : "Расшифровка появится после встречи"
     }
 }

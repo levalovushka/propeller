@@ -124,7 +124,7 @@ public struct LiveTranscriptColumn: View {
         notes: [TranscriptNote] = [],
         remoteName: String = SourceAwareSpeaker.defaultRemoteName,
         namesSpeakers: Bool = true,
-        placeholder: String = "Пока тихо",
+        placeholder: String = "Слушаю…",
         isPaused: Bool = false
     ) {
         self.turns = turns
@@ -332,7 +332,7 @@ public struct RecordingPaneBody: View {
         turns: [LiveTranscript.Turn],
         ownerName: String,
         namesSpeakers: Bool = true,
-        placeholder: String = "Пока тихо",
+        placeholder: String = "Слушаю…",
         isPaused: Bool = false,
         notes: [MeetingNote],
         transcriptNotes: [TranscriptNote] = [],
