@@ -232,7 +232,14 @@ class AppState: ObservableObject {
         // nothing to do about it. Each of those meetings is in the list with its
         // own state; that is where it belongs.
         _ = recordingStore.recoverInterruptedRecordings()
-        Task { _ = await recordingStore.recoverMissingFinalMixes() }
+        // Пока микса нет, `audioAvailable` ложно, фаза встрече не причитается и
+        // таймер не заводится вовсе — так что запуск, собравший микс, сам её и
+        // не обработает, если об этом не сказать. Молчание здесь и было тем
+        // «остановились и надеемся, что нас пнут», от которого избавлялись в I12.
+        Task { [weak self] in
+            _ = await self?.recordingStore.recoverMissingFinalMixes()
+            self?.kickPipeline("mixes rebuilt")
+        }
         refreshStorageUsage()
         NotificationManager.shared.configure()
         NotificationManager.shared.onCancelRecording = { [weak self] in
@@ -1263,6 +1270,26 @@ class AppState: ObservableObject {
             cancelRecording()
             return
         }
+        // Удалить встречу, которую прямо сейчас обрабатывают, — это ещё и
+        // «перестать её обрабатывать». Иначе фаза доработает до конца на
+        // встрече, которой уже нет в индексе, и допишет результат в пустоту:
+        // `RecordingStore.update` не найдёт id и молча ничего не сделает. На
+        // расшифровке это восемь секунд GPU впустую (замерено 2026-08-09), на
+        // саммари — минута модели. Воркер снимается здесь, а не внутри фазы:
+        // отмена — это решение о работе, а не о встрече.
+        if activity.concerns(entry.id) {
+            debugLog("[pipeline] \(entry.id) удалена во время работы — снимаем фазу")
+            // Снятая работа — не конец очереди: за этой встречей стоят другие, и
+            // `.cancelled` сам по себе никого не будит (дедлайна у отмены нет,
+            // если никто не ждёт ретрая). Ждём, пока цикл размотается, и просим
+            // его посмотреть заново.
+            let running = workerTask
+            pausePipeline()
+            Task { @MainActor [weak self] in
+                await running?.value
+                self?.kickPipeline("работа снята вместе со встречей")
+            }
+        }
         if dissolvingMeetingID != nil {
             finishDissolvingDeletion()
         }
@@ -1433,7 +1460,18 @@ class AppState: ObservableObject {
         debugLog("[pipeline] \(reason): starting, \(now.owed) owed")
         workerTask = Task { [weak self] in
             await self?.runPipelineLoop()
-            await MainActor.run { self?.workerTask = nil }
+            await MainActor.run {
+                self?.workerTask = nil
+                // Прежде чем разойтись — посмотреть на диск. «Больше нечего
+                // делать» это единственный вывод, ошибиться в котором дорого: он
+                // гасит таймер, и подобрать потерянный файл будет уже некому до
+                // следующего запуска. Один листинг папки на конец дрейна, а не
+                // таймер и не наблюдатель за файловой системой: ничего не
+                // причитается ⇒ ничего не крутится.
+                if let adopted = self?.adoptOrphans(), adopted > 0 {
+                    self?.kickPipeline("подобрано с диска: \(adopted)")
+                }
+            }
         }
     }
 
@@ -1472,6 +1510,29 @@ class AppState: ObservableObject {
         debugLog("[pipeline] next look in \(Int(delay))s")
     }
 
+    /// Подобрать записи с диска и, если кого-то подобрали, дать им ход.
+    ///
+    /// Файл в папке записей без строки в индексе — это встреча, которой для
+    /// человека не существует: её нет в списке, ей не причитается работа, и
+    /// никакой таймер за ней не придёт. Раньше её подбирал только запуск
+    /// приложения, то есть человек — а он и не знает, что надо перезапустить.
+    ///
+    /// Кик обязателен: подобранная встреча приходит в стадии `.recorded`, и без
+    /// него она просто ляжет в список нерасшифрованной до следующего события.
+    /// Кик остаётся вызывающей стороне: у активации окна он безусловный (мы и
+    /// так пришли смотреть, есть ли работа), а после дрейна — только если кого-то
+    /// подобрали, иначе цикл входил бы сам в себя.
+    @discardableResult
+    private func adoptOrphans() -> Int {
+        // Встречу, чьё «Вернуть» ещё на экране, скан не трогает: он же и
+        // дочищает аудио удалённых, а отмена без звука — не отмена.
+        let adopted = recordingStore.scanForOrphanRecordings(
+            undoableID: pendingDeletion?.id
+        )
+        refreshStorageUsage()
+        return adopted
+    }
+
     /// Everything that can make owed work runnable without a user action. Each
     /// one used to be a way for the archive to stay unfinished until the next
     /// launch: a Mac that got hot mid-backlog stayed paused, a laptop closed
@@ -1491,7 +1552,10 @@ class AppState: ObservableObject {
             forName: NSApplication.didBecomeActiveNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.kickPipeline("app active") }
+            Task { @MainActor in
+                self?.adoptOrphans()
+                self?.kickPipeline("app active")
+            }
         })
         worldObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,

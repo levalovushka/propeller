@@ -14,6 +14,22 @@ class RecordingStore: ObservableObject {
             .appendingPathComponent("recordings.json")
     }
 
+    /// Кого человек удалил (`MeetingTombstone`).
+    ///
+    /// Отдельным файлом, а не полем в записи: к моменту, когда надгробие нужно,
+    /// записи в индексе уже нет — в этом всё и дело. Держать её там же
+    /// «удалённой» значило бы, что каждый читатель массива обязан помнить про
+    /// фильтр, а забытый фильтр — это ровно тот класс ошибок, ради которого
+    /// решения вынесены в `PropellerPure`.
+    private var tombstonesURL: URL {
+        URL(fileURLWithPath: Preferences.shared.recordingsPath)
+            .appendingPathComponent("deleted.json")
+    }
+
+    /// Надгробия, прочитанные с диска. Живут всю сессию: их читает скан сирот,
+    /// а он теперь бегает не только на запуске.
+    private var tombstones: [MeetingTombstone] = []
+
     // MARK: - Load / Save
 
     /// Schedule a debounced save. Multiple rapid mutations coalesce into one write.
@@ -37,6 +53,7 @@ class RecordingStore: ObservableObject {
         let dir = URL(fileURLWithPath: Preferences.shared.recordingsPath)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
+        loadTombstones()
         guard FileManager.default.fileExists(atPath: indexURL.path) else {
             scanForOrphanRecordings()
             return
@@ -114,6 +131,42 @@ class RecordingStore: ObservableObject {
         } catch {
             NSLog("[RecordingStore] Failed to save recordings index: \(error)")
         }
+    }
+
+    // MARK: - Надгробия
+
+    private func loadTombstones() {
+        guard let data = try? Data(contentsOf: tombstonesURL) else { return }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        tombstones = (try? decoder.decode([MeetingTombstone].self, from: data)) ?? []
+    }
+
+    /// Записывается **синхронно**, без дебаунса, и до того, как аудио тронут.
+    ///
+    /// Весь смысл надгробия — пережить `SIGKILL`, а дебаунс на 0.2 с это ровно
+    /// то окно, в котором его не переживёт. Файл крошечный (id и дата), так что
+    /// платить за это нечем.
+    private func markDeleted(_ id: String) {
+        guard !tombstones.contains(where: { $0.id == id }) else { return }
+        tombstones.append(MeetingTombstone(id: id, at: Date()))
+        writeTombstones()
+    }
+
+    /// ⌘Z: удаления не было. Камень убирается сразу — иначе следующий скан
+    /// увидит запись в индексе и надгробие на неё же, и хотя `adoptable`
+    /// разрешает этот спор в пользу индекса, оставлять его незачем.
+    private func unmarkDeleted(_ id: String) {
+        guard tombstones.contains(where: { $0.id == id }) else { return }
+        tombstones.removeAll { $0.id == id }
+        writeTombstones()
+    }
+
+    private func writeTombstones() {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(tombstones) else { return }
+        try? data.write(to: tombstonesURL, options: .atomic)
     }
 
     // MARK: - CRUD
@@ -234,7 +287,12 @@ class RecordingStore: ObservableObject {
 
     /// Remove the recording entirely (audio files + index entry)
     /// Delete for good: the audio goes, then the entry.
+    ///
+    /// Надгробие ставится **до** удаления файлов: если стереть их не удалось —
+    /// том отмонтирован, файл занят, — на диске остаётся wav без записи в
+    /// индексе, то есть ровно то, что скан сирот считает потерянной встречей.
     func remove(_ entry: RecordingEntry) {
+        markDeleted(entry.id)
         for url in audioFileURLs(for: entry) {
             try? FileManager.default.removeItem(at: url)
         }
@@ -246,13 +304,20 @@ class RecordingStore: ObservableObject {
     ///
     /// Soft-delete for ⌘Z: files stay until `remove` commits (next delete or
     /// quit). An undo that cannot bring the audio back is not an undo.
+    ///
+    /// Это и есть то окно, в котором удаление раньше не переживало убийство
+    /// процесса: записи в индексе уже нет, аудио ещё на месте, а
+    /// `commitPendingDeletion` живёт в `applicationWillTerminate`, который при
+    /// `SIGKILL` не выполняется. Надгробие переживает.
     func removeDeferred(_ entry: RecordingEntry) {
+        markDeleted(entry.id)
         recordings.removeAll { $0.id == entry.id }
         scheduleSave()
     }
 
     /// Put a deferred removal back, newest-first like the rest of the list.
     func restore(_ entry: RecordingEntry) {
+        unmarkDeleted(entry.id)
         guard !recordings.contains(where: { $0.id == entry.id }) else { return }
         recordings.append(entry)
         recordings.sort { $0.date > $1.date }
@@ -390,11 +455,26 @@ class RecordingStore: ObservableObject {
     func recoverInterruptedRecordings() -> Int {
         let dir = URL(fileURLWithPath: Preferences.shared.recordingsPath)
         var recoveredCount = 0
+        var failedStarts: [String] = []
         for i in recordings.indices where recordings[i].status == .recording {
             let url = dir.appendingPathComponent(recordings[i].filename)
             let stems = AudioSourceStemURLs.expectedSiblings(for: url)
             let hasFinal = FileManager.default.fileExists(atPath: url.path)
             let hasMic = FileManager.default.fileExists(atPath: stems.microphoneURL.path)
+            if RecordingRecovery.isFailedStart(
+                stage: .recording,
+                hasAnyAudio: hasFinal || hasMic,
+                hasTranscript: recordings[i].transcript?.isEmpty == false,
+                hasNotes: MeetingNotes.resolved(
+                    items: recordings[i].noteItems, blob: recordings[i].notes
+                ).isEmpty == false
+            ) {
+                // Ни байта не записалось. Это не встреча, а след неудавшегося
+                // старта: чинить нечем, работы ей не причитается, а из списка
+                // она не уходит и вечно показывает «Идёт запись».
+                failedStarts.append(recordings[i].id)
+                continue
+            }
             if hasFinal || hasMic {
                 if hasFinal {
                     recordings[i].duration = Self.wavDuration(url: url)
@@ -419,7 +499,13 @@ class RecordingStore: ObservableObject {
             }
             recoveredCount += 1
         }
-        if recoveredCount > 0 { save() }
+        if !failedStarts.isEmpty {
+            // Без надгробий: удалять нечего — файлов нет, — а камень без файла
+            // всё равно ушёл бы на первом же скане.
+            NSLog("[RecordingStore] Убрано пустых стартов: \(failedStarts.count)")
+            recordings.removeAll { failedStarts.contains($0.id) }
+        }
+        if recoveredCount > 0 || !failedStarts.isEmpty { save() }
         return recoveredCount
     }
 
@@ -453,22 +539,75 @@ class RecordingStore: ObservableObject {
 
     // MARK: - Orphan Scanning
 
-    private func scanForOrphanRecordings() {
+    /// Подобрать записи, которые есть на диске и которых нет в индексе.
+    ///
+    /// Раньше это было событием запуска, и только его. Значит, wav, появившийся
+    /// при живом приложении, не существовал для него до перезапуска — а
+    /// перезапустить его мог только человек, который и не должен знать, что
+    /// такое бывает. Теперь скан зовут ещё и когда воркер собирается сказать
+    /// «всё сделано» (`AppState.adoptOrphans`): это самый дешёвый момент, чтобы
+    /// ошибиться в другую сторону, и самый дорогой, чтобы ошибиться в эту.
+    ///
+    /// Возвращает, сколько встреч подобрано, — вызывающая сторона обязана после
+    /// ненулевого ответа пнуть пайплайн, иначе подобранная встреча просто
+    /// полежит в списке необработанной.
+    ///
+    /// - Parameter undoableID: встреча, чьё «Вернуть» ещё на экране. Её аудио
+    ///   трогать нельзя: отмена, которая не может вернуть звук, — не отмена.
+    @discardableResult
+    func scanForOrphanRecordings(undoableID: String? = nil) -> Int {
         let dir = URL(fileURLWithPath: Preferences.shared.recordingsPath)
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: dir, includingPropertiesForKeys: [.creationDateKey]
-        ) else { return }
+        ) else { return 0 }
 
         var changed = false
-        let existingIDs = Set(recordings.map(\.id))
+        var adopted = 0
         let df = DateFormatter()
         df.dateFormat = "yyyyMMdd_HHmmss"
 
+        var wavs: [String: URL] = [:]
         for file in files where file.pathExtension == "wav" {
             let id = file.deletingPathExtension().lastPathComponent
             if id.hasSuffix(".mic") || id.hasSuffix(".sys") { continue }
-            if existingIDs.contains(id) { continue }
+            wavs[id] = file
+        }
 
+        // Надгробие, у которого файл ещё на месте, значит удаление не довели до
+        // конца. Довести сейчас — иначе аудио удалённой встречи лежит на диске
+        // вечно: в списке его нет, в подсчёте размера библиотеки нет (там проход
+        // по индексу), и предъявить его человеку негде. Замерено 2026-08-09:
+        // 24 МБ от одной удалённой встречи пережили штатный выход приложения.
+        //
+        // Это и делает надгробие самоубирающимся: файл уходит, следом уходит
+        // камень, и `deleted.json` не превращается в список всего, что человек
+        // когда-либо удалил.
+        for stone in tombstones where stone.id != undoableID {
+            guard let file = wavs[stone.id] else { continue }
+            let stems = AudioSourceStemURLs.expectedSiblings(for: file)
+            for url in [file, stems.microphoneURL, stems.systemURL] {
+                try? FileManager.default.removeItem(at: url)
+            }
+            if !FileManager.default.fileExists(atPath: file.path) {
+                wavs.removeValue(forKey: stone.id)
+                NSLog("[RecordingStore] Дочистили аудио удалённой встречи \(stone.id)")
+            }
+        }
+
+        // Камень сторожит один файл; файла нет — камень уходит.
+        let kept = OrphanAdoption.pruned(tombstones, fileIDs: Set(wavs.keys))
+        if kept.count != tombstones.count {
+            tombstones = kept
+            writeTombstones()
+        }
+
+        let adoptableIDs = OrphanAdoption.adoptable(
+            fileIDs: Array(wavs.keys),
+            knownIDs: Set(recordings.map(\.id)),
+            tombstoned: Set(tombstones.map(\.id))
+        )
+        for id in adoptableIDs {
+            guard let file = wavs[id] else { continue }
             let date = df.date(from: id) ?? ((try? file.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? Date())
             recordings.append(RecordingEntry(
                 id: id, filename: file.lastPathComponent, date: date,
@@ -476,6 +615,10 @@ class RecordingStore: ObservableObject {
                 status: .recorded, transcript: nil
             ))
             changed = true
+            adopted += 1
+        }
+        if adopted > 0 {
+            NSLog("[RecordingStore] Подобрано записей с диска: \(adopted)")
         }
 
         // Fill in missing durations
@@ -489,6 +632,7 @@ class RecordingStore: ObservableObject {
             recordings.sort { $0.date > $1.date }
             save()
         }
+        return adopted
     }
 
     // MARK: - WAV Duration
