@@ -131,6 +131,15 @@ enum AppWindowRegistry {
     /// arrival hangs off the same travel, so it has to be a length we know.
     private static func travel(_ window: NSWindow, to target: CGRect) {
         guard target != window.frame else { return }
+        // 280 pt корпуса — самое крупное движение в приложении и единственное,
+        // которое двигает не картинку, а окно. Кому от такого нехорошо, тот эту
+        // настройку и включает: окно встаёт на место сразу, а колонка внутри
+        // по-прежнему проявляется — прозрачность не укачивает.
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            window.setFrame(target, display: true)
+            persistFrame(window)
+            return
+        }
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = Tokens.Motion.windowResize
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)

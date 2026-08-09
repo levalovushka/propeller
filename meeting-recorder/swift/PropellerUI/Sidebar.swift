@@ -419,6 +419,8 @@ private struct SidebarMeetingScroll: View {
     /// Only the first finish callback wins — row + fallback both may fire.
     @State private var dissolveReported = false
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     /// Stable fingerprint of who is in the list — drives the reflow animation
     /// when a meeting appears, leaves, or moves between day groups.
     private var listSignature: String {
@@ -550,7 +552,8 @@ private struct SidebarMeetingScroll: View {
     /// animations disabled (`resetSlotCollapse`), and a date easing in over half a
     /// second above a row that is already there is the same mismatch reversed.
     private func collapse(_ vanishing: Bool) -> Animation? {
-        vanishing ? .easeInOut(duration: Tokens.Motion.Ash.duration) : nil
+        guard vanishing, !reduceMotion else { return nil }
+        return .easeInOut(duration: Tokens.Motion.Ash.duration)
     }
 
     /// Is this whole group on its way out — the meeting burning being the only one
@@ -949,6 +952,14 @@ public struct SidebarMeetingRow: View {
         AshLog.log.info("slot: collapsing from \(self.slotHeight)")
         slotFrozen = true
         slotCollapse = 0
+        // Пепла с «уменьшить движение» нет — строка исчезает сразу
+        // (`MeetingRowAshView`), и полсекунды съезжающихся соседей после
+        // мгновенного исчезновения читаются как отдельное, ничем не вызванное
+        // движение. Слот закрывается тем же кадром.
+        guard !reduceMotion else {
+            slotCollapse = 1
+            return
+        }
         withAnimation(.easeInOut(duration: Tokens.Motion.Ash.duration)) {
             slotCollapse = 1
         }

@@ -1176,6 +1176,14 @@ class AppState: ObservableObject {
             ?? preferred
     }
 
+    /// Как список сдвигается, впуская вернувшуюся строку. Nil с «уменьшить
+    /// движение»: строка встаёт на место, а соседи не разъезжаются под ней.
+    private static var listReflow: Animation? {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? nil
+            : .easeInOut(duration: Tokens.Motion.listReflow)
+    }
+
     /// Bring back the last soft-deleted meeting (⌘Z).
     func undoDeletion(undoManager: UndoManager? = nil) {
         dissolveFallbackTask?.cancel()
@@ -1187,7 +1195,7 @@ class AppState: ObservableObject {
         let um = resolveUndoManager(undoManager)
         // Mid-ash the row is still in the store — only restore if it left.
         if !recordingStore.recordings.contains(where: { $0.id == entry.id }) {
-            withAnimation(.easeInOut(duration: Tokens.Motion.listReflow)) {
+            withAnimation(Self.listReflow) {
                 recordingStore.restore(entry)
             }
         }

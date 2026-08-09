@@ -172,6 +172,8 @@ public struct NotchFace: View {
     /// одной кривой.
     @State private var shownStage: NotchGeometry.Stage = .sealed
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     /// Раскрытие и сворачивание поля — пружина без перелёта: чёлка не пружинит,
     /// она раздаётся.
     private static let move = Animation.spring(response: 0.34, dampingFraction: 0.92)
@@ -199,10 +201,27 @@ public struct NotchFace: View {
 
     /// Каким ходом плита идёт к стадии, в которую её позвали. По нему же идут
     /// значки и поле, чтобы всё движение читалось одним жестом, а не тремя.
+    ///
+    /// С «уменьшить движение» — та же хореография, но без пружин: плита всё
+    /// равно должна доехать (иначе поле появляется в воздухе над кромкой), а вот
+    /// доводка на пружине — как раз то, от чего эту настройку включают.
     private func motion(from: NotchGeometry.Stage, to: NotchGeometry.Stage) -> Animation {
+        if reduceMotion { return .easeOut(duration: Tokens.Motion.Step.t180) }
         if from == .sealed { return Self.arrive }
         if to == .sealed { return Self.leave }
         return Self.move
+    }
+
+    /// Значки приходят с задержкой и уходят без неё — и то и другое остаётся при
+    /// «уменьшить движение», потому что это очерёдность, а не движение.
+    private var glyphMotion: Animation {
+        if reduceMotion {
+            let step = Tokens.Motion.Step.t180
+            return revealed
+                ? .easeOut(duration: step).delay(Tokens.Motion.Step.t120)
+                : .easeOut(duration: step)
+        }
+        return revealed ? Self.glyphs : Self.leave
     }
 
     public var body: some View {
@@ -239,7 +258,7 @@ public struct NotchFace: View {
             // Появляются с задержкой — место сначала, содержимое следом;
             // уходят без неё, вместе с плитой, чтобы не оставаться висеть в
             // воздухе там, где уха уже нет.
-            .animation(revealed ? Self.glyphs : Self.leave, value: revealed)
+            .animation(glyphMotion, value: revealed)
 
             if composing {
                 NotchNoteField(text: $draft, onSubmit: submit, onCancel: onCancel)
@@ -289,11 +308,16 @@ private struct EarReveal: ViewModifier {
     var revealed: Bool
     var from: CGFloat
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func body(content: Content) -> some View {
         content
-            .scaleEffect(revealed ? 1 : 0.7)
-            .offset(x: revealed ? 0 : from)
-            .blur(radius: revealed ? 0 : 3)
+            // Вынесенный движением значок с «уменьшить движение» просто
+            // проявляется: выезд из-под выреза — единственное здесь, что
+            // движется само по себе, а не вслед за плитой.
+            .scaleEffect(revealed || reduceMotion ? 1 : 0.7)
+            .offset(x: revealed || reduceMotion ? 0 : from)
+            .blur(radius: revealed || reduceMotion ? 0 : 3)
             .opacity(revealed ? 1 : 0)
     }
 }
