@@ -157,8 +157,15 @@ public struct LiveTranscriptColumn: View {
             }
             ForEach(feed, id: \.self) { item in
                 switch item {
-                case .turn(let index): remark(turns[index])
-                case .note(let index): TranscriptNoteRow(note: notes[index])
+                case .turn(let index):
+                    remark(turns[index])
+                case .note(let index):
+                    // Тем же появлением, что и реплика: заметка не влетает
+                    // откуда-то, а проступает там, где и стояла бы, если бы
+                    // была написана раньше. Она встала в ленту по времени, а не
+                    // приехала в конец, и движение обязано это подтверждать.
+                    TranscriptNoteRow(note: notes[index])
+                        .transition(.opacity)
                 }
             }
         }

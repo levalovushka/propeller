@@ -65,7 +65,18 @@ public struct NoteBar: View {
         ) {
             row
         }
-        .animation(.easeOut(duration: Tokens.Motion.hover), value: focused)
+        // Плита приходит и уходит на разных ступенях, как у панели действий:
+        // появление читают, исчезновение — нет, и держать глаз на уходящем
+        // столько же, сколько на приходящем, незачем.
+        .animation(
+            .easeOut(duration: focused ? Tokens.Pane.NoteBar.raise : Tokens.Pane.NoteBar.lower),
+            value: focused
+        )
+        // Прибавившаяся строка отодвигает разговор — и отодвигает его движением,
+        // а не подменой кадра. Значение — сам текст: высота меняется только на
+        // переносе, поэтому на остальных знаках анимировать нечего и ничего не
+        // анимируется.
+        .animation(.easeOut(duration: Tokens.Pane.NoteBar.grow), value: text.wrappedValue)
         .padding(.horizontal, Tokens.Pane.noteBarHPadding)
         .padding(.vertical, Tokens.Pane.noteBarVPadding)
         // Сколько места поле занимает прямо сейчас. Колонке под ним это нужно
@@ -101,6 +112,7 @@ public struct NoteBar: View {
             hint
                 .opacity(trimmed.isEmpty ? 0 : 1)
                 .allowsHitTesting(!trimmed.isEmpty)
+                .animation(.easeOut(duration: Tokens.Pane.NoteBar.hint), value: trimmed.isEmpty)
         }
     }
 
