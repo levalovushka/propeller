@@ -142,7 +142,14 @@ class RecordingStore: ObservableObject {
         lastFailure: PipelineFailure?? = nil
     ) {
         guard let idx = recordings.firstIndex(where: { $0.id == id }) else { return }
-        if let t = transcript { recordings[idx].transcript = t }
+        if let t = transcript {
+            recordings[idx].transcript = t
+            // Настоящая расшифровка пришла — черновик больше не нужен, и
+            // стирается он здесь, а не у вызывающего. Иначе правило «живой
+            // текст живёт до расшифровки» держалось бы на памяти каждого, кто
+            // однажды напишет `update(transcript:)`, а таких мест уже пять.
+            recordings[idx].liveSegmentsJSON = nil
+        }
         if let s = status { recordings[idx].status = s }
         if let d = duration { recordings[idx].duration = d }
         if let l = language { recordings[idx].language = l }
@@ -164,6 +171,20 @@ class RecordingStore: ObservableObject {
         if let so = systemStemOffset { recordings[idx].systemStemOffset = so }
         if let sa = speakerAttribution { recordings[idx].speakerAttribution = sa }
         if let lf = lastFailure { recordings[idx].lastFailure = lf }
+        scheduleSave()
+    }
+
+    /// Черновик живого текста, снятый в момент остановки.
+    ///
+    /// Отдельным методом, а не полем в `update`: тот принимает пятнадцать
+    /// параметров и вызывается отовсюду, а это пишется ровно из одного места и
+    /// ровно один раз за встречу. Не перетирает уже расшифрованное — если
+    /// настоящий текст успел прийти раньше (короткая встреча, быстрый ASR),
+    /// черновику здесь делать нечего.
+    func setLiveSegmentsJSON(_ json: String, for id: String) {
+        guard let idx = recordings.firstIndex(where: { $0.id == id }) else { return }
+        guard recordings[idx].transcript?.isEmpty != false else { return }
+        recordings[idx].liveSegmentsJSON = json
         scheduleSave()
     }
 

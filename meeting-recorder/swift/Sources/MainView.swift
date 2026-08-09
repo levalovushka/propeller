@@ -851,6 +851,12 @@ struct MainView: View {
             turns = TranscriptPresentation.turns(from: segments)
         } else if let transcript = entry.transcript, !transcript.isEmpty {
             turns = TranscriptPresentation.turns(parsing: transcript, duration: entry.duration)
+        } else if let segments = storedLiveSegments(for: entry) {
+            // Черновик, снятый при остановке. Последний в очереди намеренно:
+            // это самое неточное, что есть у встречи, и уступает всему
+            // настоящему. Зато переживает перезапуск — а до него встреча,
+            // ждущая расшифровки, после перезапуска не могла показать ни слова.
+            turns = TranscriptPresentation.turns(from: segments)
         } else {
             turns = []
         }
@@ -868,6 +874,15 @@ struct MainView: View {
     /// Живые реплики, показанные как обычный транскрипт: те же имена дорожек,
     /// что поставит финальный проход, — чтобы текст не переименовывал говорящих
     /// в момент, когда его заменят.
+    /// Черновик живого текста с диска, если он ещё нужен.
+    private func storedLiveSegments(for entry: RecordingEntry) -> [PersistedSegment]? {
+        guard let json = entry.liveSegmentsJSON,
+              let data = json.data(using: .utf8),
+              let segments = try? JSONDecoder().decode([PersistedSegment].self, from: data),
+              !segments.isEmpty else { return nil }
+        return segments
+    }
+
     private func liveTurns(_ live: LiveTranscript) -> [MeetingTranscriptColumn.Turn] {
         live.turns.map { turn in
             MeetingTranscriptColumn.Turn(

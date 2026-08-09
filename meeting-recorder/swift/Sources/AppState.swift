@@ -633,6 +633,25 @@ class AppState: ObservableObject {
         }
     }
 
+    /// Записать живой текст на встречу, чтобы он пережил перезапуск.
+    ///
+    /// Вызывается один раз, в момент остановки, — до того как сервис его
+    /// обнулит. Раньше здесь не сохранялось ничего: текст держался в памяти и
+    /// исчезал вместе с процессом, а встреча до конца расшифровки оставалась
+    /// без единого слова.
+    ///
+    /// Пусто на микрофонном пути (живого распознавания там не было) и у встречи,
+    /// где никто не сказал ни слова, — писать пустой массив незачем.
+    private func persistLiveTranscript() {
+        guard let id = live.recordingID, !live.transcript.isEmpty else { return }
+        let segments = live.transcript.persistedSegments(
+            ownerName: Preferences.shared.ownerName
+        )
+        guard let data = try? JSONEncoder().encode(segments),
+              let json = String(data: data, encoding: .utf8) else { return }
+        recordingStore.setLiveSegmentsJSON(json, for: id)
+    }
+
     /// Живой транскрипт — только на общих часах: на микрофонном пути буферов
     /// нет вовсе, и открывать сессию не из чего. Экран тогда честно говорит,
     /// что текст будет после встречи, — это глубина, а не отказ.
@@ -738,6 +757,7 @@ class AppState: ObservableObject {
         // Сессии закрываются, а сказанное остаётся на экране: до конца прохода
         // по файлу это всё, что про встречу известно.
         live.stop()
+        persistLiveTranscript()
         let wasLinkedToCall = recordingLinkedToCall
         recordingLinkedToCall = false
         NotificationManager.shared.clearRecordingNotification()

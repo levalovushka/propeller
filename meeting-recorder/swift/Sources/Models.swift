@@ -35,6 +35,17 @@ struct RecordingEntry: Identifiable, Codable {
     /// segment timestamps and labels can no longer be trusted to match.
     /// Backward-compatible: old recordings without this field decode as nil.
     var mergedSegmentsJSON: String?
+    /// Живой текст встречи, записанный в момент остановки, в том же формате
+    /// (`[PersistedSegment]`), что и готовая расшифровка.
+    ///
+    /// Черновик, и живёт ровно до настоящей расшифровки: `transcript` старше по
+    /// всем правилам чтения, а этот снимок стирается, как только она появилась.
+    /// До тех пор это единственное, что про встречу известно, — и раньше оно
+    /// не переживало перезапуск приложения, потому что жило в памяти сервиса.
+    ///
+    /// Пусто у встреч, записанных на микрофонном пути: там живого распознавания
+    /// нет вовсе, сохранять нечего. Nil у всего, что старше 1.16.
+    var liveSegmentsJSON: String?
     /// Short list of discussed topics, LLM-derived from the finished summary.
     /// Rendered as the meeting's subtitle in the Meetings list. nil for old records.
     var topics: [String]?
