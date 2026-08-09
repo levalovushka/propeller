@@ -149,6 +149,10 @@ struct MainView: View {
             // meeting that was open, and a moment later there is no way to
             // learn which one that was.
             flushSummarySave()
+            // Недописанная заметка принадлежит прежней встрече: `MainView` не
+            // пересоздаётся при смене выбора, и без сброса `commitNote`
+            // подошьёт её к встрече, на которую только что переключились.
+            draftNote = ""
             recordNav(to: newID)
             loadSummary()
         }
@@ -754,16 +758,20 @@ struct MainView: View {
             .frame(maxWidth: .infinity)
         } else if let entry = state.selectedRecording {
             let document = summaryDocument(for: entry)
+            // Считаем один раз: внутри — полный `JSONDecoder().decode` по
+            // сегментам встречи, второй вызов в этом же выражении дублировал
+            // разбор ради того же результата.
+            let turns = transcriptTurns(for: entry)
             MeetingPaneBody(
                 mode: paneMode,
                 summary: document,
-                turns: transcriptTurns(for: entry),
+                turns: turns,
                 transcriptNotes: transcriptNotes(for: entry),
                 // Что стоит на месте саммари, пока саммари нет, — решает
                 // `SummaryColumnContent`, и это правило, а не отрисовка.
                 summaryContent: SummaryColumnContent.decide(
                     hasSummary: !document.isEmpty,
-                    hasTranscript: !transcriptTurns(for: entry).isEmpty,
+                    hasTranscript: !turns.isEmpty,
                     rest: state.rest(of: entry)
                 ),
                 transcriptSource: liveTurnsStandIn(for: entry) ? .live : .stored,
@@ -941,9 +949,14 @@ struct MainView: View {
             summaryOf = nil
             return
         }
-        let document = SummaryDocument.parse(markdown: Self.recapMarkdown(for: entry))
         let sameMeeting = summaryOf == entry.id
-        guard !sameMeeting || (summary.isEmpty && !document.isEmpty) else { return }
+        // Дешёвая половина гарда — до чтения файла с диска: та же встреча с
+        // уже непустым саммари не читает и не парсит markdown на каждый удар
+        // пульса пайплайна. `A || (B && C) == (A || B) && (A || C)`, так что
+        // вынести можно без изменения итогового условия.
+        guard !sameMeeting || summary.isEmpty else { return }
+        let document = SummaryDocument.parse(markdown: Self.recapMarkdown(for: entry))
+        guard !sameMeeting || !document.isEmpty else { return }
         // The reveal means «модель это написала», so it plays here and only
         // here: the meeting was already open, it had no summary, and now it
         // does. Opening a meeting that has had one for a week is not an
@@ -966,7 +979,14 @@ struct MainView: View {
         summaryOf = entry.id
         summarySave?.cancel()
         let markdown = document.markdown
-        let work = DispatchWorkItem { state.saveSummary(markdown, for: entry) }
+        let work = DispatchWorkItem {
+            state.saveSummary(markdown, for: entry)
+            // Разряжается сам: без этого `summarySave` продолжает указывать на
+            // уже выполненный элемент до следующей правки, и любой более
+            // поздний `flushSummarySave()` находит его «ожидающим» и пишет тот
+            // же markdown повторно — вслепую, в чужую по времени встречу.
+            summarySave = nil
+        }
         summarySave = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.summarySaveDelay, execute: work)
     }
@@ -974,11 +994,19 @@ struct MainView: View {
     private static let summarySaveDelay: TimeInterval = 0.8
 
     /// Write a pending edit right now — switching meetings, closing the window.
+    ///
+    /// Сначала `perform()`, потом `cancel()`: наоборот `perform()` у уже
+    /// отменённого `DispatchWorkItem` — no-op (libdispatch смотрит на флаг
+    /// отмены и выходит), и правка молча терялась. Отмена после — чтобы уже
+    /// поставленный `asyncAfter` не выполнил тот же блок второй раз. Сам блок
+    /// после сохранения обнуляет `summarySave`, поэтому если таймер уже
+    /// сработал сам, `summarySave` тут `nil` и флаш ничего не делает — не
+    /// перезаписывает файл встречи, которая уже не открыта.
     private func flushSummarySave() {
         guard let work = summarySave else { return }
         summarySave = nil
-        work.cancel()
         work.perform()
+        work.cancel()
     }
 
     /// Ask the model to say the selected fragment differently, and put its

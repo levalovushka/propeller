@@ -84,12 +84,19 @@ public struct SummaryDocument: Equatable, Sendable {
 
     public var blocks: [Block]
 
-    /// Строка `## Итог`, которую разбор снял с начала файла.
+    /// Всё, что разбор снял с начала файла и обязан вернуть дословно: YAML-шапка
+    /// формата «Obsidian» и строка `## Итог` — в этом порядке, через пустую строку.
     ///
-    /// Панель её не рисует — вся колонка и есть саммари, повторять незачем. Но
+    /// Панель их не рисует — вся колонка и есть саммари, повторять незачем. Но
     /// файл читают и другие: Obsidian, экспорт, следующий проход модели. Молча
     /// выкинуть заголовок при первом же сохранении — это поправить чужой файл,
     /// не спросив, поэтому он хранится дословно и возвращается на место.
+    ///
+    /// Шапка едет здесь же, а не отдельным полем, потому что это поле —
+    /// единственное, что переживает круг через редактор: `SummaryText.document`
+    /// собирает документ заново из текста колонки и переносит ровно `leadHeading`.
+    /// Отдельное поле терялось бы на первой же правке — то есть ровно там, где
+    /// шапку и теряли.
     public var leadHeading: String?
 
     public init(blocks: [Block], leadHeading: String? = nil) {
@@ -120,8 +127,9 @@ public struct SummaryDocument: Equatable, Sendable {
     ]
 
     public static func parse(markdown: String) -> SummaryDocument {
-        let lines = markdown
-            .replacingOccurrences(of: "\r\n", with: "\n")
+        let text = markdown.replacingOccurrences(of: "\r\n", with: "\n")
+        let (frontmatter, rest) = splittingFrontmatter(text)
+        let lines = rest
             .components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
 
@@ -157,7 +165,43 @@ public struct SummaryDocument: Equatable, Sendable {
             out.append(contentsOf: body)
         }
 
-        return SummaryDocument(blocks: out, leadHeading: leadHeading)
+        return SummaryDocument(blocks: out, leadHeading: kept(frontmatter, leadHeading))
+    }
+
+    /// Снять YAML-шапку с начала файла — дословно, ничего в ней не разбирая.
+    ///
+    /// В формате «Obsidian» `RecapService` пишет над конспектом `---` / `title:`
+    /// / `tags:` / `---`, и по этим тегам в vault'е ищут. Разбор про YAML не
+    /// знает: `---` заголовком не считается, а две строки под ним склеивались в
+    /// один абзац и рисовались лидом — самым крупным текстом колонки. Хуже
+    /// того, первое же сохранение писало файл без них.
+    ///
+    /// Шапка — только с самого начала и только целиком: первая непустая строка
+    /// ровно `---` и где-то ниже закрывающая `---`. Иначе это горизонтальная
+    /// черта в теле, и трогать её нечем.
+    private static func splittingFrontmatter(_ text: String) -> (String?, String) {
+        let lines = text.components(separatedBy: "\n")
+        func isFence(_ line: String) -> Bool {
+            line.trimmingCharacters(in: .whitespaces) == "---"
+        }
+        guard let open = lines.firstIndex(where: {
+                  !$0.trimmingCharacters(in: .whitespaces).isEmpty
+              }),
+              isFence(lines[open]),
+              let close = lines[(open + 1)...].firstIndex(where: isFence)
+        else { return (nil, text) }
+        return (lines[open...close].joined(separator: "\n"),
+                lines[(close + 1)...].joined(separator: "\n"))
+    }
+
+    /// Шапка и `## Итог` — одной строкой: обратно их несёт одно поле.
+    ///
+    /// Пустая строка между ними — тот же разделитель, каким `markdown` разводит
+    /// блоки, поэтому файл собирается обратно ровно таким, каким пришёл.
+    private static func kept(_ frontmatter: String?, _ leadHeading: String?) -> String? {
+        guard let frontmatter else { return leadHeading }
+        guard let leadHeading else { return frontmatter }
+        return frontmatter + "\n\n" + leadHeading
     }
 
     /// Первый абзац «Итога» становится ведущим — и, если он единственный и

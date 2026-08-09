@@ -257,6 +257,106 @@ final class SummaryDocumentTests: XCTestCase {
         XCTAssertTrue(document.markdown.contains("- Первое\n- Второе"))
     }
 
+    // MARK: - The YAML header an Obsidian vault reads
+
+    /// In the «Obsidian» markdown format the recap file opens with `---` /
+    /// `title:` / `tags:` / `---`. The parse knew nothing about it, so the two
+    /// YAML lines glued into one paragraph and — being the lead section — were
+    /// drawn at 20/26 semibold: the largest text in the window.
+    func testTheVaultsYamlHeaderIsNotTheBiggestTextInTheColumn() {
+        let document = SummaryDocument.parse(markdown: """
+        ---
+        title: "Разбор рельса — рекап"
+        tags: [meeting, recap]
+        ---
+
+        ## Итог
+        Договорились о редизайне.
+        """)
+        XCTAssertEqual(kinds(document), [.lead])
+        XCTAssertEqual(texts(document), ["Договорились о редизайне."])
+    }
+
+    func testTheVaultsYamlHeaderComesBackByteForByte() {
+        let file = """
+        ---
+        title: "Разбор рельса — рекап"
+        tags: [meeting, recap]
+        ---
+
+        ## Итог
+
+        Договорились о редизайне.
+
+        ## Решения
+
+        - Рельс 300 pt
+
+        """
+        XCTAssertEqual(SummaryDocument.parse(markdown: file).markdown, file)
+    }
+
+    /// The one that loses the file: an edit does not hand the parsed document
+    /// back, it hands over a document the editor rebuilt from the text in the
+    /// column, carrying `leadHeading` and nothing else. So the header has to
+    /// ride in that field — a field of its own would be dropped here, which is
+    /// exactly where `tags:` was disappearing from the vault.
+    func testEditingASentenceLeavesTheVaultsYamlHeaderInTheFile() {
+        let document = SummaryDocument.parse(markdown: """
+        ---
+        title: "Разбор рельса — рекап"
+        tags: [meeting, recap]
+        ---
+
+        ## Итог
+        Договорились о редизайне.
+        """)
+        // What `SummaryText.document(from:leadHeading:)` builds after a keystroke.
+        let edited = SummaryDocument(
+            blocks: [.init(id: "b0", kind: .lead, text: "Договорились о рельсе.")],
+            leadHeading: document.leadHeading
+        )
+        XCTAssertEqual(edited.markdown, """
+        ---
+        title: "Разбор рельса — рекап"
+        tags: [meeting, recap]
+        ---
+
+        ## Итог
+
+        Договорились о рельсе.
+
+        """)
+    }
+
+    /// A header over nothing is still not a summary — the column shows its
+    /// placeholder — and the file keeps the header anyway.
+    func testAFileThatIsNothingButAHeaderIsStillNoSummary() {
+        let file = """
+        ---
+        title: "Разбор рельса — рекап"
+        tags: [meeting, recap]
+        ---
+
+        """
+        let document = SummaryDocument.parse(markdown: file)
+        XCTAssertTrue(document.isEmpty)
+        XCTAssertTrue(document.blocks.isEmpty)
+        XCTAssertEqual(document.markdown, file)
+    }
+
+    /// With no closing `---` there is no header, only a rule — and a rule has
+    /// always just ended a paragraph.
+    func testARuleWithNothingClosingItIsNotMistakenForAHeader() {
+        let document = SummaryDocument.parse(markdown: """
+        ---
+        Всё решили.
+        """)
+        XCTAssertNil(document.leadHeading)
+        XCTAssertEqual(kinds(document), [.lead])
+        XCTAssertEqual(document.markdown, "Всё решили.\n")
+    }
+
     // MARK: - Editing
 
     func testChangingABlockKindChangesWhatIsWritten() {
