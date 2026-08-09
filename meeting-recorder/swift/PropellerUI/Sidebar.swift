@@ -833,11 +833,11 @@ public struct SidebarMeetingRow: View {
     }
 
     private var titleColor: Color {
-        SidebarMeetingParagraph.inks(for: row.state, isSelected: row.state.isSelected).title
+        SidebarMeetingParagraph.inks(for: row.state).title
     }
 
     private var previewColor: Color {
-        SidebarMeetingParagraph.inks(for: row.state, isSelected: row.state.isSelected).preview
+        SidebarMeetingParagraph.inks(for: row.state).preview
     }
 
     public var body: some View {
@@ -860,7 +860,7 @@ public struct SidebarMeetingRow: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: Tokens.Sidebar.meetingRadius, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.quiet)
         .contextMenu {
             if !isVanishing { meetingMenu }
         }
@@ -1086,7 +1086,7 @@ public struct SidebarMeetingRow: View {
     }
 
     private var paragraph: some View {
-        SidebarMeetingParagraph(row: row, isSelected: row.state.isSelected)
+        SidebarMeetingParagraph(row: row)
     }
 
     private var workingParagraph: some View {
@@ -1236,31 +1236,31 @@ public enum SidebarTrafficLightLayout {
 /// second place for the two halves to drift apart.
 public struct SidebarMeetingParagraph: View {
     private let row: SidebarMeetingRowModel
-    private let isSelected: Bool
 
-    /// `isSelected` is passed rather than read off `row.state`: in the rail it
-    /// means «панель показывает эту встречу», and in the switcher it means «сюда
-    /// попадёшь, если отпустить ⌥» — the same ink, two different questions.
-    public init(row: SidebarMeetingRowModel, isSelected: Bool) {
+    /// Выделенности здесь больше нет ни в каком виде: абзац рисует встречу, а не
+    /// то, выбрана ли она. Раньше сюда приходил `isSelected` — в рельсе он
+    /// значил «панель показывает эту», в переключателе «сюда попадёшь, если
+    /// отпустить ⌥», — и оба ответа перекрашивали описание.
+    public init(row: SidebarMeetingRowModel) {
         self.row = row
-        self.isSelected = isSelected
     }
 
     /// The rail's rule for the two inks. Static so the switcher's rows and the
     /// rail's working row read it instead of restating it.
-    public static func inks(
-        for state: SidebarRowState,
-        isSelected: Bool
-    ) -> (title: Color, preview: Color) {
-        let working = state.activity.isInFlight
+    ///
+    /// Выделение чернил не трогает — его говорит плашка. Описание всегда тише
+    /// заголовка: это второй голос строки, а не её состояние. Пока оно светлело
+    /// на выделенной встрече, одна и та же фраза меняла цвет от того, куда
+    /// человек кликнул, — и рельс, в котором заголовок уже гаснет на время
+    /// работы конвейера, начинал рябить на каждом шаге по списку.
+    public static func inks(for state: SidebarRowState) -> (title: Color, preview: Color) {
         // A deleted meeting reads like a working one — quiet. It is on its way
         // out, and the loud thing in the row has to be «Вернуть».
-        let deleted = state.activity == .deletedUndoable
-        let title = (working || deleted)
-            ? Tokens.Sidebar.meetingPreview
-            : Tokens.Sidebar.meetingTitle
-        if working { return (title, Tokens.Sidebar.meetingPreview) }
-        return (title, isSelected ? Tokens.Sidebar.meetingTitle : Tokens.Sidebar.meetingPreview)
+        let quiet = state.activity.isInFlight || state.activity == .deletedUndoable
+        return (
+            quiet ? Tokens.Sidebar.meetingPreview : Tokens.Sidebar.meetingTitle,
+            Tokens.Sidebar.meetingPreview
+        )
     }
 
     public var body: some View {
@@ -1271,7 +1271,7 @@ public struct SidebarMeetingParagraph: View {
     }
 
     private var attributed: AttributedString {
-        let inks = Self.inks(for: row.state, isSelected: isSelected)
+        let inks = Self.inks(for: row.state)
         var title = AttributedString(row.title)
         title.foregroundColor = inks.title
         guard !row.preview.isEmpty else { return title }

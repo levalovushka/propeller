@@ -72,7 +72,7 @@ public struct MeetingSwitcherPanel: View {
             highlight
             VStack(spacing: 0) {
                 ForEach(rows) { row in
-                    MeetingSwitcherRow(row: row, isCurrent: row.id == currentID)
+                    MeetingSwitcherRow(row: row)
                         .background {
                             GeometryReader { geo in
                                 Color.clear.preference(
@@ -176,20 +176,17 @@ public struct MeetingSwitcherPanel: View {
 /// рисует общая плашка сверху.
 private struct MeetingSwitcherRow: View {
     let row: SidebarMeetingRowModel
-    let isCurrent: Bool
 
     var body: some View {
-        // Два одинаковых по раскладке абзаца, разные только чернилами: цвет внутри
-        // `AttributedString` не анимируется, а перекрёстное затухание — да. Иначе
-        // чернила щёлкали бы в первом кадре шага, пока плашка едет ещё 0,18 с.
-        ZStack(alignment: .topLeading) {
-            SidebarMeetingParagraph(row: row, isSelected: false)
-            SidebarMeetingParagraph(row: row, isSelected: true)
-                .opacity(isCurrent ? 1 : 0)
-        }
-        .padding(.horizontal, Tokens.Sidebar.meetingHPadding)
-        .padding(.vertical, Tokens.Sidebar.meetingVPadding)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // Один абзац. Здесь стояло два, разных только чернилами, с перекрёстным
+        // затуханием между ними: цвет внутри `AttributedString` не анимируется, и
+        // без этого чернила щёлкали бы в первом кадре шага, пока плашка едет ещё
+        // 0,18 с. Теперь выделение чернил не трогает вовсе — его говорит плашка,
+        // и щёлкать стало нечему.
+        SidebarMeetingParagraph(row: row)
+            .padding(.horizontal, Tokens.Sidebar.meetingHPadding)
+            .padding(.vertical, Tokens.Sidebar.meetingVPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -72,6 +72,27 @@ public struct PressStyle: ButtonStyle {
     }
 }
 
+/// Кнопка, которая на нажатие не отвечает ничем.
+///
+/// `.plain` — не «никакого оформления»: на macOS он приглушает ярлык, пока
+/// кнопка нажата. Строке встречи это лишнее. В ней и так три чернила и заливка,
+/// которые меняются от наведения, выделения и стадии конвейера, — четвёртая
+/// перекраска, живущая доли секунды, читается как рябь, а не как ответ.
+/// Подтверждение нажатия там даёт не строка, а панель, которая меняется.
+public struct QuietStyle: ButtonStyle {
+    public init() {}
+
+    public func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+    }
+}
+
+extension ButtonStyle where Self == QuietStyle {
+    /// `.buttonStyle(.quiet)` — для строк списка. Мишени-действия берут
+    /// `.press`.
+    public static var quiet: QuietStyle { QuietStyle() }
+}
+
 extension ButtonStyle where Self == PressStyle {
     /// `.buttonStyle(.press)` — то же «ничего не рисует», что и `.plain`, плюс
     /// отклик на нажатие. Для мишеней-действий; строки списка его не берут —
