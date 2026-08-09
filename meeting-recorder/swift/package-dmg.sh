@@ -13,7 +13,7 @@ mkdir -p "$OUT_DIR"
 # never scales it, so any other size shows the seam.
 #
 # The artwork is 660x400 and background.tiff is 660x432: the extra 32 pt at the bottom continues the
-# gradient's bottom edge (#0B0D0E), and it is there because the Finder path bar is a *global*
+# artwork's own bottom edge (#FFFFFF today), and it is there because the Finder path bar is a *global*
 # preference, not a window one — nothing in the .DS_Store can turn it off for whoever opens the
 # image. When it is on it eats ~28 pt off the bottom of the icon view, which cropped the caption
 # clean in half. With the padding, a viewer who has the path bar on sees the composition as drawn,
@@ -29,8 +29,8 @@ mkdir -p "$OUT_DIR"
 #
 # Rebuild background.tiff from the two exports after any redesign — match the pad colour to the
 # artwork's own bottom row:
-#   ffmpeg -i background.png     -vf pad=660:432:0:0:color=#0B0D0E  padded.png
-#   ffmpeg -i background@2x.png  -vf pad=1320:864:0:0:color=#0B0D0E padded@2x.png
+#   ffmpeg -i background.png     -vf pad=660:432:0:0:color=#FFFFFF  padded.png
+#   ffmpeg -i background@2x.png  -vf pad=1320:864:0:0:color=#FFFFFF padded@2x.png
 #   tiffutil -cathidpicheck padded.png padded@2x.png -out background.tiff
 WIN_W=660
 WIN_H=432
