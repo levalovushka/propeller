@@ -8,6 +8,7 @@ struct MainView: View {
     @ObservedObject var state: AppState
     @ObservedObject var recordingStore: RecordingStore
     @Environment(\.undoManager) private var undoManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showSearchPalette = false
     @ObservedObject private var calendar = CalendarService.shared
 
@@ -89,7 +90,15 @@ struct MainView: View {
         HStack(spacing: 0) {
             if sidebarVisible {
                 sidebar
-                    .transition(.move(edge: .leading))
+                    // Единственный `move` в приложении, и он остаётся: рельс
+                    // уходит за собственный край окна, а не разъезжается с
+                    // соседями. Уезжающая строка толкает то, что рядом с ней,
+                    // — уезжающая панель освобождает место, которое занимала.
+                    //
+                    // С «уменьшить движение» — гаснет: 300 pt, идущие сбоку
+                    // через всё окно, это ровно тот размах, ради которого
+                    // настройку включают.
+                    .transition(reduceMotion ? .opacity : .move(edge: .leading))
             }
             contentPane
         }
