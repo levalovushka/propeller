@@ -114,6 +114,11 @@ final class OnboardingPanelController {
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.titlebarSeparatorStyle = .none
+        // A programmatically created NSPanel defaults to releasing itself on
+        // close; ⌘W (`.closable`) would free it while `panel` still points at
+        // it, and the next `close()` (e.g. from `applicationWillTerminate`)
+        // would touch freed memory.
+        panel.isReleasedWhenClosed = false
 
         let hosting = NSHostingView(rootView: content)
         hosting.frame = NSRect(origin: .zero, size: contentSize)
