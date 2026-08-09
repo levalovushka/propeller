@@ -316,7 +316,7 @@ public struct SettingsButton: View {
                     RoundedRectangle(cornerRadius: Tokens.Settings.buttonRadius, style: .continuous)
                 )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .disabled(!enabled)
         .onHover { hovering = $0 && enabled }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)

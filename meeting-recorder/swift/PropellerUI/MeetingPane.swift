@@ -347,7 +347,7 @@ struct PaneIconButton: View {
                     RoundedRectangle(cornerRadius: Tokens.Pane.headerButtonRadius, style: .continuous)
                 )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
         .help(help)
@@ -1161,7 +1161,7 @@ struct CollapsedNotesButton: View {
                     )
                 )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .disabled(onReveal == nil)
         // Прижата к правому краю тем же отступом, что и кластер шапки, а не
         // отцентрована в своём слоте: по центру она стояла на 26 pt от края

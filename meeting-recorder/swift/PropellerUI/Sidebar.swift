@@ -1125,7 +1125,7 @@ struct SidebarRowAction: View {
                 .frame(width: Tokens.Sidebar.rowActionSlot, height: Tokens.Sidebar.rowActionSlot)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
         .help(help)
@@ -1152,7 +1152,7 @@ struct SidebarRowRestore: View {
                 .frame(height: Tokens.Sidebar.rowActionSlot)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
         .help("Вернуть удалённую запись")
@@ -1311,7 +1311,7 @@ public struct SidebarChromeButton: View {
                 )
                 .contentShape(RoundedRectangle(cornerRadius: Tokens.Sidebar.rowRadius, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
         .help(help)

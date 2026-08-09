@@ -340,7 +340,7 @@ private struct NoteEar: View {
             .frame(width: size + 14, height: size + 14)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
         .animation(.smooth(duration: Tokens.Motion.Step.t240), value: composing)

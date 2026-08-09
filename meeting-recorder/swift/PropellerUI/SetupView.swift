@@ -209,7 +209,7 @@ private struct SetupGrantButton: View {
                 )
                 .contentShape(RoundedRectangle(cornerRadius: Tokens.Setup.controlRadius, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
     }
@@ -239,7 +239,7 @@ private struct SetupActionButton: View {
                 )
                 .contentShape(RoundedRectangle(cornerRadius: Tokens.Setup.actionRadius, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .keyboardShortcut(.defaultAction)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)

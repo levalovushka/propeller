@@ -44,6 +44,41 @@ public enum ButtonProminence {
     }
 }
 
+/// Кнопка отвечает пальцу раньше, чем на нажатие успевает ответить приложение.
+///
+/// До этого стиля единственным откликом на нажатие была подсветка наведения,
+/// которая к моменту нажатия уже горит: клик по «Сгенерировать» и клик мимо неё
+/// выглядели одинаково, пока не приходил результат, — а он приходит не всегда и
+/// не сразу. Просадка на 4 % говорит «нажалось» в тот же кадр и ничего не
+/// обещает про то, что будет дальше.
+///
+/// Уходит быстрее, чем возвращается. Палец уже знает, что нажал, и ждать
+/// подтверждения ему незачем; а вот возврат в покой на скорости нажатия
+/// читается как отскок.
+public struct PressStyle: ButtonStyle {
+    public init() {}
+
+    public func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? Tokens.Motion.pressScale : 1)
+            .animation(
+                .easeOut(
+                    duration: configuration.isPressed
+                        ? Tokens.Motion.press
+                        : Tokens.Motion.release
+                ),
+                value: configuration.isPressed
+            )
+    }
+}
+
+extension ButtonStyle where Self == PressStyle {
+    /// `.buttonStyle(.press)` — то же «ничего не рисует», что и `.plain`, плюс
+    /// отклик на нажатие. Для мишеней-действий; строки списка его не берут —
+    /// см. `SidebarMeetingRow`.
+    public static var press: PressStyle { PressStyle() }
+}
+
 /// Square icon button (always 1:1, circular). Shares the four prominences and two
 /// sizes. Default is the ghost language (back chevron); pass `.minimal` for the
 /// quietest icons. The app-wide primitive for iconic actions.
@@ -92,7 +127,7 @@ public struct IconButton: View {
                 )
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .disabled(!enabled)
         .onHover { if enabled { hovering = $0 } else { hovering = false } }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)

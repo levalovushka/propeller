@@ -126,7 +126,7 @@ struct SidebarPromptBlock: View {
                     .frame(width: Tokens.Space.s16, height: Tokens.Space.s16)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.press)
             .disabled(!canSubmit)
             .accessibilityLabel("Сохранить имя")
         }
@@ -176,7 +176,7 @@ private struct SidebarPromptButton: View {
                 )
                 .contentShape(RoundedRectangle(cornerRadius: Tokens.RailPrompt.controlRadius, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
     }

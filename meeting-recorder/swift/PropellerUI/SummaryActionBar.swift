@@ -200,7 +200,7 @@ private struct BarIcon: View {
                                                        style: .continuous))
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
         .animation(.easeOut(duration: Tokens.Motion.hover), value: isOn)
@@ -229,7 +229,7 @@ private struct BarLabel: View {
                 .frame(height: Tokens.Pane.Bar.itemHeight)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.press)
         // Pad outside the label — same place as `kindMenu`, so left and right
         // edges of the bar breathe the same amount.
         .padding(.horizontal, Tokens.Pane.Bar.itemHPadding)
