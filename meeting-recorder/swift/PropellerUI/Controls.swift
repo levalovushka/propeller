@@ -257,22 +257,28 @@ public struct GlassBackground: View {
     public var material: Material = .thickMaterial
     public var cornerRadius: CGFloat? = nil
     public var tinted: Bool = true
+    /// Чем подкрашено стекло. По умолчанию — окном, то есть почти чёрным:
+    /// фону положено уходить. Вызванный инструмент передаёт свой
+    /// (`Tokens.Glass.summonedFill`) и уходить отказывается.
+    public var wash: NSColor = Tokens.Glass.fill
 
     public init(
         material: Material = .thickMaterial,
         cornerRadius: CGFloat? = nil,
-        tinted: Bool = true
+        tinted: Bool = true,
+        wash: NSColor = Tokens.Glass.fill
     ) {
         self.material = material
         self.cornerRadius = cornerRadius
         self.tinted = tinted
+        self.wash = wash
     }
 
     public var body: some View {
         ZStack {
             Rectangle().fill(material)
             if tinted {
-                Rectangle().fill(Color(nsColor: Tokens.Glass.fill))
+                Rectangle().fill(Color(nsColor: wash))
             }
         }
     }

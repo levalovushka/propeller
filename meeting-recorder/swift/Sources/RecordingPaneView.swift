@@ -14,15 +14,8 @@ struct RecordingPaneView: View {
     let entry: RecordingEntry
     let isPaused: Bool
     let ownerName: String
-    let notes: [MeetingNote]
     let transcriptNotes: [TranscriptNote]
     let composer: MeetingPaneBody.NoteComposer
-    let onRevealNotes: () -> Void
-    let onHideNotes: () -> Void
-    let notesHidden: Bool
-    let notesInk: Double
-    @Binding var notesFocusRequest: Bool
-    @Binding var travel: WindowReveal.NotesTravel?
 
     var body: some View {
         RecordingPaneBody(
@@ -34,15 +27,8 @@ struct RecordingPaneView: View {
             namesSpeakers: live.attributesSpeakers,
             placeholder: placeholder,
             isPaused: isPaused,
-            notes: notes,
             transcriptNotes: transcriptNotes,
-            composer: composer,
-            onRevealNotes: onRevealNotes,
-            onHideNotes: onHideNotes,
-            notesHidden: notesHidden,
-            notesInk: notesInk,
-            notesFocusRequest: $notesFocusRequest,
-            travel: $travel
+            composer: composer
         )
     }
 

@@ -464,6 +464,24 @@ public enum Tokens {
         public static var fillWhite: CGFloat { Primitive.inkWashWhite }
         public static var fillAlpha: CGFloat { Primitive.AlphaBlack.a80 }
         public static var tint: NSColor { fill }
+
+        /// Подкрас вызванного инструмента — панели действий, переключателя
+        /// встреч, плашки заметки (`SummonedPlate`).
+        ///
+        /// **Светлее всего остального в окне**, и это единственное, чем такой
+        /// инструмент отличается от плиты. Окно подкрашивает своё стекло почти
+        /// чёрным (`glassWash`): оно фон, ему положено уходить. Инструменту
+        /// положено обратное — он поднят над текстом и держится, пока держат
+        /// позвавший его жест, поэтому темнеть вместе с фоном ему нельзя: тёмная
+        /// плита над тёмной колонкой читается как дырка в ней, а не как
+        /// предмет над ней.
+        public static var summonedFill: NSColor {
+            Tokens.dualNSColor(
+                dark: NSColor(calibratedWhite: 1, alpha: Primitive.AlphaWhite.a12),
+                light: NSColor(calibratedWhite: 1, alpha: Primitive.AlphaBlack.a70)
+            )
+        }
+        public static var summonedTint: NSColor { summonedFill }
     }
 
     public enum Window {
@@ -854,6 +872,35 @@ public enum Tokens {
         /// держат ещё и зазоры между репликами.
         public static let transcriptNotePlateBleedH = Space.s12
         public static let transcriptNotePlateBleedV = Space.s8
+
+        // MARK: Поле заметки на экране записи (Figma 136:3444 / 136:3497)
+
+        /// Отступ поля от краёв панели. Выведен, а не назван: текст в поле
+        /// обязан стоять на той же вертикали, что и текст реплик, а плашка
+        /// вылезает за него ровно настолько же, насколько плашка заметки внутри
+        /// ленты. Сорок минус двенадцать — и на любой ширине окна совпадает.
+        public static let noteBarHPadding = summaryHPadding - transcriptNotePlateBleedH
+        public static let noteBarVPadding = Space.s16
+        /// Внутри плашки. Совпадает с зазором до края панели по вертикали, так
+        /// что поле в покое читается как строка, а не как элемент управления.
+        public static let noteBarFieldPadding = Space.s12
+        public static let noteBarMinHeight = Space.s40
+        /// Дальше поле не растёт, а скроллится внутри себя. Четыре строки —
+        /// столько видно в макете, и столько же помещается, не съедая разговор,
+        /// ради которого заметку и пишут.
+        public static let noteBarMaxLines = 4
+        public static let noteBarRadius = Radius.md
+        /// Подсказка «⏎» в правом нижнем углу. Внизу, а не по центру: она
+        /// относится к последней строке, и при росте поля обязана остаться
+        /// рядом с ней — та же логика, что у чёлки.
+        public static let noteBarHintSide = Space.s20
+        public static let noteBarHintIconSize: CGFloat = 14
+        public static let noteBarHintGap = Space.s16
+        /// Растворение расшифровки под полем.
+        ///
+        /// Длинное намеренно: под коротким градиентом строка не исчезает, а
+        /// обрезается, и это читается как сбой отрисовки. Замерено с макета.
+        public static let transcriptBottomFade: CGFloat = 143
 
         // MARK: Живая колонка — то же место, что у саммари
 

@@ -310,23 +310,24 @@ private final class LiveTypewriter: ObservableObject {
 
 // MARK: - Панель целиком
 
-/// Живая колонка слева, заметки справа — те же самые заметки.
+/// Одна колонка — то, что говорят, — и поле заметки поперёк её низа.
+///
+/// Колонки заметок здесь больше нет. Она делила экран пополам ради поля ввода,
+/// которым пользуются раз в десять минут, и заставляла сводить глазами две
+/// ленты: сказанное слева, записанное справа. Теперь записанное стоит **в** той
+/// же ленте на своей секунде (`NotePlacement`), а пишется внизу, поверх
+/// разговора.
 public struct RecordingPaneBody: View {
     private let turns: [LiveTranscript.Turn]
     private let ownerName: String
     private let namesSpeakers: Bool
     private let placeholder: String
     private let isPaused: Bool
-    private let notes: [MeetingNote]
     /// Заметки на своих секундах — они стоят в живой ленте, среди реплик.
     private let transcriptNotes: [TranscriptNote]
+    /// Что печатают прямо сейчас. Nil у панели, которую рисуют без записи —
+    /// в галерее: писать там некуда и незачем.
     private let composer: MeetingPaneBody.NoteComposer?
-    private let onRevealNotes: (() -> Void)?
-    private let onHideNotes: (() -> Void)?
-    private let notesHidden: Bool
-    private let notesInk: Double
-    private let notesFocusRequest: Binding<Bool>?
-    private let travel: Binding<WindowReveal.NotesTravel?>?
 
     public init(
         turns: [LiveTranscript.Turn],
@@ -334,55 +335,92 @@ public struct RecordingPaneBody: View {
         namesSpeakers: Bool = true,
         placeholder: String = "Слушаю…",
         isPaused: Bool = false,
-        notes: [MeetingNote],
         transcriptNotes: [TranscriptNote] = [],
-        composer: MeetingPaneBody.NoteComposer? = nil,
-        onRevealNotes: (() -> Void)? = nil,
-        onHideNotes: (() -> Void)? = nil,
-        notesHidden: Bool = false,
-        notesInk: Double = 1,
-        notesFocusRequest: Binding<Bool>? = nil,
-        travel: Binding<WindowReveal.NotesTravel?>? = nil
+        composer: MeetingPaneBody.NoteComposer? = nil
     ) {
         self.turns = turns
         self.ownerName = ownerName
         self.namesSpeakers = namesSpeakers
         self.placeholder = placeholder
         self.isPaused = isPaused
-        self.notes = notes
         self.transcriptNotes = transcriptNotes
         self.composer = composer
-        self.onRevealNotes = onRevealNotes
-        self.onHideNotes = onHideNotes
-        self.notesHidden = notesHidden
-        self.notesInk = notesInk
-        self.notesFocusRequest = notesFocusRequest
-        self.travel = travel
+    }
+
+    /// Пустышка в конце колонки — то, к чему доезжают.
+    private static var bottomAnchor: String { "recording-column-bottom" }
+
+    /// Дописали реплику или начали новую — колонка доезжает до низа. Отпечаток
+    /// по последней реплике, а не по всему тексту: перебирать всю встречу на
+    /// каждый партиал незачем.
+    private var follow: String {
+        "\(turns.count)-\(turns.last?.text.count ?? 0)-\(transcriptNotes.count)"
     }
 
     public var body: some View {
-        PaneColumns(
-            notes: notes,
-            composer: composer,
-            onRevealNotes: onRevealNotes,
-            onHideNotes: onHideNotes,
-            notesHidden: notesHidden,
-            notesInk: notesInk,
-            notesFocusRequest: notesFocusRequest,
-            travel: travel,
-            // Дописали реплику или начали новую — колонка доезжает до низа.
-            // Отпечаток по последней реплике, а не по всему тексту: перебирать
-            // всю встречу на каждый партиал незачем.
-            follow: "\(turns.count)-\(turns.last?.text.count ?? 0)"
-        ) {
-            LiveTranscriptColumn(
-                turns: turns,
-                ownerName: ownerName,
-                notes: transcriptNotes,
-                namesSpeakers: namesSpeakers,
-                placeholder: placeholder,
-                isPaused: isPaused
-            )
+        ZStack(alignment: .bottom) {
+            column
+            if let composer {
+                NoteBar(
+                    placeholder: composer.placeholder,
+                    text: composer.text,
+                    onCommit: composer.onCommit
+                )
+            }
         }
+    }
+
+    private var column: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                VStack(spacing: 0) {
+                    LiveTranscriptColumn(
+                        turns: turns,
+                        ownerName: ownerName,
+                        notes: transcriptNotes,
+                        namesSpeakers: namesSpeakers,
+                        placeholder: placeholder,
+                        isPaused: isPaused
+                    )
+                    // Столько, чтобы последняя реплика доезжала из-под поля и
+                    // из-под растворения над ним. Без этого свежесказанное
+                    // навсегда остаётся наполовину погашенным — то есть ровно
+                    // то, ради чего колонку и смотрят.
+                    Color.clear
+                        .frame(height: bottomClear)
+                        .id(Self.bottomAnchor)
+                }
+            }
+            .scrollIndicators(.hidden)
+            .onChange(of: follow) { _, _ in
+                withAnimation(.easeOut(duration: Tokens.Pane.followScroll)) {
+                    proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+                }
+            }
+        }
+        // Растворение, а не обрез: строка, уходящая под поле, должна гаснуть.
+        // Маска, а не крашеный градиент, — под колонкой стекло окна, и любой
+        // непрозрачный градиент поверх него был бы заплаткой другого цвета.
+        .mask {
+            VStack(spacing: 0) {
+                Color.black
+                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: Tokens.Pane.transcriptBottomFade)
+                Color.clear.frame(height: barHeight)
+            }
+        }
+    }
+
+    /// Высота поля в покое. Растёт оно вверх, поэтому нижний просвет колонки от
+    /// этого не меняется: под четырёхстрочным полем последняя реплика была бы
+    /// не видна и с любым просветом.
+    private var barHeight: CGFloat {
+        composer == nil
+            ? 0
+            : Tokens.Pane.noteBarMinHeight + Tokens.Pane.noteBarVPadding * 2
+    }
+
+    private var bottomClear: CGFloat {
+        barHeight + Tokens.Pane.transcriptBottomFade
     }
 }

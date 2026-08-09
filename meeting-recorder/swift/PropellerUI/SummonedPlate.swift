@@ -16,6 +16,14 @@ public struct SummonedPlate<Content: View>: View {
     private let cornerRadius: CGFloat
     private let padding: CGFloat
     private let minHeight: CGFloat?
+    /// Поднята ли она сейчас.
+    ///
+    /// Есть инструмент, который стоит на своём месте и до того, как его позвали:
+    /// поле заметки внизу экрана записи. Опущенное, оно не плита, а строка —
+    /// но **та же самая строка**, и это здесь единственное, что важно. Геометрия
+    /// не зависит от `raised`, поэтому текст в момент фокуса не сдвигается ни на
+    /// точку: появляется только стекло под ним.
+    private let raised: Bool
     private let content: Content
 
     /// `minHeight` — для инструмента в один ряд: он задаёт высоту плиты, когда
@@ -29,11 +37,13 @@ public struct SummonedPlate<Content: View>: View {
         cornerRadius: CGFloat = Tokens.Pane.Bar.radius,
         padding: CGFloat = Tokens.Pane.Bar.padding,
         minHeight: CGFloat? = nil,
+        raised: Bool = true,
         @ViewBuilder content: () -> Content
     ) {
         self.cornerRadius = cornerRadius
         self.padding = padding
         self.minHeight = minHeight
+        self.raised = raised
         self.content = content()
     }
 
@@ -41,9 +51,9 @@ public struct SummonedPlate<Content: View>: View {
         content
             .padding(padding)
             .frame(minHeight: minHeight)
-            .background { glass }
+            .background { if raised { glass } }
             .clipShape(shape)
-            .shadow(color: Tokens.Pane.Bar.shadow,
+            .shadow(color: raised ? Tokens.Pane.Bar.shadow : .clear,
                     radius: Tokens.Pane.Bar.shadowRadius,
                     y: Tokens.Pane.Bar.shadowY)
     }
@@ -55,12 +65,18 @@ public struct SummonedPlate<Content: View>: View {
     /// Тот же стек, что у окна: материал + подкрас. Liquid glass на 26+, общий
     /// `GlassBackground` ниже — сплошная плита `#212121` над саммари была другим
     /// материалом, чем всё остальное в приложении.
+    ///
+    /// Подкрас — единственное, чем плита отличается от окна, и он светлее
+    /// (`Tokens.Glass.summonedFill`). Тем же почти чёрным, что и окно, она
+    /// читалась как дырка в колонке, а не как предмет над ней.
     @ViewBuilder
     private var glass: some View {
         if #available(macOS 26.0, *) {
-            LiquidGlassBackdrop(cornerRadius: cornerRadius)
+            LiquidGlassBackdrop(cornerRadius: cornerRadius, tint: Tokens.Glass.summonedTint)
         } else {
-            GlassBackground(material: .regularMaterial, tinted: true)
+            GlassBackground(
+                material: .regularMaterial, tinted: true, wash: Tokens.Glass.summonedFill
+            )
         }
     }
 }

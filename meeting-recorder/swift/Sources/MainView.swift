@@ -751,15 +751,11 @@ struct MainView: View {
                 entry: entry,
                 isPaused: state.isRecordingPaused,
                 ownerName: Preferences.shared.ownerName,
-                notes: noteModels(for: entry),
                 transcriptNotes: transcriptNotes(for: entry),
-                composer: .init(text: $draftNote) { commitNote(for: entry) },
-                onRevealNotes: revealNotes,
-                onHideNotes: hideNotes,
-                notesHidden: !notesVisible,
-                notesInk: notesInk,
-                notesFocusRequest: $focusNoteComposer,
-                travel: $notesTravel
+                composer: .init(
+                    placeholder: "Начните писать заметку",
+                    text: $draftNote
+                ) { commitNote(for: entry) }
             )
             .frame(maxWidth: .infinity)
         } else if let entry = state.selectedRecording {
