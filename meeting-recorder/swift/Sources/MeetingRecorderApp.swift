@@ -172,13 +172,18 @@ struct MeetingRecorderApp: App {
         .menuBarExtraStyle(.window)
     }
 
-    /// Template PDF — HIG menu-bar extra is 18×18 pt (vector scales; no re-export).
+    /// Template PDF. HIG says 18×18 pt for a menu-bar extra; ours is 17.
+    ///
+    /// На пункт компактнее, потому что 18 — потолок для значка, у которого
+    /// глиф занимает весь квадрат, а лопасть занимает его целиком: рядом с
+    /// системными значками, у которых внутри квадрата есть поля, она читалась
+    /// крупнее соседей. Вектор, так что переэкспорт не нужен.
     private static let menuBarIcon: NSImage = {
         let image = NSImage(named: "MenuBarIcon")
             ?? NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Propeller")
             ?? NSImage()
         image.isTemplate = true
-        image.size = NSSize(width: 18, height: 18)
+        image.size = NSSize(width: 17, height: 17)
         return image
     }()
 }

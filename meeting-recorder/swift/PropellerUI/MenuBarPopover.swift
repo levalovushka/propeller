@@ -1,23 +1,24 @@
 import SwiftUI
 import AppKit
 
-/// The menu-bar popover: a small glass panel with a header (name + version +
-/// open-window), a state-dependent primary row, and Settings / Quit.
-/// Data-driven — the app passes `status` and the callbacks. Verified against
-/// Figma 632:754 (idle / started / stopped).
+/// # Меню-бар — пять команд и ничего больше
+///
+/// Он был маленьким приложением: шапка с именем и версией, стрелка в угол,
+/// живой заголовок записываемой встречи с таймером, красная кнопка стопа,
+/// «Стоп и сбросить», строка фазы обработки. Всё это уже есть в окне, и лучше:
+/// таймер идёт в чёлке и на строке рельса, фазу говорит рельс, сброс записи
+/// спрашивает подтверждение, которому в поповере негде появиться.
+///
+/// Значок в строке меню — не место для интерфейса. Это системное меню приложения,
+/// и в нём ровно то, чего нельзя сделать больше нигде, когда окна перед глазами
+/// нет: начать (или остановить) запись, открыть окно, убрать значок, настройки,
+/// выйти. Без иконок: пять строк подряд не нуждаются в опознавательных знаках,
+/// а системные меню macOS их и не носят.
 public struct MenuBarPopover: View {
-    public enum Status: Equatable {
-        case idle
-        case recording(title: String, elapsed: String)
-        case processing(String)   // e.g. "Saving…"
-    }
-
-    var version: String
-    var status: Status
+    var isRecording: Bool
     var onOpenWindow: () -> Void
     var onStartRecording: () -> Void
     var onStop: () -> Void
-    var onDiscard: (() -> Void)?
     var onSettings: () -> Void
     /// Убрать иконку из строки меню. Отсюда её можно только убрать: вернуть
     /// нечем — поповера без иконки не существует, — и возврат живёт в настройках
@@ -26,22 +27,18 @@ public struct MenuBarPopover: View {
     var onQuit: () -> Void
 
     public init(
-        version: String = "v0.1 Beta",
-        status: Status,
+        isRecording: Bool,
         onOpenWindow: @escaping () -> Void,
         onStartRecording: @escaping () -> Void,
         onStop: @escaping () -> Void,
-        onDiscard: (() -> Void)? = nil,
         onSettings: @escaping () -> Void,
         onHideFromMenuBar: (() -> Void)? = nil,
         onQuit: @escaping () -> Void
     ) {
-        self.version = version
-        self.status = status
+        self.isRecording = isRecording
         self.onOpenWindow = onOpenWindow
         self.onStartRecording = onStartRecording
         self.onStop = onStop
-        self.onDiscard = onDiscard
         self.onSettings = onSettings
         self.onHideFromMenuBar = onHideFromMenuBar
         self.onQuit = onQuit
@@ -49,112 +46,38 @@ public struct MenuBarPopover: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            header
-            divider
-            primary
-            divider
+            // Одна строка на две команды, а не две строки, одна из которых
+            // всегда мертва. Пункт остаётся тем же — «запись», — и говорит, что
+            // с ней сейчас можно сделать. Без него закрытое окно означало бы,
+            // что остановить запись нечем: в чёлке стопа нет намеренно, а ⌘.
+            // требует фокуса на окне.
             MenuRow(
-                title: "Настройки…",
-                symbol: "gearshape",
-                shortcut: "⌘,",
-                action: onSettings
+                title: isRecording ? "Остановить запись" : "Начать запись",
+                action: isRecording ? onStop : onStartRecording
             )
-            .keyboardShortcut(",", modifiers: .command)
+            MenuRow(title: "Открыть в окне", action: onOpenWindow)
             if let onHideFromMenuBar {
-                MenuRow(
-                    title: "Скрыть из меню-бара",
-                    symbol: "eye.slash",
-                    action: onHideFromMenuBar
-                )
+                MenuRow(title: "Скрыть из меню-бара", action: onHideFromMenuBar)
             }
-            MenuRow(
-                title: "Выйти",
-                symbol: "xmark.circle",
-                shortcut: "⌘Q",
-                action: onQuit
-            )
-            .keyboardShortcut("q", modifiers: .command)
+            MenuRow(title: "Настройки…", shortcut: "⌘,", action: onSettings)
+                .keyboardShortcut(",", modifiers: .command)
+            MenuRow(title: "Выйти", shortcut: "⌘Q", action: onQuit)
+                .keyboardShortcut("q", modifiers: .command)
         }
         .padding(6)
-        .frame(width: 260)
+        .frame(width: 220)
         .background(GlassBackground(material: .regularMaterial, tinted: false))
         .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.md, style: .continuous))
-    }
-
-    private var header: some View {
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Propeller").foregroundStyle(Tokens.Ink.primary)
-                Text(version).foregroundStyle(Tokens.Ink.tertiary)
-            }
-            .typo(Tokens.Typography.Label.smMedium)
-            .padding(.leading, 10)
-
-            Spacer(minLength: 8)
-            IconButton(systemName: "arrow.up.right", iconSize: 13, action: onOpenWindow)
-        }
-        .padding(.vertical, 6)
-    }
-
-    @ViewBuilder private var primary: some View {
-        switch status {
-        case .idle:
-            MenuRow(title: "Записать", action: onStartRecording)
-        case .recording(let title, let elapsed):
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
-                    stopButton
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(title).foregroundStyle(Tokens.Ink.primary).lineLimit(1)
-                        Text(elapsed).foregroundStyle(Tokens.Ink.tertiary).monospacedDigit()
-                    }
-                    .typo(Tokens.Typography.Label.smMedium)
-                    Spacer(minLength: 0)
-                }
-                if onDiscard != nil {
-                    MenuRow(title: "Стоп и сбросить", action: { onDiscard?() })
-                }
-            }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 6)
-        case .processing(let text):
-            Text(text)
-                .typo(Tokens.Typography.Label.smMedium)
-                .foregroundStyle(Tokens.Ink.tertiary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-        }
-    }
-
-    private var stopButton: some View {
-        Button(action: onStop) {
-            Image(systemName: "stop.fill")
-                .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(.white)
-                .frame(width: 32, height: 32)   // sm
-                .background(Color(nsColor: .systemRed), in: Circle())   // system destructive colour
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    // 8px row with a centred hairline, inset to align with the row text.
-    private var divider: some View {
-        Color.clear.frame(height: 8).overlay(
-            Rectangle().fill(Tokens.Neutral.aw10).frame(height: 1).padding(.horizontal, 10)
-        )
     }
 }
 
 /// A popover menu row: SF Pro Medium 12, hover fills a 6pt rounded highlight.
 ///
-/// Optional `symbol` / `shortcut` follow the system menu layout — icon, title,
-/// then the key equivalent on the trailing edge (same as `Menu` + `Label` +
-/// `keyboardShortcut`, drawn by hand because this is a custom panel).
+/// Title, then the key equivalent on the trailing edge — the system menu layout
+/// minus the icon column. Значков нет: они стояли у трёх строк из пяти, то есть
+/// не различали, а украшали, — а по системным меню macOS их и не носят.
 private struct MenuRow: View {
     let title: String
-    var symbol: String? = nil
     var shortcut: String? = nil
     var action: () -> Void
     @State private var hovering = false
@@ -162,12 +85,6 @@ private struct MenuRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                if let symbol {
-                    Image(systemName: symbol)
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundStyle(Tokens.Ink.primary)
-                        .frame(width: 16, alignment: .center)
-                }
                 Text(title)
                     .typo(Tokens.Typography.Label.smMedium)
                     .foregroundStyle(Tokens.Ink.primary)
@@ -192,13 +109,10 @@ private struct MenuRow: View {
 
 #Preview("Popover states") {
     HStack(alignment: .top, spacing: 24) {
-        MenuBarPopover(status: .idle, onOpenWindow: {}, onStartRecording: {}, onStop: {},
-                       onSettings: {}, onQuit: {})
-        MenuBarPopover(status: .recording(title: "Новая запись 26.08", elapsed: "00:12:04"),
-                       onOpenWindow: {}, onStartRecording: {}, onStop: {},
-                       onSettings: {}, onQuit: {})
-        MenuBarPopover(status: .processing("Сохранение…"), onOpenWindow: {}, onStartRecording: {},
-                       onStop: {}, onSettings: {}, onQuit: {})
+        MenuBarPopover(isRecording: false, onOpenWindow: {}, onStartRecording: {},
+                       onStop: {}, onSettings: {}, onHideFromMenuBar: {}, onQuit: {})
+        MenuBarPopover(isRecording: true, onOpenWindow: {}, onStartRecording: {},
+                       onStop: {}, onSettings: {}, onHideFromMenuBar: {}, onQuit: {})
     }
     .padding(40)
     .background(Color(white: 0.12))
