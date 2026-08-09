@@ -27,6 +27,30 @@ fi
 DMG_NAME=$(basename "$DMG")
 VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/Propeller.app/Contents/Info.plist 2>/dev/null || echo "0.1")
 BUILD=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' /Applications/Propeller.app/Contents/Info.plist 2>/dev/null || echo "1")
+
+# The DMG above is just "newest file in dist/" and the version above is just "whatever is
+# installed right now" — nothing so far has checked they are the same build. dist/ keeps every
+# past release (a dozen DMGs back to 1.10), so a stale /Applications/Propeller.app next to a
+# freshly packaged DMG would sign someone else's file into this version's appcast: Sparkle would
+# offer "1.16" pointing at the bytes of 1.15, everyone would update straight onto 1.15, and
+# because the installed version would then read 1.15 == feed 1.15, Sparkle would never offer
+# 1.16 again. package-dmg.sh (see its lines ~62-67) only ever names a DMG one of two ways, so the
+# picked file must match one of them for this exact VERSION/BUILD.
+if [ "$VERSION" = "$BUILD" ]; then
+    EXPECTED_PREFIX="Propeller-${VERSION}-"
+else
+    EXPECTED_PREFIX="Propeller-${VERSION}+${BUILD}-"
+fi
+case "$DMG_NAME" in
+    "${EXPECTED_PREFIX}"*.dmg) ;;
+    *)
+        echo "ERROR: picked $DMG_NAME but /Applications/Propeller.app is version ${VERSION} (build ${BUILD})."
+        echo "Expected a name matching ${EXPECTED_PREFIX}*.dmg — rebuild/repackage this version first,"
+        echo "or the appcast would sign a different release's bytes into this version's feed."
+        exit 1
+        ;;
+esac
+
 # Outputs: sparkle:edSignature="…" length="…"
 ED_ATTRS=$("$SPARKLE_BIN/sign_update" --account propeller --ed-key-file "$PRIV_KEY" "$DMG" | tr -d '\n')
 PUB_DATE=$(date -u "+%a, %d %b %Y %H:%M:%S +0000")

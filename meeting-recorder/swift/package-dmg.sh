@@ -140,6 +140,22 @@ hdiutil detach "$MOUNT" -quiet
 
 hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 -o "$DMG_PATH" -ov -quiet
 
+# The landing page's "Download" button links to a stable, ever-green name
+# (releases/latest/download/${APP_NAME}.dmg) so the site never needs editing on release day.
+# Every release therefore ships a second asset under that name, next to the versioned one.
+# It must be a hard link, not a copy: the DMG is ~390 MB and dist/ already holds a dozen of
+# them, and a hard link on APFS costs no extra space. This name must never collide with the
+# Propeller-*.dmg glob make-appcast.sh uses to pick the image to sign — "Propeller.dmg" has no
+# hyphen after the app name, so it does not match that pattern.
+STABLE_PATH="${OUT_DIR}/${APP_NAME}.dmg"
+rm -f "$STABLE_PATH"
+if ! ln "$DMG_PATH" "$STABLE_PATH"; then
+    echo "ERROR: failed to hard-link $STABLE_PATH -> $DMG_PATH — this asset ships in the release."
+    exit 1
+fi
+
 echo ""
 echo "=== DMG ready: $DMG_PATH ==="
+echo "=== Stable alias: $STABLE_PATH ==="
+echo "Upload both to the release (versioned + stable name)."
 echo "Share with COLLEAGUES.md (ПКМ → Open on first launch)."
