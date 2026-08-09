@@ -535,7 +535,7 @@ public struct MeetingSummaryColumn: View {
                     .easeOut(duration: Tokens.Pane.Bar.fadeIn)
                         .delay(Tokens.Pane.Bar.fadeInDelay)
                 ),
-                removal: .opacity.animation(.easeIn(duration: Tokens.Pane.Bar.fadeOut))
+                removal: .opacity.animation(.easeOut(duration: Tokens.Pane.Bar.fadeOut))
             ))
         }
     }
@@ -939,7 +939,7 @@ public struct MeetingPaneBody: View {
                                     .delay(Tokens.Pane.columnSwapOut)
                             ),
                             removal: .opacity.animation(
-                                .easeIn(duration: Tokens.Pane.columnSwapOut)
+                                .easeOut(duration: Tokens.Pane.columnSwapOut)
                             )
                         )
                     )

@@ -374,7 +374,7 @@ struct MainView: View {
                                 .delay(Tokens.Pane.meetingSwapOut)
                         ),
                         removal: .opacity.animation(
-                            .easeIn(duration: Tokens.Pane.meetingSwapOut)
+                            .easeOut(duration: Tokens.Pane.meetingSwapOut)
                         )
                     )
                 )
@@ -1042,7 +1042,7 @@ struct MainView: View {
         // Text goes first. The window sets off while the notes are already
         // most of the way gone, so its edge never eats a line somebody is
         // still reading.
-        withAnimation(.easeIn(duration: Tokens.Motion.notesInkFade)) { notesInk = 0 }
+        withAnimation(.easeOut(duration: Tokens.Motion.notesInkFade)) { notesInk = 0 }
         let target = WindowReveal.contentWidth(
             hidingNotes: split,
             sidebar: sidebar,
