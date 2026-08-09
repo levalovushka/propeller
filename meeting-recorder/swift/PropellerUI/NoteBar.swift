@@ -59,47 +59,79 @@ public struct NoteBar: View {
     private var row: some View {
         HStack(alignment: .bottom, spacing: Tokens.Pane.noteBarHintGap) {
             field
-            if !trimmed.isEmpty {
-                hint
-            }
+            // Столбец под подсказку занят всегда, даже когда её не видно.
+            // Иначе первый набранный символ отнимает у текста 36 pt, и вся
+            // строка перебирает переносы в момент, когда на неё смотрят.
+            hint
+                .opacity(trimmed.isEmpty ? 0 : 1)
+                .allowsHitTesting(!trimmed.isEmpty)
         }
     }
 
+    /// Поле, которое растёт до четырёх строк, а дальше прокручивается внутри
+    /// себя.
+    ///
+    /// `TextEditor`, а не `TextField`: у поля с `lineLimit` пятая строка не
+    /// уезжает под край, а вытесняет первую совсем — написанное исчезает на
+    /// глазах у того, кто его пишет. Высоту задаёт невидимая мерка тем же
+    /// кеглем: она упирается в четыре строки, и с ней вместе упирается поле.
+    /// Рамку задаёт мерка, а редактор ложится в неё поверх.
+    ///
+    /// Не `ZStack`: `TextEditor` жаден по высоте и в стопке растягивал плашку
+    /// на всё, что ему предложат, — поле в одну строку выходило в двести точек.
+    /// Наложением он получает ровно ту рамку, которую намерил текст, и
+    /// прокручивается внутри неё.
     private var field: some View {
-        // Плейсхолдер рисуется свой, а не отдаётся `TextField`: системный берёт
-        // цвет самого поля, то есть выходит той же яркости, что и текст встречи,
-        // и приглашение читается как чья-то реплика без имени.
-        TextField("", text: text, axis: .vertical)
+        sizer
+            // Плейсхолдер рисуется свой, а не отдаётся полю: системный берёт
+            // цвет самого поля, то есть выходит яркостью в реплику, и
+            // приглашение читается как чья-то фраза без имени. `typo`, а не
+            // `typoBlock`: половинный интерлиньяж уже отдан мерке, и второй раз
+            // он опускает приглашение ниже строки, которая появится на его месте.
             .overlay(alignment: .topLeading) {
                 if text.wrappedValue.isEmpty {
                     Text(placeholder)
-                        .typoBlock(Tokens.Pane.Typo.transcriptBody)
+                        .typo(Tokens.Pane.Typo.transcriptBody)
                         .foregroundStyle(Tokens.Pane.placeholder)
                         .allowsHitTesting(false)
                 }
             }
-            .textFieldStyle(.plain)
+            .overlay(alignment: .topLeading) { editor }
+    }
+
+    /// Невидимая копия текста — она и есть высота поля.
+    private var sizer: some View {
+        Text(text.wrappedValue.isEmpty ? " " : text.wrappedValue)
+            .typo(Tokens.Pane.Typo.transcriptBody)
+            .lineLimit(Tokens.Pane.noteBarMaxLines)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .hidden()
+            .accessibilityHidden(true)
+    }
+
+    private var editor: some View {
+        TextEditor(text: text)
             .focused($focused)
-            .typoBlock(Tokens.Pane.Typo.transcriptBody)
+            .typo(Tokens.Pane.Typo.transcriptBody)
             .foregroundStyle(Tokens.Pane.body)
-            .lineLimit(1...Tokens.Pane.noteBarMaxLines)
-            // Enter отправляет, ⇧Enter переносит строку — как в чёлке и как в
-            // любом поле, из которого что-то уходит по Enter. Порядок важен:
-            // `onKeyPress` перехватывает только сочетание с шифтом и отдаёт
-            // голый Enter дальше, в `onSubmit`.
+            .scrollContentBackground(.hidden)
+            // `NSTextView` держит свой отступ во фрагменте строки, и без этого
+            // текст стоит правее и мерки, и приглашения, и реплик над ним.
+            .padding(.horizontal, -Tokens.Pane.noteBarEditorInset)
+            // Enter отправляет, ⇧Enter переносит строку. В редакторе нет
+            // `onSubmit` — Return для него обычный символ, — поэтому обе ветки
+            // решаются здесь: отданный дальше Return редактор впишет сам.
             .onKeyPress(.return, phases: .down) { press in
-                guard press.modifiers.contains(.shift) else { return .ignored }
-                text.wrappedValue.append("\n")
+                guard !press.modifiers.contains(.shift) else { return .ignored }
+                commit()
                 return .handled
             }
-            .onSubmit(commit)
             // Esc убирает и черновик, и каретку. Не «сохранить и выйти»: то,
             // что человек не дописал и передумал, дописывать за него нельзя.
             .onExitCommand {
                 text.wrappedValue = ""
                 focused = false
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Подсказка, которая работает.

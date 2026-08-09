@@ -75,7 +75,7 @@ public struct SummonedPlate<Content: View>: View {
             LiquidGlassBackdrop(cornerRadius: cornerRadius, tint: Tokens.Glass.summonedTint)
         } else {
             GlassBackground(
-                material: .regularMaterial, tinted: true, wash: Tokens.Glass.summonedFill
+                material: .thickMaterial, tinted: true, wash: Tokens.Glass.summonedFill
             )
         }
     }

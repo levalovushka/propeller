@@ -477,10 +477,16 @@ public enum Tokens {
         /// предмет над ней.
         public static var summonedFill: NSColor {
             Tokens.dualNSColor(
-                dark: NSColor(calibratedWhite: 1, alpha: Primitive.AlphaWhite.a12),
-                light: NSColor(calibratedWhite: 1, alpha: Primitive.AlphaBlack.a70)
+                dark: NSColor(calibratedWhite: 1, alpha: Primitive.AlphaWhite.a7),
+                light: NSColor(calibratedWhite: 1, alpha: Primitive.AlphaBlack.a58)
             )
         }
+        /// Материал под этим подкрасом — толще оконного.
+        ///
+        /// Инструмент поднят над текстом, и текст под ним обязан **уйти**, а не
+        /// просвечивать: буквы, читаемые сквозь плиту, спорят с буквами на ней.
+        /// Толщина здесь делает ровно это и заодно позволяет держать сам подкрас
+        /// тихим — светлее фона, но не белым пятном.
         public static var summonedTint: NSColor { summonedFill }
     }
 
@@ -893,6 +899,11 @@ public enum Tokens {
         /// Подсказка «⏎» в правом нижнем углу. Внизу, а не по центру: она
         /// относится к последней строке, и при росте поля обязана остаться
         /// рядом с ней — та же логика, что у чёлки.
+        /// Собственный отступ `NSTextView` внутри редактора — его вычитают,
+        /// чтобы набранный текст встал на ту же вертикаль, что мерка,
+        /// приглашение и реплики над полем. Замерено, а не выведено: это
+        /// системное число, и живёт оно здесь именно поэтому.
+        public static let noteBarEditorInset: CGFloat = 5
         public static let noteBarHintSide = Space.s20
         public static let noteBarHintIconSize: CGFloat = 14
         public static let noteBarHintGap = Space.s16
