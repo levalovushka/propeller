@@ -6,6 +6,19 @@ import SpeakerMatchingCore
 class RecordingStore: ObservableObject {
     @Published var recordings: [RecordingEntry] = []
 
+    /// Прочитан ли индекс с диска.
+    ///
+    /// «Пусто» и «ещё не знаем» — разные вещи, и до этого флага окно их не
+    /// различало: `recordings` пуст в обоих случаях, а `load()` идёт из
+    /// `bootstrap()`, то есть уже после первого кадра. На кадр между ними окно
+    /// с полным архивом успевало показать «Запишем первую встречу?» и тут же
+    /// смениться на список — то самое моргание.
+    ///
+    /// `@Published`, потому что у пустого архива это единственное, что меняется:
+    /// `recordings` как был `[]`, так и остаётся, и без этого поля вид, решивший
+    /// «ещё не знаем», не узнал бы, что теперь знает.
+    @Published private(set) var didLoad = false
+
     private var pendingSaveWork: DispatchWorkItem?
     private let saveDebounceInterval: TimeInterval = 0.2
 
@@ -50,6 +63,11 @@ class RecordingStore: ObservableObject {
     }
 
     func load() {
+        // Через `defer`, а не строкой в конце: у `load()` три выхода — нет
+        // файла, разобрали, не разобрали, — и «архив прочитан» верно на всех
+        // трёх. Пустой архив, отсутствующий индекс и битый индекс для окна
+        // означают одно: спрашивать больше нечего.
+        defer { didLoad = true }
         let dir = URL(fileURLWithPath: Preferences.shared.recordingsPath)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
