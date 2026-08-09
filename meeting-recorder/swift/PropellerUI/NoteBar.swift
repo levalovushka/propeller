@@ -47,6 +47,15 @@ public struct NoteBar: View {
         .animation(.easeOut(duration: Tokens.Motion.hover), value: focused)
         .padding(.horizontal, Tokens.Pane.noteBarHPadding)
         .padding(.vertical, Tokens.Pane.noteBarVPadding)
+        // Сколько места поле занимает прямо сейчас. Колонке под ним это нужно
+        // знать: за её прозрачной зоной, не поспевшей за ростом поля, под верх
+        // плиты заезжает текст — и просвечивает сквозь стекло, отчего плита на
+        // третьей строке кажется светлее, чем на первой.
+        .background {
+            GeometryReader { geo in
+                Color.clear.preference(key: NoteBarHeight.self, value: geo.size.height)
+            }
+        }
         // Та же мерка, что у колонки под ним: на широком окне поле не
         // растягивается во всю панель, а стоит ровно под текстом, к которому
         // относится.
@@ -56,6 +65,12 @@ public struct NoteBar: View {
 
     /// Поле и подсказка. По нижнему краю: поле растёт вниз, и подсказка
     /// относится к последней строке, а не к первой.
+    ///
+    /// «Последняя строка» — это её **строчный блок**, а не высота глифов. Поэтому
+    /// у подсказки та же высота, что у одной строки текста: прижатые низом, они
+    /// оказываются отцентрованы друг относительно друга — и на одной строке, и
+    /// на четырёх. Прижатая своими 20 pt к 17 pt глифов, стрелка расходилась с
+    /// текстом на пару точек: текст казался опущенным, а она задранной.
     private var row: some View {
         HStack(alignment: .bottom, spacing: Tokens.Pane.noteBarHintGap) {
             field
@@ -97,6 +112,11 @@ public struct NoteBar: View {
                 }
             }
             .overlay(alignment: .topLeading) { editor }
+            // Половинный интерлиньяж — снаружи всех троих сразу, а не внутри
+            // каждого. Так строчный блок поля равен строчному блоку реплики над
+            // ним и подсказки рядом, а мерка, приглашение и редактор остаются
+            // выровненными между собой до пикселя.
+            .padding(.vertical, max(0, Tokens.Pane.Typo.transcriptBody.lineSpacingExtra) / 2)
     }
 
     /// Невидимая копия текста — она и есть высота поля.
@@ -144,7 +164,10 @@ public struct NoteBar: View {
             Image(systemName: "return")
                 .font(.system(size: Tokens.Pane.noteBarHintIconSize, weight: .regular))
                 .foregroundStyle(hintHovering ? Tokens.Paint.Text.primary : Tokens.Pane.meta)
-                .frame(width: Tokens.Pane.noteBarHintSide, height: Tokens.Pane.noteBarHintSide)
+                .frame(
+                    width: Tokens.Pane.noteBarHintSide,
+                    height: Tokens.Pane.Typo.transcriptBody.lineHeight
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -163,5 +186,14 @@ public struct NoteBar: View {
     private func commit() {
         guard !trimmed.isEmpty else { return }
         onCommit()
+    }
+}
+
+
+/// Высота поля заметки — вверх по дереву, колонке, которая под ним.
+struct NoteBarHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }

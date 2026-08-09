@@ -368,7 +368,18 @@ public struct RecordingPaneBody: View {
                 )
             }
         }
+        // Поле само сообщает, сколько занимает: оно растёт с текстом, и колонка
+        // обязана освобождать под ним ровно столько же. Считать эту высоту здесь
+        // значило бы держать в двух местах одно число, которое меняется на
+        // каждый перенос строки.
+        .onPreferenceChange(NoteBarHeight.self) { height in
+            barHeight = height
+        }
     }
+
+    /// Сколько сейчас занимает поле. Ноль, пока оно о себе не сообщило, и у
+    /// панели без композера — писать там нечем и освобождать нечего.
+    @State private var barHeight: CGFloat = 0
 
     private var column: some View {
         ScrollViewReader { proxy in
@@ -409,15 +420,6 @@ public struct RecordingPaneBody: View {
                 Color.clear.frame(height: barHeight)
             }
         }
-    }
-
-    /// Высота поля в покое. Растёт оно вверх, поэтому нижний просвет колонки от
-    /// этого не меняется: под четырёхстрочным полем последняя реплика была бы
-    /// не видна и с любым просветом.
-    private var barHeight: CGFloat {
-        composer == nil
-            ? 0
-            : Tokens.Pane.noteBarMinHeight + Tokens.Pane.noteBarVPadding * 2
     }
 
     private var bottomClear: CGFloat {

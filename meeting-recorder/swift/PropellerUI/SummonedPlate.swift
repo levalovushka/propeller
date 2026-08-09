@@ -69,13 +69,23 @@ public struct SummonedPlate<Content: View>: View {
     /// Подкрас — единственное, чем плита отличается от окна, и он светлее
     /// (`Tokens.Glass.summonedFill`). Тем же почти чёрным, что и окно, она
     /// читалась как дырка в колонке, а не как предмет над ней.
+    ///
+    /// Под системным стеклом лежит ещё слой матовости, и он там не для красоты.
+    /// Liquid glass по замыслу **прозрачен**: сквозь панель действий, поднятую
+    /// над саммари, читается само саммари, и буквы под ней спорят с буквами на
+    /// ней. Стекло не умеет быть мутнее — у него нет такой ручки, — поэтому
+    /// мутность добавляется тем, что лежит ниже. У поля заметки эффект не виден
+    /// вовсе: под ним колонка уже погашена маской, и мутить нечего.
     @ViewBuilder
     private var glass: some View {
         if #available(macOS 26.0, *) {
-            LiquidGlassBackdrop(cornerRadius: cornerRadius, tint: Tokens.Glass.summonedTint)
+            ZStack {
+                GlassBackground(material: .ultraThickMaterial, tinted: false)
+                LiquidGlassBackdrop(cornerRadius: cornerRadius, tint: Tokens.Glass.summonedTint)
+            }
         } else {
             GlassBackground(
-                material: .thickMaterial, tinted: true, wash: Tokens.Glass.summonedFill
+                material: .ultraThickMaterial, tinted: true, wash: Tokens.Glass.summonedFill
             )
         }
     }
