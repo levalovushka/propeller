@@ -396,6 +396,16 @@ public struct NotchNoteField: View {
 
     @FocusState private var focused: Bool
 
+    /// Где по высоте поля начинается вторая строка и где — последняя, долями от
+    /// его высоты. Всё, что ниже последней, обязано быть непрозрачным: по этой
+    /// строке идёт набор, и она же держит подсказку.
+    private static func lineTop(_ index: Int) -> CGFloat {
+        (NotchGeometry.notePaddingTop + CGFloat(index) * NotchGeometry.noteLineHeight)
+            / NotchGeometry.composeDrop
+    }
+    private static var secondLineTop: CGFloat { lineTop(1) }
+    private static var lastLineTop: CGFloat { lineTop(NotchGeometry.noteVisibleLines - 1) }
+
     public var body: some View {
         VStack(spacing: 0) {
             // Пока строк меньше трёх, текст не висит вверху плиты, а стоит там,
@@ -440,12 +450,17 @@ public struct NotchNoteField: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         // Уехавшая наверх строка не обрезается кромкой, а гаснет: обрез читается
         // как «поле кончилось», угасание — как «это было раньше».
+        //
+        // Стопы стоят на строках, а не на глазок по высоте. Достаточно было
+        // ошибиться на десятую, чтобы градиент заходил на верх нижней строки —
+        // на бегущем тексте это почти не видно, а на неподвижной подсказке
+        // читается как затенённые макушки букв.
         .mask(
             LinearGradient(
                 stops: [
                     .init(color: .black.opacity(0), location: 0),
-                    .init(color: .black.opacity(0.32), location: 0.36),
-                    .init(color: .black, location: 0.74),
+                    .init(color: .black.opacity(0.3), location: Self.secondLineTop),
+                    .init(color: .black, location: Self.lastLineTop),
                 ],
                 startPoint: .top, endPoint: .bottom
             )
