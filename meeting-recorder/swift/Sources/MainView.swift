@@ -763,6 +763,7 @@ struct MainView: View {
                 isPaused: state.isRecordingPaused,
                 ownerName: Preferences.shared.ownerName,
                 notes: noteModels(for: entry),
+                transcriptNotes: transcriptNotes(for: entry),
                 composer: .init(text: $draftNote) { commitNote(for: entry) },
                 onRevealNotes: revealNotes,
                 onHideNotes: hideNotes,
@@ -778,6 +779,7 @@ struct MainView: View {
                 mode: paneMode,
                 summary: document,
                 turns: transcriptTurns(for: entry),
+                transcriptNotes: transcriptNotes(for: entry),
                 notes: noteModels(for: entry),
                 composer: .init(text: $draftNote) { commitNote(for: entry) },
                 // Что стоит на месте саммари, пока саммари нет, — решает
@@ -866,7 +868,8 @@ struct MainView: View {
                 id: "t\(index)",
                 speaker: turn.speaker,
                 time: turn.timestamp,
-                text: turn.phrases.map(\.text).joined(separator: " ")
+                text: turn.phrases.map(\.text).joined(separator: " "),
+                startSeconds: turn.startSeconds
             )
         }
     }
@@ -883,7 +886,27 @@ struct MainView: View {
                     ownerName: Preferences.shared.ownerName
                 ),
                 time: turn.timestamp,
-                text: turn.text
+                text: turn.text,
+                startSeconds: turn.startSeconds
+            )
+        }
+    }
+
+    /// То, что человек написал во время встречи, — для ленты расшифровки.
+    ///
+    /// Время и текст берутся через `MeetingNotes.placed`: у заметки из старого
+    /// архива секунда лежит строкой в начале её же текста, и читать её надо там,
+    /// не переписывая архив. Заметка без секунды сюда тоже попадает — и
+    /// `NotePlacement` её отбрасывает, потому что решение «в ленту или нет»
+    /// принимается в одном месте, а не двумя фильтрами подряд.
+    private func transcriptNotes(for entry: RecordingEntry) -> [TranscriptNote] {
+        MeetingNotes.resolved(items: entry.noteItems, blob: entry.notes).map { note in
+            let placed = MeetingNotes.placed(note)
+            return TranscriptNote(
+                id: note.id,
+                time: placed.seconds.map(MeetingNotes.timecode) ?? "",
+                text: placed.text,
+                seconds: placed.seconds
             )
         }
     }

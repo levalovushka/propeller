@@ -724,16 +724,27 @@ public struct MeetingTranscriptColumn: View {
         public let speaker: String
         public let time: String
         public let text: String
+        /// Начало реплики. Нужно, чтобы заметку можно было поставить между
+        /// репликами: у времени реплики есть число, а у метки `12:34` — нет.
+        public let startSeconds: Double
 
-        public init(id: String, speaker: String, time: String, text: String) {
+        public init(
+            id: String,
+            speaker: String,
+            time: String,
+            text: String,
+            startSeconds: Double = 0
+        ) {
             self.id = id
             self.speaker = speaker
             self.time = time
             self.text = text
+            self.startSeconds = startSeconds
         }
     }
 
     private let turns: [Turn]
+    private let notes: [TranscriptNote]
     private let emptyMessage: String
     private let disclosure: String?
 
@@ -748,17 +759,33 @@ public struct MeetingTranscriptColumn: View {
     /// carrying both here made one line out of two different thoughts.
     public init(
         turns: [Turn],
+        notes: [TranscriptNote] = [],
         emptyMessage: String = "Расшифровки пока нет",
         disclosure: String? = nil
     ) {
         self.turns = turns
+        self.notes = notes
         self.emptyMessage = emptyMessage
         self.disclosure = disclosure
     }
 
+    /// Реплики и заметки одной лентой. Правило — `NotePlacement`, одно на эту
+    /// колонку и на живую: одна и та же встреча до стопа и после него обязана
+    /// быть собрана одинаково.
+    private var feed: [NotePlacement.Item] {
+        NotePlacement.interleave(
+            turnStarts: turns.map(\.startSeconds),
+            noteOffsets: notes.map(\.seconds)
+        )
+    }
+
     public var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Pane.transcriptTurnGap) {
-            if turns.isEmpty {
+            // Пусто — это когда нет ни реплик, ни заметок. Встреча, у которой
+            // расшифровки не вышло, но которую человек конспектировал руками,
+            // не пустая, и говорить ей «расшифровки пока нет» поверх её же
+            // заметок значило бы отбирать готовое ради сообщения об отсутствии.
+            if turns.isEmpty, notes.isEmpty {
                 Text(emptyMessage)
                     .typoBlock(Tokens.Pane.Typo.body)
                     .foregroundStyle(Tokens.Pane.placeholder)
@@ -768,23 +795,11 @@ public struct MeetingTranscriptColumn: View {
                     .typoBlock(Tokens.Pane.Typo.transcriptMeta)
                     .foregroundStyle(Tokens.Pane.meta)
             }
-            ForEach(turns) { turn in
-                VStack(alignment: .leading, spacing: Tokens.Pane.transcriptLineGap) {
-                    HStack(spacing: Tokens.Pane.transcriptMetaGap) {
-                        Text(turn.speaker)
-                            .typoBlock(Tokens.Pane.Typo.transcriptMeta)
-                            .lineLimit(1)
-                        Text(turn.time)
-                            .typoBlock(Tokens.Pane.Typo.transcriptMeta, monospacedDigit: true)
-                            .frame(width: Tokens.Pane.transcriptTimeWidth, alignment: .leading)
-                    }
-                    .foregroundStyle(Tokens.Pane.meta)
-                    Text(turn.text)
-                        .typoBlock(Tokens.Pane.Typo.transcriptBody)
-                        .foregroundStyle(Tokens.Pane.body)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(feed, id: \.self) { item in
+                switch item {
+                case .turn(let index): remark(turns[index])
+                case .note(let index): TranscriptNoteRow(note: notes[index])
                 }
-                .fixedSize(horizontal: false, vertical: true)
             }
         }
         .multilineTextAlignment(.leading)
@@ -792,6 +807,25 @@ public struct MeetingTranscriptColumn: View {
         .padding(.vertical, Tokens.Pane.summaryVPadding)
         .frame(maxWidth: Tokens.Pane.summaryMaxWidth + Tokens.Pane.summaryHPadding * 2)
         .frame(maxWidth: .infinity)
+    }
+
+    private func remark(_ turn: Turn) -> some View {
+        VStack(alignment: .leading, spacing: Tokens.Pane.transcriptLineGap) {
+            HStack(spacing: Tokens.Pane.transcriptMetaGap) {
+                Text(turn.speaker)
+                    .typoBlock(Tokens.Pane.Typo.transcriptMeta)
+                    .lineLimit(1)
+                Text(turn.time)
+                    .typoBlock(Tokens.Pane.Typo.transcriptMeta, monospacedDigit: true)
+                    .frame(width: Tokens.Pane.transcriptTimeWidth, alignment: .leading)
+            }
+            .foregroundStyle(Tokens.Pane.meta)
+            Text(turn.text)
+                .typoBlock(Tokens.Pane.Typo.transcriptBody)
+                .foregroundStyle(Tokens.Pane.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -817,6 +851,9 @@ public struct MeetingPaneBody: View {
     private let mode: MeetingPaneMode
     private let summary: MeetingSummary
     private let turns: [MeetingTranscriptColumn.Turn]
+    /// Заметки на своих секундах — для ленты расшифровки. Не то же самое, что
+    /// `notes`: там они список сами по себе, здесь стоят среди реплик.
+    private let transcriptNotes: [TranscriptNote]
     private let notes: [MeetingNote]
     private let composer: NoteComposer?
     /// Что стоит в колонке саммари — решено `SummaryColumnContent`, не здесь.
@@ -876,6 +913,7 @@ public struct MeetingPaneBody: View {
         mode: MeetingPaneMode = .summary,
         summary: MeetingSummary,
         turns: [MeetingTranscriptColumn.Turn] = [],
+        transcriptNotes: [TranscriptNote] = [],
         notes: [MeetingNote],
         composer: NoteComposer? = nil,
         summaryContent: SummaryColumnContent = .summary,
@@ -894,6 +932,7 @@ public struct MeetingPaneBody: View {
         self.mode = mode
         self.summary = summary
         self.turns = turns
+        self.transcriptNotes = transcriptNotes
         self.notes = notes
         self.composer = composer
         self.summaryContent = summaryContent
@@ -977,7 +1016,9 @@ public struct MeetingPaneBody: View {
             case .transcript:
                 // Саммари ещё пишется. До тех пор колонка показывает то, что
                 // человек и читал минуту назад, — расшифровку.
-                MeetingTranscriptColumn(turns: turns, disclosure: transcriptDisclosure)
+                MeetingTranscriptColumn(
+                    turns: turns, notes: transcriptNotes, disclosure: transcriptDisclosure
+                )
             case .nothing(let text):
                 MeetingSummaryColumn(
                     summary: .empty,

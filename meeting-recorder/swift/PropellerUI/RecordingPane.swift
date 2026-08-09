@@ -115,16 +115,20 @@ public struct LiveTranscriptColumn: View {
     /// Запись на паузе — тише весь столбец, потому что он весь про «сейчас», а
     /// «сейчас» приостановлено.
     private let isPaused: Bool
+    /// То, что человек записал сам, — в той же ленте, на своих секундах.
+    private let notes: [TranscriptNote]
 
     public init(
         turns: [LiveTranscript.Turn],
         ownerName: String,
+        notes: [TranscriptNote] = [],
         remoteName: String = SourceAwareSpeaker.defaultRemoteName,
         namesSpeakers: Bool = true,
         placeholder: String = "Пока тихо",
         isPaused: Bool = false
     ) {
         self.turns = turns
+        self.notes = notes
         self.ownerName = ownerName
         self.remoteName = remoteName
         self.namesSpeakers = namesSpeakers
@@ -132,42 +136,60 @@ public struct LiveTranscriptColumn: View {
         self.isPaused = isPaused
     }
 
+    /// Реплики и заметки одной лентой — тем же правилом, что у готовой
+    /// колонки. Разное правило означало бы, что встреча до стопа и после него
+    /// собрана по-разному, а замена живого текста готовым и так самая заметная
+    /// склейка в приложении.
+    private var feed: [NotePlacement.Item] {
+        NotePlacement.interleave(
+            turnStarts: turns.map(\.startSeconds),
+            noteOffsets: notes.map(\.seconds)
+        )
+    }
+
     public var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Pane.transcriptTurnGap) {
-            if turns.isEmpty {
+            if turns.isEmpty, notes.isEmpty {
                 Text(placeholder)
                     .typoBlock(Tokens.Pane.Typo.body)
                     .foregroundStyle(Tokens.Pane.placeholder)
             }
-            ForEach(turns) { turn in
-                VStack(alignment: .leading, spacing: Tokens.Pane.transcriptLineGap) {
-                    HStack(spacing: Tokens.Pane.transcriptMetaGap) {
-                        if namesSpeakers {
-                            Text(name(of: turn.channel))
-                                .typoBlock(Tokens.Pane.Typo.transcriptMeta)
-                                .lineLimit(1)
-                        }
-                        Text(turn.timestamp)
-                            .typoBlock(Tokens.Pane.Typo.transcriptMeta, monospacedDigit: true)
-                            .frame(width: Tokens.Pane.transcriptTimeWidth, alignment: .leading)
-                    }
-                    .foregroundStyle(Tokens.Pane.meta)
-                    LiveTurnText(text: turn.text)
+            ForEach(feed, id: \.self) { item in
+                switch item {
+                case .turn(let index): remark(turns[index])
+                case .note(let index): TranscriptNoteRow(note: notes[index])
                 }
-                .fixedSize(horizontal: false, vertical: true)
-                // Новая реплика не влетает — она появляется там, где стояла бы
-                // всё это время.
-                .transition(.opacity)
             }
         }
         .multilineTextAlignment(.leading)
         .opacity(isPaused ? 0.55 : 1)
         .animation(.easeOut(duration: Tokens.Motion.hover), value: isPaused)
-        .animation(.easeOut(duration: Tokens.Motion.hover), value: turns.count)
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: feed.count)
         .padding(.horizontal, Tokens.Pane.summaryHPadding)
         .padding(.vertical, Tokens.Pane.summaryVPadding)
         .frame(maxWidth: Tokens.Pane.summaryMaxWidth + Tokens.Pane.summaryHPadding * 2)
         .frame(maxWidth: .infinity)
+    }
+
+    private func remark(_ turn: LiveTranscript.Turn) -> some View {
+        VStack(alignment: .leading, spacing: Tokens.Pane.transcriptLineGap) {
+            HStack(spacing: Tokens.Pane.transcriptMetaGap) {
+                if namesSpeakers {
+                    Text(name(of: turn.channel))
+                        .typoBlock(Tokens.Pane.Typo.transcriptMeta)
+                        .lineLimit(1)
+                }
+                Text(turn.timestamp)
+                    .typoBlock(Tokens.Pane.Typo.transcriptMeta, monospacedDigit: true)
+                    .frame(width: Tokens.Pane.transcriptTimeWidth, alignment: .leading)
+            }
+            .foregroundStyle(Tokens.Pane.meta)
+            LiveTurnText(text: turn.text)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        // Новая реплика не влетает — она появляется там, где стояла бы всё это
+        // время.
+        .transition(.opacity)
     }
 
     private func name(of channel: LiveTranscript.Channel) -> String {
@@ -296,6 +318,8 @@ public struct RecordingPaneBody: View {
     private let placeholder: String
     private let isPaused: Bool
     private let notes: [MeetingNote]
+    /// Заметки на своих секундах — они стоят в живой ленте, среди реплик.
+    private let transcriptNotes: [TranscriptNote]
     private let composer: MeetingPaneBody.NoteComposer?
     private let onRevealNotes: (() -> Void)?
     private let onHideNotes: (() -> Void)?
@@ -311,6 +335,7 @@ public struct RecordingPaneBody: View {
         placeholder: String = "Пока тихо",
         isPaused: Bool = false,
         notes: [MeetingNote],
+        transcriptNotes: [TranscriptNote] = [],
         composer: MeetingPaneBody.NoteComposer? = nil,
         onRevealNotes: (() -> Void)? = nil,
         onHideNotes: (() -> Void)? = nil,
@@ -325,6 +350,7 @@ public struct RecordingPaneBody: View {
         self.placeholder = placeholder
         self.isPaused = isPaused
         self.notes = notes
+        self.transcriptNotes = transcriptNotes
         self.composer = composer
         self.onRevealNotes = onRevealNotes
         self.onHideNotes = onHideNotes
@@ -352,6 +378,7 @@ public struct RecordingPaneBody: View {
             LiveTranscriptColumn(
                 turns: turns,
                 ownerName: ownerName,
+                notes: transcriptNotes,
                 namesSpeakers: namesSpeakers,
                 placeholder: placeholder,
                 isPaused: isPaused

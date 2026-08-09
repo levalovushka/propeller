@@ -15,6 +15,7 @@ struct RecordingPaneView: View {
     let isPaused: Bool
     let ownerName: String
     let notes: [MeetingNote]
+    let transcriptNotes: [TranscriptNote]
     let composer: MeetingPaneBody.NoteComposer
     let onRevealNotes: () -> Void
     let onHideNotes: () -> Void
@@ -34,6 +35,7 @@ struct RecordingPaneView: View {
             placeholder: placeholder,
             isPaused: isPaused,
             notes: notes,
+            transcriptNotes: transcriptNotes,
             composer: composer,
             onRevealNotes: onRevealNotes,
             onHideNotes: onHideNotes,

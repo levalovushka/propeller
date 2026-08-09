@@ -845,6 +845,15 @@ public enum Tokens {
         public static let transcriptMetaGap = Space.s8
         /// Fixed, so the timecodes form a column instead of drifting with names.
         public static let transcriptTimeWidth: CGFloat = 40
+        /// Насколько плашка заметки вылезает за её текст.
+        ///
+        /// Наружу, а не внутрь: заметка стоит в ленте между репликами, и её
+        /// строки обязаны начинаться там же, где их строки. Плашка с внутренним
+        /// отступом сдвинула бы абзац вправо — подсветка ценой столбца.
+        /// Горизонтально шире, чем вертикально, потому что по вертикали её
+        /// держат ещё и зазоры между репликами.
+        public static let transcriptNotePlateBleedH = Space.s12
+        public static let transcriptNotePlateBleedV = Space.s8
 
         // MARK: Живая колонка — то же место, что у саммари
 
