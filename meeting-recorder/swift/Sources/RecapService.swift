@@ -96,7 +96,7 @@ actor RecapService {
     Собери ВСЕ договорённости, а не первые попавшиеся: они разбросаны по всему разговору, и на рабочей встрече их обычно пять и больше. Пропущенная договорённость — худшая ошибка конспекта.
     Срок и ответственного пиши, только если они прозвучали вслух. Не «к пятнице», если про пятницу никто не говорил; не «Система» и не «команда» вместо имени.
     Не выдумывай того, чего нет в транскрипте.
-    Если пользователь приложил свои заметки — это то, что он счёл важным; вплетай их по смыслу, а не отдельным списком.
+    Если пользователь приложил свои заметки — это то, что он счёл важным; вплетай их по смыслу, а не отдельным списком. Раздела «Заметки» не пиши: он собирается из его текста дословно и без тебя.
 
     Формат — Markdown: заголовки через ##, списки через дефис, жирное через **. Пустые секции опускай целиком. Шапку Date / Duration / Participants не добавляй.
 
@@ -688,12 +688,17 @@ actor RecapService {
         _ = duration
         let heading = title.isEmpty ? "Meeting recap" : "\(title) — рекап"
 
+        // Заметки — не хвост файла, а раздел под «Итогом»: место решает
+        // `RecapNotes`, и оно же не даёт им удвоиться, если модель выдала свой
+        // такой раздел. Текст остаётся дословным — модель его не переписывает.
+        let body = RecapNotes.placed(notes, into: recapBody)
+
         var lines: [String] = []
         switch format {
         case .simple:
             lines.append("# \(heading)")
             lines.append("")
-            lines.append(recapBody)
+            lines.append(body)
         case .obsidian:
             let safeTitle = heading.replacingOccurrences(of: "\"", with: "'")
             lines.append("---")
@@ -701,15 +706,7 @@ actor RecapService {
             lines.append("tags: [meeting, recap]")
             lines.append("---")
             lines.append("")
-            lines.append(recapBody)
-        }
-
-        // Notes stay verbatim — never rewritten by the LLM.
-        if let notes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            lines.append("")
-            lines.append("## Заметки")
-            lines.append("")
-            lines.append(notes.trimmingCharacters(in: .whitespacesAndNewlines))
+            lines.append(body)
         }
 
         lines.append("")
