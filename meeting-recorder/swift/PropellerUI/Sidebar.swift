@@ -364,7 +364,7 @@ public struct PropellerSidebar: View {
             // Answered, it leaves downward — the direction it came from, and the
             // direction that says «убрано», not «закрыто».
             .transition(.move(edge: .bottom).combined(with: .opacity))
-            .animation(.easeOut(duration: 0.22), value: prompt.id)
+            .animation(.easeOut(duration: Tokens.Motion.promptDock), value: prompt.id)
         }
     }
 

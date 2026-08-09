@@ -93,7 +93,7 @@ struct MainView: View {
             }
             contentPane
         }
-        .animation(.easeOut(duration: 0.18), value: sidebarVisible)
+        .animation(.easeOut(duration: Tokens.Motion.sidebarToggle), value: sidebarVisible)
         .overlay(alignment: .topLeading) { windowChrome }
         // Over both columns, because ⌥Tab is a window gesture and the panel is
         // what the rail would have shown if it were up. Centred rather than

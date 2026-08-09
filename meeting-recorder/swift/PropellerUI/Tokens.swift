@@ -291,9 +291,48 @@ public enum Tokens {
     // MARK: - 6. Motion
 
     public enum Motion {
-        public static let hover: Double = 0.12
-        public static let press: Double = 0.065
-        public static let release: Double = 0.13
+        /// Лестница длительностей — то же, чем `Space` служит отступам.
+        ///
+        /// До неё в приложении жило четырнадцать длительностей, часть из которых
+        /// различима только на бумаге (0.08 против 0.09, 0.12 против 0.13).
+        /// Семь ступеней с шагом примерно ×1.4: соседние читаются как разные,
+        /// а промежуток между ними нечем занять. Имя — миллисекунды, потому что
+        /// про движение думают в них, а не в долях секунды.
+        ///
+        /// Всё, что длится, снапится к ступени. Исключения — не вкус, а другая
+        /// природа: пружины чёлки (там ручка — отклик, а не время), развёртка
+        /// шиммера (бесконечный цикл) и печатная машинка (время от числа
+        /// символов).
+        public enum Step {
+            /// Отклик на нажатие. Ниже порога, за которым палец чувствует лаг.
+            public static let t60: Double = 0.06
+            /// Уход мелкого: панель действий, подмена того, про кого панель.
+            public static let t90: Double = 0.09
+            /// Ховер и приход мелкого. Рабочая ступень всего приложения.
+            public static let t120: Double = 0.12
+            /// Шаг: уход содержимого, кнопка на месте колонки, рельс.
+            public static let t180: Double = 0.18
+            /// Приход содержимого и переукладка списка — там, где есть что
+            /// прочитать в новом положении.
+            public static let t240: Double = 0.24
+            /// Поездка окна. Единственное, что двигает сам корпус.
+            public static let t320: Double = 0.32
+            /// Пепел. Раз за встречу и по своей физике — см. `Ash`.
+            public static let t550: Double = 0.55
+        }
+
+        public static let hover = Step.t120
+        /// Кнопка проседает под курсором и отпускает.
+        ///
+        /// Нажатие короче отпускания: палец уже знает, что нажал, и ждать
+        /// подтверждения ему незачем, — а вот возврат в покой на той же
+        /// скорости читается как отскок.
+        public static let press = Step.t60
+        public static let release = Step.t120
+        /// Рельс уходит за левый край и приходит обратно.
+        public static let sidebarToggle = Step.t180
+        /// Вопрос, пришвартованный к низу рельса.
+        public static let promptDock = Step.t240
         /// Окно едет само — за заметками, и обратно.
         ///
         /// Своя длительность и своя кривая, потому что у AppKit'овского
@@ -301,10 +340,10 @@ public enum Tokens {
         /// ведёт кадр линейно, а линейное движение окна в 280 pt читается как
         /// рывок. Замедление в конце — то, из-за чего край окна кажется
         /// тяжёлым, а не дёрганым.
-        public static let windowResize: Double = 0.32
+        public static let windowResize = Step.t320
         /// Кнопка на месте ушедшей колонки. Позже окна на полкорпуса: она
         /// появляется в опустевшем слоте, а не летит вместе с ним.
-        public static let notesButtonFade: Double = 0.18
+        public static let notesButtonFade = Step.t180
 
         /// Как заметки приезжают и уезжают относительно самого окна.
         ///
@@ -316,15 +355,15 @@ public enum Tokens {
         ///
         /// Считано так, чтобы приезд заканчивался **позже** остановки окна, а
         /// уход — **раньше** её; за этим следит `NotesChoreographyTests`.
-        public static let notesInkFade: Double = 0.2
+        public static let notesInkFade = Step.t180
         /// Пауза от начала поездки до начала проявления. Окно успевает открыть
         /// больше половины пути пустым.
-        public static let notesInkDelay: Double = 0.18
+        public static let notesInkDelay = Step.t180
         /// И фора чернилам на обратном пути: окно трогается, когда текста уже
         /// почти нет.
-        public static let notesInkLead: Double = 0.1
+        public static let notesInkLead = Step.t120
         /// List insert/remove reflow when ash is not driving the slot.
-        public static let listReflow: Double = 0.28
+        public static let listReflow = Step.t240
         /// Legacy alias.
         public static let listDissolve: Double = listReflow
 
@@ -338,7 +377,7 @@ public enum Tokens {
         /// интегрируется по реальному Δt), а не по формуле от прогресса.
         public enum Ash {
             /// Общий такт. Пепел, слот и соседи стартуют и заканчивают вместе.
-            public static let duration: Double = 0.55
+            public static let duration = Step.t550
 
             /// Сторона частицы в pt. 1 — одна частица на точку строки: строка
             /// 272×40 даёт ~10 900 квадов, и это один draw call. Больше значение
@@ -781,16 +820,16 @@ public enum Tokens {
             public static let maximum: Double = 1.4
         }
 
-        /// Доезд колонки до низа, когда в неё дописали. Быстрее ховера, но не
-        /// мгновенно: прыжок без движения читается как перерисовка экрана.
-        public static let followScroll: Double = 0.22
+        /// Доезд колонки до низа, когда в неё дописали. Не мгновенно: прыжок
+        /// без движения читается как перерисовка экрана.
+        public static let followScroll = Motion.Step.t240
 
         /// Замена содержимого левой колонки: расшифровка уходит, саммари
         /// приходит. Не одновременно — по очереди, иначе два текста проступают
         /// друг сквозь друга. Уход короче прихода: пустое место держать долго
         /// незачем, а появление читается спокойнее медленным.
-        public static let columnSwapOut: Double = 0.16
-        public static let columnSwapIn: Double = 0.26
+        public static let columnSwapOut = Motion.Step.t180
+        public static let columnSwapIn = Motion.Step.t240
 
         /// Смена самой встречи: панель показывает уже не то же самое, и уходит из
         /// неё **всё сразу** — заголовок, колонка, заметки. Раньше уходила одна
@@ -801,8 +840,8 @@ public enum Tokens {
         /// то, *что* показано, и на смысл нужно время, а здесь — про кого, и это
         /// уже сказал рельс. Только прозрачность: любое движение на 0,2 с успевает
         /// быть замеченным, но не успевает быть прочитанным.
-        public static let meetingSwapOut: Double = 0.09
-        public static let meetingSwapIn: Double = 0.13
+        public static let meetingSwapOut = Motion.Step.t90
+        public static let meetingSwapIn = Motion.Step.t120
 
         // MARK: Notes column (31:4652)
 
@@ -944,11 +983,11 @@ public enum Tokens {
             /// else is not the same bar moving — it is one bar's job finishing
             /// and another's starting, and a control sliding across the text
             /// under the pointer is the app taking a turn nobody gave it.
-            public static let fadeOut: Double = 0.08
-            public static let fadeIn: Double = 0.12
+            public static let fadeOut = Motion.Step.t90
+            public static let fadeIn = Motion.Step.t120
             /// The new bar waits for the old one to be gone. Without the pause
             /// the two cross-fade, which is the sliding it replaces, softer.
-            public static let fadeInDelay: Double = 0.06
+            public static let fadeInDelay = Motion.Step.t60
         }
 
         // MARK: Meeting switcher (⌥Tab)
@@ -966,10 +1005,10 @@ public enum Tokens {
             /// The step: the pill stays where it is and the list slides under it.
             /// Faster than the rail's own reflow (0.28) — that one answers a
             /// meeting arriving, this one answers a key, and a key that repeats.
-            public static let step: Double = 0.18
+            public static let step = Motion.Step.t180
             /// Called by a key, gone when the key comes up. Same order of
             /// magnitude as the action bar's fade, for the same reason.
-            public static let fade: Double = 0.12
+            public static let fade = Motion.Step.t120
             /// How long ⌥Tab has to be held before the panel is worth showing.
             /// A tap-and-release is a switch, not a browse: it should land on the
             /// next meeting without a plate flashing over the window on the way.

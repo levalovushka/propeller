@@ -186,7 +186,7 @@ private struct MenuRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.1), value: hovering)
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
     }
 }
 

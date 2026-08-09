@@ -183,7 +183,8 @@ public struct NotchFace: View {
     private static let leave = Animation.spring(response: 0.46, dampingFraction: 1.0)
     /// Значки идут за плитой, а не вместе с ней: сначала место, потом то, что в
     /// нём стоит. Задержка меньше половины хода — иначе читается как рассинхрон.
-    private static let glyphs = Animation.spring(response: 0.4, dampingFraction: 0.9).delay(0.1)
+    private static let glyphs = Animation.spring(response: 0.4, dampingFraction: 0.9)
+        .delay(Tokens.Motion.Step.t120)
 
     private var shown: NotchGeometry.Stage { shownStage }
     private var frame: NotchGeometry.Frame { NotchGeometry.frame(on: screen, stage: shown) }
@@ -341,8 +342,8 @@ private struct NoteEar: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovering)
-        .animation(.smooth(duration: 0.28), value: composing)
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+        .animation(.smooth(duration: Tokens.Motion.Step.t240), value: composing)
     }
 }
 
