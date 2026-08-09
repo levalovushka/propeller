@@ -172,13 +172,23 @@ class RecordingStore: ObservableObject {
     /// Both are written on purpose: the records are what the pane draws, the
     /// blob is what the overlay, the markdown writer, the recap prompt and
     /// search have always read.
-    func appendNote(id: String, text: String, at date: Date = Date()) {
+    /// `offsetSeconds` — сколько было на таймере в момент записи заметки. Nil,
+    /// когда встреча уже кончилась: у такой заметки нет места в расшифровке, и
+    /// притворяться, что есть, значит поставить её в случайную секунду.
+    func appendNote(
+        id: String,
+        text: String,
+        at date: Date = Date(),
+        offsetSeconds: Double? = nil
+    ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, let idx = recordings.firstIndex(where: { $0.id == id }) else { return }
         var items = MeetingNotes.resolved(
             items: recordings[idx].noteItems, blob: recordings[idx].notes
         )
-        items.append(MeetingNoteRecord(text: trimmed, createdAt: date))
+        items.append(
+            MeetingNoteRecord(text: trimmed, createdAt: date, offsetSeconds: offsetSeconds)
+        )
         recordings[idx].noteItems = items
         recordings[idx].notes = MeetingNotes.blob(from: items)
         scheduleSave()

@@ -1110,6 +1110,16 @@ class AppState: ObservableObject {
         renameRecording(id: entry.id, to: newTitle)
     }
 
+    /// Где на ленте встречи стоит заметка, которую пишут прямо сейчас.
+    ///
+    /// Nil у любой встречи, кроме той, что пишется, — включая ту, которая
+    /// писалась минуту назад. Заметка, дописанная после стопа, не относится ни к
+    /// какой секунде разговора, и выдумать ей секунду хуже, чем оставить без.
+    func noteOffset(for recordingID: String) -> Double? {
+        guard isRecording, recorder.recordingID == recordingID else { return nil }
+        return elapsedSeconds
+    }
+
     /// Append a note tagged with the current recording timecode (used by the
     /// quick-note overlay). No-op unless a recording is in progress.
     ///
@@ -1118,10 +1128,13 @@ class AppState: ObservableObject {
     @discardableResult
     func appendTimestampedNote(_ text: String) -> Bool {
         guard isRecording, let id = recorder.recordingID else { return false }
-        let line = "[\(AppState.formatElapsed(elapsedSeconds))] \(text)"
-        // Through `appendNote` so the overlay's notes arrive as records with
-        // their own time, same as the ones typed in the pane.
-        recordingStore.appendNote(id: id, text: line)
+        // The stamp is a field now, not a prefix typed into the text. It used to
+        // be `[12:34] ` glued to the front, which reads fine and answers
+        // nothing: a note has to stand beside the remark it was written about,
+        // and that remark's time is a number. `MeetingNotes.blob` renders the
+        // same prefix back for the file and the prompt, so nothing downstream
+        // can tell the difference.
+        recordingStore.appendNote(id: id, text: text, offsetSeconds: noteOffset(for: id))
         // No notification here on purpose. It used to post one — with a sound,
         // during a recording, about something the user had just done themselves,
         // with nothing to do about it. Подтверждение живёт там, где печатали:

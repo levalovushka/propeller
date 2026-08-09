@@ -1143,7 +1143,14 @@ struct MainView: View {
     private func commitNote(for entry: RecordingEntry) {
         let text = draftNote
         draftNote = ""
-        recordingStore.appendNote(id: entry.id, text: text)
+        // Тот же вопрос, что и у чёлки: идёт ли эта встреча прямо сейчас. Одно и
+        // то же поле стоит и над идущей записью, и над готовой встречей, и
+        // только в первом случае у заметки есть секунда, к которой она относится.
+        recordingStore.appendNote(
+            id: entry.id,
+            text: text,
+            offsetSeconds: state.noteOffset(for: entry.id)
+        )
     }
 
     /// The old meetings list — the pre-redesign screen — used to live here:
