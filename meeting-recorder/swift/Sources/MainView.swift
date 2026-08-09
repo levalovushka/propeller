@@ -45,30 +45,11 @@ struct MainView: View {
     /// collapse toggle and the traffic lights move into the content header.
     @AppStorage("sidebarVisible") private var sidebarVisible = true
 
-    /// Так же можно убрать и заметки — и это состояние, а не ширина.
-    ///
-    /// Свернуть колонку по ширине нельзя: на широком окне места хватает, и
-    /// сколько окно ни сужай, оно останется шире порога — то есть просьбу
-    /// «убери заметки» негде было бы записать. Живёт рядом с рельсом и хранится
-    /// так же: окно помнит свой размер между запусками, и если бы заметки не
-    /// помнили своё, они возвращались бы сами.
-    @AppStorage("notesVisible") private var notesVisible = true
-
     /// Which column the pane is showing. The comps switch this from the action
     /// bar; until that is built it lives in the header's «ещё» menu.
     @State private var paneMode: MeetingPaneMode = .summary
     /// What is being typed into the notes composer.
     @State private var draftNote = ""
-    /// Raised when the collapsed notes button is pressed, lowered by the
-    /// composer once it has the caret — so widening the window lands you in a
-    /// new note rather than merely next to one.
-    @State private var focusNoteComposer = false
-    /// Окно едет за заметками или от них — и всё, что панель обязана держать
-    /// неподвижным, пока оно едет. Nil вне поездки.
-    @State private var notesTravel: WindowReveal.NotesTravel?
-    /// Сколько заметок на экране. Отдельно от поездки окна, потому что это и
-    /// есть отдельное событие: приезжают они позже окна, уезжают раньше.
-    @State private var notesInk: Double = 1
     /// Raised by «Поделиться»; the anchor lowers it once the sheet is up.
     @State private var showShareSheet = false
     /// Записываемая встреча, которую попросили удалить. Спрашиваем один раз —
@@ -778,8 +759,6 @@ struct MainView: View {
                 summary: document,
                 turns: transcriptTurns(for: entry),
                 transcriptNotes: transcriptNotes(for: entry),
-                notes: noteModels(for: entry),
-                composer: .init(text: $draftNote) { commitNote(for: entry) },
                 // Что стоит на месте саммари, пока саммари нет, — решает
                 // `SummaryColumnContent`, и это правило, а не отрисовка.
                 summaryContent: SummaryColumnContent.decide(
@@ -789,12 +768,6 @@ struct MainView: View {
                 ),
                 transcriptSource: liveTurnsStandIn(for: entry) ? .live : .stored,
                 transcriptDisclosure: entry.depthDisclosure,
-                onRevealNotes: revealNotes,
-                onHideNotes: hideNotes,
-                notesHidden: !notesVisible,
-                notesInk: notesInk,
-                notesFocusRequest: $focusNoteComposer,
-                travel: $notesTravel,
                 summaryController: summaryEditing,
                 // No file behind it, no caret: a summary that cannot be saved
                 // must not look like one you can type into.
@@ -830,11 +803,6 @@ struct MainView: View {
     /// неё было некуда.
     private func isBeingRecorded(_ entry: RecordingEntry) -> Bool {
         state.isRecording && entry.id == state.activeRecordingID
-    }
-
-    private func noteModels(for entry: RecordingEntry) -> [MeetingNote] {
-        MeetingNotes.newestFirst(MeetingNotes.resolved(items: entry.noteItems, blob: entry.notes))
-            .map { MeetingNote(id: $0.id, text: $0.text) }
     }
 
     /// Diarised segments when they exist, the plain transcript when they do not
@@ -1067,127 +1035,12 @@ struct MainView: View {
         #endif
     }
 
-    /// Сколько шпилька держится, если её некому снять по месту.
-    ///
-    /// Чуть дольше самой поездки окна: край может упереться в границу экрана и
-    /// не доехать до расчётной ширины, и тогда обычное правило никогда не
-    /// совпадёт со шпилькой (`PaneColumns.clearPinIfSettled`).
-    private static let pinFallback = Tokens.Motion.windowResize + 0.12
-
-    /// The collapsed notes button was pressed. The pane cannot widen itself —
-    /// its width is the window's — so the window grows to the right by the
-    /// notes' width while the left column keeps the width it already had. The
-    /// composer takes the caret as soon as the column exists.
-    private func revealNotes() {
-        focusNoteComposer = true
-        notesVisible = true
-        let sidebar = sidebarVisible ? Tokens.Sidebar.width : 0
-        let contentWidth = mainContentWidth(sidebar: sidebar)
-        let pane = contentWidth - sidebar
-        // Room is asked for only when there is none. A pane that could already
-        // hold the notes — they were put away by hand, not for want of space —
-        // opens them by itself, and growing it anyway would push the window
-        // 280 pt wider to protect a summary nobody asked to keep that wide.
-        guard pane < Tokens.Pane.notesCollapseBelow else {
-            notesInk = 0
-            bringNotesIn(after: 0)
-            return
-        }
-        let target = WindowReveal.contentWidth(
-            revealingNotesBeside: contentWidth,
-            sidebar: sidebar,
-            collapsedSlot: Tokens.Pane.notesCollapsedSide,
-            notesWidth: Tokens.Pane.notesMaxWidth,
-            minimumPane: Tokens.Pane.notesCollapseBelow
-        )
-        let left = max(0, pane - Tokens.Pane.notesCollapsedSide)
-        // The width the column will *end* at, decided before it sets off. Laid
-        // out in the gap it currently occupies it would re-wrap on every frame
-        // of the window's travel — the reflow that made the text twitch.
-        notesInk = 0
-        notesTravel = .init(left: left, notes: (target - sidebar) - left)
-        AppWindowRegistry.widenMain(toContentWidth: target)
-        // Room first, notes after it — and the notes land a beat past the
-        // window's own stop, so the two are read as two events rather than as
-        // one edge wiping text into view.
-        bringNotesIn(after: Tokens.Motion.notesInkDelay)
-        // Fallback: a screen edge can clamp the grow short of the settled
-        // width, so the ordinary split never matches the held one. End the
-        // travel after the window's animation either way — by then it has done
-        // its job.
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pinFallback) {
-            notesTravel = nil
-        }
-    }
-
-    private func bringNotesIn(after delay: Double) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            withAnimation(.easeOut(duration: Tokens.Motion.notesInkFade)) { notesInk = 1 }
-        }
-    }
-
-    /// «Скрыть заметки» — раскрытие наоборот. Окно отдаёт обратно ту ширину,
-    /// которую заняла колонка, забирая её с правого края, а левая колонка стоит
-    /// там же, где стояла: то, что человек читает, не двигается вовсе, двигается
-    /// край окна. Пришпилена она по той же причине, что и при раскрытии — по
-    /// дороге вниз обычное правило сузило бы саммари на 52 pt и вернуло обратно.
-    private func hideNotes() {
-        notesVisible = false
-        let sidebar = sidebarVisible ? Tokens.Sidebar.width : 0
-        let contentWidth = mainContentWidth(sidebar: sidebar)
-        let split = WindowReveal.paneSplit(
-            width: contentWidth - sidebar,
-            travel: nil,
-            summaryMin: Tokens.Pane.summaryMinWidth,
-            notesMin: Tokens.Pane.notesMinWidth,
-            notesMax: Tokens.Pane.notesMaxWidth,
-            collapsedSlot: Tokens.Pane.notesCollapsedSide,
-            openAt: Tokens.Pane.notesCollapseBelow
-        )
-        // Already a button for want of room: there is nothing to give back, and
-        // narrowing the window on top of that would eat the summary.
-        guard split.open else { return }
-        // On the way out the column keeps the width it is standing at — it is
-        // leaving, and a column that narrows as it goes re-wraps its text right
-        // where the eye is still on it.
-        notesTravel = .init(left: split.left, notes: split.notes)
-        // Text goes first. The window sets off while the notes are already
-        // most of the way gone, so its edge never eats a line somebody is
-        // still reading.
-        withAnimation(.easeOut(duration: Tokens.Motion.notesInkFade)) { notesInk = 0 }
-        let target = WindowReveal.contentWidth(
-            hidingNotes: split,
-            sidebar: sidebar,
-            collapsedSlot: Tokens.Pane.notesCollapsedSide
-        )
-        DispatchQueue.main.asyncAfter(deadline: .now() + Tokens.Motion.notesInkLead) {
-            AppWindowRegistry.narrowMain(toContentWidth: target)
-        }
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + Tokens.Motion.notesInkLead + Self.pinFallback
-        ) {
-            notesTravel = nil
-            // Ready for the next time they are asked for: the column is a
-            // button by now, so nothing flashes.
-            notesInk = 1
-        }
-    }
-
-    /// Ширина содержимого окна. Окна может не быть — панель рисуют и в галерее,
-    /// где спрашивать не у кого; тогда это та ширина, с которой окно открывается.
-    private func mainContentWidth(sidebar: CGFloat) -> CGFloat {
-        guard let window = AppWindowRegistry.mainWindow() else {
-            return sidebar + Tokens.Window.defaultPaneWidth
-        }
-        return window.contentRect(forFrameRect: window.frame).width
-    }
-
     private func commitNote(for entry: RecordingEntry) {
         let text = draftNote
         draftNote = ""
-        // Тот же вопрос, что и у чёлки: идёт ли эта встреча прямо сейчас. Одно и
-        // то же поле стоит и над идущей записью, и над готовой встречей, и
-        // только в первом случае у заметки есть секунда, к которой она относится.
+        // Тот же вопрос, что и у чёлки: идёт ли эта встреча прямо сейчас.
+        // Поле есть только у идущей записи, но спрашивать всё равно надо: у
+        // встречи, остановленной секунду назад, поле ещё на экране.
         recordingStore.appendNote(
             id: entry.id,
             text: text,

@@ -15,7 +15,7 @@ struct RecordingPaneView: View {
     let isPaused: Bool
     let ownerName: String
     let transcriptNotes: [TranscriptNote]
-    let composer: MeetingPaneBody.NoteComposer
+    let composer: NoteComposer
 
     var body: some View {
         RecordingPaneBody(

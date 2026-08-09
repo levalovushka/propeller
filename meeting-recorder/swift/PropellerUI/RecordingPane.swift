@@ -4,10 +4,11 @@ import PropellerPure
 
 /// # Экран идущей записи
 ///
-/// Та же панель, что у готовой встречи, и это главное про неё. Слева, на месте
-/// саммари, — то, что говорят прямо сейчас; справа — те же заметки, тот же
-/// композер, те же правила ширины. В шапке — имя встречи (переименовывается так
-/// же, как у готовой), а справа таймер и две кнопки: пауза и стоп.
+/// Та же панель, что у готовой встречи, и это главное про неё. На месте саммари
+/// — то, что говорят прямо сейчас, и в той же ленте, на своих секундах, то, что
+/// человек записал сам. В шапке — имя встречи (переименовывается так же, как у
+/// готовой), а справа таймер и две кнопки: пауза и стоп. Внизу, поперёк колонки,
+/// — поле заметки; оно живёт только пока идёт запись.
 ///
 /// Запись перестала быть отдельным режимом приложения. Встреча создаётся в
 /// рельсе в первую же секунду, и пока она пишется, можно уйти читать любую
@@ -327,7 +328,7 @@ public struct RecordingPaneBody: View {
     private let transcriptNotes: [TranscriptNote]
     /// Что печатают прямо сейчас. Nil у панели, которую рисуют без записи —
     /// в галерее: писать там некуда и незачем.
-    private let composer: MeetingPaneBody.NoteComposer?
+    private let composer: NoteComposer?
 
     public init(
         turns: [LiveTranscript.Turn],
@@ -336,7 +337,7 @@ public struct RecordingPaneBody: View {
         placeholder: String = "Слушаю…",
         isPaused: Bool = false,
         transcriptNotes: [TranscriptNote] = [],
-        composer: MeetingPaneBody.NoteComposer? = nil
+        composer: NoteComposer? = nil
     ) {
         self.turns = turns
         self.ownerName = ownerName

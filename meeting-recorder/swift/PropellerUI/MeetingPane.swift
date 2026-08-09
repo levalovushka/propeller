@@ -5,13 +5,14 @@ import PropellerPure
 /// # The content pane — Figma 31:4624
 ///
 /// What the rail points at: a 48 pt header carrying the meeting's identity and
-/// the three things you can do to it, then two columns — what the meeting *was*
-/// on the left, what you wrote during it on the right.
+/// the three things you can do to it, then one column — what the meeting *was*.
 ///
-/// Both columns flex. The summary takes what it can up to a readable measure and
-/// the notes take the rest, so the same pane works at 800 pt and at 520 without
-/// a breakpoint. Pure presentation, like the rail: it takes text and hands back
-/// callbacks, which is what lets the gallery draw it with no meeting on disk.
+/// One, not two. Notes had a column of their own here, and it cost a third of
+/// the window to hold a list nobody added to after the meeting ended. A note
+/// written during it now stands in the transcript on its own second; a note
+/// after it is part of the summary. Pure presentation, like the rail: it takes
+/// text and hands back callbacks, which is what lets the gallery draw it with no
+/// meeting on disk.
 
 // MARK: - Header
 
@@ -567,151 +568,6 @@ public struct MeetingSummaryColumn: View {
 
 }
 
-// MARK: - Notes column
-
-public struct MeetingNote: Identifiable, Equatable, Sendable {
-    public let id: String
-    public let text: String
-
-    public init(id: String, text: String) {
-        self.id = id
-        self.text = text
-    }
-}
-
-/// What you wrote while it was happening, and a place to write more.
-///
-/// Every entry is a plate — the rail's meeting row, in the other column: same
-/// fill, same corner, same insets. Before them the column was text on a
-/// background, and two short notes in a row read as one paragraph with a
-/// strange line break in it. Where one ends is a thing the eye should not have
-/// to work out from the meaning.
-public struct MeetingNotesColumn: View {
-    private let notes: [MeetingNote]
-    private let composer: MeetingPaneBody.NoteComposer?
-    /// Raised by the collapsed button: the notes were *asked* for, so the
-    /// composer takes the caret the moment it exists. Lowered as soon as it is
-    /// honoured — a request left standing steals the caret on every re-layout.
-    private let focusRequest: Binding<Bool>?
-    /// Puts the column away. Absent in the gallery, where there is no window to
-    /// shrink — the header then carries its title and nothing else.
-    private let onCollapse: (() -> Void)?
-
-    @FocusState private var composerFocused: Bool
-
-    public init(
-        notes: [MeetingNote],
-        composer: MeetingPaneBody.NoteComposer? = nil,
-        focusRequest: Binding<Bool>? = nil,
-        onCollapse: (() -> Void)? = nil
-    ) {
-        self.notes = notes
-        self.composer = composer
-        self.focusRequest = focusRequest
-        self.onCollapse = onCollapse
-    }
-
-    public var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Pane.noteGap) {
-            header
-            if let composer {
-                NoteComposerRow(composer: composer, focused: $composerFocused)
-            }
-            ForEach(notes) { note in
-                NoteRow(text: note.text, style: Tokens.Pane.Typo.note, colour: Tokens.Pane.body)
-            }
-        }
-        .padding(.horizontal, Tokens.Pane.notesHPadding)
-        .padding(.vertical, Tokens.Pane.notesVPadding)
-        .frame(minWidth: Tokens.Pane.notesMinWidth, alignment: .leading)
-        // `onAppear`, not only `onChange`: the column does not exist yet when
-        // the request is made — the window is still growing — so the change it
-        // would listen for happens before there is anything to listen with.
-        .onAppear { claimFocus() }
-        .onChange(of: focusRequest?.wrappedValue ?? false) { _, _ in claimFocus() }
-    }
-
-    /// Says what the column is, and holds the one control that can take it
-    /// away. The button sits hard against the column's inset, which is the
-    /// pane's inset too — so it stands in the same vertical line as «поделиться»
-    /// in the header above and as the folded button that replaces this column.
-    private var header: some View {
-        HStack(spacing: 0) {
-            Text("Заметки")
-                .typoBlock(Tokens.Pane.Typo.notesHeader)
-                .foregroundStyle(Tokens.Pane.placeholder)
-                .padding(.leading, Tokens.Pane.notesHeaderLeadingInset)
-            Spacer(minLength: Tokens.Space.s8)
-            if let onCollapse {
-                PaneIconButton(
-                    symbol: "chevron.right.2",
-                    help: "Скрыть заметки — окно станет уже",
-                    action: onCollapse
-                )
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: Tokens.Pane.notesHeaderHeight)
-    }
-
-    private func claimFocus() {
-        guard focusRequest?.wrappedValue == true else { return }
-        DispatchQueue.main.async {
-            focusRequest?.wrappedValue = false
-            composerFocused = true
-        }
-    }
-}
-
-/// The row you type into. Sits above the notes, like the comps' `empty-writing`.
-private struct NoteComposerRow: View {
-    let composer: MeetingPaneBody.NoteComposer
-    /// Held by the column, bound here: focus belongs to the field itself, and
-    /// `.focused` on the wrapper is a coin toss about which descendant it means.
-    @FocusState.Binding var focused: Bool
-
-    var body: some View {
-        TextField(composer.placeholder, text: composer.text, axis: .vertical)
-            .textFieldStyle(.plain)
-            .focused($focused)
-            .typoBlock(Tokens.Pane.Typo.note)
-            .foregroundStyle(Tokens.Pane.body)
-            .lineLimit(1...6)
-            .onSubmit(composer.onCommit)
-            .notePlate()
-    }
-}
-
-private struct NoteRow: View {
-    let text: String
-    let style: Tokens.Typography.Style
-    let colour: Color
-
-    var body: some View {
-        Text(text)
-            .typoBlock(style)
-            .foregroundStyle(colour)
-            .multilineTextAlignment(.leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .notePlate()
-    }
-}
-
-private extension View {
-    /// One note's plate. The composer wears it too: what you are writing and
-    /// what you wrote are the same kind of thing, and a field that looks unlike
-    /// its own output reads as a search box.
-    func notePlate() -> some View {
-        self
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, Tokens.Pane.noteHPadding)
-            .padding(.vertical, Tokens.Pane.noteVPadding)
-            .background(
-                Tokens.Pane.notePlateFill,
-                in: RoundedRectangle(cornerRadius: Tokens.Pane.noteRadius, style: .continuous)
-            )
-    }
-}
-
 // MARK: - Transcript column
 
 /// One remark: who, when, and what they said — Figma 32:5278.
@@ -846,7 +702,12 @@ public enum MeetingPaneMode: String, CaseIterable, Equatable, Sendable {
     }
 }
 
-/// The pane's body: the meeting on the left, your notes on the right.
+/// Панель готовой встречи: одна колонка, и в ней всё, что о встрече известно.
+///
+/// Колонки заметок здесь больше нет. Заметка во время встречи стоит в ленте
+/// расшифровки на своей секунде, а после встречи — разделом в саммари, который
+/// правится как всё остальное в нём. Отдельный список рядом был третьим местом
+/// для одной и той же вещи и стоил трети окна.
 public struct MeetingPaneBody: View {
     private let mode: MeetingPaneMode
     private let summary: MeetingSummary
@@ -854,8 +715,6 @@ public struct MeetingPaneBody: View {
     /// Заметки на своих секундах — для ленты расшифровки. Не то же самое, что
     /// `notes`: там они список сами по себе, здесь стоят среди реплик.
     private let transcriptNotes: [TranscriptNote]
-    private let notes: [MeetingNote]
-    private let composer: NoteComposer?
     /// Что стоит в колонке саммари — решено `SummaryColumnContent`, не здесь.
     private let summaryContent: SummaryColumnContent
     /// Откуда взяты реплики: живая строка или готовая расшифровка. Отличать их
@@ -863,43 +722,13 @@ public struct MeetingPaneBody: View {
     /// это смена содержания, а не перерисовка.
     private let transcriptSource: TranscriptSource
     private let transcriptDisclosure: String?
-    /// What the collapsed notes button asks for: room. The pane cannot make
-    /// any — its width is the window's — so it hands the request up.
-    private let onRevealNotes: (() -> Void)?
-    /// The same request the other way round: give the room back.
-    private let onHideNotes: (() -> Void)?
-    /// Их убрали руками, а не по нехватке места.
-    private let notesHidden: Bool
-    /// Насколько заметки сейчас видны. Ведёт их тот же, кто двинул окно.
-    private let notesInk: Double
-    /// Set by whoever answers that request, cleared by the composer once it has
-    /// the caret. See `MeetingNotesColumn.focusRequest`.
-    private let notesFocusRequest: Binding<Bool>?
-    /// Left column width held while the window grows for the notes. See
-    /// `PaneColumns.travel`.
-    private let travel: Binding<WindowReveal.NotesTravel?>?
     /// The summary's caret and what the action bar does to it. Owned above the
-    /// pane, because the pane is rebuilt on every keystroke in the notes.
+    /// pane, so the selection survives the pane being rebuilt.
     private let summaryController: SummaryEditorController
     /// nil where a summary cannot be saved: the gallery, and a meeting with no
     /// recap file to write into.
     private let onSummaryChange: ((MeetingSummary) -> Void)?
     private let onSummaryRewrite: ((SummaryRewrite, String) -> Void)?
-
-    /// The «Добавьте заметку…» row, when notes can be written.
-    public struct NoteComposer {
-        public let placeholder: String
-        public let text: Binding<String>
-        public let onCommit: () -> Void
-
-        public init(placeholder: String = "Добавьте заметку…",
-                    text: Binding<String>,
-                    onCommit: @escaping () -> Void) {
-            self.placeholder = placeholder
-            self.text = text
-            self.onCommit = onCommit
-        }
-    }
 
     /// Чей текст сейчас в колонке транскрипта.
     public enum TranscriptSource: String, Equatable, Sendable {
@@ -914,17 +743,9 @@ public struct MeetingPaneBody: View {
         summary: MeetingSummary,
         turns: [MeetingTranscriptColumn.Turn] = [],
         transcriptNotes: [TranscriptNote] = [],
-        notes: [MeetingNote],
-        composer: NoteComposer? = nil,
         summaryContent: SummaryColumnContent = .summary,
         transcriptSource: TranscriptSource = .stored,
         transcriptDisclosure: String? = nil,
-        onRevealNotes: (() -> Void)? = nil,
-        onHideNotes: (() -> Void)? = nil,
-        notesHidden: Bool = false,
-        notesInk: Double = 1,
-        notesFocusRequest: Binding<Bool>? = nil,
-        travel: Binding<WindowReveal.NotesTravel?>? = nil,
         summaryController: SummaryEditorController = SummaryEditorController(),
         onSummaryChange: ((MeetingSummary) -> Void)? = nil,
         onSummaryRewrite: ((SummaryRewrite, String) -> Void)? = nil
@@ -933,33 +754,16 @@ public struct MeetingPaneBody: View {
         self.summary = summary
         self.turns = turns
         self.transcriptNotes = transcriptNotes
-        self.notes = notes
-        self.composer = composer
         self.summaryContent = summaryContent
         self.transcriptSource = transcriptSource
         self.transcriptDisclosure = transcriptDisclosure
-        self.onRevealNotes = onRevealNotes
-        self.onHideNotes = onHideNotes
-        self.notesHidden = notesHidden
-        self.notesInk = notesInk
-        self.notesFocusRequest = notesFocusRequest
-        self.travel = travel
         self.summaryController = summaryController
         self.onSummaryChange = onSummaryChange
         self.onSummaryRewrite = onSummaryRewrite
     }
 
     public var body: some View {
-        PaneColumns(
-            notes: notes,
-            composer: composer,
-            onRevealNotes: onRevealNotes,
-            onHideNotes: onHideNotes,
-            notesHidden: notesHidden,
-            notesInk: notesInk,
-            notesFocusRequest: notesFocusRequest,
-            travel: travel
-        ) {
+        ScrollView(.vertical) {
             // Смена того, что стоит в колонке, — не перерисовка, а смена
             // содержания: старое уходит, новое приходит на его место. Ключ
             // описывает *что* показано, а не какая это встреча, — иначе колонка
@@ -984,7 +788,9 @@ public struct MeetingPaneBody: View {
                     )
             }
             .animation(.default, value: columnKey)
+            .frame(maxWidth: .infinity)
         }
+        .scrollIndicators(.hidden)
     }
 
     /// Что сейчас в левой колонке. Меняется — играет замена.
@@ -1031,208 +837,5 @@ public struct MeetingPaneBody: View {
         case .transcript:
             MeetingTranscriptColumn(turns: turns, disclosure: transcriptDisclosure)
         }
-    }
-}
-
-/// Две колонки пане́ли: встреча слева, заметки справа.
-///
-/// Одна на все состояния встречи — готовую и идущую. Заметки во время записи не
-/// «похожи» на заметки готовой встречи, а буквально они же: тот же композер, тот
-/// же список, те же правила схлопывания в кнопку. Разница между экранами ровно в
-/// левой колонке, поэтому только она и параметризована.
-struct PaneColumns<Left: View>: View {
-    let notes: [MeetingNote]
-    let composer: MeetingPaneBody.NoteComposer?
-    let onRevealNotes: (() -> Void)?
-    /// Убирает колонку по просьбе человека, а не по нехватке места. Nil там, где
-    /// окна нет и сужать нечего.
-    var onHideNotes: (() -> Void)? = nil
-    /// Их убрали руками. Ширина этого сказать не может: на панели в 1200 pt
-    /// места вдоволь, а колонка всё равно должна уйти.
-    var notesHidden: Bool = false
-    /// Сколько чернил колонки на экране. Ведётся не отсюда: приезд заметок —
-    /// отдельное от окна событие, и заводит его тот же, кто двинул окно.
-    var notesInk: Double = 1
-    let notesFocusRequest: Binding<Bool>?
-    /// Окно едет за заметками или от них. Nil вне этой поездки — тогда работают
-    /// обычные правила деления.
-    var travel: Binding<WindowReveal.NotesTravel?>? = nil
-    /// Отпечаток растущего содержимого левой колонки. Меняется — колонка
-    /// доезжает до низа. Нужен живому транскрипту: строка, которая появляется
-    /// ниже края окна, не показана. Nil у всего остального: саммари и готовый
-    /// транскрипт не растут, и уезжать им некуда.
-    var follow: String? = nil
-    @ViewBuilder let left: () -> Left
-
-    /// Пустышка в конце колонки — то, к чему доезжают.
-    private static var bottomAnchor: String { "pane-columns-bottom" }
-
-    var body: some View {
-        // The split is decided from the pane's real width, not from a
-        // breakpoint: the notes hold their column while the summary can keep its
-        // 520, and collapse to a button the moment it cannot. During a reveal
-        // the left width is pinned so the summary does not stretch and snap.
-        GeometryReader { geo in
-            let split = WindowReveal.paneSplit(
-                width: geo.size.width,
-                travel: travel?.wrappedValue,
-                hidden: notesHidden,
-                summaryMin: Tokens.Pane.summaryMinWidth,
-                notesMin: Tokens.Pane.notesMinWidth,
-                notesMax: Tokens.Pane.notesMaxWidth,
-                collapsedSlot: Tokens.Pane.notesCollapsedSide,
-                openAt: Tokens.Pane.notesCollapseBelow
-            )
-            // Notes stay put while the summary scrolls: they sit beside the
-            // scroll view, not inside it. Their own scroll covers a long list.
-            HStack(alignment: .top, spacing: 0) {
-                ScrollViewReader { proxy in
-                    ScrollView(.vertical) {
-                        VStack(spacing: 0) {
-                            left()
-                            Color.clear
-                                .frame(height: 1)
-                                .id(Self.bottomAnchor)
-                        }
-                        .frame(width: split.left)
-                    }
-                    .scrollIndicators(.hidden)
-                    .onChange(of: follow) { _, _ in
-                        guard follow != nil else { return }
-                        withAnimation(.easeOut(duration: Tokens.Pane.followScroll)) {
-                            proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
-                        }
-                    }
-                }
-                .frame(width: split.left)
-                if split.open {
-                    notesColumn(in: split)
-                } else {
-                    CollapsedNotesButton(count: notes.count, onReveal: onRevealNotes)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .onChange(of: geo.size.width) { _, width in
-                clearPinIfSettled(paneWidth: width)
-            }
-        }
-    }
-
-    /// Заметки, пока окно ещё едет и когда уже приехало.
-    ///
-    /// Колонка всю поездку свёрстана по одной ширине — той, что будет в конце, —
-    /// и подрезана слотом, а не сжата в него. Сжатая перебирала бы переносы на
-    /// каждом кадре: вместо приезда колонки получался кипящий текст.
-    ///
-    /// Сколько её видно — не её дело: `ink` приходит сверху, оттуда же, откуда
-    /// поехало окно, потому что приезд колонки и приезд окна — два события, а
-    /// не одно (`Tokens.Motion.notesInkDelay` / `notesInkLead`).
-    @ViewBuilder
-    private func notesColumn(in split: WindowReveal.PaneSplit) -> some View {
-        let layout = travel?.wrappedValue?.notes ?? split.notes
-        ScrollView(.vertical) {
-            MeetingNotesColumn(
-                notes: notes,
-                composer: composer,
-                focusRequest: notesFocusRequest,
-                onCollapse: onHideNotes
-            )
-            .frame(width: layout)
-        }
-        .frame(width: layout)
-        .opacity(notesInk)
-        .offset(x: (1 - notesInk) * Tokens.Pane.notesArrivalShift)
-        .frame(width: split.notes, alignment: .leading)
-        .clipped()
-    }
-
-    /// End the travel once the ordinary split would keep the same left width —
-    /// the window has arrived, and holding it any longer would freeze the
-    /// summary against later resizes.
-    private func clearPinIfSettled(paneWidth: CGFloat) {
-        guard let trip = travel?.wrappedValue else { return }
-        let natural = WindowReveal.paneSplit(
-            width: paneWidth,
-            travel: nil,
-            hidden: notesHidden,
-            summaryMin: Tokens.Pane.summaryMinWidth,
-            notesMin: Tokens.Pane.notesMinWidth,
-            notesMax: Tokens.Pane.notesMaxWidth,
-            collapsedSlot: Tokens.Pane.notesCollapsedSide,
-            openAt: Tokens.Pane.notesCollapseBelow
-        )
-        guard natural.open == !notesHidden, abs(natural.left - trip.left) < 1 else { return }
-        travel?.wrappedValue = nil
-    }
-}
-
-/// The notes, with nowhere to be — `notes-block` state `*-hidden`.
-///
-/// Shown rather than dropped: a column that vanishes silently at a certain
-/// window width looks like the notes were lost. And pressed rather than merely
-/// looked at: the button says the notes are here, so it has to be able to
-/// produce them. It cannot make room itself — `onReveal` widens the window, and
-/// the composer takes the caret on the other side, so one click ends with a
-/// cursor in an empty note.
-struct CollapsedNotesButton: View {
-    let count: Int
-    /// Absent in the gallery, where there is no window to grow. The button then
-    /// stays what it was: a marker that the notes are somewhere.
-    var onReveal: (() -> Void)?
-
-    @State private var hovering = false
-    /// Кнопка не стоит в опустевшем слоте с первого кадра, а проявляется в нём.
-    ///
-    /// Слот пустеет ровно тогда, когда окно доехало, — до этого на её месте всё
-    /// ещё стоит уходящая колонка (`WindowReveal.paneSplit`, ветка со шпилькой).
-    /// Раньше кнопка возникала в момент нажатия и уже на конечном месте, пока
-    /// окно только начинало ехать: конец движения показывали до самого движения.
-    @State private var arrived = false
-
-    var body: some View {
-        Button { onReveal?() } label: {
-            Image(systemName: "square.and.pencil")
-                .font(.system(size: Tokens.Pane.headerIconSize, weight: .regular))
-                .foregroundStyle(hovering ? Tokens.Paint.Text.primary : Tokens.Pane.buttonIcon)
-                .frame(width: Tokens.Pane.headerButtonSide, height: Tokens.Pane.headerButtonSide)
-                .background(
-                    hovering ? Tokens.Sidebar.rowHover : .clear,
-                    in: RoundedRectangle(
-                        cornerRadius: Tokens.Pane.headerButtonRadius, style: .continuous
-                    )
-                )
-        }
-        .buttonStyle(.press)
-        .disabled(onReveal == nil)
-        // Прижата к правому краю тем же отступом, что и кластер шапки, а не
-        // отцентрована в своём слоте: по центру она стояла на 26 pt от края
-        // окна против 24 pt у «поделиться» прямо над ней, и две иконки в одном
-        // столбце расходились на два пункта — ровно столько, чтобы это было
-        // видно и нечем было объяснить.
-        .padding(.trailing, Tokens.Pane.headerActionsPadding)
-        .frame(
-            width: Tokens.Pane.notesCollapsedSide,
-            height: Tokens.Pane.notesCollapsedSide,
-            alignment: .trailing
-        )
-        .opacity(arrived ? 1 : 0)
-        .onAppear {
-            withAnimation(.easeOut(duration: Tokens.Motion.notesButtonFade)) { arrived = true }
-        }
-        .onHover { hovering = $0 && onReveal != nil }
-        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
-        .help(hint)
-        .accessibilityLabel("Заметки")
-    }
-
-    /// Says what the click does, because widening the window is a big enough
-    /// consequence to warn about and too useful to hide behind a resize.
-    private var hint: String {
-        guard onReveal != nil else {
-            return count == 0 ? "Заметок нет" : "Заметок: \(count) — окно слишком узкое"
-        }
-        return count == 0
-            ? "Написать заметку — окно станет шире"
-            : "Заметок: \(count) — окно станет шире"
     }
 }

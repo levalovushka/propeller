@@ -153,8 +153,6 @@ public enum UIStateCatalog {
         .init(id: "tab-summary-content",       label: "Саммари — конспект"),
         .init(id: "tab-summary-editing",       label: "Саммари — правка"),
         .init(id: "tab-summary-rewriting",     label: "Саммари — модель переписывает фрагмент"),
-        .init(id: "tab-notes-empty",           label: "Заметки — пусто"),
-        .init(id: "tab-notes-content",         label: "Заметки — есть"),
         .init(id: "tab-transcript-empty",      label: "Транскрипт — пусто"),
         .init(id: "tab-transcript-content",    label: "Транскрипт — есть"),
         .init(id: "tab-transcript-failed",     label: "Транскрипт — дальше нечего делать"),

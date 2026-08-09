@@ -295,7 +295,7 @@ enum SidebarGallery {
                     Button("Показать в Finder") {}
                     Button("Удалить встречу", role: .destructive) {}
                 }
-                MeetingPaneBody(summary: Self.summary, notes: Self.notes)
+                MeetingPaneBody(summary: Self.summary)
             }
             .frame(width: width, height: 640)
             .background(GalleryBackdrop())
@@ -317,10 +317,6 @@ enum SidebarGallery {
         - Связи вместо статических страниц: Каждая единица контента (трек, релиз, жанр, эпоха) рассматривается как узел графа. Важным элементом является отображение связей «вбок» и «назад».
         """)
 
-        static let notes: [MeetingNote] = [
-            .init(id: "n1", text: "Убедиться что все ошибки дают путь дальше"),
-            .init(id: "n2", text: "дальний горизонт:\n\n* собрать контекст по рынку че похожего делают\n* зарелизить бота для лидов пг\n\nв понедельник проводим дейлик."),
-        ]
     }
 
     /// Eleven pipeline states in, four appearances out. Printed as a table

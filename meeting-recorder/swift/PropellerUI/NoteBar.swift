@@ -17,6 +17,27 @@ import SwiftUI
 ///
 /// Живёт только пока идёт запись. У готовой встречи заметка — часть саммари, и
 /// пишется там же, где всё остальное.
+/// Что печатают в поле и куда это уходит.
+///
+/// Жил внутри панели готовой встречи, пока заметки были её колонкой. Колонки
+/// нет — и композер переехал к единственному полю, которое осталось: к тому,
+/// что стоит внизу экрана записи.
+public struct NoteComposer {
+    public let placeholder: String
+    public let text: Binding<String>
+    public let onCommit: () -> Void
+
+    public init(
+        placeholder: String = "Начните писать заметку",
+        text: Binding<String>,
+        onCommit: @escaping () -> Void
+    ) {
+        self.placeholder = placeholder
+        self.text = text
+        self.onCommit = onCommit
+    }
+}
+
 public struct NoteBar: View {
     private let placeholder: String
     private let text: Binding<String>

@@ -365,35 +365,6 @@ public enum Tokens {
         public static let sidebarToggle = Step.t180
         /// Вопрос, пришвартованный к низу рельса.
         public static let promptDock = Step.t240
-        /// Окно едет само — за заметками, и обратно.
-        ///
-        /// Своя длительность и своя кривая, потому что у AppKit'овского
-        /// `setFrame(animate:)` их нет: он считает время от величины прыжка и
-        /// ведёт кадр линейно, а линейное движение окна в 280 pt читается как
-        /// рывок. Замедление в конце — то, из-за чего край окна кажется
-        /// тяжёлым, а не дёрганым.
-        public static let windowResize = Step.t320
-        /// Кнопка на месте ушедшей колонки. Позже окна на полкорпуса: она
-        /// появляется в опустевшем слоте, а не летит вместе с ним.
-        public static let notesButtonFade = Step.t180
-
-        /// Как заметки приезжают и уезжают относительно самого окна.
-        ///
-        /// Не в такт с ним, и это главное. Окно и колонка — два разных события:
-        /// сначала появляется место, потом то, что в нём стоит; на обратном
-        /// пути наоборот — сначала текст уходит, и только потом край окна
-        /// доезжает до кнопки. В такт они читались бы как одно движение,
-        /// вскрывающее текст, — то есть как шторка.
-        ///
-        /// Считано так, чтобы приезд заканчивался **позже** остановки окна, а
-        /// уход — **раньше** её; за этим следит `NotesChoreographyTests`.
-        public static let notesInkFade = Step.t180
-        /// Пауза от начала поездки до начала проявления. Окно успевает открыть
-        /// больше половины пути пустым.
-        public static let notesInkDelay = Step.t180
-        /// И фора чернилам на обратном пути: окно трогается, когда текста уже
-        /// почти нет.
-        public static let notesInkLead = Step.t120
         /// List insert/remove reflow when ash is not driving the slot.
         public static let listReflow = Step.t240
         /// Legacy alias.
@@ -498,9 +469,8 @@ public enum Tokens {
         /// Narrowest the content pane may get. The rail adds its own 300 on top
         /// — the window minimum is the sum, derived rather than restated.
         public static let contentPaneMinWidth: CGFloat = 480
-        /// Opening pane width — notes stay a button. Must stay below
-        /// `Pane.notesCollapseBelow` (760); wider than Figma `thin` (601) so
-        /// the summary still reads. ~920 window with the rail.
+        /// Opening pane width. Wider than Figma `thin` (601) so the summary
+        /// reads comfortably from the first launch. ~920 window with the rail.
         public static let defaultPaneWidth: CGFloat = 620
         public static let chromePadding: CGFloat = Space.s12
         public static let trafficLightSlotWidth: CGFloat = 76
@@ -956,55 +926,13 @@ public enum Tokens {
         public static let meetingSwapOut = Motion.Step.t90
         public static let meetingSwapIn = Motion.Step.t120
 
-        // MARK: Notes column (31:4652)
+        // MARK: Плашка заметки
 
-        public static let notesHPadding = Space.s8
-        public static let notesVPadding = Space.s10
-        public static let notesMinWidth: CGFloat = 240
-        /// And a ceiling. The comps give the notes 268 at a 788 pt pane and 280
-        /// at 800 — they take the leftover *up to a point*. Without the cap a
-        /// wide window hands the notes everything and leaves the summary in its
-        /// 520 against the left edge, which is not "centred" by any reading.
-        public static let notesMaxWidth: CGFloat = 280
-        /// What the notes shrink to when there is no room for the column —
-        /// `notes-block` state `*-hidden`, a 52 × 52 button.
-        public static let notesCollapsedSide: CGFloat = 52
-        /// The summary keeps this much while the notes are open. Measured
-        /// across the comps: the column is 520 at both 788 and 800 pt of pane,
-        /// and the notes take whatever is left (268 and 280). Below
-        /// `summaryMinWidth + notesMinWidth` the notes collapse instead of
-        /// squeezing the text — at 601 the comps give the summary 549 and the
-        /// notes a button.
-        public static let notesCollapseBelow: CGFloat = summaryMinWidth + notesMinWidth
-        /// Одна заметка — плашка, буквально строка встречи под ховером: тот же
-        /// оттенок, то же скругление, те же отступы, что у групп настроек
-        /// (`Settings.plateFill`). Не «похожая», а та же — в одном окне две
-        /// разные плашки читаются как два разных приложения.
-        ///
-        /// До этого заметки были голым текстом с отступами, и подряд идущие
-        /// короткие записи сливались в один абзац: где кончилась одна и
-        /// началась вторая, было видно только по смыслу.
+        /// Буквально строка встречи под ховером: тот же оттенок, то же
+        /// скругление. Не «похожая», а та же — в одном окне две разные плашки
+        /// читаются как два разных приложения.
         public static let notePlateFill = Sidebar.rowHover
         public static let noteRadius = Sidebar.meetingRadius
-        public static let noteHPadding = Sidebar.meetingHPadding
-        public static let noteVPadding = Sidebar.meetingVPadding
-        /// Между плашками. Меньше их внутреннего отступа: зазор обязан читаться
-        /// как шов между двумя записями, а не как ещё одна пустая строка.
-        public static let noteGap = Space.s8
-        /// Шапка колонки: «Заметки» и кнопка, которая её убирает. Высоту задаёт
-        /// кнопка, а не заголовок, — иначе 32 pt иконки распирали бы 22 pt
-        /// строки и зазор до первой плашки поехал бы.
-        public static let notesHeaderHeight = headerButtonSide
-        /// Отступ заголовка слева. Как в настройках, чуть меньше внутреннего
-        /// отступа плашки: совпадение до пикселя склеило бы их в один блок.
-        public static let notesHeaderLeadingInset = Space.s12
-        /// Сколько колонка не доезжает до своего места, пока окно едет.
-        ///
-        /// Одна ширина плашечного отступа. Без неё колонку просто открывал
-        /// движущийся край окна — шторка: текст стоит, а по нему ползёт вырез.
-        /// Со сдвигом она приезжает вместе с краем и на последних точках
-        /// становится на место сама.
-        public static let notesArrivalShift = Space.s12
 
         // MARK: Paint
 
