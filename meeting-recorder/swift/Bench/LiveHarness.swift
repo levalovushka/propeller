@@ -59,7 +59,9 @@ enum LiveHarness {
 
     // MARK: - Run
 
-    static func run(fixtureDir: URL, port: Int, warmup: Bool) async throws -> Outcome {
+    static func run(
+        fixtureDir: URL, port: Int, warmup: Bool, gate: FeedGate? = nil
+    ) async throws -> Outcome {
         let mic = try samples(fixtureDir.appendingPathComponent("final.mic.wav"))
         let systemStem = try? samples(fixtureDir.appendingPathComponent("final.sys.wav"))
         let system = systemStem ?? []
@@ -89,7 +91,9 @@ enum LiveHarness {
         else { throw BenchError.costUnavailable }
         sampler.start()
 
-        let streamed = try await stream(mic: mic, system: system, port: port, meter: sampler)
+        let streamed = try await stream(
+            mic: mic, system: system, port: port, meter: sampler, gate: gate
+        )
 
         sampler.stop()
         guard let sidecarAfter = ProcessCost.of(pid: sidecar.pid),
@@ -129,7 +133,7 @@ enum LiveHarness {
     /// folds the answers into a `LiveTranscript` — the product's own assembly,
     /// so segment joining and turn splitting are not re-implemented here.
     static func stream(
-        mic: [Float], system: [Float], port: Int, meter: ProcessSampler?
+        mic: [Float], system: [Float], port: Int, meter: ProcessSampler?, gate: FeedGate? = nil
     ) async throws -> Streamed {
         let hasSystem = !system.isEmpty
         let collector = Collector()
@@ -138,6 +142,16 @@ enum LiveHarness {
         let systemSession = hasSystem
             ? LiveWSSession(port: port, channel: .remote, collector: collector)
             : nil
+
+        // The gate reads the same loudness windows the app already computes on
+        // every capture tick; the log is shared by both sessions because the
+        // whole point is comparing the two tracks at the same instant.
+        let windows = WindowLog()
+        for session in [micSession, systemSession].compactMap({ $0 }) {
+            session.gate = gate
+            session.windowsInRange = { from, to in windows.inRange(from: from, to: to) }
+        }
+
         micSession.open()
         systemSession?.open()
 
@@ -163,7 +177,14 @@ enum LiveHarness {
 
             let from = Double(offset) / Double(sampleRate)
             let to = Double(end) / Double(sampleRate)
-            dominance.note(from: from, to: to, mic: rms(micSlice), system: rms(systemSlice))
+            let micLevel = rms(micSlice)
+            let systemLevel = rms(systemSlice)
+            dominance.note(from: from, to: to, mic: micLevel, system: systemLevel)
+            // Recorded before the frames are handed over: the gate decides on a
+            // portion that has only just been completed by them.
+            windows.note(
+                FeedGate.Window(start: from, end: to, mic: micLevel, system: systemLevel)
+            )
 
             micSession.feed(micSlice)
             systemSession?.feed(systemSlice)
@@ -221,6 +242,24 @@ enum LiveHarness {
             framesFedRatio: offered > 0 ? Double(fed) / Double(offered) : 1,
             lagMedianSeconds: lags.isEmpty ? 0 : lags[lags.count / 2]
         )
+    }
+
+    /// Loudness windows behind a lock — written from the feeding loop, read by
+    /// whichever session completes a portion. Mirrors `LoudnessLog` in the app.
+    final class WindowLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var windows: [FeedGate.Window] = []
+
+        func note(_ window: FeedGate.Window) {
+            lock.lock()
+            windows.append(window)
+            lock.unlock()
+        }
+
+        func inRange(from: Double, to: Double) -> [FeedGate.Window] {
+            lock.lock(); defer { lock.unlock() }
+            return windows.filter { $0.end > from && $0.start < to }
+        }
     }
 
     private static func slice(_ samples: [Float], _ from: Int, _ to: Int) -> [Float] {

@@ -1,4 +1,5 @@
 import Foundation
+import PropellerPure
 
 /// `swift run -c release Bench -- --live [-k N] [--port 9877] [--no-warmup]`
 ///
@@ -10,8 +11,27 @@ func runLive(_ args: [String]) async throws {
     let port = intFlag(args, "--port") ?? 9877
     let warmup = !args.contains("--no-warmup")
     let fixtureDir = resolveFixtureDir(args)
+    // `--gate` measures the candidate; without it the harness measures what
+    // ships. Both write the same keys, so a diff of the two files is the
+    // hypothesis being answered. The rules are separable because they buy
+    // different things at different prices — `--gate=silence`, `--gate=echo`,
+    // or plain `--gate` for both.
+    let gate: FeedGate?
+    switch args.first(where: { $0.hasPrefix("--gate") }) {
+    case "--gate=silence": gate = FeedGate(rules: .silence)
+    case "--gate=echo": gate = FeedGate(rules: .echo)
+    case "--gate", "--gate=both": gate = FeedGate(rules: .both)
+    default: gate = nil
+    }
 
-    print("Live harness — fixture \(fixtureDir.lastPathComponent), runs=\(runs), port=\(port)")
+    let gateLabel: String
+    switch gate?.rules {
+    case .none: gateLabel = ""
+    case .some(.silence): gateLabel = ", gate: silence"
+    case .some(.echo): gateLabel = ", gate: echo"
+    default: gateLabel = ", gate: silence+echo"
+    }
+    print("Live harness — fixture \(fixtureDir.lastPathComponent), runs=\(runs), port=\(port)\(gateLabel)")
     if let appBusy = try? await LiveHealth.probe(port: 9876), appBusy {
         print("""
             NOTE: a gigastt is healthy on 9876 — probably the app's. It will not be \
@@ -23,7 +43,7 @@ func runLive(_ args: [String]) async throws {
     for i in 1...runs {
         print("--- run \(i)/\(runs) ---")
         let outcome = try await LiveHarness.run(
-            fixtureDir: fixtureDir, port: port, warmup: warmup && i == 1
+            fixtureDir: fixtureDir, port: port, warmup: warmup && i == 1, gate: gate
         )
         outcomes.append(outcome)
         report(outcome)
@@ -95,6 +115,15 @@ private func report(_ o: LiveHarness.Outcome) {
                  a.coverage, o.lagMedianSeconds))
     if let attribution = a.attributionAccuracy {
         print(String(format: "  attribution: %.3f of %d matched words", attribution, a.matches))
+    }
+    // Which words, not just how many: the difference between a word lost and a
+    // word arriving mangled is the whole decision about accepting a saving.
+    if !a.deletedWords.isEmpty {
+        print("  lost: " + a.deletedWords.joined(separator: ", "))
+    }
+    if !a.substitutedWords.isEmpty {
+        let pairs = a.substitutedWords.map { "\($0.reference)→\($0.hypothesis)" }
+        print("  mangled: " + pairs.joined(separator: ", "))
     }
     print("  turns:")
     for turn in o.transcript.turns {

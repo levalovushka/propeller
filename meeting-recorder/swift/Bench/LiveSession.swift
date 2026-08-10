@@ -29,11 +29,31 @@ final class LiveWSSession: @unchecked Sendable {
 
     /// Frames handed to the session by the harness.
     private(set) var framesOffered = 0
-    /// Frames actually put on the socket. Equal to `framesOffered` today — the
-    /// ratio exists so that a feeding policy which skips audio has somewhere to
-    /// show up, and cannot claim a saving without also showing what it skipped.
+    /// Frames actually put on the socket. Without a gate these are equal; the
+    /// ratio is how a feeding policy shows what it skipped, so it cannot claim a
+    /// saving without declaring the audio it dropped.
     private(set) var framesFed = 0
     private(set) var failure: String?
+
+    /// The gate under test. Nil means the shipped behaviour: feed everything.
+    var gate: FeedGate?
+    /// Loudness windows for a stretch of the meeting — the same ones the app
+    /// already computes per capture tick.
+    var windowsInRange: ((Double, Double) -> [FeedGate.Window])?
+
+    /// Server seconds → meeting seconds. Only diverges once a portion is
+    /// skipped, and then it is the only thing keeping the text on the clock.
+    private var timeline = FedTimeline()
+    /// Every frame the session has been offered, fed or not — the meeting clock.
+    private var framesSeen = 0
+    /// Where the last fed portion ended, in meeting seconds. Keepalive is
+    /// measured in audio, not wall clock, so a run is reproducible.
+    private var lastFedMeetingEnd: Double = 0
+
+    var skippedSeconds: Double {
+        lock.lock(); defer { lock.unlock() }
+        return timeline.totalSkippedSeconds
+    }
 
     private static let sampleRate = 16_000
     private var chunkFrames: Int { Int(Double(Self.sampleRate) * LiveHarness.sessionChunkSeconds) }
@@ -91,11 +111,32 @@ final class LiveWSSession: @unchecked Sendable {
         lock.lock()
         guard !closed else { lock.unlock(); return }
         framesOffered += frames.count
+        framesSeen += frames.count
         buffer.append(contentsOf: frames)
         guard ready, let socket = task, buffer.count >= chunkFrames else { lock.unlock(); return }
         let portion = buffer
         buffer.removeAll(keepingCapacity: true)
+
+        // Where this portion sits on the meeting clock. Not on the engine's
+        // clock: the engine counts only what it received.
+        let seconds = Double(portion.count) / Double(Self.sampleRate)
+        let meetingStart = Double(framesSeen - portion.count) / Double(Self.sampleRate)
+
+        if let gate {
+            let windows = windowsInRange?(meetingStart, meetingStart + seconds) ?? []
+            let quietFor = meetingStart - lastFedMeetingEnd
+            guard gate.shouldSend(
+                channel: channel, windows: windows, secondsSinceLastSend: quietFor
+            ) else {
+                timeline.skipped(seconds: seconds)
+                lock.unlock()
+                return
+            }
+        }
+
         framesFed += portion.count
+        timeline.fed(meetingStart: meetingStart, seconds: seconds)
+        lastFedMeetingEnd = meetingStart + seconds
         lock.unlock()
         send(data: Self.pcm16(portion), on: socket)
     }
@@ -107,7 +148,13 @@ final class LiveWSSession: @unchecked Sendable {
         guard !closed, ready, let socket = task, !buffer.isEmpty else { lock.unlock(); return }
         let held = buffer
         buffer.removeAll(keepingCapacity: true)
+        // The tail goes regardless of the gate: it is the end of the meeting, and
+        // the last words are the ones people look at. A partial portion is cheap.
+        let seconds = Double(held.count) / Double(Self.sampleRate)
+        let meetingStart = Double(framesSeen - held.count) / Double(Self.sampleRate)
         framesFed += held.count
+        timeline.fed(meetingStart: meetingStart, seconds: seconds)
+        lastFedMeetingEnd = meetingStart + seconds
         lock.unlock()
         send(data: Self.pcm16(held), on: socket)
     }
@@ -178,9 +225,16 @@ final class LiveWSSession: @unchecked Sendable {
             guard let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !text.isEmpty else { return }
             let span = message.span()
+            // The engine timestamps against what it received. Without the
+            // translation, every word after the first skipped portion lands
+            // earlier than it was said — on top of text already on screen.
+            lock.lock()
+            let start = timeline.meetingTime(forServer: span.start)
+            let end = timeline.meetingTime(forServer: span.end)
+            lock.unlock()
             collector.add(
                 Collector.Final(
-                    channel: channel, text: text, start: span.start, end: span.end,
+                    channel: channel, text: text, start: start, end: max(end, start),
                     receivedAt: collector.elapsed()
                 )
             )

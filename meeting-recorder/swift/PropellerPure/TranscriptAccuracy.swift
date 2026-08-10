@@ -46,6 +46,26 @@ public struct TranscriptAccuracy {
         /// Из совпавших — сколько пришло с той дорожки, что в эталоне.
         /// `nil`, когда дорожек нет ни у эталона, ни у гипотезы.
         public let attributedCorrectly: Int?
+        /// Слова эталона, которых в тексте нет вовсе.
+        ///
+        /// Нужны, чтобы про падение `coverage` можно было спросить «какие
+        /// именно» и получить ответ, а не гадать. Разница между «слово
+        /// потерялось» и «слово доехало огрызком» — это разница между пропуском
+        /// и заменой, и в решении «принимать ли экономию» она главная.
+        public let deletedWords: [String]
+        /// Пары «сказано → распознано» для слов, которые доехали неверными.
+        public let substitutedWords: [(reference: String, hypothesis: String)]
+
+        public static func == (lhs: Report, rhs: Report) -> Bool {
+            lhs.referenceWords == rhs.referenceWords
+                && lhs.hypothesisWords == rhs.hypothesisWords
+                && lhs.substitutions == rhs.substitutions
+                && lhs.deletions == rhs.deletions
+                && lhs.insertions == rhs.insertions
+                && lhs.matches == rhs.matches
+                && lhs.attributedCorrectly == rhs.attributedCorrectly
+                && lhs.deletedWords == rhs.deletedWords
+        }
 
         /// (S + D + I) / N. Может быть больше 1: вставок бывает сколько угодно.
         public var wer: Double {
@@ -114,7 +134,9 @@ public struct TranscriptAccuracy {
             matches: alignment.matches.count,
             attributedCorrectly: bothHaveChannels
                 ? alignment.matches.filter { $0.hypothesis.channel == $0.reference.channel }.count
-                : nil
+                : nil,
+            deletedWords: alignment.deleted.reversed(),
+            substitutedWords: alignment.substituted.reversed()
         )
     }
 
@@ -134,6 +156,8 @@ public struct TranscriptAccuracy {
         var insertions = 0
         /// Пары дословно совпавших слов — по ним считается атрибуция.
         var matches: [(hypothesis: Word, reference: Word)] = []
+        var deleted: [String] = []
+        var substituted: [(reference: String, hypothesis: String)] = []
     }
 
     /// Левенштейн по словам с восстановлением пути.
@@ -200,11 +224,15 @@ public struct TranscriptAccuracy {
                     result.matches.append((hypothesis[j - 1], reference[i - 1]))
                 } else {
                     result.substitutions += 1
+                    result.substituted.append(
+                        (reference: reference[i - 1].text, hypothesis: hypothesis[j - 1].text)
+                    )
                 }
                 i -= 1
                 j -= 1
             case .deletion:
                 result.deletions += 1
+                result.deleted.append(reference[i - 1].text)
                 i -= 1
             case .insertion:
                 result.insertions += 1
