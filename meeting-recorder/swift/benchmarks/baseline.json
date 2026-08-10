@@ -2,6 +2,15 @@
   "audio_duration_s": 27.4394375,
   "commit": "40ae070",
   "fixture": "ru-short-2spk",
+  "live_baseline": {
+    "commit": "a6eef21",
+    "fixture": "ru-short-2spk",
+    "machine": "MacBook Pro",
+    "note": "Propeller quit; app sidecar idle-stopped. Sys stem corrected same day.",
+    "os": "Version 26.4.1 (Build 25E253)",
+    "runs": 3,
+    "taken": "2026-08-10"
+  },
   "machine": "MacBook Pro",
   "metrics": {
     "asr.rtf": {
@@ -23,6 +32,105 @@
       "median": 0.017847925411881863,
       "p90": 0.017847925411881863,
       "tolerance": "+15%"
+    },
+    "live.app_cpu_cores": {
+      "direction": "lower",
+      "median": 0.0036797629324580726,
+      "p90": 0.0037253937269425934,
+      "samples": [
+        0.0035712117519415875,
+        0.0037253937269425934,
+        0.0036797629324580726
+      ],
+      "tolerance": "+20%"
+    },
+    "live.attribution_accuracy": {
+      "direction": "higher",
+      "median": 1,
+      "p90": 1,
+      "samples": [
+        1,
+        1,
+        1
+      ],
+      "tolerance": "0.05"
+    },
+    "live.coverage": {
+      "direction": "higher",
+      "median": 0.9655172413793104,
+      "p90": 0.9655172413793104,
+      "samples": [
+        0.9655172413793104,
+        0.9655172413793104,
+        0.9655172413793104
+      ],
+      "tolerance": "0.02"
+    },
+    "live.frames_fed_ratio": {
+      "direction": "lower",
+      "median": 1,
+      "p90": 1,
+      "samples": [
+        1,
+        1,
+        1
+      ],
+      "tolerance": "+10%"
+    },
+    "live.lag_median_s": {
+      "direction": "lower",
+      "median": 0.26506498813629165,
+      "p90": 0.2681689596176149,
+      "samples": [
+        0.2681689596176149,
+        0.26506498813629165,
+        0.25850205898284884
+      ],
+      "tolerance": "+0.5"
+    },
+    "live.sidecar_cpu_cores": {
+      "direction": "lower",
+      "median": 0.41214788477351255,
+      "p90": 0.41712076216334004,
+      "samples": [
+        0.40908225766897244,
+        0.41712076216334004,
+        0.41214788477351255
+      ],
+      "tolerance": "+10%"
+    },
+    "live.sidecar_gcycles_per_audio_s": {
+      "direction": "lower",
+      "median": 1.342938774236899,
+      "p90": 1.3455901680929137,
+      "samples": [
+        1.3380132517293766,
+        1.342938774236899,
+        1.3455901680929137
+      ],
+      "tolerance": "+10%"
+    },
+    "live.sidecar_peak_rss_mb": {
+      "direction": "lower",
+      "median": 1303.265625,
+      "p90": 1308.625,
+      "samples": [
+        940.078125,
+        1308.625,
+        1303.265625
+      ],
+      "tolerance": "+50%"
+    },
+    "live.wer": {
+      "direction": "lower",
+      "median": 0.27586206896551724,
+      "p90": 0.27586206896551724,
+      "samples": [
+        0.27586206896551724,
+        0.27586206896551724,
+        0.27586206896551724
+      ],
+      "tolerance": "+0.03"
     },
     "sidecar.spawn_ms": {
       "median": 3112.9199266433716,

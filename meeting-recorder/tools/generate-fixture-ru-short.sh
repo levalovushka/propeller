@@ -31,8 +31,19 @@ def scale(frames, gain):
         s = max(-32768, min(32767, int(s * gain)))
         outb += struct.pack("<h", s)
     return bytes(outb)
+# The mic hears the far side too — through the room, quieter (-12 dB here):
+# that is the speakers case, and the rule that separates the two tracks
+# (`StemDominance`) exists precisely for it.
+#
+# The system stem, though, is tapped *before* the speaker, straight off the
+# app's output — the owner's voice cannot be in it at all. It used to carry A at
+# 0.25, and that one number made the fixture lie in the direction that matters:
+# the sys session then recognised the owner's speech, the live text came out
+# doubled (38 insertions on 58 reference words, measured), and any change that
+# fed the engine more selectively would have scored a spectacular saving on
+# audio no real meeting contains.
 gains_mic = [1.0, 0.25, 1.0, 0.25]
-gains_sys = [0.25, 1.0, 0.25, 1.0]
+gains_sys = [0.0, 1.0, 0.0, 1.0]
 final = silence.join(parts)
 mic = silence.join(scale(p, g) for p, g in zip(parts, gains_mic))
 sys = silence.join(scale(p, g) for p, g in zip(parts, gains_sys))

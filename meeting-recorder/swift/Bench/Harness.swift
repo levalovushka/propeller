@@ -8,6 +8,10 @@ import Darwin
 
 func run() async throws {
     let args = Array(CommandLine.arguments.dropFirst())
+    if args.contains("--live") {
+        try await runLive(args)
+        return
+    }
     let runs = max(1, intFlag(args, "-k") ?? 1)
     let skipASR = args.contains("--diarize-only")
     let fixtureDir = resolveFixtureDir(args)
@@ -80,29 +84,56 @@ func run() async throws {
                      Double(peak) / 1_048_576, Double(released) / 1_048_576))
     }
 
+    // Only the batch keys are touched: a `--live` run's numbers stay where they
+    // are, so the two harnesses can be run separately and still diff together.
+    let latestURL = try writeMetrics(
+        fixture: "ru-short-2spk", audioDuration: audioDuration, runs: runs
+    ) { metrics in
+        if !skipASR {
+            metrics.asr_rtf = sampleStat(asrSamples.map { $0 / audioDuration }, tolerance: "+15%")
+        }
+        metrics.diarize_rtf = sampleStat(diarizeSamples.map { $0 / audioDuration }, tolerance: "+15%")
+        if !spawnSamples.isEmpty {
+            metrics.sidecar_spawn_ms = sampleStat(spawnSamples, tolerance: "+20%")
+        }
+        metrics.batch_peak_rss_mb = sampleStat(peakRSS, tolerance: "+10%")
+        metrics.batch_rss_after_release_mb = sampleStat(afterReleaseRSS, tolerance: "+15%")
+    }
+    print("Wrote \(latestURL.path)")
+}
+
+/// Update `benchmarks/latest.json` in place, editing only the keys the caller
+/// sets. Rewriting the file wholesale would erase the other harness's metrics,
+/// and `bench-diff` reports a missing key as `skip` — a silently unguarded
+/// metric, which is the failure mode this whole exercise exists to avoid.
+func writeMetrics(
+    fixture: String,
+    audioDuration: Double,
+    runs: Int,
+    _ edit: (inout MetricsReport.Metrics) -> Void
+) throws -> URL {
     let outDir = resolveBenchmarksDir()
     try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
     let latestURL = outDir.appendingPathComponent("latest.json")
+
+    var metrics = MetricsReport.Metrics()
+    if let data = try? Data(contentsOf: latestURL),
+       let previous = try? JSONDecoder().decode(MetricsReport.self, from: data) {
+        metrics = previous.metrics
+    }
+    edit(&metrics)
 
     let report = MetricsReport(
         machine: Host.current().localizedName ?? "unknown",
         os: ProcessInfo.processInfo.operatingSystemVersionString,
         commit: gitCommit() ?? "unknown",
-        fixture: "ru-short-2spk",
+        fixture: fixture,
         audio_duration_s: audioDuration,
         runs: runs,
-        metrics: MetricsReport.Metrics(
-            asr_rtf: skipASR ? nil : sampleStat(asrSamples.map { $0 / audioDuration }, tolerance: "+15%"),
-            diarize_rtf: sampleStat(diarizeSamples.map { $0 / audioDuration }, tolerance: "+15%"),
-            sidecar_spawn_ms: spawnSamples.isEmpty ? nil : sampleStat(spawnSamples, tolerance: "+20%"),
-            batch_peak_rss_mb: sampleStat(peakRSS, tolerance: "+10%"),
-            batch_rss_after_release_mb: sampleStat(afterReleaseRSS, tolerance: "+15%")
-        )
+        metrics: metrics
     )
-
-    let data = try JSONEncoder.pretty.encode(report)
-    try data.write(to: latestURL, options: .atomic)
-    print("Wrote \(latestURL.path)")
+    try JSONEncoder.pretty.encode(report).write(to: latestURL, options: .atomic)
+    return latestURL
 }
 
 // MARK: - gigastt
@@ -241,11 +272,17 @@ func currentRSSBytes() -> UInt64 {
     return kr == KERN_SUCCESS ? UInt64(info.resident_size) : 0
 }
 
-func sampleStat(_ values: [Double], tolerance: String) -> MetricSample {
+func sampleStat(
+    _ values: [Double],
+    tolerance: String,
+    direction: MetricSample.Direction? = nil
+) -> MetricSample {
     let sorted = values.sorted()
     let median = percentile(sorted, 0.50)
     let p90 = percentile(sorted, 0.90)
-    return MetricSample(median: median, p90: p90, tolerance: tolerance, samples: values)
+    return MetricSample(
+        median: median, p90: p90, tolerance: tolerance, samples: values, direction: direction
+    )
 }
 
 func percentile(_ sorted: [Double], _ p: Double) -> Double {
@@ -259,11 +296,25 @@ enum BenchError: LocalizedError {
     case missingFixture(String)
     case binaryNotFound
     case sidecarTimeout
+    case portBusy(Int)
+    case sessionFailed(String)
+    case costUnavailable
     var errorDescription: String? {
         switch self {
         case .missingFixture(let p): return "Fixture not found: \(p)"
         case .binaryNotFound: return "gigastt binary not found (set GIGASTT_BIN)"
         case .sidecarTimeout: return "gigastt did not become healthy within 180s"
+        case .portBusy(let port):
+            return """
+                Port \(port) already serves a healthy gigastt. The live harness \
+                needs its own process to meter (pass --port N for another one), \
+                and a server shared with the running app would mix its work into \
+                the measurement.
+                """
+        case .sessionFailed(let why):
+            return "live session failed — \(why); the run is not a measurement"
+        case .costUnavailable:
+            return "proc_pid_rusage refused: cannot meter CPU for this process"
         }
     }
 }
