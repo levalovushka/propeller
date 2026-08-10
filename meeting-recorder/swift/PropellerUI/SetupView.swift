@@ -139,9 +139,16 @@ public struct SetupView: View {
             cell("Push-уведомления", "Отказаться, если запись началась") {
                 grantControl(granted: notificationsGranted, action: onGrantNotifications)
             }
-            // Also rewritten: «чтобы не забыть включить запись» described the
-            // manual path, and auto-record is the default.
-            cell("Запуск при входе", "Закрытый Propeller не заметит звонок") {
+            // No second line, and the title is the one the settings pane already
+            // uses («Запускать Propeller при входе»). It had a subtitle twice —
+            // «чтобы не забыть включить запись», then «Закрытый Propeller не
+            // заметит звонок» — and both explained a consequence of a login item
+            // to someone who has not met the app yet: two clauses to hold in
+            // mind, under a row that is the only optional switch on the plate.
+            // The other two rows earn their second line because a permission is
+            // a request and a request owes a reason; this one is a preference,
+            // and a preference is named, not argued.
+            cell("Запускать Propeller при входе") {
                 Toggle("", isOn: $launchOn)
                     .labelsHidden()
                     .toggleStyle(.switch)
@@ -156,18 +163,23 @@ public struct SetupView: View {
         }
     }
 
+    /// A row keeps its height whether or not it has a second line: the three
+    /// rows are one list, and a shorter row would put the switch off the grid the
+    /// two pills above it stand on.
     private func cell<Control: View>(
-        _ title: String, _ subtitle: String, @ViewBuilder control: () -> Control
+        _ title: String, _ subtitle: String? = nil, @ViewBuilder control: () -> Control
     ) -> some View {
         HStack(spacing: Tokens.Space.s8) {
             VStack(alignment: .leading, spacing: 0) {
                 Text(title)
                     .typoBlock(Tokens.Setup.Typo.cell)
                     .foregroundStyle(Tokens.Setup.cellTitle)
-                Text(subtitle)
-                    .typoBlock(Tokens.Setup.Typo.cell)
-                    .foregroundStyle(Tokens.Setup.cellSubtitle)
-                    .lineLimit(1)
+                if let subtitle {
+                    Text(subtitle)
+                        .typoBlock(Tokens.Setup.Typo.cell)
+                        .foregroundStyle(Tokens.Setup.cellSubtitle)
+                        .lineLimit(1)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             control()
