@@ -30,6 +30,10 @@ struct MetricsReport: Codable {
 
     struct Metrics: Codable {
         var asr_rtf: MetricSample?
+        /// Cores the offline ASR pass occupies while it runs. RTF says how long
+        /// it takes; this says whether the machine is usable meanwhile — the part
+        /// a person feels in the minutes right after a meeting ends.
+        var asr_cpu_cores: MetricSample?
         var diarize_rtf: MetricSample?
         var sidecar_spawn_ms: MetricSample?
         var batch_peak_rss_mb: MetricSample?
@@ -50,6 +54,7 @@ struct MetricsReport: Codable {
 
         enum CodingKeys: String, CodingKey {
             case asr_rtf = "asr.rtf"
+            case asr_cpu_cores = "asr.cpu_cores"
             case diarize_rtf = "diarize.rtf"
             case sidecar_spawn_ms = "sidecar.spawn_ms"
             case batch_peak_rss_mb = "batch.peak_rss_mb"

@@ -26,6 +26,7 @@ func run() async throws {
 
     var spawnSamples: [Double] = []
     var asrSamples: [Double] = []
+    var asrCoreSamples: [Double] = []
     var diarizeSamples: [Double] = []
     var peakRSS: [Double] = []
     var afterReleaseRSS: [Double] = []
@@ -41,6 +42,13 @@ func run() async throws {
         var peak: UInt64 = currentRSSBytes()
 
         if !skipASR {
+            // How many cores the offline pass actually occupies, not just how
+            // long it takes. RTF says the wall-clock is short; it says nothing
+            // about whether the machine is unusable while it lasts, and that is
+            // the part a person feels right after a meeting ends.
+            let sidecarPID = BenchMain.retainedGigastt?.processIdentifier
+                ?? BenchMain.backgroundGigastt
+            let costBefore = sidecarPID.flatMap { ProcessCost.of(pid: $0) }
             let t0 = Date()
             let (_, text) = try await PipelineMetrics.interval(
                 PipelineMetrics.pipeline, PipelineMetrics.asr
@@ -52,6 +60,13 @@ func run() async throws {
             peak = max(peak, currentRSSBytes())
             print(String(format: "  asr: %.2fs (RTF %.3f) segs/text≈%d chars",
                          asrS, asrS / audioDuration, text.count))
+            if let sidecarPID, let costBefore,
+               let spent = ProcessCost.of(pid: sidecarPID)?.since(costBefore) {
+                let cores = spent.cpuSeconds / asrS
+                asrCoreSamples.append(cores)
+                print(String(format: "  asr cpu: %.1f s over %.1f s wall — %.1f cores of %d",
+                             spent.cpuSeconds, asrS, cores, ProcessInfo.processInfo.activeProcessorCount))
+            }
         }
 
         let config = OfflineDiarizerConfig()
@@ -95,6 +110,9 @@ func run() async throws {
         metrics.diarize_rtf = sampleStat(diarizeSamples.map { $0 / audioDuration }, tolerance: "+15%")
         if !spawnSamples.isEmpty {
             metrics.sidecar_spawn_ms = sampleStat(spawnSamples, tolerance: "+20%")
+        }
+        if !asrCoreSamples.isEmpty {
+            metrics.asr_cpu_cores = sampleStat(asrCoreSamples, tolerance: "+15%", direction: .lower)
         }
         metrics.batch_peak_rss_mb = sampleStat(peakRSS, tolerance: "+10%")
         metrics.batch_rss_after_release_mb = sampleStat(afterReleaseRSS, tolerance: "+15%")
@@ -157,6 +175,25 @@ func ensureGigastt() async throws -> Double {
     print("Models: \(modelDir.path)")
 
     let t0 = Date()
+    let logURL = modelDir.deletingLastPathComponent().appendingPathComponent("bench-gigastt-serve.log")
+    let serveArgs = [
+        "serve", "--model-dir", modelDir.path, "--model-variant", "e2e_rnnt",
+        "--port", "9876", "--pool-size", "1", "--hotwords-default",
+    ]
+    // Same server, same flags — only the QoS class differs, so the diff is the
+    // scheduling policy and nothing else.
+    if CommandLine.arguments.contains("--bg-asr") {
+        guard let pid = spawnBackground(binary, serveArgs, log: logURL) else {
+            throw BenchError.sidecarTimeout
+        }
+        BenchMain.backgroundGigastt = pid
+        print("spawned under QOS_CLASS_BACKGROUND, pid \(pid)")
+        for _ in 0..<180 {
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            if let h = try? await GigasttHTTP.health(), h.model != "loading" { break }
+        }
+        return Date().timeIntervalSince(t0) * 1000
+    }
     try await PipelineMetrics.interval(PipelineMetrics.sidecar, PipelineMetrics.spawn) {
         let proc = Process()
         proc.executableURL = binary

@@ -77,6 +77,49 @@ struct ProcessCost {
     }()
 }
 
+/// Spawn a child pinned to the background QoS class.
+///
+/// The pipeline is work nobody sits in front of, and the measured alternative is
+/// 3.2 of 10 cores taken the moment a meeting ends. On Apple Silicon the
+/// background class confines a process to the efficiency cores and throttles its
+/// disk I/O — the trade a background obligation is entitled to make.
+///
+/// It has to be done **at spawn**. `setpriority(PRIO_DARWIN_BG, …)` is refused
+/// for another process and returns EINVAL even for self on this system, and
+/// `taskpolicy` does not exist here — measured, all three.
+func spawnBackground(_ binary: URL, _ arguments: [String], log: URL) -> pid_t? {
+    var attr: posix_spawnattr_t?
+    posix_spawnattr_init(&attr)
+    defer { posix_spawnattr_destroy(&attr) }
+    guard posix_spawnattr_set_qos_class_np(&attr, QOS_CLASS_BACKGROUND) == 0 else { return nil }
+
+    var actions: posix_spawn_file_actions_t?
+    posix_spawn_file_actions_init(&actions)
+    defer { posix_spawn_file_actions_destroy(&actions) }
+    posix_spawn_file_actions_addopen(
+        &actions, 1, log.path, O_WRONLY | O_CREAT | O_TRUNC, 0o644
+    )
+    posix_spawn_file_actions_adddup2(&actions, 1, 2)
+
+    let argv = [binary.path] + arguments
+    var pid: pid_t = 0
+    let rc = withArrayOfCStrings(argv) { cargv in
+        posix_spawn(&pid, binary.path, &actions, &attr, cargv, environ)
+    }
+    return rc == 0 ? pid : nil
+}
+
+/// `posix_spawn` wants a NULL-terminated `char *const *`; Swift will not hand
+/// one over without this dance.
+private func withArrayOfCStrings<R>(
+    _ strings: [String], _ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> R
+) -> R {
+    var pointers = strings.map { strdup($0) }
+    pointers.append(nil)
+    defer { pointers.forEach { if let p = $0 { free(p) } } }
+    return pointers.withUnsafeMutableBufferPointer { body($0.baseAddress!) }
+}
+
 /// Samples a process while something else runs, keeping the high-water RSS.
 ///
 /// Peak RSS matters more than the final number: the sidecar loads the encoder,
