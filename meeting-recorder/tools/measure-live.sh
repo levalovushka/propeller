@@ -9,7 +9,16 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SWIFT="$ROOT/swift"
 K="${K:-1}"
 PORT="${PORT:-9877}"
+# Fixture name, not path: metric files are per-fixture, since a number only
+# compares to one taken on the same audio.
+FIXTURE="${FIXTURE:-ru-short-2spk}"
 cd "$SWIFT"
+
+if [[ "$FIXTURE" == "ru-short-2spk" ]]; then
+  LATEST="benchmarks/latest.json"; BASELINE="benchmarks/baseline.json"
+else
+  LATEST="benchmarks/latest-$FIXTURE.json"; BASELINE="benchmarks/baseline-$FIXTURE.json"
+fi
 
 if pgrep -qf "Propeller.app/Contents/MacOS/MeetingRecorder"; then
   echo "WARNING: Propeller is running. Its sidecar is not measured, but it shares"
@@ -20,14 +29,16 @@ fi
 echo "== Building Bench (release) =="
 swift build -c release --product Bench
 
-echo "== Running live harness -k $K on port $PORT =="
-swift run -c release Bench -- --live -k "$K" --port "$PORT" "$@"
+echo "== Running live harness -k $K on $FIXTURE, port $PORT =="
+swift run -c release Bench -- --live -k "$K" --port "$PORT" \
+  --fixture "$SWIFT/Tests/Fixtures/$FIXTURE" "$@"
 
 echo "== Diff vs baseline =="
-if [[ -f benchmarks/baseline.json ]]; then
-  "$ROOT/tools/bench-diff"
+if [[ -f "$BASELINE" ]]; then
+  "$ROOT/tools/bench-diff" --baseline "$BASELINE" --latest "$LATEST" \
+    --write-report "benchmarks/report-$FIXTURE.md"
 else
-  echo "No benchmarks/baseline.json yet."
+  echo "No $BASELINE yet."
   echo "After a trusted run on a quiet machine:"
-  echo "  cp benchmarks/latest.json benchmarks/baseline.json"
+  echo "  cp $LATEST $BASELINE"
 fi

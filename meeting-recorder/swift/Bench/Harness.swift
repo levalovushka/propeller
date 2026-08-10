@@ -102,6 +102,13 @@ func run() async throws {
     print("Wrote \(latestURL.path)")
 }
 
+/// One file per fixture, because a number is only comparable to a number taken
+/// on the same audio. The original fixture keeps the unsuffixed names so the
+/// existing baseline and every command in the docs still resolve.
+func metricsFilename(_ kind: String, fixture: String) -> String {
+    fixture == "ru-short-2spk" ? "\(kind).json" : "\(kind)-\(fixture).json"
+}
+
 /// Update `benchmarks/latest.json` in place, editing only the keys the caller
 /// sets. Rewriting the file wholesale would erase the other harness's metrics,
 /// and `bench-diff` reports a missing key as `skip` — a silently unguarded
@@ -114,7 +121,7 @@ func writeMetrics(
 ) throws -> URL {
     let outDir = resolveBenchmarksDir()
     try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
-    let latestURL = outDir.appendingPathComponent("latest.json")
+    let latestURL = outDir.appendingPathComponent(metricsFilename("latest", fixture: fixture))
 
     var metrics = MetricsReport.Metrics()
     if let data = try? Data(contentsOf: latestURL),
