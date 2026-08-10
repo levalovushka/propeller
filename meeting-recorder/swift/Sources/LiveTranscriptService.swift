@@ -104,13 +104,28 @@ final class LiveTranscriptService: ObservableObject {
 
     private func openSessions(at elapsed: TimeInterval) {
         let id = recordingID
-        let mic = GigasttLiveSession(timeOffset: elapsed) { [weak self] event in
+        // Гейт читает ту же громкость, что и правило атрибуции, и по ней не
+        // отдаёт движку порции, в которых уверенно говорит дальняя сторона:
+        // микрофон слышит её из колонки, эти слова распознаются целиком и потом
+        // выбрасываются в `absorb`. Замерено: −26 % работы сайдкара, WER не хуже,
+        // атрибуция та же (`benchmarks/report-gate.md`).
+        let loudness = self.loudness
+        let gate = FeedGate(rules: .echo)
+        let windows: (TimeInterval, TimeInterval) -> [FeedGate.Window] = { from, to in
+            loudness.windows(from: from, to: to)
+        }
+
+        let mic = GigasttLiveSession(
+            timeOffset: elapsed, channel: .owner, gate: gate, windowsInRange: windows
+        ) { [weak self] event in
             Task { @MainActor in self?.absorb(event, from: .owner, of: id) }
         }
         let system = hasSystemAudio
-            ? GigasttLiveSession(timeOffset: elapsed) { [weak self] event in
+            ? GigasttLiveSession(
+                timeOffset: elapsed, channel: .remote, gate: gate, windowsInRange: windows
+              ) { [weak self] event in
                 Task { @MainActor in self?.absorb(event, from: .remote, of: id) }
-            }
+              }
             : nil
         sessions.open(mic: mic, system: system)
 
@@ -160,9 +175,18 @@ final class LiveTranscriptService: ObservableObject {
 private final class LoudnessLog: @unchecked Sendable {
     private let lock = NSLock()
     private var dominance = StemDominance()
+    /// Те же окна, что уходят в `dominance`, но в форме, которую спрашивает
+    /// гейт. Хранятся здесь, а не выводятся из `dominance`: одно окно кладётся в
+    /// оба одним вызовом `note`, так что разойтись им негде, а гейту нужен срез
+    /// по отрезку, которого правилу атрибуции не требуется.
+    private var gateWindows: [FeedGate.Window] = []
     private var framesSeen = 0
 
     private static let sampleRate = 16_000.0
+    /// Столько же истории, сколько держит правило дорожек: живая реплика
+    /// приезжает через пару секунд, а встреча на восемь часов не имеет права
+    /// расти в памяти.
+    private static let historySeconds = 60.0
 
     func note(mic: [Float], system: [Float]) {
         guard !mic.isEmpty else { return }
@@ -176,7 +200,21 @@ private final class LoudnessLog: @unchecked Sendable {
         framesSeen += mic.count
         let end = Double(framesSeen) / Self.sampleRate
         dominance.note(from: start, to: end, mic: micLevel, system: systemLevel)
+        gateWindows.append(
+            FeedGate.Window(start: start, end: end, mic: micLevel, system: systemLevel)
+        )
+        let cutoff = end - Self.historySeconds
+        if let first = gateWindows.first, first.end < cutoff {
+            gateWindows.removeAll { $0.end < cutoff }
+        }
         lock.unlock()
+    }
+
+    /// Окна, попадающие на отрезок встречи. Пустой ответ значит «замера нет», и
+    /// гейт в этом случае порцию отдаёт: отсутствие замера не есть замер.
+    func windows(from: Double, to: Double) -> [FeedGate.Window] {
+        lock.lock(); defer { lock.unlock() }
+        return gateWindows.filter { $0.end > from && $0.start < to }
     }
 
     func ownerSpoke(from start: Double, to end: Double) -> Bool? {
@@ -188,6 +226,7 @@ private final class LoudnessLog: @unchecked Sendable {
     func reset() {
         lock.lock()
         dominance = StemDominance()
+        gateWindows.removeAll(keepingCapacity: true)
         framesSeen = 0
         lock.unlock()
     }

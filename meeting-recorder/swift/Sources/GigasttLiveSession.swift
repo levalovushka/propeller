@@ -60,15 +60,35 @@ final class GigasttLiveSession: @unchecked Sendable {
     private var isClosed = false
     private var attempt = 0
     private var reconnectWork: DispatchWorkItem?
-    /// Сколько кадров уже прошло через эту дорожку с начала сессии.
+    /// Сколько кадров прошло через эту дорожку с начала сессии — отданных и нет.
+    /// Часы встречи: 16 кГц, поэтому счётчик кадров и есть секунды.
+    private var framesSeen = 0
+    /// Перевод шкалы движка в шкалу встречи.
     ///
-    /// Существует ради обрыва. Времена слов движок считает **от начала своего
-    /// сокета**, а не от начала встречи: сокет, поднятый заново на сороковой
-    /// минуте, снова начинает с нуля. Без этой отметки весь текст после обрыва
-    /// лёг бы в начало встречи — поверх того, что там уже сказано.
-    private var framesStreamed = 0
-    /// На каком кадре встречи начался нынешний сокет.
-    private var connectionBaseFrames = 0
+    /// Существует ради двух разных вещей, у которых оказалась одна арифметика.
+    /// **Обрыв:** времена слов движок считает от начала своего сокета, и сокет,
+    /// поднятый заново на сороковой минуте, снова начинает с нуля — без перевода
+    /// весь текст после обрыва лёг бы в начало встречи. **Гейт:** порция, которую
+    /// мы решили не отдавать, для движка не существует, и с этого момента его
+    /// шкала отстаёт от встречи ровно на её длину.
+    ///
+    /// Раньше первое решалось парой счётчиков (`framesStreamed` +
+    /// `connectionBaseFrames`), но со вторым это стало бы двумя смещениями
+    /// одновременно — то есть двумя ответами на вопрос «когда это было сказано».
+    private var timeline = FedTimeline()
+    /// Конец последней отданной порции в шкале встречи — для keepalive: сокет
+    /// закрывается сам, если кадров не было пять минут.
+    private var lastFedMeetingEnd: TimeInterval = 0
+
+    /// Чья это дорожка. Гейт спрашивает у микрофонной и системной разное: в
+    /// системном стеме владельца быть не может, а в микрофонном может быть
+    /// дальняя сторона из колонки.
+    private let channel: LiveTranscript.Channel
+    /// Правило, по которому порция может не уйти движку. `nil` — отдавать всё.
+    private let gate: FeedGate?
+    /// Громкость обеих дорожек на отрезке встречи. Считается один раз на кадр
+    /// в `LiveTranscriptService`, здесь только спрашивается.
+    private let windowsInRange: ((TimeInterval, TimeInterval) -> [FeedGate.Window])?
 
     private static let sampleRate = 16_000
     /// Порция, которой кормим движок. Две секунды — замер, а не вкус (см. выше).
@@ -78,8 +98,17 @@ final class GigasttLiveSession: @unchecked Sendable {
     /// потерять кусок встречи, чем копить его в памяти.
     private static let bufferLimitFrames = 10 * sampleRate
 
-    init(timeOffset: TimeInterval, onEvent: @escaping (Event) -> Void) {
+    init(
+        timeOffset: TimeInterval,
+        channel: LiveTranscript.Channel = .owner,
+        gate: FeedGate? = nil,
+        windowsInRange: ((TimeInterval, TimeInterval) -> [FeedGate.Window])? = nil,
+        onEvent: @escaping (Event) -> Void
+    ) {
         self.timeOffset = timeOffset
+        self.channel = channel
+        self.gate = gate
+        self.windowsInRange = windowsInRange
         self.onEvent = onEvent
     }
 
@@ -165,6 +194,7 @@ final class GigasttLiveSession: @unchecked Sendable {
         guard !frames.isEmpty else { return }
         lock.lock()
         guard !isClosed else { lock.unlock(); return }
+        framesSeen += frames.count
         buffer.append(contentsOf: frames)
         if buffer.count > Self.bufferLimitFrames {
             let excess = buffer.count - Self.bufferLimitFrames
@@ -172,7 +202,7 @@ final class GigasttLiveSession: @unchecked Sendable {
             // Выброшенное всё равно прошло по шкале встречи: иначе после
             // долгого обрыва весь дальнейший текст лёг бы раньше, чем был
             // сказан.
-            framesStreamed += excess
+            timeline.skipped(seconds: Double(excess) / Double(Self.sampleRate))
         }
         guard isReady, let socket = task, buffer.count >= Self.chunkFrames else {
             lock.unlock()
@@ -180,7 +210,28 @@ final class GigasttLiveSession: @unchecked Sendable {
         }
         let portion = buffer
         buffer.removeAll(keepingCapacity: true)
-        framesStreamed += portion.count
+
+        let seconds = Double(portion.count) / Double(Self.sampleRate)
+        // Начало порции на шкале встречи — по кадрам, а не по стенным часам:
+        // кадры и есть время записи, и на паузе они не идут.
+        let meetingStart = timeOffset
+            + Double(framesSeen - portion.count) / Double(Self.sampleRate)
+
+        if let gate {
+            let windows = windowsInRange?(meetingStart, meetingStart + seconds) ?? []
+            guard gate.shouldSend(
+                channel: channel,
+                windows: windows,
+                secondsSinceLastSend: meetingStart - lastFedMeetingEnd
+            ) else {
+                timeline.skipped(seconds: seconds)
+                lock.unlock()
+                return
+            }
+        }
+
+        timeline.fed(meetingStart: meetingStart, seconds: seconds)
+        lastFedMeetingEnd = meetingStart + seconds
         lock.unlock()
         send(data: Self.pcm16(portion), on: socket)
     }
@@ -192,9 +243,15 @@ final class GigasttLiveSession: @unchecked Sendable {
         lock.lock()
         let held = buffer
         buffer.removeAll(keepingCapacity: true)
-        framesStreamed += held.count
+        guard !held.isEmpty else { lock.unlock(); return }
+        // Хвост уходит независимо от гейта: это конец записи или пауза, а
+        // последние сказанные слова — те самые, ради которых на строку смотрят.
+        let seconds = Double(held.count) / Double(Self.sampleRate)
+        let meetingStart = timeOffset
+            + Double(framesSeen - held.count) / Double(Self.sampleRate)
+        timeline.fed(meetingStart: meetingStart, seconds: seconds)
+        lastFedMeetingEnd = meetingStart + seconds
         lock.unlock()
-        guard !held.isEmpty else { return }
         send(data: Self.pcm16(held), on: socket)
     }
 
@@ -249,8 +306,9 @@ final class GigasttLiveSession: @unchecked Sendable {
             if mine {
                 isReady = true
                 attempt = 0
-                // Всё, что этот сокет расскажет, случилось после этого кадра.
-                connectionBaseFrames = framesStreamed
+                // Новый сокет — новая шкала: движок снова считает с нуля, и
+                // прежние отметки к его временам больше не относятся.
+                timeline = FedTimeline()
             }
             lock.unlock()
             guard mine else { return }
@@ -261,8 +319,12 @@ final class GigasttLiveSession: @unchecked Sendable {
         case "final":
             guard let text = message.text?.trimmingCharacters(in: .whitespacesAndNewlines),
                   !text.isEmpty else { return }
-            let span = message.span(offset: currentOffset)
-            onEvent(.text(text, start: span.start, end: span.end))
+            let span = message.span()
+            lock.lock()
+            let start = timeline.meetingTime(forServer: span.start)
+            let end = timeline.meetingTime(forServer: span.end)
+            lock.unlock()
+            onEvent(.text(text, start: start, end: max(end, start)))
         case "partial":
             // Догадка. Живому слою она не нужна: см. заголовок файла.
             break
@@ -293,12 +355,6 @@ final class GigasttLiveSession: @unchecked Sendable {
         socket.cancel(with: .abnormalClosure, reason: nil)
         debugLog("[LiveSession] сессия оборвалась (\(reason)) — новая через \(Int(delay)) с")
         DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: work)
-    }
-
-    /// Секунда встречи, которой для нынешнего сокета соответствует его нуль.
-    private var currentOffset: TimeInterval {
-        lock.lock(); defer { lock.unlock() }
-        return timeOffset + Double(connectionBaseFrames) / Double(Self.sampleRate)
     }
 
     private static func backoff(_ attempt: Int) -> TimeInterval {
@@ -333,13 +389,14 @@ final class GigasttLiveSession: @unchecked Sendable {
             let end: Double?
         }
 
-        /// Куда этот кусок попадает на шкале встречи. Времена слов приходят от
-        /// начала сессии; смещение делает из них время записи.
-        func span(offset: TimeInterval) -> (start: Double, end: Double) {
+        /// Куда этот кусок попадает на шкале **движка**. Перевод во время
+        /// встречи — дело `FedTimeline`: только он знает, сколько звука до этого
+        /// момента не было отдано.
+        func span() -> (start: Double, end: Double) {
             let starts = words?.compactMap(\.start) ?? []
             let ends = words?.compactMap(\.end) ?? []
-            let start = (starts.min() ?? 0) + offset
-            let end = (ends.max() ?? starts.min() ?? 0) + offset
+            let start = starts.min() ?? 0
+            let end = ends.max() ?? start
             return (start, max(end, start))
         }
     }
