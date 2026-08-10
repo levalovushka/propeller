@@ -125,6 +125,14 @@ enum GalleryExport {
         // identical. A reference file cannot depend on a system toggle.
         window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = hosting
+        // Nobody is typing in a photograph. The meeting title is a `TextField`,
+        // and a new window hands first responder to the first one it finds — so
+        // every frame with a header came out with the name selected blue-grey
+        // and the Return hint lit beside it, posing an edit nobody started.
+        // Claimed here, before the window is shown: taking focus *away* after
+        // the fact runs the field's commit-on-blur, and that writes through the
+        // store on the same run loop the capture is waiting on.
+        window.initialFirstResponder = hosting
         window.backgroundColor = .black
         window.isOpaque = true
         window.hasShadow = false

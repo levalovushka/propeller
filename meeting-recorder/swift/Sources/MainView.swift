@@ -264,9 +264,23 @@ struct MainView: View {
 
     // MARK: - Rail
 
+    /// Кадр галереи снимается в borderless-окне, у которого кнопок нет вовсе:
+    /// `SceneWindowChrome` нечего двигать в слот, и слот остаётся пустым. Диски
+    /// рисуются только там, где нажимать всё равно не на что; в отгружаемом
+    /// окне — настоящие кнопки. Условие стоит здесь, а не в списке аргументов
+    /// `PropellerSidebar`: `#if` между аргументами вызова Swift не разбирает.
+    private var railTrafficLights: SidebarTrafficLights {
+        #if GALLERY
+        return GalleryFixture.isActive ? .drawn : .system
+        #else
+        return .system
+        #endif
+    }
+
     private var sidebar: some View {
         PropellerSidebar(
             model: SidebarPresenter.model(state: state, store: recordingStore),
+            trafficLights: railTrafficLights,
             onNav: performNav,
             onSelectMeeting: { id in
                 guard let entry = recordingStore.recordings.first(where: { $0.id == id }) else { return }
