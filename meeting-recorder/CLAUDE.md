@@ -54,10 +54,22 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full table. Coordinator
 - Идущая запись — не режим окна, а одна из встреч: `MainView` показывает `RecordingPaneView`
   только когда выбрана записываемая встреча (`AppState.activeRecordingID`). Шапка —
   `RecordingPaneHeader` (заголовок слева, таймер + пауза/стоп справа), слева живой транскрипт
-  (`LiveTranscriptColumn`), справа те же заметки, что у готовой встречи.
-- `NoteOverlayController` — ⌃⌥N quick-note overlay during recording
+  (`LiveTranscriptColumn`), и в той же ленте — заметки на своих секундах
+  (`PropellerPure/NotePlacement`). Пишутся они в поле внизу колонки (`NoteBar`),
+  и оно есть только пока идёт запись: у готовой встречи заметка — раздел саммари.
+- `NotchController` — чёлка на время записи: чёрная плита у выреза, слева лопасть
+  (`PropellerUI/NotchSurface.swift`), которую крутит уровень записываемого звука, справа заметка.
+  ⌃⌥N и клик по правому уху опускают её в поле ввода на три строки с воздухом (вниз, не вширь —
+  `NotchGeometry.composeDrop`, число выведено, не выбрано); Enter сохраняет с
+  таймкодом, Esc выходит без сохранения. Геометрия и привод лопасти — чистые (`PropellerPure/NotchGeometry`,
+  `PropellerPure/BladeDrive`), потому что проверить их можно только на четырёх геометриях сразу.
+  Паузы и стопа там нет намеренно; нижний оверлей заметки (`NoteOverlayController`) удалён.
+  **Нет выреза — нет фичи целиком, вместе с ⌃⌥N** (`NotchGeometry.screen(...)` → `nil`): заметки
+  тогда пишутся в поле внизу окна. Вырез может появиться и исчезнуть посреди записи (крышка, монитор,
+  разрешение) — за этим следит `NotchController`, и наблюдатель живёт всю запись, а не пока стоит
+  панель
 - `MenuBarPanelView` — record/stop, recent, quit
-- Native `Settings` scene (`SettingsSheet.swift`): General / Audio / Transcription / Recap / Export
+- Настройки — не окно, а состояние панели (`AppState.paneRoute`): столбец групп шириной с колонку саммари. Вёрстка — `PropellerUI/SettingsKit.swift`, содержимое — `Sources/SettingsPane.swift`. Сцены `Settings` и `SettingsLink` в проекте больше нет; ⌘, и меню-бар идут через `SettingsOpener`
 
 ### Data storage
 
@@ -172,11 +184,6 @@ Which apps count as a call, and which window titles mean "in one", is **data** i
   and stopped it when the share ended (1.15). Talk therefore has no call signal at all and is started
   by hand; before adding one, check it is absent while the app merely sits open.
 
-## Principles
-
-All of them in one place: [`../design/principles.md`](../design/principles.md) —
-product framing, notifications, «no dead ends», the engineering order below, the
-studio's form canon (`pgcorpus`) and the grep-checkable typography rules. Read the
 - **Заголовки окон как сигнал мертвы, и в браузере детекта сейчас нет вовсе.** Без «Записи экрана»
   `CGWindowListCopyWindowInfo` отдаёт пустые имена у всех окон (замерено 2026-08-07), значит
   `browserTitleMeansCall` не срабатывает никогда. Кандидат на замену — аудио-дуплекс процесса
@@ -185,6 +192,11 @@ studio's form canon (`pgcorpus`) and the grep-checkable typography rules. Read t
   приёмки — не больше 2 ложных баннеров за неделю, подробности и снятые факты в
   [`../STATE.md`](../STATE.md) §8.
 
+## Principles
+
+All of them in one place: [`../design/principles.md`](../design/principles.md) —
+product framing, notifications, «no dead ends», the engineering order below, the
+studio's form canon (`pgcorpus`) and the grep-checkable typography rules. Read the
 relevant section before a decision; run §6 before a commit.
 
 ## How to work in this repo
