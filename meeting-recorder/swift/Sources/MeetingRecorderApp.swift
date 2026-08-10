@@ -37,6 +37,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Audio ждёт решения TCC — замерено, шестьдесят секунд, — и заплатить
         // его на старте записи означает записать встречу без первой минуты.
         // Платим сейчас, в фоне, когда никто ничего не ждёт.
+        //
+        // Разрешение при этом не выпрашивается: без выданного микрофона прогрев
+        // ничего не делает (`ProcessTapCapture.warmUpIfNeeded`), иначе первый в
+        // жизни запуск показывал бы системный запрос раньше настроечной плиты.
+        // На первом запуске за него платит плита, когда разрешение придёт.
         if Preferences.shared.captureSystemAudio {
             Task.detached(priority: .utility) {
                 await ProcessTapCapture.warmUpIfNeeded()

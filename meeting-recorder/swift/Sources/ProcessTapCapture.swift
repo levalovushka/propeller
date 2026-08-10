@@ -262,10 +262,22 @@ final class ProcessTapCapture {
     /// микрофон, а значит зажигает оранжевый индикатор записи. Один раз при
     /// первом запуске это честная цена за разрешение; на каждом запуске — это
     /// приложение, которое «слушает», когда его просто открыли.
+    ///
+    /// **Прогрев не выпрашивает разрешение.** Открытие входа Core Audio без
+    /// решения TCC — это и есть системный запрос микрофона, и на первом запуске
+    /// он выскакивал раньше, чем человек доходил до кнопки «Разрешить» на
+    /// настроечной плите: сначала непонятный диалог, потом экран, который просит
+    /// то же самое второй раз. Поэтому без выданного разрешения прогрев не
+    /// делается вовсе; плату за него вносят сразу после того, как разрешение
+    /// пришло (`OnboardingContainer`), — то есть всё равно до первой записи.
     static func warmUpIfNeeded() async {
         if let known = Preferences.shared.sharedClockCaptureWorks {
             setReady(known)
             if known { return }
+        }
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+            debugLog("[ProcessTapCapture] прогрев отложен: разрешения на микрофон ещё нет")
+            return
         }
         let ready = await warmUp()
         Preferences.shared.sharedClockCaptureWorks = ready

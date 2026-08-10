@@ -17,6 +17,10 @@ struct OnboardingContainer: View {
     @State private var microphoneGranted = false
     @State private var notificationsGranted = false
     @State private var launchAtLogin = false
+    /// Прогрев захвата платится один раз за показ плиты. Опрос идёт раз в
+    /// секунду, а неудавшийся прогрев не запоминается как «готово», так что без
+    /// этого флага отказавший путь открывал бы микрофон каждую секунду.
+    @State private var warmUpStarted = false
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -95,6 +99,7 @@ struct OnboardingContainer: View {
 
     private func refreshGrants() {
         microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        warmUpCaptureIfGranted()
 
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             let granted = settings.authorizationStatus == .authorized
@@ -102,6 +107,27 @@ struct OnboardingContainer: View {
             DispatchQueue.main.async {
                 if notificationsGranted != granted { notificationsGranted = granted }
             }
+        }
+    }
+
+    /// Заплатить за первое открытие входа Core Audio здесь — на плите, после
+    /// того как разрешение пришло.
+    ///
+    /// Раньше это делалось на запуске приложения (`AppDelegate`), и именно оно
+    /// показывало системный запрос микрофона до всякого нажатия. Теперь прогрев
+    /// ждёт разрешения (`ProcessTapCapture.warmUpIfNeeded`), а разрешение
+    /// приходит здесь — на «Разрешить» или из системных настроек, куда ведёт та
+    /// же кнопка после отказа. Обе двери сходятся в опросе, поэтому ловим факт
+    /// выданного разрешения, а не нажатие.
+    ///
+    /// Время до первой записи от этого не страдает: до неё ещё как минимум
+    /// «Дальше», и минута прогрева идёт в фоне, пока плита стоит.
+    private func warmUpCaptureIfGranted() {
+        guard microphoneGranted, !warmUpStarted else { return }
+        guard Preferences.shared.captureSystemAudio else { return }
+        warmUpStarted = true
+        Task.detached(priority: .utility) {
+            await ProcessTapCapture.warmUpIfNeeded()
         }
     }
 
