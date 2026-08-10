@@ -60,7 +60,7 @@ enum LiveHarness {
     // MARK: - Run
 
     static func run(
-        fixtureDir: URL, port: Int, warmup: Bool, gate: FeedGate? = nil
+        fixtureDir: URL, port: Int, warmup: Bool, gate: FeedGate? = nil, poolSize: Int = 2
     ) async throws -> Outcome {
         let mic = try samples(fixtureDir.appendingPathComponent("final.mic.wav"))
         let systemStem = try? samples(fixtureDir.appendingPathComponent("final.sys.wav"))
@@ -70,7 +70,7 @@ enum LiveHarness {
         let reference = try Reference.load(fixtureDir: fixtureDir)
         let audioSeconds = Double(max(mic.count, system.count)) / Double(sampleRate)
 
-        let sidecar = try await LiveSidecar.start(port: port)
+        let sidecar = try await LiveSidecar.start(port: port, poolSize: poolSize)
         defer { sidecar.stop() }
 
         if warmup {

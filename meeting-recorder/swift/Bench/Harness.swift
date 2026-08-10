@@ -101,8 +101,10 @@ func run() async throws {
 
     // Only the batch keys are touched: a `--live` run's numbers stay where they
     // are, so the two harnesses can be run separately and still diff together.
+    // The fixture's own name, not a constant: a batch run on another clip used to
+    // overwrite ru-short-2spk's numbers with numbers taken on different audio.
     let latestURL = try writeMetrics(
-        fixture: "ru-short-2spk", audioDuration: audioDuration, runs: runs
+        fixture: fixtureDir.lastPathComponent, audioDuration: audioDuration, runs: runs
     ) { metrics in
         if !skipASR {
             metrics.asr_rtf = sampleStat(asrSamples.map { $0 / audioDuration }, tolerance: "+15%")

@@ -229,6 +229,35 @@ surprises you; each file there cost a real incident.
 - After any code change, run the project's test suite and typecheck/lint before reporting done.
 - Never claim a fix works without empirical verification (run it, screenshot it, or measure it).
 
+## Performance — measure first, and measure what it costs the person
+
+Two harnesses, both writing `swift/benchmarks/`, both diffed by `tools/bench-diff`
+against a per-fixture baseline:
+
+```bash
+tools/measure-batch.sh                        # offline pass: asr.rtf, asr.cpu_cores, diarize, RSS
+tools/measure-live.sh                         # the live layer, in real time
+FIXTURE=ru-pauses-2spk K=3 tools/measure-live.sh
+```
+
+- **The live harness defaults to the shipped configuration** (echo feed gate on).
+  `--no-gate`, `--gate=silence`, `--gate=both`, `--pool-size N` exist to re-answer
+  hypotheses, not for daily use. A harness whose default is not the product
+  measures a product that does not exist.
+- **Cost metrics never travel alone.** Every `live.*` cost sits beside `live.wer`,
+  `live.coverage` and `live.attribution_accuracy`, because the cheap way to save
+  CPU is to stop recognising speech. `coverage` is the one that catches it — a gate
+  that goes quiet mid-phrase *improves* WER while deleting the meeting. Metrics
+  carry a `direction`; `bench-diff` used to read every drop as an improvement.
+- **Cores, not just RTF.** `asr.cpu_cores` says whether the machine is usable while
+  the pass runs (measured: 3.2 of 10), which is what a person actually feels;
+  RTF only ever said how long it takes.
+- **Where the money is:** the live layer costs 0.33 cores for the *whole meeting*,
+  the offline pass 3.2 cores for ~110 s of an hour-long one, the summary under one
+  core but 4.6 GB. Numbers and every rejected idea (with its cost) live in
+  `benchmarks/report-gate.md` and `benchmarks/report-pipeline-cpu.md`. Read them
+  before proposing a knob — three plausible ones are already refuted there.
+
 ## Scope Discipline
 
 - Implement ONLY what was asked. Do not add extra packages, prototype apps, docs sites, or abstractions that were not requested.

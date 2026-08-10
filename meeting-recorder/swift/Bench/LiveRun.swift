@@ -11,27 +11,34 @@ func runLive(_ args: [String]) async throws {
     let port = intFlag(args, "--port") ?? 9877
     let warmup = !args.contains("--no-warmup")
     let fixtureDir = resolveFixtureDir(args)
-    // `--gate` measures the candidate; without it the harness measures what
-    // ships. Both write the same keys, so a diff of the two files is the
-    // hypothesis being answered. The rules are separable because they buy
-    // different things at different prices — `--gate=silence`, `--gate=echo`,
-    // or plain `--gate` for both.
+    // Each pool triplet deserializes its own encoder copy — "~0.4 GB resident for
+    // the INT8 encoder" per `gigastt serve --help`. With the echo gate the two
+    // tracks rarely ask at once, so the second copy may have stopped earning it.
+    let poolSize = intFlag(args, "--pool-size") ?? 2
+    // Default is what the app does — `FeedGate(rules: .echo)`, wired in
+    // `LiveTranscriptService.openSessions`. A harness whose default is not the
+    // shipped configuration measures a product that does not exist, and its
+    // baseline stops being able to catch a regression.
+    //
+    // The other variants stay reachable because they answered the hypothesis and
+    // may have to answer it again on other audio: `--no-gate` for the old
+    // measure-everything run, `--gate=silence`, `--gate=both`.
     let gate: FeedGate?
-    switch args.first(where: { $0.hasPrefix("--gate") }) {
+    switch args.first(where: { $0.hasPrefix("--gate") || $0 == "--no-gate" }) {
+    case "--no-gate": gate = nil
     case "--gate=silence": gate = FeedGate(rules: .silence)
-    case "--gate=echo": gate = FeedGate(rules: .echo)
-    case "--gate", "--gate=both": gate = FeedGate(rules: .both)
-    default: gate = nil
+    case "--gate=both": gate = FeedGate(rules: .both)
+    default: gate = FeedGate(rules: .echo)
     }
 
     let gateLabel: String
     switch gate?.rules {
-    case .none: gateLabel = ""
+    case .none: gateLabel = ", gate: OFF (not what ships)"
     case .some(.silence): gateLabel = ", gate: silence"
-    case .some(.echo): gateLabel = ", gate: echo"
+    case .some(.echo): gateLabel = ", gate: echo (as shipped)"
     default: gateLabel = ", gate: silence+echo"
     }
-    print("Live harness — fixture \(fixtureDir.lastPathComponent), runs=\(runs), port=\(port)\(gateLabel)")
+    print("Live harness — fixture \(fixtureDir.lastPathComponent), runs=\(runs), port=\(port), pool=\(poolSize)\(gateLabel)")
     if let appBusy = try? await LiveHealth.probe(port: 9876), appBusy {
         print("""
             NOTE: a gigastt is healthy on 9876 — probably the app's. It will not be \
@@ -43,7 +50,8 @@ func runLive(_ args: [String]) async throws {
     for i in 1...runs {
         print("--- run \(i)/\(runs) ---")
         let outcome = try await LiveHarness.run(
-            fixtureDir: fixtureDir, port: port, warmup: warmup && i == 1, gate: gate
+            fixtureDir: fixtureDir, port: port, warmup: warmup && i == 1, gate: gate,
+            poolSize: poolSize
         )
         outcomes.append(outcome)
         report(outcome)

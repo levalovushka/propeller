@@ -20,7 +20,7 @@ final class LiveSidecar {
         self.pid = process.processIdentifier
     }
 
-    static func start(port: Int) async throws -> LiveSidecar {
+    static func start(port: Int, poolSize: Int = 2) async throws -> LiveSidecar {
         if let existing = try? await LiveHealth.probe(port: port), existing {
             throw BenchError.portBusy(port)
         }
@@ -37,7 +37,7 @@ final class LiveSidecar {
             "--model-dir", modelDir.path,
             "--model-variant", "e2e_rnnt",
             "--port", "\(port)",
-            "--pool-size", "2",
+            "--pool-size", "\(poolSize)",
             "--max-session-secs", "28800",
             "--inference-timeout-secs", "0",
             "--hotwords-default",

@@ -13,15 +13,15 @@
 | `batch.peak_rss_mb` | 112.031 | 98.1094 | -13.9219 (-12.4%) | OK | improved |
 | `batch.rss_after_release_mb` | 83.375 | 69.3281 | -14.0469 (-16.8%) | OK | improved |
 | `diarize.rtf` | 0.0178479 | 0.0146406 | -0.00320728 (-18.0%) | OK | improved |
-| `live.app_cpu_cores` | 0.00354806 | 0.00354806 | +0 (+0.0%) | OK | within tol |
+| `live.app_cpu_cores` | 0.00367976 | 0.00354806 | -0.000131699 (-3.6%) | OK | improved |
 | `live.attribution_accuracy` | 1 | 1 | +0 (+0.0%) | OK | within tol |
-| `live.coverage` | 0.948276 | 0.948276 | +0 (+0.0%) | OK | within tol |
-| `live.frames_fed_ratio` | 0.817781 | 0.817781 | +0 (+0.0%) | OK | within tol |
-| `live.lag_median_s` | 0.257766 | 0.257766 | +0 (+0.0%) | OK | within tol |
-| `live.sidecar_cpu_cores` | 0.336152 | 0.336152 | +0 (+0.0%) | OK | within tol |
-| `live.sidecar_gcycles_per_audio_s` | 1.12612 | 1.12612 | +0 (+0.0%) | OK | within tol |
-| `live.sidecar_peak_rss_mb` | 916.125 | 916.125 | +0 (+0.0%) | OK | within tol |
-| `live.wer` | 0.293103 | 0.293103 | +0 (+0.0%) | OK | within tol |
+| `live.coverage` | 0.965517 | 0.948276 | -0.0172414 (-1.8%) | OK | within tol |
+| `live.frames_fed_ratio` | 1 | 0.817781 | -0.182219 (-18.2%) | OK | improved |
+| `live.lag_median_s` | 0.265065 | 0.257766 | -0.00729893 (-2.8%) | OK | improved |
+| `live.sidecar_cpu_cores` | 0.412148 | 0.336152 | -0.075996 (-18.4%) | OK | improved |
+| `live.sidecar_gcycles_per_audio_s` | 1.34294 | 1.12612 | -0.216816 (-16.1%) | OK | improved |
+| `live.sidecar_peak_rss_mb` | 1303.27 | 916.125 | -387.141 (-29.7%) | OK | improved |
+| `live.wer` | 0.275862 | 0.293103 | +0.0172414 (+6.2%) | OK | within tol |
 | `sidecar.spawn_ms` | 3112.92 | 3136.5 | +23.5831 (+0.8%) | OK | within tol |
 
 ## Metric key

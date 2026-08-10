@@ -1,23 +1,23 @@
 # Propeller batch benchmark report
 
 - **Baseline commit:** `a63b473` · machine `MacBook Pro`
-- **Latest commit:** `a63b473` · machine `MacBook Pro`
-- **Fixture:** `ru-pauses-2spk` · audio `54.2625s` · runs `2`
+- **Latest commit:** `a01c4bb` · machine `MacBook Pro`
+- **Fixture:** `ru-pauses-2spk` · audio `54.2625s` · runs `3`
 - **Verdict:** PASS
 
 ## Metrics
 
 | Metric | Baseline | Latest | Δ | Status | Note |
 |--------|---------:|-------:|--:|:------:|------|
-| `live.app_cpu_cores` | 0.00334495 | 0.00334495 | +0 (+0.0%) | OK | within tol |
+| `live.app_cpu_cores` | 0.00414745 | 0.00414745 | +0 (+0.0%) | OK | within tol |
 | `live.attribution_accuracy` | 1 | 1 | +0 (+0.0%) | OK | within tol |
-| `live.coverage` | 0.975904 | 0.975904 | +0 (+0.0%) | OK | within tol |
-| `live.frames_fed_ratio` | 1 | 1 | +0 (+0.0%) | OK | within tol |
-| `live.lag_median_s` | 0.275418 | 0.275418 | +0 (+0.0%) | OK | within tol |
-| `live.sidecar_cpu_cores` | 0.422019 | 0.422019 | +0 (+0.0%) | OK | within tol |
-| `live.sidecar_gcycles_per_audio_s` | 1.40113 | 1.40113 | +0 (+0.0%) | OK | within tol |
-| `live.sidecar_peak_rss_mb` | 1276.08 | 1276.08 | +0 (+0.0%) | OK | within tol |
-| `live.wer` | 0.180723 | 0.180723 | +0 (+0.0%) | OK | within tol |
+| `live.coverage` | 0.963855 | 0.963855 | +0 (+0.0%) | OK | within tol |
+| `live.frames_fed_ratio` | 0.797282 | 0.797282 | +0 (+0.0%) | OK | within tol |
+| `live.lag_median_s` | 0.29755 | 0.29755 | +0 (+0.0%) | OK | within tol |
+| `live.sidecar_cpu_cores` | 0.331782 | 0.331782 | +0 (+0.0%) | OK | within tol |
+| `live.sidecar_gcycles_per_audio_s` | 1.11477 | 1.11477 | +0 (+0.0%) | OK | within tol |
+| `live.sidecar_peak_rss_mb` | 1008.83 | 1008.83 | +0 (+0.0%) | OK | within tol |
+| `live.wer` | 0.168675 | 0.168675 | +0 (+0.0%) | OK | within tol |
 
 ## Metric key
 
