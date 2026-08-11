@@ -400,6 +400,12 @@ final class GigasttSidecar: @unchecked Sendable {
         }
 
         try proc.run()
+        // Своя копия дескриптора после запуска не нужна: она уже у ребёнка.
+        // Здесь это дороже, чем у ollama — падение сайдкара поднимает его заново
+        // из `terminationHandler`, и каждый перезапуск заводил новый лог-хендл
+        // поверх незакрытого. Счётчик `consecutiveCrashRestarts` существует
+        // именно потому, что перезапуски бывают частыми.
+        try? logHandle.close()
         lock.lock(); process = proc; lock.unlock()
         Self.writePIDFile(proc.processIdentifier)
         NSLog("[GigasttSidecar] spawned pid=\(proc.processIdentifier) binary=\(binary.path)")
