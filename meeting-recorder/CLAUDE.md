@@ -83,7 +83,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full table. Coordinator
 
 ```
 ~/.meeting-recorder/{recordings,meetings}   # people/ is legacy: no longer read/written
-~/Library/Application Support/Meeting Recorder/{gigastt-models/,hotwords.txt}
+~/Library/Application Support/Meeting Recorder/{gigastt-models/,hotwords.txt,ollama/}
+# ollama/ — the summary engine unpacked from the bundle (~97 MB) plus models/ (~3.4 GB,
+# fetched over the network). By far the largest thing the app puts on a person's disk.
 ```
 
 ## Pipeline state — invariants
@@ -239,13 +241,25 @@ surprises you; each file there cost a real incident.
 
 ## Performance — measure first, and measure what it costs the person
 
-Two harnesses, both writing `swift/benchmarks/`, both diffed by `tools/bench-diff`
+Three harnesses, all writing `swift/benchmarks/`, all diffed by `tools/bench-diff`
 against a per-fixture baseline:
 
 ```bash
 tools/measure-batch.sh                        # offline pass: asr.rtf, asr.cpu_cores, diarize, RSS
 tools/measure-live.sh                         # the live layer, in real time
 FIXTURE=ru-pauses-2spk K=3 tools/measure-live.sh
+cd swift && swift run -c release Bench -- --search   # ui.search_ms on a synthetic archive
+```
+
+A fourth number has no harness and does not need one: **what a person waits for**.
+Stream the app's own log during a real meeting and read the phase transitions —
+17 minutes of audio measured 42 s of transcript plus 39 s of summary, with
+fractions of a second in the seams. Signposts do not reach the persistent store
+and `debugLog` writes at `.debug`, so it has to be captured live, and `log` may be
+shadowed by a shell builtin:
+
+```bash
+/usr/bin/log stream --level debug --style compact --predicate 'subsystem == "app.propeller"'
 ```
 
 - **The live harness defaults to the shipped configuration** (echo feed gate on).
