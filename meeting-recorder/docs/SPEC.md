@@ -159,6 +159,7 @@ MeetingDetector (Auto: Zoom, Контур.Толк) / menu bar / ⌘R / кноп
 ~/Library/Application Support/Meeting Recorder/
   gigastt-models/   # ~247 МБ GigaAM INT8 — из бандла, без загрузки (имя папки — наследие TCC)
   hotwords.txt      # словарь Domain terms для gigastt
+  ollama/           # движок саммари (~97 МБ) из бандла + models/ с моделью (~3,4 ГБ, качается сама)
 ```
 
 ## Форматы вывода
