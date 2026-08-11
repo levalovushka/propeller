@@ -2028,12 +2028,18 @@ class AppState: ObservableObject {
             NSLog("[AppState] \(phase): в \(recordingID) не нашлось речи — \(error.localizedDescription)")
         } catch {
             modelDownloadProgress = nil
-            let msg = error.localizedDescription
-            Analytics.transcriptionFinished(ok: false, reason: phase == .diarizing ? "diarize" : "error")
-            restoreStageAfterInterruptedASR(recordingID, phase: phase)
-            let failure = recordFailure(recordingID, phase: phase, message: msg)
-            report(failure, for: recordingID)
-            NSLog("[AppState] \(phase) FAILED (attempt \(failure.attempt), \(failure.kind)): \(error)")
+            if vanished(recordingID) {
+                // То же, что на саммари: работа снята вместе со встречей. Стадию
+                // возвращать тоже некуда — записи нет в индексе.
+                debugLog("[pipeline] \(recordingID) исчезла во время \(phase) — не сбой")
+            } else {
+                let msg = error.localizedDescription
+                Analytics.transcriptionFinished(ok: false, reason: phase == .diarizing ? "diarize" : "error")
+                restoreStageAfterInterruptedASR(recordingID, phase: phase)
+                let failure = recordFailure(recordingID, phase: phase, message: msg)
+                report(failure, for: recordingID)
+                NSLog("[AppState] \(phase) FAILED (attempt \(failure.attempt), \(failure.kind)): \(error)")
+            }
         }
 
         isTranscribing = false
@@ -2283,6 +2289,12 @@ class AppState: ObservableObject {
             debugLog("[pipeline] recap cancelled (transport) for \(recordingID)")
             return .advanced
         } catch {
+            // Встречу удалили, пока её конспектировали: это снятая работа, а не
+            // провал (см. `vanished`). Ни телеметрии, ни ретрая.
+            if vanished(recordingID) {
+                debugLog("[pipeline] \(recordingID) исчезла во время саммари — не сбой")
+                return .advanced
+            }
             Analytics.recapFinished(ok: false)
             // "model ... not found" means the pull never finished. That is the
             // provider missing, not this meeting failing — treated as `.blocked`
@@ -2372,6 +2384,22 @@ class AppState: ObservableObject {
     /// The plan is the whole point: nothing here asks a person for anything, and
     /// only `.terminal` stops the work (`design/no-dead-ends.md`).
     @discardableResult
+    /// Встречи больше нет в индексе — значит работа по ней снята, а не провалена.
+    ///
+    /// Удаление во время фазы снимает воркера (`deleteRecording`), но сама фаза
+    /// уже в полёте: она добегает до своего `catch` и раньше записывала «не
+    /// удалось». Это врало трижды. В телеметрию уходил сбой саммари, которого не
+    /// было (`Recap.finished ok=false`), в лог — «retry in 19s» про встречу, за
+    /// которую никто не ждёт, и планировщик ставил под это пробуждение, хотя
+    /// обязательства уже нет. Снято с живого таймлайна 2026-08-11, где человек
+    /// удалил три обрывка встречи, пока их конспектировали.
+    ///
+    /// `.advanced` при этом честен: удалённой встречи нет в очереди, поэтому
+    /// цикл не может попросить ту же работу снова (I11).
+    private func vanished(_ recordingID: String) -> Bool {
+        recordingStore.recording(for: recordingID) == nil
+    }
+
     private func recordFailure(
         _ recordingID: String,
         phase: PipelineActivity.Phase,
