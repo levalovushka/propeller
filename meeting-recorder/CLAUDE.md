@@ -36,6 +36,16 @@ legal state for the app, so there is no consent gate and no «Скачать» b
 - **FluidAudio** — on-device speaker diarization + WeSpeaker embeddings
 - ASR is **not** an SPM package: bundled `gigastt` binary (HTTP sidecar)
 
+**Never call `OfflineDiarizerManager.prepareModels()`.** It is `load` + `initialize`
++ a prewarm, and the prewarm kills the process on macOS 14: it feeds CoreML a
+degenerate input (`samplesPerWindow` zeros and a 1×1×1 segmentation tensor), which
+on 14.8.4 goes down the BNNS CPU path and writes past a page. Twenty-five identical
+crash reports from one tester, one per launch that had a meeting waiting; nobody on
+macOS 26 can reproduce it. Use `TranscriptionService.loadDiarizerModels`, which does
+the two public halves itself. A signal is not catchable, so there is no defensive
+way to keep calling it — and raising the FluidAudio pin means re-checking that
+`prepareModels` is still the only thing that prewarms.
+
 ### Data flow
 
 ```
@@ -238,6 +248,28 @@ surprises you; each file there cost a real incident.
 - ALWAYS build with the project's `./build.sh` (or documented build script), never raw `swift build` / `xcodebuild` directly — raw builds put artifacts in `.build/` and the user sees no updated app.
 - After any code change, run the project's test suite and typecheck/lint before reporting done.
 - Never claim a fix works without empirical verification (run it, screenshot it, or measure it).
+
+### When a tester says it crashes
+
+**Crash reports are named `MeetingRecorder-*.ips`, not `Propeller-*`.** The bundle is
+Propeller, the executable inside it is still `MeetingRecorder`, and macOS names the
+report after the executable — so does Activity Monitor and so does the force-quit
+dialogue. Asking a tester for `Propeller*.ips` returns nothing and reads as "there
+are no crash reports", which is the opposite of the truth. This cost a round trip
+once; the whole ask is one line, and `zsh` aborts the command if a glob matches
+nothing, so it must not be a bare glob:
+
+```bash
+mkdir -p ~/Desktop/propeller-logs && find ~/Library/Logs/DiagnosticReports /Library/Logs/DiagnosticReports \( -iname "*meetingrecorder*" -o -iname "*propeller*" -o -iname "*llama*" -o -iname "*ollama*" \) -exec cp {} ~/Desktop/propeller-logs/ \; 2>/dev/null; cp "$HOME/Library/Application Support/Meeting Recorder/"*.log ~/Desktop/propeller-logs/ 2>/dev/null; open ~/Desktop/propeller-logs
+```
+
+Read the first two lines of an `.ips` before theorising: `os_version` and the
+exception. `EXC_BAD_ACCESS` at an address ending in `ffc` is four bytes past a page
+boundary — a buffer overrun in whatever library owns the faulting thread, not
+memory pressure. `EXC_RESOURCE` would be the system killing us. And read
+`os_version` every time: the one crash this project has had was a macOS 14-only
+path that nobody on 26 could reproduce, and every hypothesis formed before that
+line was read turned out to be wrong.
 
 ## Performance — measure first, and measure what it costs the person
 
