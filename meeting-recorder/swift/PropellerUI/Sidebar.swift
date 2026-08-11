@@ -550,7 +550,11 @@ private struct SidebarDayGroup<Rows: View>: View {
     let vanishing: Bool
     @ViewBuilder let rows: () -> Rows
 
-    /// 0 — the date and the gap are there, 1 — gone.
+    /// Two things, because they are two events. `ink` is the date dissolving with
+    /// the letters below it — a statement about the day that has stopped being true.
+    /// `collapsed` is the room it occupied closing up, which is the layout settling
+    /// and happens a beat later, together with the slot.
+    @State private var ink: CGFloat = 1
     @State private var collapsed: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -562,6 +566,7 @@ private struct SidebarDayGroup<Rows: View>: View {
                     .foregroundStyle(Tokens.Sidebar.sectionHeader)
                     .padding(.horizontal, Tokens.Sidebar.meetingHPadding)
                     .padding(.bottom, Tokens.Sidebar.sectionHeaderBottomGap)
+                    .opacity(ink)
                     // The block's own height, stated so it can be driven to nothing.
                     // Equal to what it measures anyway, so a group that is staying is
                     // laid out exactly as before.
@@ -570,7 +575,6 @@ private struct SidebarDayGroup<Rows: View>: View {
                         alignment: .top
                     )
                     .clipped()
-                    .opacity(1 - collapsed)
             }
             rows()
             // The gap to the next group, as a view rather than as the stack's
@@ -593,10 +597,16 @@ private struct SidebarDayGroup<Rows: View>: View {
     private func close() {
         guard collapsed == 0 else { return }
         guard !reduceMotion else {
+            ink = 0
             collapsed = 1
             return
         }
-        withAnimation(.easeInOut(duration: Tokens.Motion.Ash.duration)) {
+        // Dissolves now, closes up in a moment. Both end with the ash.
+        withAnimation(.easeOut(duration: Tokens.Motion.Ash.inkFade)) { ink = 0 }
+        withAnimation(
+            .easeInOut(duration: Tokens.Motion.Ash.settle)
+                .delay(Tokens.Motion.Ash.settleDelay)
+        ) {
             collapsed = 1
         }
     }
@@ -607,7 +617,10 @@ private struct SidebarDayGroup<Rows: View>: View {
     private func reopen() {
         var t = Transaction()
         t.disablesAnimations = true
-        withTransaction(t) { collapsed = 0 }
+        withTransaction(t) {
+            ink = 1
+            collapsed = 0
+        }
     }
 }
 
@@ -822,6 +835,10 @@ public struct SidebarMeetingRow: View {
     @State private var hovering = false
     /// Measured row height — the slot collapses from this while ash plays.
     @State private var slotHeight: CGFloat = 0
+    /// 1 = the plate under the letters is there, 0 = dissolved. Its own value
+    /// because it leaves on the ash's *ink* clock, while the slot below it closes
+    /// later and slower.
+    @State private var plateInk: Double = 1
     /// 0 = full slot, 1 = gone. Animated with the ash, same duration.
     @State private var slotCollapse: CGFloat = 0
     /// `slotHeight` is the height we collapse *from* — once the ash is lit it
@@ -942,14 +959,28 @@ public struct SidebarMeetingRow: View {
         // the slot it is burning, so the slot must not cut it down as it shrinks.
         .overlay(alignment: .top) {
             if isDissolving, slotHeight > 1 {
-                MeetingRowAshView(
-                    title: row.title,
-                    preview: row.preview,
-                    onFinished: {
-                        burnedOut = true
-                        onDissolveFinished?()
-                    }
-                )
+                ZStack(alignment: .top) {
+                    // The plate the letters stood on, dissolving with them.
+                    //
+                    // The ash carries the text and only the text (`AshField`
+                    // rasterises an attributed string), while `.opacity(0)` above
+                    // takes the whole row in one frame — plate included. Deleting is
+                    // done from the row's own menu, so the pointer is on it and the
+                    // hover plate is there to lose: what was left on that frame was
+                    // the letters alone, which reads as the row jumping up by its
+                    // padding. It leaves on the date's clock instead.
+                    RoundedRectangle(cornerRadius: Tokens.Sidebar.meetingRadius, style: .continuous)
+                        .fill(fill)
+                        .opacity(plateInk)
+                    MeetingRowAshView(
+                        title: row.title,
+                        preview: row.preview,
+                        onFinished: {
+                            burnedOut = true
+                            onDissolveFinished?()
+                        }
+                    )
+                }
                 .frame(height: slotHeight, alignment: .top)
             }
         }
@@ -1001,7 +1032,15 @@ public struct SidebarMeetingRow: View {
             slotCollapse = 1
             return
         }
-        withAnimation(.easeInOut(duration: Tokens.Motion.Ash.duration)) {
+        // A beat after the ash, not with it: the flakes are the answer to the click
+        // and the room closing up is the consequence. Same delay and same remainder
+        // as the date above (`Ash.settleDelay` / `Ash.settle`), so the two are one
+        // movement and both land on the ash's last frame.
+        withAnimation(.easeOut(duration: Tokens.Motion.Ash.inkFade)) { plateInk = 0 }
+        withAnimation(
+            .easeInOut(duration: Tokens.Motion.Ash.settle)
+                .delay(Tokens.Motion.Ash.settleDelay)
+        ) {
             slotCollapse = 1
         }
     }
@@ -1011,6 +1050,7 @@ public struct SidebarMeetingRow: View {
         t.disablesAnimations = true
         withTransaction(t) {
             slotCollapse = 0
+            plateInk = 1
             burnedOut = false
             slotFrozen = false
         }

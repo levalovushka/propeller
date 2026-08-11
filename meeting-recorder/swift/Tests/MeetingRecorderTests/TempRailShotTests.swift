@@ -86,7 +86,12 @@ final class TempRailShotTests: XCTestCase {
         let hosting = NSHostingView(rootView: root)
         window.contentView = hosting
         hosting.layoutSubtreeIfNeeded()
-        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        // How far into any animation the shot is taken. 0.3 by default — long
+        // enough for one-shot arrivals to have landed; `RAIL_SHOT_SETTLE` catches an
+        // earlier frame, which is how the ash is compared with the letters it stands
+        // in for.
+        let settle = Double(ProcessInfo.processInfo.environment["RAIL_SHOT_SETTLE"] ?? "0.3") ?? 0.3
+        RunLoop.current.run(until: Date().addingTimeInterval(settle))
 
         let rep = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
         hosting.cacheDisplay(in: hosting.bounds, to: rep)
