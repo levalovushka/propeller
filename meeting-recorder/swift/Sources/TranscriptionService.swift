@@ -28,11 +28,45 @@ class TranscriptionService {
     /// Ensure the diarizer is loaded (without touching ASR).
     func prepareDiarizer() async throws -> OfflineDiarizerManager {
         if let existing = diarizer { return existing }
-        let diaConfig = OfflineDiarizerConfig()
-        let dia = OfflineDiarizerManager(config: diaConfig)
-        try await dia.prepareModels()
+        let dia = OfflineDiarizerManager(config: OfflineDiarizerConfig())
+        try await Self.loadDiarizerModels(into: dia)
         diarizer = dia
         return dia
+    }
+
+    /// `prepareModels()` minus its prewarm, and the prewarm is the whole reason
+    /// this function exists.
+    ///
+    /// FluidAudio warms the embedding stack with a deliberately degenerate
+    /// input — `samplesPerWindow` zeros and a 1×1×1 segmentation tensor. On
+    /// **macOS 14.8.4** that input takes CoreML down the `MLE5Engine` → BNNS CPU
+    /// path and kills the process inside `_platform_memmove`, four bytes past a
+    /// page boundary. Twenty-five crash reports from one tester, all identical,
+    /// all with `prewarmEmbeddingStack` on the stack, none with a real
+    /// diarization pass — and the machine crashed on every launch that had a
+    /// meeting waiting, because the pipeline reaches this call before it reaches
+    /// anything else it could fail at. A signal is not catchable, so there is no
+    /// defensive version of calling it.
+    ///
+    /// Skipping it costs the first real inference its warm-up and nothing else:
+    /// FluidAudio itself wraps both prewarms in `try/catch` and only logs the
+    /// failure, so the library already treats them as optional. Nobody is waiting
+    /// on a keystroke here — this is the background pipeline.
+    ///
+    /// The retry mirrors `prepareModels`: a first load failure means the cached
+    /// repo is broken, so it is removed and the load repeated (that path
+    /// downloads afresh). Written out rather than delegated because
+    /// `purgeDiarizerRepo` is private to the library.
+    private static func loadDiarizerModels(into dia: OfflineDiarizerManager) async throws {
+        let directory = OfflineDiarizerModels.defaultModelsDirectory().standardizedFileURL
+        do {
+            dia.initialize(models: try await OfflineDiarizerModels.load(from: directory))
+        } catch {
+            NSLog("[TranscriptionService] диаризатор не загрузился (\(error.localizedDescription)) — чищу кэш и качаю заново")
+            let repo = directory.appendingPathComponent(Repo.diarizer.folderName, isDirectory: true)
+            try? FileManager.default.removeItem(at: repo)
+            dia.initialize(models: try await OfflineDiarizerModels.load(from: directory))
+        }
     }
 
     // MARK: - Setup
@@ -58,9 +92,9 @@ class TranscriptionService {
 
         if diarizer == nil {
             statusCallback?("Загрузка диаризатора…")
-            let diaConfig = OfflineDiarizerConfig()
-            diarizer = OfflineDiarizerManager(config: diaConfig)
-            try await diarizer?.prepareModels()
+            let dia = OfflineDiarizerManager(config: OfflineDiarizerConfig())
+            try await Self.loadDiarizerModels(into: dia)
+            diarizer = dia
         }
         downloadProgress?(1.0)
     }
