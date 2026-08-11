@@ -483,45 +483,9 @@ private struct SidebarMeetingScroll: View {
         }
     }
 
-    /// One day's meetings, under its date.
-    ///
-    /// The group carries its own furniture: the date above it and the gap below it.
-    /// Both collapse on the ash's clock when the meeting burning is the last one
-    /// left in the group, because then there is nothing for the date to head and
-    /// nothing for the gap to separate.
-    ///
-    /// Without that, a row would collapse smoothly to nothing and *then* 22 pt of
-    /// date and 24 pt of gap would leave in a single frame as the entry left the
-    /// store — the list slid up gently and jumped the last 46 pt. It only ever
-    /// showed on the last meeting of a day, because that is the only time this
-    /// furniture goes anywhere.
-    /// **Nothing here animates the rows.** Each collapsing piece carries its own
-    /// `.animation`, and neither of them is an ancestor of a row — one on the
-    /// container would have covered the rows too, and a row is already animating
-    /// its own height from its own transaction. Two clocks on one property is what
-    /// the note above `listSignature` is about, and what made the list jump at the
-    /// start of a deletion instead of the end of one.
     @ViewBuilder
     private func dayGroup(_ group: SidebarMeetingGroup) -> some View {
-        let vanishing = isVanishing(group)
-        VStack(alignment: .leading, spacing: 0) {
-            if let header = group.header {
-                Text(header)
-                    .typoBlock(Tokens.Sidebar.Typo.sectionHeader)
-                    .foregroundStyle(Tokens.Sidebar.sectionHeader)
-                    .padding(.horizontal, Tokens.Sidebar.meetingHPadding)
-                    .padding(.bottom, Tokens.Sidebar.sectionHeaderBottomGap)
-                    // The block's own height, stated so it can be animated to
-                    // nothing. Equal to what it measures anyway, so a group that is
-                    // staying is laid out exactly as before.
-                    .frame(
-                        height: vanishing ? 0 : Tokens.Sidebar.sectionHeaderBlockHeight,
-                        alignment: .top
-                    )
-                    .clipped()
-                    .opacity(vanishing ? 0 : 1)
-                    .animation(collapse(vanishing), value: vanishing)
-            }
+        SidebarDayGroup(header: group.header, vanishing: isVanishing(group)) {
             ForEach(group.rows) { row in
                 SidebarMeetingRow(
                     row: row,
@@ -537,23 +501,7 @@ private struct SidebarMeetingScroll: View {
                 // Opacity only — move transitions shove neighbours.
                 .transition(.opacity)
             }
-            // The gap to the next group, as a view rather than as the stack's
-            // spacing: spacing belongs to nobody, and this has to leave with the
-            // group it follows. A view can also carry its own animation, which
-            // padding on the container could not do without wrapping the rows.
-            Color.clear
-                .frame(height: vanishing ? 0 : Tokens.Sidebar.groupGap)
-                .animation(collapse(vanishing), value: vanishing)
         }
-    }
-
-    /// The ash's own clock — so the date, the gap and the slot under them are one
-    /// movement. Nil on the way back: undo mid-ash snaps the row into place with
-    /// animations disabled (`resetSlotCollapse`), and a date easing in over half a
-    /// second above a row that is already there is the same mismatch reversed.
-    private func collapse(_ vanishing: Bool) -> Animation? {
-        guard vanishing, !reduceMotion else { return nil }
-        return .easeInOut(duration: Tokens.Motion.Ash.duration)
     }
 
     /// Is this whole group on its way out — the meeting burning being the only one
@@ -567,6 +515,99 @@ private struct SidebarMeetingScroll: View {
         guard !dissolveReported else { return }
         dissolveReported = true
         onDissolveFinished?()
+    }
+}
+
+/// One day's meetings, under its date.
+///
+/// The group carries its own furniture: the date above it and the gap below it. Both
+/// collapse on the ash's clock when the meeting burning is the last one left under
+/// that date, because then there is nothing for the date to head and nothing for the
+/// gap to separate. Without it the row collapsed smoothly to nothing and 22 pt of
+/// date plus 24 pt of gap left in a single frame — the list slid gently and jumped
+/// the remaining 46.
+///
+/// # Why this is a view with state rather than two `.animation(_:value:)`
+///
+/// The update that starts a deletion carries `disablesAnimations`: `removeRecording`
+/// moves the selection to a neighbour inside such a transaction, and that lands in
+/// the same update as `dissolvingMeetingID`. An implicit animation is suppressed
+/// there — so the date went in one frame no matter which curve was written next to
+/// it, which is the jerk *before* the smooth part.
+///
+/// The row's slot has always been driven by an explicit `withAnimation` from its own
+/// `onChange` (`startSlotCollapse`), which is a later transaction and not a disabled
+/// one — that is why the slot was smooth all along while the date was not. This does
+/// the same thing, so the two move together by construction rather than by hoping
+/// the ambient transaction allows it.
+///
+/// **Nothing here animates the rows**: `collapsed` is read only by the date and the
+/// gap, and a row is already animating its own height. Two clocks on one property is
+/// what the note above `listSignature` is about.
+private struct SidebarDayGroup<Rows: View>: View {
+    let header: String?
+    /// True while the only meeting left under this date is the one burning.
+    let vanishing: Bool
+    @ViewBuilder let rows: () -> Rows
+
+    /// 0 — the date and the gap are there, 1 — gone.
+    @State private var collapsed: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let header {
+                Text(header)
+                    .typoBlock(Tokens.Sidebar.Typo.sectionHeader)
+                    .foregroundStyle(Tokens.Sidebar.sectionHeader)
+                    .padding(.horizontal, Tokens.Sidebar.meetingHPadding)
+                    .padding(.bottom, Tokens.Sidebar.sectionHeaderBottomGap)
+                    // The block's own height, stated so it can be driven to nothing.
+                    // Equal to what it measures anyway, so a group that is staying is
+                    // laid out exactly as before.
+                    .frame(
+                        height: Tokens.Sidebar.sectionHeaderBlockHeight * (1 - collapsed),
+                        alignment: .top
+                    )
+                    .clipped()
+                    .opacity(1 - collapsed)
+            }
+            rows()
+            // The gap to the next group, as a view rather than as the stack's
+            // spacing: spacing belongs to nobody, and this has to leave with the
+            // group it follows.
+            Color.clear
+                .frame(height: Tokens.Sidebar.groupGap * (1 - collapsed))
+        }
+        .onChange(of: vanishing) { _, going in
+            if going { close() } else { reopen() }
+        }
+        .onAppear {
+            // A group can be built already vanishing — the rail is rebuilt from the
+            // store on every pipeline heartbeat, and one of those can land inside
+            // the ash.
+            if vanishing { close() }
+        }
+    }
+
+    private func close() {
+        guard collapsed == 0 else { return }
+        guard !reduceMotion else {
+            collapsed = 1
+            return
+        }
+        withAnimation(.easeInOut(duration: Tokens.Motion.Ash.duration)) {
+            collapsed = 1
+        }
+    }
+
+    /// Undo mid-ash. Snapped, not eased: the row comes back with animations
+    /// disabled (`resetSlotCollapse`), and a date easing in over half a second above
+    /// a row that is already there is the same mismatch pointing the other way.
+    private func reopen() {
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) { collapsed = 0 }
     }
 }
 
