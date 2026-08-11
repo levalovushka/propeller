@@ -35,6 +35,11 @@ enum Analytics {
         let config = TelemetryDeck.Config(appID: id)
         config.defaultSignalPrefix = "Propeller."
         config.analyticsDisabled = !Preferences.shared.analyticsEnabled
+        // Every signal — including the SDK's own session ones — carries the
+        // configuration it happened under. Without this, "у кого именно ломается"
+        // needs a new parameter at every call site; with it, the question is a
+        // filter on data already collected.
+        config.defaultParameters = { Analytics.environment() }
         // Dogfood DMGs are always `-c release`, but be explicit so Live Mode
         // insights aren't empty because someone glanced at Test Mode only.
         #if DEBUG
@@ -46,6 +51,9 @@ enum Analytics {
         config.logHandler = .standard(.info)
         self.config = config
         TelemetryDeck.initialize(config: config)
+        // The session the SDK just opened belongs to today; the next one is owed
+        // when the day turns over (see `noteDayBoundary`).
+        lastSessionDay = today()
         let ver = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         NSLog("[Analytics] TelemetryDeck ready (enabled=\(Preferences.shared.analyticsEnabled) testMode=\(config.testMode) app=\(ver) id=\(id.prefix(8))…)")
         signal("App.opened", parameters: [
@@ -73,9 +81,61 @@ enum Analytics {
         }
     }
 
-    static func signal(_ name: String, parameters: [String: String] = [:]) {
+    static func signal(_ name: String, parameters: [String: String] = [:], value: Double? = nil) {
         guard Preferences.shared.analyticsEnabled, !appID.isEmpty, config != nil else { return }
-        TelemetryDeck.signal(name, parameters: parameters)
+        TelemetryDeck.signal(name, parameters: parameters, floatValue: value)
+    }
+
+    // MARK: - Environment
+
+    /// Coarse configuration attached to every signal.
+    ///
+    /// Read on the SDK's own queue, so it may touch `UserDefaults` and nothing
+    /// else — no AppState, no disk, no window. Never anything a person typed:
+    /// no names, paths, titles or model keys. Hardware, OS, locale and appearance
+    /// already arrive from the SDK, so they are not repeated here.
+    private static func environment() -> [String: String] {
+        let prefs = Preferences.shared
+        return [
+            "auto_record": prefs.autoRecordMode.rawValue,
+            "recap_provider": prefs.recapProvider.rawValue,
+            "markdown": prefs.markdownOutputFormat.rawValue,
+            "calendar": prefs.calendarEnabled ? "on" : "off",
+            "onboarded": prefs.onboardingCompleted ? "1" : "0",
+            // nil means "never measured yet", which is a third answer, not a no.
+            "capture_path": prefs.sharedClockCaptureWorks.map { $0 ? "shared_clock" : "mic_only" } ?? "unknown",
+        ]
+    }
+
+    // MARK: - Sessions
+
+    /// ISO day (`2026-08-11`) of the session currently open.
+    private static var lastSessionDay: String? {
+        get { UserDefaults.standard.string(forKey: "analyticsSessionDay") }
+        set { UserDefaults.standard.set(newValue, forKey: "analyticsSessionDay") }
+    }
+
+    private static func today() -> String {
+        ISO8601DateFormatter.string(from: Date(), timeZone: .current, formatOptions: [.withFullDate])
+    }
+
+    /// Roll the session over when the calendar day turns.
+    ///
+    /// The SDK opens a session when the *process* starts (`Config.sessionID`
+    /// didSet) — for a menu-bar app that runs for weeks that is one session per
+    /// install, and every "how many days was it alive" question reads as one day.
+    /// Called from the wake and activation observers, so a laptop that sleeps
+    /// through the night reports the new day when it opens.
+    ///
+    /// Note this does *not* repair `TelemetryDeck.Retention.distinctDaysUsed`:
+    /// the SDK refreshes that counter only in `SessionManager.init`, i.e. on
+    /// process start. Count active days from the signals, not from that field.
+    static func noteDayBoundary() {
+        guard Preferences.shared.analyticsEnabled, config != nil else { return }
+        let day = today()
+        guard lastSessionDay != day else { return }
+        lastSessionDay = day
+        TelemetryDeck.generateNewSession()
     }
 
     // MARK: - Funnel helpers (no content)
@@ -100,8 +160,26 @@ enum Analytics {
         ])
     }
 
-    static func recordingCancelled() {
-        signal("Recording.cancelled")
+    /// Coarse age of a recording at the moment it was thrown away. The first
+    /// bucket is the one that matters: an auto-started recording killed inside
+    /// ten seconds is a wrong call detection, not a change of mind.
+    static func ageBucket(_ seconds: TimeInterval) -> String {
+        switch seconds {
+        case ..<10: return "<10s"
+        case ..<60: return "10-60s"
+        case ..<300: return "1-5m"
+        default: return "5m+"
+        }
+    }
+
+    /// «Не записывать». `source` is how the recording began (`auto` / `manual`),
+    /// `age` how long it had been running — together they separate a false
+    /// auto-start from a person who decided against the meeting they started.
+    /// Field answer to the acceptance criterion in STATE.md §8.
+    static func recordingCancelled(source: String, age: TimeInterval?) {
+        var params = ["source": source]
+        if let age { params["age"] = ageBucket(age) }
+        signal("Recording.cancelled", parameters: params, value: age)
     }
 
     static func transcriptionFinished(ok: Bool, reason: String? = nil) {
@@ -124,5 +202,26 @@ enum Analytics {
         if let backend { params["backend"] = backend }
         if let skip { params["skip"] = skip }
         signal("Recap.finished", parameters: params)
+    }
+
+    /// How long the person waited between the meeting ending and the summary
+    /// existing — the promise the product actually makes, and the one number
+    /// none of the phase signals contained.
+    ///
+    /// Sent as its own signal rather than a `floatValue` on `Recap.finished`,
+    /// because failures and skips have no wait to report and would drag the
+    /// average toward zero. `awaited` separates the meeting somebody is sitting
+    /// in front of from the backlog a launch is catching up on; only the first
+    /// one is a wait a person felt.
+    static func summaryWaited(seconds: TimeInterval, awaited: Bool, meetingDuration: TimeInterval) {
+        guard seconds > 0 else { return }
+        signal(
+            "Summary.waited",
+            parameters: [
+                "awaited": awaited ? "1" : "0",
+                "meeting": durationBucket(meetingDuration),
+            ],
+            value: seconds
+        )
     }
 }

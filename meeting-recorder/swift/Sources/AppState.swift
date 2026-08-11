@@ -185,6 +185,10 @@ class AppState: ObservableObject {
     /// Set right before an auto-start so `beginRecording` knows to post the
     /// interactive "recording started" notification (manual starts don't).
     private var autoStartedFromMeeting = false
+    /// How the recording in progress began (`auto` / `manual`). `autoStartedFromMeeting`
+    /// is cleared as soon as the start finishes, and the question is still asked
+    /// at the end — a discard means something different for each.
+    private var activeRecordingSource: String?
     /// Mutex so Stop / Discard / end-of-call can't race two `recorder.stop()` calls.
     private var isTerminalRecordingAction = false
 
@@ -564,6 +568,7 @@ class AppState: ObservableObject {
 
         // Analytics dimension: how the recording began, not which app it was.
         let recordingSource = autoStartedFromMeeting ? "auto" : "manual"
+        activeRecordingSource = recordingSource
 
         do {
             // Ставится до старта: кадры пойдут с первой же сотой секунды, а
@@ -731,11 +736,16 @@ class AppState: ObservableObject {
         } catch {
             NSLog("[AppState] cancelRecording stop error: \(error)")
         }
+        // Read before the entry is removed: the age of the discarded recording
+        // is what tells a wrong call detection from a change of mind.
+        var age: TimeInterval?
         if let id, let entry = recordingStore.recording(for: id) {
+            age = Date().timeIntervalSince(entry.date)
             recordingStore.remove(entry)
             if selectedRecordingID == id { selectedRecordingID = nil }
         }
-        Analytics.recordingCancelled()
+        Analytics.recordingCancelled(source: activeRecordingSource ?? "manual", age: age)
+        activeRecordingSource = nil
         NotificationManager.shared.clearRecordingNotification()
     }
 
@@ -1559,13 +1569,19 @@ class AppState: ObservableObject {
             Task { @MainActor in
                 self?.adoptOrphans()
                 self?.kickPipeline("app active")
+                // Same two events the pipeline wakes on: a menu-bar app that
+                // never quits would otherwise report one session per install.
+                Analytics.noteDayBoundary()
             }
         })
         worldObservers.append(NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.kickPipeline("machine woke") }
+            Task { @MainActor in
+                self?.kickPipeline("machine woke")
+                Analytics.noteDayBoundary()
+            }
         })
     }
 
@@ -2227,6 +2243,16 @@ class AppState: ObservableObject {
                 }
             case .success(let recap):
                 Analytics.recapFinished(ok: true, backend: recap.provider)
+                // The wait a person felt: from the meeting ending to the summary
+                // existing. `date` is when the recording began, so the end of it
+                // is `date + duration` — no new state to keep in sync.
+                if let entry = recordingStore.recording(for: recordingID) {
+                    Analytics.summaryWaited(
+                        seconds: Date().timeIntervalSince(entry.date.addingTimeInterval(entry.duration)),
+                        awaited: isAwaited(recordingID),
+                        meetingDuration: entry.duration
+                    )
+                }
                 if selectedRecordingID == recordingID {
                     lastRecapPath = recap.path
                     recapSkipHint = nil
