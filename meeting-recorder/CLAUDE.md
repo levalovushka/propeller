@@ -354,7 +354,10 @@ shadowed by a shell builtin:
   the pass runs (measured: 3.2 of 10), which is what a person actually feels;
   RTF only ever said how long it takes.
 - **Where the money is:** the live layer costs 0.35 cores for the *whole meeting*
-  (of which the coherence estimator is 0.0013), the offline pass 3.2 cores for
+  (of which the coherence estimator is 0.0013), and the feed gate is worth
+  **−15 % of that on continuous speech, −18 % on a fixture with pauses**, measured
+  against a `--no-gate` run of the same commit in the same hour — never against a
+  number from another day. The offline pass is 3.2 cores for
   ~110 s of an hour-long one, the summary under one core but 4.6 GB. Numbers and
   every rejected idea (with its cost) live in `benchmarks/report-gate.md` and
   `benchmarks/report-pipeline-cpu.md`. Read them before proposing a knob — five
@@ -362,9 +365,15 @@ shadowed by a shell builtin:
 - **A promoted baseline needs its argument in `benchmarks/`, not in a commit body
   alone.** `live.wer` is currently 0.048 above the old tolerance on `ru-pauses-2spk`
   by decision: the increase is seven insertions from one badly recognised owner turn
-  that the previous rule hid entirely, and `coverage` improved in the same run. If a
+  that the previous rule hid entirely, and `coverage` improved in the same run.
+  **Three of those seven are the turn, four are the gate** — a `--no-gate` run of the
+  same commit scores 0.181 with three insertions and identical coverage, so feeding
+  the mic session speech torn by skipped portions costs the other four. The lesson is
+  the method: attributing a delta to a rule means measuring the rule alone. If a
   guardrail goes red, the choice is to fix it or to write down why the red is the
-  better product — never to widen the tolerance quietly.
+  better product — never to widen the tolerance quietly. And a guardrail whose
+  tolerance is inside its own scatter is not a guardrail: `live.app_cpu_cores` reads
+  ±45 % between identical runs against a `+20 %` gate, so its red says nothing.
 
 ## Scope Discipline
 

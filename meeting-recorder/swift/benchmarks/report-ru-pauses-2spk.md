@@ -1,23 +1,23 @@
 # Propeller batch benchmark report
 
-- **Baseline commit:** `a63b473` · machine `MacBook Pro`
-- **Latest commit:** `368483e` · machine `MacBook Pro`
-- **Fixture:** `ru-pauses-2spk` · audio `54.2625s` · runs `2`
+- **Baseline commit:** `368483e` · machine `MacBook Pro`
+- **Latest commit:** `1a02692` · machine `MacBook Pro`
+- **Fixture:** `ru-pauses-2spk` · audio `54.2625s` · runs `3`
 - **Verdict:** FAIL
 
 ## Metrics
 
 | Metric | Baseline | Latest | Δ | Status | Note |
 |--------|---------:|-------:|--:|:------:|------|
-| `live.app_cpu_cores` | 0.00414745 | 0.00597761 | +0.00183015 (+44.1%) | FAIL | beyond +20% (allow +0.000829491) |
+| `live.app_cpu_cores` | 0.00597761 | 0.00799885 | +0.00202125 (+33.8%) | FAIL | beyond +20% (allow +0.00119552) |
 | `live.attribution_accuracy` | 1 | 1 | +0 (+0.0%) | OK | within tol |
-| `live.coverage` | 0.963855 | 0.975904 | +0.0120482 (+1.3%) | OK | improved |
-| `live.frames_fed_ratio` | 0.797282 | 0.83414 | +0.0368579 (+4.6%) | OK | within tol |
-| `live.lag_median_s` | 0.29755 | 0.283084 | -0.014466 (-4.9%) | OK | improved |
-| `live.sidecar_cpu_cores` | 0.331782 | 0.351134 | +0.0193514 (+5.8%) | OK | within tol |
-| `live.sidecar_gcycles_per_audio_s` | 1.11477 | 1.18803 | +0.0732636 (+6.6%) | OK | within tol |
-| `live.sidecar_peak_rss_mb` | 1008.83 | 996.141 | -12.6875 (-1.3%) | OK | improved |
-| `live.wer` | 0.168675 | 0.216867 | +0.0481928 (+28.6%) | FAIL | beyond +0.03 (allow +0.03) |
+| `live.coverage` | 0.975904 | 0.975904 | +0 (+0.0%) | OK | within tol |
+| `live.frames_fed_ratio` | 0.83414 | 0.83414 | +0 (+0.0%) | OK | within tol |
+| `live.lag_median_s` | 0.283084 | 0.267983 | -0.0151011 (-5.3%) | OK | improved |
+| `live.sidecar_cpu_cores` | 0.351134 | 0.333255 | -0.017879 (-5.1%) | OK | improved |
+| `live.sidecar_gcycles_per_audio_s` | 1.18803 | 1.14185 | -0.0461816 (-3.9%) | OK | improved |
+| `live.sidecar_peak_rss_mb` | 996.141 | 1086.44 | +90.2969 (+9.1%) | OK | within tol |
+| `live.wer` | 0.216867 | 0.216867 | +0 (+0.0%) | OK | within tol |
 
 ## Metric key
 
