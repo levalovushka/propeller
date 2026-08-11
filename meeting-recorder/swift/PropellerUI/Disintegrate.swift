@@ -84,7 +84,12 @@ enum AshField {
     }
 
     private static func resolvedInk() -> NSColor {
-        let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        // `NSApp` is nil wherever there is no application — a test reaching this
+        // through `rasterize` took the whole run down on the force-unwrap. The
+        // drawing appearance is the right fallback anyway: it is what the context
+        // we are about to draw into would answer.
+        let appearance = NSApp?.effectiveAppearance ?? .currentDrawing()
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         return dark
             ? NSColor(white: 1, alpha: 0.95)
             : NSColor(white: 0, alpha: 0.88)
