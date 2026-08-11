@@ -57,7 +57,11 @@ final class TempRailShotTests: XCTestCase {
                         id: "4", meta: "11:00 · 21 мин",
                         title: "Один в своём дне.",
                         preview: "Единственная встреча под этой датой",
-                        state: .rest
+                        // Hovered on purpose: deletion is done from the row's own
+                        // menu, so the plate under the letters is there — and it is
+                        // the only part of the ash a test process can see, Metal
+                        // being absent. Its top edge is where the flakes are.
+                        state: SidebarRowState(isHovered: true)
                     ),
                 ]),
             ]
