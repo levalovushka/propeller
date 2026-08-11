@@ -191,6 +191,43 @@ and it is what makes a live transcript and echo cancellation possible at all.
   and `tools/echo-probe/` for coherence. Acceptance: **> 0.7** in the speech band; measured
   0.91–0.97 across runs. Check `maxSys` in the probe report first — a run where the speaker
   was driven into clipping (`maxSys=1.0`) reads 0.67, and that is the acoustic path, not us.
+  **That 0.91–0.97 describes the tap, not a meeting.** On real audio, coherence between the
+  mic and the system stem in the speech band is ~0.5, because the probe plays a test signal
+  at a convenient level while a room adds a non-linear speaker and a reverb tail. Quoting the
+  probe's figure as "we can cancel echo" is the mistake that measurement exists to prevent.
+
+## Live echo — invariants
+
+On speakers the microphone hears the far side and 95–97 % of her words are recognisable
+from the mic stem alone, so the live column will show every remark twice unless something
+stops it. Two things do, and **neither of them compares the two tracks' loudness**.
+
+- **Never decide who spoke by which track is louder.** Measured 2026-08-11 across the
+  archive: the owner's own voice in his own microphone is **4–6 dB below** the far side's
+  echo. Output level belongs to the call app, input level to the mic gain; the two are not
+  one scale. A rule built on that premise (`StemDominance`) shipped, looked right in the
+  harness for four days, and was inert on every real meeting. Numbers:
+  `benchmarks/report-gate.md`, `docs/ECHO_AND_MIX_EXPERIMENTS.md` (2026-08-11 section).
+- **The audio may only be asked gain-free questions.** Two are legal: "did the system stem
+  carry anything at all" (digital silence, `FeedGate.silenceFloor`) and "is the microphone
+  predictable from the reference" (`EchoCoherence`). Anything of the form `mic > system` is
+  the refuted rule coming back.
+- **What reaches the screen is decided on the text** (`EchoDedup`): a mic line the far side
+  has already said cannot be the owner's, at any level. Matching is fuzzy per token, and
+  **only for tokens of four characters or more** — at two, one edit turns "ни" into "они",
+  which cost a whole owner turn in the harness (coverage 0.964 → 0.916).
+- **A duplicate is dropped at once; "this looks new" may wait.** Similarity only grows as
+  more of the far side arrives, and `LiveTranscript` promises that shown text is never
+  rewritten. Waiting is capped at `EchoDedup.holdSeconds` and only applies to lines that
+  overlap audible far-side speech — own speech into silence is never delayed.
+- **Suppression is not the answer, and this is measured.** A coherent post-filter gives
+  8.8–10.3 dB and the engine does not care: 95.4 % of the far side's words still come
+  through against 97.5 % raw. An ASR needs 20–30 dB; linearly that is not available here.
+  Before proposing AEC, read the numbers — the cheap version is already refuted.
+- **The gate is about electricity, the dedup is about truth.** If a change makes the gate
+  stricter, it can only cost CPU; if it makes the dedup stricter, it can cost a word. Watch
+  `live.coverage`, never `live.wer` alone: a rule that hides a badly recognised real turn
+  *improves* WER.
 
 ## Meeting detection
 
@@ -302,6 +339,12 @@ shadowed by a shell builtin:
   `--no-gate`, `--gate=silence`, `--gate=both`, `--pool-size N` exist to re-answer
   hypotheses, not for daily use. A harness whose default is not the product
   measures a product that does not exist.
+- **A green harness is not a working feature.** Both fixtures carry the far side in
+  the mic stem 12 dB *below* the owner; real meetings on speakers have it 4–6 dB
+  *above*. The echo rule was green here for four days while being inert on every
+  actual meeting. When a rule depends on a level relationship, ask what the fixture
+  assumes about it before trusting the diff — and a fixture with the echo above the
+  reference is owed (`Tests/Fixtures/ru-short-2spk/README.md`).
 - **Cost metrics never travel alone.** Every `live.*` cost sits beside `live.wer`,
   `live.coverage` and `live.attribution_accuracy`, because the cheap way to save
   CPU is to stop recognising speech. `coverage` is the one that catches it — a gate
@@ -310,11 +353,18 @@ shadowed by a shell builtin:
 - **Cores, not just RTF.** `asr.cpu_cores` says whether the machine is usable while
   the pass runs (measured: 3.2 of 10), which is what a person actually feels;
   RTF only ever said how long it takes.
-- **Where the money is:** the live layer costs 0.33 cores for the *whole meeting*,
-  the offline pass 3.2 cores for ~110 s of an hour-long one, the summary under one
-  core but 4.6 GB. Numbers and every rejected idea (with its cost) live in
-  `benchmarks/report-gate.md` and `benchmarks/report-pipeline-cpu.md`. Read them
-  before proposing a knob — three plausible ones are already refuted there.
+- **Where the money is:** the live layer costs 0.35 cores for the *whole meeting*
+  (of which the coherence estimator is 0.0013), the offline pass 3.2 cores for
+  ~110 s of an hour-long one, the summary under one core but 4.6 GB. Numbers and
+  every rejected idea (with its cost) live in `benchmarks/report-gate.md` and
+  `benchmarks/report-pipeline-cpu.md`. Read them before proposing a knob — five
+  plausible ones are already refuted there, echo suppression among them.
+- **A promoted baseline needs its argument in `benchmarks/`, not in a commit body
+  alone.** `live.wer` is currently 0.048 above the old tolerance on `ru-pauses-2spk`
+  by decision: the increase is seven insertions from one badly recognised owner turn
+  that the previous rule hid entirely, and `coverage` improved in the same run. If a
+  guardrail goes red, the choice is to fix it or to write down why the red is the
+  better product — never to widen the tolerance quietly.
 
 ## Scope Discipline
 
