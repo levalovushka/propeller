@@ -222,15 +222,33 @@ public struct EchoDedup: Equatable, Sendable {
         return Double(explained) / Double(max(total, 1)) >= Self.duplicateShare
     }
 
+    /// Короче этого нестрогое сравнение не применяется.
+    ///
+    /// При двух-трёх знаках одна правка меняет слово целиком: «ни» → «они», «да»
+    /// → «два». Это стоило живой реплики — в харнессе «Понял, до пятницы не
+    /// трогаю» приехало как «ни ни ни ни ни юз до пятницы не трогаю», каждое «ни»
+    /// сошлось с «они» из речи собеседницы, и вся реплика была снята как эхо
+    /// (coverage 0.964 → 0.916). Порог поймал тест, а не встреча.
+    static let fuzzyMinimum = 4
+
     /// Одно и то же слово, распознанное дважды с разным качеством.
     static func similar(_ lhs: String, _ rhs: String) -> Bool {
         if lhs == rhs { return true }
+        // Протяжное «э-э-э» против «э-э»: движок записывает тянущийся звук разным
+        // числом слогов, и это одно и то же слово, а не похожие.
+        if lhs.contains("-") || rhs.contains("-") {
+            if syllables(lhs) == syllables(rhs) { return true }
+        }
+        guard min(lhs.count, rhs.count) >= fuzzyMinimum else { return false }
         let longest = max(lhs.count, rhs.count)
-        guard longest > 0 else { return true }
         // Разница длин уже больше допуска — расстояние считать незачем.
         if Double(abs(lhs.count - rhs.count)) / Double(longest) > 1 - tokenMatch { return false }
         let distance = editDistance(Array(lhs), Array(rhs))
         return 1 - Double(distance) / Double(longest) >= tokenMatch
+    }
+
+    private static func syllables(_ word: String) -> Set<String> {
+        Set(word.split(separator: "-").map(String.init))
     }
 
     /// Левенштейн на двух строках слова. Одна строка памяти: слова короткие, но

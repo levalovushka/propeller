@@ -178,10 +178,35 @@ final class EchoDedupTests: XCTestCase {
 
     // MARK: - Похожесть слов
 
+    func testИспорченнаяРепликаВладельцаНеСтановитсяЭхомИзОбрывков() {
+        // Настоящий случай из харнесса: «Понял, до пятницы не трогаю» приехало
+        // огрызками, и каждое «ни» сошлось с «они» из речи собеседницы. Реплику
+        // сняли целиком, coverage 0.964 → 0.916.
+        var dedup = afterRemote(
+            "И ещё одно. Дизайн просил не менять форму оплаты до пятницы, иначе они не успеют.",
+            at: 34, end: 40
+        )
+        let text = "ни ни ни ни ни юз до пятницы не трогаю."
+        XCTAssertTrue(dedup.ownerSaid(
+            start: 40.3, end: 41.9, text: text, farSideAudible: true, at: now
+        ).isEmpty, "дальняя сторона ещё не отговорила — реплика ждёт")
+        XCTAssertEqual(
+            dedup.tick(at: now + EchoDedup.holdSeconds).map(\.text), [text],
+            "повтор чужих слов в своей реплике — не эхо"
+        )
+    }
+
     func testПохожестьСловНеПутаетРазныеСлова() {
         XCTAssertTrue(EchoDedup.similar("интеграции", "интеграции"))
         XCTAssertTrue(EchoDedup.similar("формации", "формате"))
         XCTAssertFalse(EchoDedup.similar("смета", "фигма"))
         XCTAssertFalse(EchoDedup.similar("да", "давай"))
+        // Короткие слова — только дословно: одна правка их подменяет.
+        XCTAssertFalse(EchoDedup.similar("ни", "они"))
+        XCTAssertFalse(EchoDedup.similar("да", "два"))
+        XCTAssertFalse(EchoDedup.similar("юз", "уз"))
+        // Кроме тянущегося звука, записанного разным числом слогов.
+        XCTAssertTrue(EchoDedup.similar("э-э-э", "э-э"))
+        XCTAssertTrue(EchoDedup.similar("да-да", "да"))
     }
 }
