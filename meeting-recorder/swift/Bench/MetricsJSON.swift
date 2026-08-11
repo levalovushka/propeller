@@ -52,6 +52,11 @@ struct MetricsReport: Codable {
         var live_attribution_accuracy: MetricSample?
         var live_lag_median_s: MetricSample?
 
+        // The UI. Not the whole of it — only the part with a ruler so far: the
+        // archive search that used to run, with disk reads, inside `body`.
+        var ui_search_ms: MetricSample?
+        var ui_search_render_ms: MetricSample?
+
         enum CodingKeys: String, CodingKey {
             case asr_rtf = "asr.rtf"
             case asr_cpu_cores = "asr.cpu_cores"
@@ -68,6 +73,8 @@ struct MetricsReport: Codable {
             case live_coverage = "live.coverage"
             case live_attribution_accuracy = "live.attribution_accuracy"
             case live_lag_median_s = "live.lag_median_s"
+            case ui_search_ms = "ui.search_ms"
+            case ui_search_render_ms = "ui.search_render_ms"
         }
     }
 }

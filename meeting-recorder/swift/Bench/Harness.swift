@@ -12,6 +12,10 @@ func run() async throws {
         try await runLive(args)
         return
     }
+    if args.contains("--search") {
+        try await runSearch(args)
+        return
+    }
     let runs = max(1, intFlag(args, "-k") ?? 1)
     let skipASR = args.contains("--diarize-only")
     let fixtureDir = resolveFixtureDir(args)

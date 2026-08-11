@@ -1,4 +1,5 @@
 import SwiftUI
+import PropellerPure
 import PropellerUI
 
 /// Command-palette search (⌘K) — glass plate matching Figma Meetings chrome.
@@ -12,6 +13,20 @@ struct SearchPalette: View {
     @State private var highlightedIndex = 0
     @FocusState private var fieldFocused: Bool
 
+    /// Архив в виде, по которому ищут. Строится один раз при открытии палитры —
+    /// это единственное место, где читается диск.
+    ///
+    /// Раньше и поиск, и чтение файлов конспектов жили в вычисляемом свойстве,
+    /// которое `body` спрашивал шесть-семь раз за проход: три чипа фильтра,
+    /// `items`, `groupedItems` через него и дважды `items.count`. На архиве из 29
+    /// встреч это около двухсот файловых чтений и **281 мс на один проход** — и не
+    /// только на нажатие клавиши, а на любое изменение `AppState`, которых во
+    /// время записи двадцать в секунду.
+    @State private var documents: [ArchiveSearch.Document] = []
+    @State private var entriesByID: [String: RecordingEntry] = [:]
+    /// Что нашлось. Пересчитывается на изменение запроса, а не на отрисовку.
+    @State private var hits: [ArchiveSearch.Hit] = []
+
     enum Filter: String, CaseIterable, Identifiable {
         case all = "Все"
         case meetings = "Встречи"
@@ -21,7 +36,7 @@ struct SearchPalette: View {
 
     private struct RecordingMatch {
         let entry: RecordingEntry
-        let snippet: AttributedString?
+        let snippet: ArchiveSearch.Snippet?
         let matchCount: Int
         let inText: Bool
     }
@@ -101,9 +116,19 @@ struct SearchPalette: View {
                                 .padding(.top, 12)
                                 .padding(.bottom, 4)
 
-                            ForEach(sectionItems, id: \.0) { flatIndex, item in
+                            // Строка опознаётся собой, а не своим номером — и в
+                            // `ForEach`, и в `.id()` для прокрутки.
+                            //
+                            // Номер здесь не идентификатор: секций две, номера в
+                            // них общие, и `.id(0)` существовал сразу в обеих —
+                            // в «Недавних» и в «Действиях». SwiftUI брал первую
+                            // найденную, и первая встреча выходила нарисованной
+                            // как «Записать». Раньше это не всплывало только
+                            // потому, что список считался прямо в `body` и к
+                            // первому проходу уже был полным.
+                            ForEach(sectionItems, id: \.1.id) { flatIndex, item in
                                 itemRow(item, highlighted: flatIndex == highlightedIndex)
-                                    .id(flatIndex)
+                                    .id(item.id)
                                     .onTapGesture { activate(flatIndex) }
                                     .onHover { inside in
                                         if inside { highlightedIndex = flatIndex }
@@ -122,7 +147,8 @@ struct SearchPalette: View {
                     .padding(.bottom, 8)
                 }
                 .onChange(of: highlightedIndex) { _, idx in
-                    proxy.scrollTo(idx, anchor: nil)
+                    guard items.indices.contains(idx) else { return }
+                    proxy.scrollTo(items[idx].id, anchor: nil)
                 }
             }
             .frame(maxHeight: 380)
@@ -150,8 +176,15 @@ struct SearchPalette: View {
                 .fill(Color(nsColor: Tokens.Glass.fill))
         }
         .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.lg, style: .continuous))
-        .onAppear { fieldFocused = true }
-        .onChange(of: query) { _, _ in highlightedIndex = 0 }
+        .onAppear {
+            fieldFocused = true
+            buildIndex()
+        }
+        .onChange(of: query) { _, _ in refreshHits() }
+        // Встреча могла закончиться, пока палитра открыта: тогда индекс её не
+        // знает. Перестраивается по числу записей, а не по каждому изменению
+        // хранилища — иначе вернулись бы к пересчёту на каждый тик записи.
+        .onChange(of: state.recordingStore.recordings.count) { _, _ in buildIndex() }
         .onKeyPress(.downArrow) {
             if highlightedIndex < items.count - 1 { highlightedIndex += 1 }
             return .handled
@@ -165,85 +198,53 @@ struct SearchPalette: View {
 
     // MARK: - Data
 
+    /// Плоский список найденного. Читает только уже посчитанное — ни диска, ни
+    /// поиска: их место в `refreshHits()`.
     private var matchedRecordings: [RecordingMatch] {
+        hits.compactMap { hit in
+            guard let entry = entriesByID[hit.id] else { return nil }
+            return RecordingMatch(
+                entry: entry, snippet: hit.snippet,
+                matchCount: hit.matchCount, inText: hit.inText
+            )
+        }
+    }
+
+    /// Собрать архив для поиска. Единственное место, где читаются файлы
+    /// конспектов, и происходит это на открытии палитры.
+    private func buildIndex() {
         let recordings = state.recordingStore.recordings
-        if query.isEmpty {
-            return recordings.prefix(8).map {
-                RecordingMatch(entry: $0, snippet: nil, matchCount: 0, inText: false)
-            }
+        entriesByID = Dictionary(uniqueKeysWithValues: recordings.map { ($0.id, $0) })
+        documents = recordings.map { entry in
+            var bodies = [entry.transcript, entry.notes].compactMap { $0 }
+            if let recap = AppState.loadRecapText(for: entry) { bodies.append(recap) }
+            return ArchiveSearch.Document(
+                id: entry.id, title: entry.title, dateLabel: entry.dateFormatted, bodies: bodies
+            )
         }
-        let q = query.lowercased()
-        return recordings.compactMap { rec in
-            let inTitle = rec.title.lowercased().contains(q)
-                || rec.dateFormatted.lowercased().contains(q)
-
-            var snippet: AttributedString?
-            var count = 0
-            var texts = [rec.transcript, rec.notes].compactMap { $0 }
-            if let recap = AppState.loadRecapText(for: rec) {
-                texts.append(recap)
-            }
-            for text in texts {
-                let hits = Self.occurrences(of: query, in: text)
-                count += hits
-                if snippet == nil, hits > 0 {
-                    snippet = Self.snippet(around: query, in: text)
-                }
-            }
-
-            guard inTitle || count > 0 else { return nil }
-            return RecordingMatch(entry: rec, snippet: snippet, matchCount: count, inText: count > 0)
-        }
+        refreshHits()
     }
 
-    private static let matchOptions: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
-
-    private static func occurrences(of needle: String, in haystack: String) -> Int {
-        var count = 0
-        var searchRange = haystack.startIndex..<haystack.endIndex
-        while let r = haystack.range(of: needle, options: matchOptions, range: searchRange) {
-            count += 1
-            searchRange = r.upperBound..<haystack.endIndex
-        }
-        return count
+    private func refreshHits() {
+        hits = ArchiveSearch.run(query: query, over: documents)
+        highlightedIndex = 0
     }
 
-    private static func snippet(around needle: String, in haystack: String) -> AttributedString? {
-        guard let r = haystack.range(of: needle, options: matchOptions) else { return nil }
-        let contextChars = 50
-
-        var start = haystack.index(r.lowerBound, offsetBy: -contextChars, limitedBy: haystack.startIndex) ?? haystack.startIndex
-        var end = haystack.index(r.upperBound, offsetBy: contextChars, limitedBy: haystack.endIndex) ?? haystack.endIndex
-        while start > haystack.startIndex, !haystack[haystack.index(before: start)].isWhitespace {
-            start = haystack.index(before: start)
-        }
-        while end < haystack.endIndex, !haystack[end].isWhitespace {
-            end = haystack.index(after: end)
-        }
-
-        func clean(_ s: Substring) -> String {
-            s.replacingOccurrences(of: "\n", with: " ")
-                .replacingOccurrences(of: "  ", with: " ")
-                .trimmingCharacters(in: .whitespaces)
-        }
-
-        let prefix = (start > haystack.startIndex ? "…" : "") + clean(haystack[start..<r.lowerBound])
-        let match = String(haystack[r])
-        let suffix = clean(haystack[r.upperBound..<end]) + (end < haystack.endIndex ? "…" : "")
-
-        var result = AttributedString(prefix.isEmpty ? "" : prefix + " ")
-        var highlighted = AttributedString(match)
+    /// Подсветка собирается здесь, а не в поиске: шрифты и цвета живут во вьюхе.
+    private static func attributed(_ snippet: ArchiveSearch.Snippet) -> AttributedString {
+        var result = AttributedString(snippet.prefix)
+        var highlighted = AttributedString(snippet.match)
         highlighted.font = Tokens.Typography.Label.smMedium.font
         highlighted.foregroundColor = Tokens.Ink.primary
         result += highlighted
-        result += AttributedString(suffix.isEmpty ? "" : " " + suffix)
+        result += AttributedString(snippet.suffix)
         return result
     }
 
     private func count(for f: Filter) -> Int {
         switch f {
-        case .all, .meetings: return matchedRecordings.count
-        case .transcripts: return matchedRecordings.filter(\.inText).count
+        case .all, .meetings: return hits.count
+        case .transcripts: return hits.filter(\.inText).count
         }
     }
 
@@ -310,7 +311,7 @@ struct SearchPalette: View {
                     .typo(Tokens.Typography.Label.smMedium)
                     .foregroundStyle(Tokens.Ink.quaternary)
                     if let snippet = match.snippet {
-                        Text(snippet)
+                        Text(Self.attributed(snippet))
                             .typo(Tokens.Typography.Label.smRegular)
                             .foregroundStyle(Tokens.Ink.quaternary)
                             .lineLimit(2)
