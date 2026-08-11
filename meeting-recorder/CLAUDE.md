@@ -244,6 +244,19 @@ Which apps count as a call, and which window titles mean "in one", is **data** i
   holds it while *someone shares a screen*, so trusting it started a recording at the start of a share
   and stopped it when the share ended (1.15). Talk therefore has no call signal at all and is started
   by hand; before adding one, check it is absent while the app merely sits open.
+- **Read the assertion's name, not just its type** (`sleepAssertionNameMarkers`). Apps name what they
+  hold: VK writes «VK video call in progress» and holds nothing else, so the row narrows the signal to
+  that name and «VK keeps the display awake» stops meaning anything on its own. Empty list = the
+  shipped Zoom behaviour, any assertion counts. Measure the name on a live call before writing one in.
+- **What counts is who holds the assertion, not how many conferencing apps are open.** The detector
+  used to skip the whole branch unless exactly one was running (`live.count == 1`); one idle Zoom left
+  open all day was enough to make a live VK call invisible for its whole length (measured 2026-08-11,
+  76 s, assertion held throughout). The rule is now `MeetingPlatform.callFromAssertion`, in
+  `PropellerPure` with tests: one holder is the call, two are nobody's — there is one recording and
+  nothing to choose with.
+- **A platform whose bundle id ends in something meaningless needs `ownsProcess` checked.** VK's is
+  `com.vk.calls.native.1`, and the "last component is the process name" rule handed the platform every
+  process with a `1` in its name until it started requiring three characters and a non-digit.
 
 - **Заголовки окон как сигнал мертвы, и в браузере детекта сейчас нет вовсе.** Без «Записи экрана»
   `CGWindowListCopyWindowInfo` отдаёт пустые имена у всех окон (замерено 2026-08-07), значит

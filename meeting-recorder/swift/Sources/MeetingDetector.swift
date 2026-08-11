@@ -187,11 +187,14 @@ final class MeetingDetector {
         // on. It counts only for a platform measured to hold it for the call
         // itself (`sleepAssertionMeansCall`) — Контур.Толк holds it while
         // someone shares a screen, and reading that as a call started and
-        // stopped recordings on screen share alone (1.15).
-        if detected == nil, live.count == 1, live[0].sleepAssertionMeansCall,
-           hasDisplaySleepAssertion(for: live[0]) {
-            signals.append("display-sleep-assertion")
-            detected = live[0].id
+        // stopped recordings on screen share alone (1.15). Who the holder has
+        // to be is decided in `PropellerPure`, where it is tested.
+        if detected == nil {
+            let holders = live.filter { hasDisplaySleepAssertion(for: $0) }.map(\.id)
+            if let id = MeetingPlatform.callFromAssertion(live: live, holdingAssertion: holders) {
+                signals.append("display-sleep-assertion")
+                detected = id
+            }
         }
 
         return MeetingSnapshot(platformID: detected, appRunning: !live.isEmpty, signals: signals)
@@ -282,6 +285,11 @@ final class MeetingDetector {
     /// Attributed to one platform on purpose: the assertion only ever meant
     /// anything as *this app is keeping the display awake*, and which app holds
     /// it is the whole content of the signal.
+    ///
+    /// A platform may narrow it further by the assertion's own name
+    /// (`sleepAssertionNameMarkers`): VK holds exactly one, called «VK video
+    /// call in progress», and reading the name is the difference between "a
+    /// call is on" and "this app is busy".
     static func hasDisplaySleepAssertion(for platform: MeetingPlatform) -> Bool {
         var cfAssertionsRef: Unmanaged<CFDictionary>?
         guard IOPMCopyAssertionsByProcess(&cfAssertionsRef) == kIOReturnSuccess,
@@ -296,9 +304,10 @@ final class MeetingDetector {
             guard platform.ownsProcess(named: name) else { continue }
             for assertion in assertions {
                 guard let type = assertion[kIOPMAssertionTypeKey as String] as? String else { continue }
-                if type.contains("PreventUserIdleDisplaySleep") || type.contains("NoDisplaySleepAssertion") {
-                    return true
-                }
+                guard type.contains("PreventUserIdleDisplaySleep")
+                    || type.contains("NoDisplaySleepAssertion") else { continue }
+                let assertionName = assertion[kIOPMAssertionNameKey as String] as? String
+                if platform.assertionNameMeansCall(assertionName) { return true }
             }
         }
         return false

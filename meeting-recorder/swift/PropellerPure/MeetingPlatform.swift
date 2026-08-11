@@ -28,6 +28,13 @@ public struct MeetingPlatform: Equatable, Sendable {
     /// holds it while sharing a screen answers `false`, because then the signal
     /// says "the display must stay awake", not "a call is on".
     public let sleepAssertionMeansCall: Bool
+    /// Fragments of the assertion's own *name* that mean a call (lowercased,
+    /// matched as substrings). Apps name their assertions, and the name is the
+    /// difference between "a call is on" and "this app is busy" — VK writes
+    /// «VK video call in progress» and holds nothing else. Empty means any
+    /// display-sleep assertion from the app counts, which is how Zoom has
+    /// shipped since phase 6.
+    public let sleepAssertionNameMarkers: [String]
 
     public init(
         id: String,
@@ -38,7 +45,8 @@ public struct MeetingPlatform: Equatable, Sendable {
         meetingTitleMarkers: [String],
         idleTitles: Set<String>,
         webHostFragments: [String] = [],
-        sleepAssertionMeansCall: Bool = false
+        sleepAssertionMeansCall: Bool = false,
+        sleepAssertionNameMarkers: [String] = []
     ) {
         self.id = id
         self.displayName = displayName
@@ -49,6 +57,7 @@ public struct MeetingPlatform: Equatable, Sendable {
         self.idleTitles = idleTitles
         self.webHostFragments = webHostFragments
         self.sleepAssertionMeansCall = sleepAssertionMeansCall
+        self.sleepAssertionNameMarkers = sleepAssertionNameMarkers
     }
 }
 
@@ -139,10 +148,74 @@ extension MeetingPlatform {
         sleepAssertionMeansCall: false
     )
 
-    public static let all: [MeetingPlatform] = [.zoom, .konturTalk]
+    /// VK Звонки.
+    ///
+    /// Снято с живого звонка 2026-08-11 (звонок шёл, камера и микрофон
+    /// выключены — то есть это не «видео», это звонок):
+    ///
+    /// - `lsappinfo list`: «VK Звонки» → `com.vk.calls.native.1`, исполняемый
+    ///   файл `VK Calls`. Bundle id кончается цифрой — из-за этого пришлось
+    ///   чинить `ownsProcess`, см. там.
+    /// - процессов звонка нет вовсе: `VK Calls` и `crashpad_handler` подняты с
+    ///   запуска приложения и живут ровно столько же. Zoom-подобного `CptHost`,
+    ///   который существует только внутри звонка, у VK не бывает.
+    /// - `pmset -g assertions`: `NoDisplaySleepAssertion named: "VK video call
+    ///   in progress"`, взят через 37 с после запуска приложения — то есть на
+    ///   старте звонка, а не при открытии окна. **Пропал за один тик (3 с)
+    ///   после завершения звонка**, приложение при этом осталось открытым и
+    ///   больше тридцати секунд не держало ничего.
+    ///
+    /// Заголовков окон здесь нет и списки пустые — не потому, что не проверяли,
+    /// а потому, что без «Записи экрана» `CGWindowListCopyWindowInfo` отдаёт
+    /// пустые имена, и ни один заголовок VK не видел никто. Вписать сюда
+    /// правдоподобные слова значило бы держать в таблице непроверенное правило,
+    /// которое включает запись.
+    public static let vkCalls = MeetingPlatform(
+        id: "vk-calls",
+        displayName: "VK Звонки",
+        bundleIDs: ["com.vk.calls.native.1"],
+        // Обе формы имени настоящие: LaunchServices зовёт приложение «VK
+        // Звонки», исполняемый файл — `VK Calls`, и ассерт держит именно он.
+        windowOwners: ["vk звонки", "vk calls"],
+        callHelperProcesses: [],
+        meetingTitleMarkers: [],
+        idleTitles: [],
+        // Единственный сигнал — ассерт, и он сужен до своего имени. Урок Толка
+        // был не «ассерт врёт», а «ассерт значит "экрану нельзя гаснуть"»; имя
+        // отвечает на другой вопрос, и у VK отвечает прямым текстом.
+        sleepAssertionMeansCall: true,
+        sleepAssertionNameMarkers: ["video call in progress"]
+    )
+
+    public static let all: [MeetingPlatform] = [.zoom, .konturTalk, .vkCalls]
 
     public static func platform(id: String) -> MeetingPlatform? {
         all.first { $0.id == id }
+    }
+
+    /// Чей display-sleep ассерт считается идущим звонком.
+    ///
+    /// - Parameters:
+    ///   - live: платформы, чьи приложения запущены сейчас.
+    ///   - holdingAssertion: id тех из них, кто прямо сейчас держит ассерт,
+    ///     прошедший проверку имени (`assertionNameMeansCall`).
+    ///
+    /// Раньше на этот вопрос отвечала строчка `live.count == 1` в детекторе:
+    /// открыто два конференц-приложения — сигнал ассерта не работает ни для
+    /// кого. Замерено 2026-08-11: у человека постоянно открыт простаивающий
+    /// Zoom, и живой звонок VK не был опознан ни разу за 76 секунд, хотя ассерт
+    /// держался всё это время. Считать надо не приложения, а **держателей**:
+    /// простаивающий Zoom не держит ничего (проверено тем же днём).
+    ///
+    /// Двое держателей — по-прежнему ничей звонок. Не потому, что так
+    /// безопаснее вообще, а потому, что запись одна: выбрать из двоих значит
+    /// угадать, в какой встрече человек, а угадывать здесь нечем.
+    public static func callFromAssertion(
+        live: [MeetingPlatform],
+        holdingAssertion ids: [String]
+    ) -> String? {
+        let holders = live.filter { $0.sleepAssertionMeansCall && ids.contains($0.id) }
+        return holders.count == 1 ? holders[0].id : nil
     }
 }
 
@@ -169,8 +242,28 @@ extension MeetingPlatform {
         if windowOwners.contains(where: { name.contains($0) }) { return true }
         return bundleIDs.contains { id in
             guard let last = id.split(separator: ".").last else { return false }
+            // Последний компонент годится в имя процесса, только если он сам
+            // по себе что-то значит. У VK bundle id — `com.vk.calls.native.1`,
+            // и без этой проверки платформе принадлежал бы **любой** процесс с
+            // единицей в имени: `python3.11`, державший display-sleep, начал бы
+            // звонок VK. Три символа и не одни цифры — граница, за которой
+            // совпадение перестаёт быть случайным.
+            guard last.count >= 3, last.contains(where: { !$0.isNumber }) else { return false }
             return name.contains(last)
         }
+    }
+
+    /// Значит ли имя ассерта, что идёт звонок?
+    ///
+    /// Пустой список маркеров — «любой display-sleep ассерт этого приложения
+    /// считается», как у Zoom с шестой фазы. Непустой — сигналом остаётся ровно
+    /// то, что замерено на живом звонке, и «приложение держит экран не спящим»
+    /// само по себе больше ничего не значит.
+    public func assertionNameMeansCall(_ rawName: String?) -> Bool {
+        guard !sleepAssertionNameMarkers.isEmpty else { return true }
+        guard let rawName else { return false }
+        let name = rawName.lowercased()
+        return sleepAssertionNameMarkers.contains { name.contains($0) }
     }
 
     /// Does this window title mean a call is up?
