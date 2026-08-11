@@ -72,6 +72,9 @@ public struct NotchBlade: View {
     private final class Motion {
         var angle: Double = 0
         var speed: Double = BladeDrive.idleSpeed
+        /// Огибающая уровня: из захвата приходит пик за буфер, и приводу его
+        /// показывать нельзя — см. `BladeDrive.envelope`.
+        var envelope: Float = 0
         var last: Date?
     }
 
@@ -105,8 +108,9 @@ public struct NotchBlade: View {
         defer { motion.last = date }
         guard let last = motion.last else { return motion.angle }
         let dt = date.timeIntervalSince(last)
+        motion.envelope = BladeDrive.envelope(motion.envelope, level: level(), dt: dt)
         motion.speed = BladeDrive.advance(
-            speed: motion.speed, level: level(), paused: paused, dt: dt
+            speed: motion.speed, level: motion.envelope, paused: paused, dt: dt
         )
         motion.angle += motion.speed * dt
         return motion.angle

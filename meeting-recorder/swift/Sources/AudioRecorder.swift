@@ -384,6 +384,37 @@ class AudioRecorder: ObservableObject {
 
     // MARK: - Audio Level Metering
 
+    /// Как часто на самом деле приходит уровень.
+    ///
+    /// Замер, а не догадка: лопасть в чёлке питается этими отсчётами, и от их
+    /// частоты зависит, чувствуется ли её ход ровным. По коду выходило «раз в
+    /// несколько десятков миллисекунд» — но период зависит от размера буфера
+    /// Core Audio, который выбирает система, а не мы. Пишется раз в десять
+    /// секунд, чтобы не быть шумом в логе.
+    private var levelTicks = 0
+    private var levelWindowStart: Date?
+    private static let levelReportWindow: TimeInterval = 10
+
+    private func noteLevelTick() {
+        let now = Date()
+        guard let started = levelWindowStart else {
+            levelWindowStart = now
+            levelTicks = 1
+            return
+        }
+        levelTicks += 1
+        let elapsed = now.timeIntervalSince(started)
+        guard elapsed >= Self.levelReportWindow else { return }
+        let perSecond = Double(levelTicks) / elapsed
+        debugLog(String(
+            format: "[AudioRecorder] уровень: %.1f отсчётов/с (%.0f мс между ними)",
+            perSecond, 1000 / max(perSecond, 0.001)
+        ))
+        Analytics.signal("Capture.levelRate", value: perSecond)
+        levelWindowStart = now
+        levelTicks = 0
+    }
+
     private func startMetering() {
         micLevelHistory = Array(repeating: 0, count: Self.historySize)
         systemLevelHistory = Array(repeating: 0, count: Self.historySize)
@@ -392,11 +423,14 @@ class AudioRecorder: ObservableObject {
         // индикаторе они описывают один и тот же момент — таймер тут не нужен
         // и врать ему нечем.
         if let capture = tapCapture as? ProcessTapCapture {
+            levelTicks = 0
+            levelWindowStart = nil
             capture.levelCallback = { [weak self] mic, system in
                 Task { @MainActor [weak self] in
                     guard let self, self.isRecording, self.meteringDesired else { return }
                     self.append(mic, to: &self.micLevelHistory)
                     self.append(system, to: &self.systemLevelHistory)
+                    self.noteLevelTick()
                 }
             }
             return

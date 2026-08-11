@@ -149,6 +149,87 @@ final class NotchGeometryTests: XCTestCase {
 /// Лопасть: чем она питается и что означает её остановка.
 final class BladeDriveTests: XCTestCase {
 
+    // MARK: - Огибающая: чем лопасть питается на самом деле
+
+    /// Как громкая речь выглядит в захвате: пик за буфер, приходящий раз в
+    /// ~50 мс, где слог даёт 0.8, а пауза между словами — почти ноль.
+    private func syllables(seconds: Double, tick: Double = 0.05) -> [Float] {
+        stride(from: 0.0, to: seconds, by: tick).map { t in
+            Int(t / tick) % 3 == 0 ? 0.8 : 0.03
+        }
+    }
+
+    func testМеждуСловамиОгибающаяНеПроваливается() {
+        var envelope: Float = 0
+        for level in syllables(seconds: 2) {
+            envelope = BladeDrive.envelope(envelope, level: level, dt: 0.05)
+        }
+        XCTAssertGreaterThan(envelope, 0.3, "пауза между слогами — не тишина")
+    }
+
+    func testПослеРепликиОгибающаяВсёЖеОпускается() {
+        var envelope: Float = 0.8
+        func hold(seconds: Double) {
+            for _ in 0..<Int(seconds / 0.05) {
+                envelope = BladeDrive.envelope(envelope, level: 0, dt: 0.05)
+            }
+        }
+        // Пауза в разговоре — не тишина: за две секунды лопасть сбрасывает
+        // мощность, но не встаёт на холостой ход.
+        hold(seconds: 2)
+        XCTAssertLessThan(envelope, 0.1)
+        XCTAssertGreaterThan(envelope, BladeDrive.floorLevel)
+        // А комната, замолчавшая совсем, доводит её до холостого хода.
+        hold(seconds: 2)
+        XCTAssertLessThan(envelope, BladeDrive.floorLevel)
+    }
+
+    func testНаГромкойРечиХодЛопастиРовный() {
+        // Тот самый дефект: пик за буфер скачет, привод тянет вверх втрое
+        // быстрее, чем отпускает, — и на слогах это работало храповиком.
+        // Замерено на этой модели: 13,1 % размаха напрямую по пикам против
+        // 4,7 % через огибающую, то есть пульсация втрое меньше.
+        XCTAssertLessThan(ripple(throughEnvelope: true), 0.06)
+        XCTAssertGreaterThan(ripple(throughEnvelope: false), 0.10)
+    }
+
+    /// Размах колебаний скорости на установившейся речи, долей от полного
+    /// диапазона лопасти.
+    ///
+    /// Модель повторяет то, что происходит на самом деле: лопасть считается
+    /// каждый кадр (60 Гц), а уровень приходит редко — пик за буфер, который
+    /// между отсчётами держится неизменным.
+    private func ripple(throughEnvelope: Bool, levelPeriod: Double = 0.15) -> Double {
+        let dt = 1.0 / 60
+        var envelope: Float = 0, speed = BladeDrive.idleSpeed
+        var settled: [Double] = []
+        var held: Float = 0
+        var t = 0.0, nextSample = 0.0
+        while t < 6 {
+            if t >= nextSample {
+                // Слог даёт пик под 0.8, пауза между словами — почти ноль.
+                held = Int(t / 0.25) % 2 == 0 ? 0.8 : 0.03
+                nextSample += levelPeriod
+            }
+            envelope = BladeDrive.envelope(envelope, level: held, dt: dt)
+            speed = BladeDrive.advance(
+                speed: speed, level: throughEnvelope ? envelope : held,
+                paused: false, dt: dt
+            )
+            // Первые три секунды — разгон, он и должен быть заметным.
+            if t > 3 { settled.append(speed) }
+            t += dt
+        }
+        return (settled.max()! - settled.min()!).magnitude
+            / abs(BladeDrive.topSpeed - BladeDrive.idleSpeed)
+    }
+
+    func testОгибающаяПодхватываетНачалоФразыБыстро() {
+        var envelope: Float = 0
+        for _ in 0..<4 { envelope = BladeDrive.envelope(envelope, level: 0.6, dt: 0.05) }
+        XCTAssertGreaterThan(envelope, 0.4, "0,2 с — и лопасть уже пошла")
+    }
+
     func testВТишинеЛопастьИдётХолостымХодомАНеВстаёт() {
         let target = BladeDrive.targetSpeed(level: 0, paused: false)
         XCTAssertEqual(target, BladeDrive.idleSpeed)
