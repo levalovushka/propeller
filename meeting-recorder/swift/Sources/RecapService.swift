@@ -277,9 +277,15 @@ actor RecapService {
             let cutUp = backend == "ollama"
                 && TranscriptChunking.needed(promptCharacters: prompt.count + userContent.count)
 
+            // Окно, в котором встреча **на самом деле** считалась. У нарезанной
+            // это окно фрагмента, а не `window`: `window` для неё равен 32768,
+            // потому что упёрся в потолок бакета — то самое окно, ради ухода от
+            // которого её и нарезали. Второй проход с ним поднимал свежий
+            // llama-server на 4,3 ГБ поверх ещё не выгруженного на 3,6.
             let draft: String
+            let effectiveWindow: Int
             if cutUp {
-                draft = try await recapByChunks(
+                (draft, effectiveWindow) = try await recapByChunks(
                     title: title, transcriptMarkdown: trimmed, notes: notes,
                     system: prompt, prefs: prefs
                 )
@@ -287,6 +293,7 @@ actor RecapService {
                 draft = try await callBackend(
                     backend, system: prompt, user: userContent, numCtx: window, prefs: prefs
                 )
+                effectiveWindow = window
             }
 
             let extracted = RecapMetadataParser.stripCodeFences(draft)
@@ -294,7 +301,8 @@ actor RecapService {
             guard !extracted.isEmpty else { throw RecapError.emptyResponse }
 
             let edited = await polished(
-                extracted, transcript: trimmed, backend: backend, numCtx: window, prefs: prefs
+                extracted, transcript: trimmed, backend: backend,
+                numCtx: effectiveWindow, prefs: prefs
             )
 
             // Термины канонизируются здесь, а не промптом: модель не может
@@ -349,13 +357,16 @@ actor RecapService {
     /// Все вызовы идут в одном окне (фрагмент подобран так, чтобы влезать в
     /// 16384): одна загрузка модели на всю встречу и 3,6 ГБ памяти вместо 4,3 ГБ,
     /// которые стоит окно 32768.
+    /// Возвращает конспект **и окно, в котором он посчитан**: дальше по встрече
+    /// идёт ещё один вызов (редактура), и он обязан идти в том же окне. Иначе
+    /// нарезка, сделанная ради 3,6 ГБ вместо 4,3, тут же оплачивает и то и другое.
     private func recapByChunks(
         title: String,
         transcriptMarkdown: String,
         notes: String?,
         system: String,
         prefs: RecapPreferences
-    ) async throws -> String {
+    ) async throws -> (recap: String, window: Int) {
         let chunks = TranscriptChunking.split(transcriptMarkdown)
         let extractSystem = Self.chunkExtractPrompt + Self.languageLock
         // Окно одно на все фрагменты — иначе каждый платил бы холодную загрузку.
@@ -402,9 +413,10 @@ actor RecapService {
             "",
             "Ответь строго на русском языке.",
         ]
-        return try await callOllama(
+        let reduced = try await callOllama(
             model: prefs.ollamaModel, system: system, user: parts.joined(separator: "\n"), numCtx: window
         )
+        return (reduced, window)
     }
 
     /// Второй проход: та же модель правит форму по адресам от `RecapLint`.
