@@ -228,6 +228,9 @@ private final class LoudnessLog: @unchecked Sendable {
     /// отрезку порции) и дедуп (звучала ли дальняя сторона на отрезке реплики), —
     /// и оба про одно и то же, поэтому список один.
     private var gateWindows: [FeedGate.Window] = []
+    /// Что в микрофоне не объясняется дальней стороной. Считается здесь же, из
+    /// тех же кадров: два места, считающих по одному звуку, разошлись бы.
+    private var coherence = EchoCoherence()
     private var framesSeen = 0
 
     private static let sampleRate = 16_000.0
@@ -237,17 +240,20 @@ private final class LoudnessLog: @unchecked Sendable {
 
     func note(mic: [Float], system: [Float]) {
         guard !mic.isEmpty else { return }
-        // Системной дорожки может не быть вовсе — тогда сравнивать не с чем и
-        // отбирать не у кого: пустой стем читается как тишина, микрофон
-        // выигрывает всегда, и правило молча ничего не делает.
+        // Системной дорожки может не быть вовсе (микрофонный путь) — тогда
+        // объяснять эхо нечем, и `EchoCoherence` честно отвечает «замера нет»:
+        // гейт в этом случае отдаёт порцию.
         let micLevel = Self.rms(mic)
         let systemLevel = Self.rms(system)
         lock.lock()
+        let cells = coherence.note(mic: mic, system: system)
         let start = Double(framesSeen) / Self.sampleRate
         framesSeen += mic.count
         let end = Double(framesSeen) / Self.sampleRate
         gateWindows.append(
-            FeedGate.Window(start: start, end: end, mic: micLevel, system: systemLevel)
+            FeedGate.Window(
+                start: start, end: end, mic: micLevel, system: systemLevel, cells: cells
+            )
         )
         let cutoff = end - Self.historySeconds
         if let first = gateWindows.first, first.end < cutoff {
@@ -284,6 +290,7 @@ private final class LoudnessLog: @unchecked Sendable {
     func reset() {
         lock.lock()
         gateWindows.removeAll(keepingCapacity: true)
+        coherence.reset()
         framesSeen = 0
         lock.unlock()
     }

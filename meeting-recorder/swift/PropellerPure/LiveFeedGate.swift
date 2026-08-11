@@ -26,15 +26,20 @@ import Foundation
 /// отправки, а не после ответа, и поэтому он не может изменить того, что человек
 /// видит на экране.
 ///
+/// Как отличить эхо от своей речи — вопрос отдельный и решённый замером:
+/// сравнением громкостей нельзя (собственный голос владельца в его микрофоне
+/// тише эха на 4–6 dB), поэтому спрашивается когерентность с референсом,
+/// `EchoCoherence`.
+///
 /// # Почему решение принимается по целой порции
 ///
 /// Порция — две секунды, и это замер, а не вкус: 9.7 % WER против 25 % на 200 мс
 /// (`tools/live-bench/README.md`). Выкусывать тишину внутри порции нельзя — тогда
 /// движку достанется склейка несмежных кусков речи, то есть щелчок посреди слова.
-/// Поэтому правило одно: **порция уходит целиком, если в ней есть хоть одно окно,
-/// которое нам нужно.** Заодно это бесплатно даёт разбег: слово, начавшееся в
-/// последних миллисекундах порции, приезжает вместе с предшествующей тишиной, и
-/// отдельный preroll-буфер не нужен.
+/// Поэтому решение одно на порцию: **тишина — если молчат все её окна; эхо — если
+/// её громкие ячейки объясняются дальней стороной.** Заодно это бесплатно даёт
+/// разбег: слово, начавшееся в последних миллисекундах порции, приезжает вместе с
+/// предшествующей тишиной, и отдельный preroll-буфер не нужен.
 ///
 /// Асимметрия дорожек намеренная: системный стем снят до колонки, владельца в
 /// нём быть не может, поэтому там спрашивается только тишина. Микрофон — оба
@@ -95,22 +100,49 @@ public struct FeedGate: Sendable {
     /// теряет звук. 240 с — тот же порог с минутой запаса.
     public static let keepaliveSeconds: Double = 240
 
-    /// Окно громкости обеих дорожек — одно тиканье захвата (50 мс).
+    /// Какой доли необъяснённых ячеек хватает, чтобы отдать порцию микрофонной
+    /// сессии.
+    ///
+    /// Замер 2026-08-11 (окна 2 с, 711 с эхом, 124 чистых владельца): только эхо
+    /// — 0.05, эхо со речью владельца на −10 dB — 0.22, на −5 dB — 0.29, только
+    /// владелец — 0.74. Порог стоит **ниже двойного разговора на самом
+    /// невыгодном для нас уровне**, а не посередине: пропущенная порция стоит
+    /// слова, а лишняя — только электричества, и цена этих ошибок несимметрична.
+    public static let ownerShare: Double = 0.15
+
+    /// На каком отрезке задаётся этот вопрос. Полсекунды — длина слова: короче
+    /// голосов не хватает на суждение, длиннее — короткая перебивка владельца
+    /// растворяется в чужой речи.
+    public static let decisionSeconds: Double = 0.5
+    /// Меньше этого числа голосов отрезок не судит: доля от десятка ячеек — это
+    /// шум, а не замер.
+    public static let minimumCells = 20
+
+    /// Окно захвата — одно тиканье дрейна (50 мс): громкость обеих дорожек и
+    /// голоса ячеек время-частота, посчитанные `EchoCoherence`.
     public struct Window: Equatable, Sendable {
         public let start: Double
         public let end: Double
         public let mic: Float
         public let system: Float
+        /// Сколько громких ячеек пришлось на это окно и сколько из них дальняя
+        /// сторона не объясняет. По умолчанию — «замера когерентности нет»
+        /// (микрофонный путь без системной дорожки, начало записи), и тогда
+        /// правило эха молчит.
+        public let cells: EchoCoherence.Cells
 
-        public init(start: Double, end: Double, mic: Float, system: Float) {
+        public init(
+            start: Double, end: Double, mic: Float, system: Float,
+            cells: EchoCoherence.Cells = .none
+        ) {
             self.start = start
             self.end = end
             self.mic = mic
             self.system = system
+            self.cells = cells
         }
 
         var silent: Bool { max(mic, system) < FeedGate.silenceFloor }
-        var ownersOwn: Bool { mic > system }
     }
 
     public init(rules: Rules = .both) {
@@ -159,24 +191,39 @@ public struct FeedGate: Sendable {
         if secondsSinceLastSend >= Self.keepaliveSeconds { return true }
         guard !windows.isEmpty else { return true }
 
-        // Окна, интересные этой дорожке. Для микрофона чужая речь — не сигнал:
-        // она и сегодня не доходит до экрана (`LiveTranscriptService.absorb`).
         let audible = windows.filter { !$0.silent }
-        let wanted: [Window]
-        if channel == .owner, rules.contains(.echo) {
-            wanted = audible.filter { $0.ownersOwn }
-        } else {
-            wanted = audible
+
+        // Тишина: в порции не звучит ни одна дорожка.
+        if audible.isEmpty { return !rules.contains(.silence) }
+
+        // Эхо: в порции звучит только то, что объясняется дальней стороной.
+        guard channel == .owner, rules.contains(.echo) else { return true }
+        // Замера когерентности нет — порция уходит. Отсутствие замера не есть
+        // замер, и на микрофонном пути (нет системной дорожки) так будет всегда.
+        guard audible.contains(where: { $0.cells.loud > 0 }) else { return true }
+
+        // Решение — по отрезку в полсекунды, скользящему по порции.
+        //
+        // Ни по целой порции, ни по одному окну. По целой — короткая перебивка
+        // владельца растворяется: полсекунды его речи среди двух секунд чужой
+        // дают долю 0.11 при пороге 0.15, и слово пропадает. По одному окну в
+        // 50 мс — голосов слишком мало, чтобы каждое решало само. Полсекунды —
+        // длина слова, то есть наименьшее, что имеет смысл спасать.
+        var loud = 0
+        var unexplained = 0
+        var low = 0
+        for high in audible.indices {
+            loud += audible[high].cells.loud
+            unexplained += audible[high].cells.unexplained
+            while low < high, audible[high].end - audible[low].start > Self.decisionSeconds {
+                loud -= audible[low].cells.loud
+                unexplained -= audible[low].cells.unexplained
+                low += 1
+            }
+            guard loud >= Self.minimumCells else { continue }
+            if Double(unexplained) / Double(loud) >= Self.ownerShare { return true }
         }
-
-        guard wanted.isEmpty else { return true }
-
-        // Порция, в которой нам ничего не нужно. Отдавать её — значит платить за
-        // время, а не за речь; ровно то, из-за чего гейт и появился.
-        let quiet = audible.isEmpty
-        if quiet, rules.contains(.silence) { return false }
-        if !quiet, channel == .owner, rules.contains(.echo) { return false }
-        return true
+        return false
     }
 }
 

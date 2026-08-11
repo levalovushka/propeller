@@ -12,13 +12,28 @@ final class FeedGateTests: XCTestCase {
 
     /// Окна по 50 мс — та же порция, какой приходит захват
     /// (`ProcessTapCapture.startDraining` тикает каждые 50 мс).
-    private func windows(_ levels: [(mic: Float, system: Float)], from: Double = 0) -> [FeedGate.Window] {
+    ///
+    /// `cells` по умолчанию пустые — «замера когерентности нет», и это законное
+    /// состояние: микрофонный путь без системной дорожки, начало записи.
+    private func windows(
+        _ levels: [(mic: Float, system: Float)], from: Double = 0,
+        cells: EchoCoherence.Cells = .none
+    ) -> [FeedGate.Window] {
         var t = from
         return levels.map { level in
             defer { t += 0.05 }
-            return FeedGate.Window(start: t, end: t + 0.05, mic: level.mic, system: level.system)
+            return FeedGate.Window(
+                start: t, end: t + 0.05, mic: level.mic, system: level.system, cells: cells
+            )
         }
     }
+
+    /// Порция, все громкие ячейки которой объясняются дальней стороной: так
+    /// выглядит эхо из колонки (замер 2026-08-11: доля необъяснённых 0.05).
+    private let onlyEcho = EchoCoherence.Cells(loud: 20, unexplained: 1)
+    /// Владелец говорит поверх чужой речи — на 5 dB **тише** её, как и бывает на
+    /// колонках (замер: доля 0.29).
+    private let ownerOverEcho = EchoCoherence.Cells(loud: 20, unexplained: 6)
 
     private func send(_ channel: LiveTranscript.Channel, _ w: [FeedGate.Window]) -> Bool {
         gate.shouldSend(channel: channel, windows: w, secondsSinceLastSend: 0)
@@ -50,29 +65,33 @@ final class FeedGateTests: XCTestCase {
     // MARK: - Эхо: то, за что сейчас платят зря
 
     func testЧужаяРечьИзКолонкиНеОтдаётсяМикрофоннойСессией() {
-        // Микрофон слышит собеседника (+27 dB над полом), но тише системного
-        // стема, снятого до колонки. Сейчас эти слова распознаются целиком и
-        // выбрасываются в absorb — гейт не даёт их даже распознать.
-        let echo = windows(Array(repeating: (mic: 0.06, system: 0.25), count: 40))
+        // Микрофон слышит собеседника из колонки, и оттуда распознаётся 95–97 %
+        // её слов. На экран они всё равно не попадут (`EchoDedup`) — гейт не даёт
+        // их даже распознать.
+        let echo = windows(Array(repeating: (mic: 0.06, system: 0.25), count: 40), cells: onlyEcho)
         XCTAssertFalse(send(.owner, echo))
         XCTAssertTrue(send(.remote, echo), "дальней стороне её собственная речь нужна")
     }
 
-    func testПеребивкаОтдаётсяОбеимДорожкам() {
-        // Собеседник говорит, владелец вступает посреди. В окнах перебивки
-        // микрофон громче — значит порция уходит и микрофонной сессии тоже.
-        var w = windows(Array(repeating: (mic: 0.06, system: 0.25), count: 30))
-        w += windows(Array(repeating: (mic: 0.30, system: 0.25), count: 10), from: 30 * 0.05)
-        XCTAssertTrue(send(.owner, w), "иначе первые слова владельца не появятся вовсе")
-        XCTAssertTrue(send(.remote, w))
+    func testЭхоГромчеСистемнойДорожкиВсёРавноЭхо() {
+        // То, на чём провалилось прежнее правило: замер 2026-08-11 показал, что
+        // на колонках микрофон бывает громче системного стема, а собственный
+        // голос владельца — тише эха на 4–6 dB. Решает когерентность, не уровни.
+        let loud = windows(Array(repeating: (mic: 0.30, system: 0.10), count: 40), cells: onlyEcho)
+        XCTAssertFalse(send(.owner, loud))
     }
 
-    func testРовноПополамСчитаетсяЧужим() {
-        // Сомнение трактуется в пользу дальней стороны: пропущенная порция стоит
-        // строки, которая всё равно приедет финальным проходом, а лишняя —
-        // электричества.
-        let tie = windows(Array(repeating: (mic: 0.2, system: 0.2), count: 40))
-        XCTAssertFalse(send(.owner, tie))
+    func testПеребивкаОтдаётсяОбеимДорожкам() {
+        // Собеседник говорит, владелец вступает посреди — и делает это тише
+        // колонок. Его ячейки дальней стороной не объясняются, значит порция
+        // уходит и микрофонной сессии тоже.
+        var w = windows(Array(repeating: (mic: 0.06, system: 0.25), count: 30), cells: onlyEcho)
+        w += windows(
+            Array(repeating: (mic: 0.10, system: 0.25), count: 10), from: 30 * 0.05,
+            cells: ownerOverEcho
+        )
+        XCTAssertTrue(send(.owner, w), "иначе первые слова владельца не появятся вовсе")
+        XCTAssertTrue(send(.remote, w))
     }
 
     // MARK: - Когда замера нет
@@ -82,6 +101,24 @@ final class FeedGateTests: XCTestCase {
         // Отсутствие замера — не замер, и молчать на этом основании нельзя.
         XCTAssertTrue(send(.owner, []))
         XCTAssertTrue(send(.remote, []))
+    }
+
+    func testОдноШумноеОкноПорциюНеОтдаёт() {
+        // Пятьдесят миллисекунд — это единицы голосов, и доля от них ничего не
+        // значит. Иначе любой щелчок в комнате отменял бы экономию целиком.
+        var w = windows(Array(repeating: (mic: 0.06, system: 0.25), count: 39), cells: onlyEcho)
+        w += windows(
+            [(mic: 0.06, system: 0.25)], from: 39 * 0.05,
+            cells: EchoCoherence.Cells(loud: 3, unexplained: 3)
+        )
+        XCTAssertFalse(send(.owner, w))
+    }
+
+    func testБезЗамераКогерентностиПорцияУходит() {
+        // Микрофонный путь: системной дорожки нет, объяснять эхо нечем. Гейт
+        // обязан молчать, а не считать всё эхом.
+        let loud = windows(Array(repeating: (mic: 0.2, system: 0.0), count: 40))
+        XCTAssertTrue(send(.owner, loud))
     }
 
     // MARK: - Сокет не должен закрыться из-за экономии
@@ -114,16 +151,16 @@ final class FeedGateTests: XCTestCase {
 
     func testТолькоЭхоРежетЧужуюРечьВМикрофоне() {
         let gate = FeedGate(rules: .echo)
-        let echo = windows(Array(repeating: (mic: 0.06, system: 0.25), count: 40))
+        let echo = windows(Array(repeating: (mic: 0.06, system: 0.25), count: 40), cells: onlyEcho)
         XCTAssertFalse(gate.shouldSend(channel: .owner, windows: echo, secondsSinceLastSend: 0))
     }
 
     func testТолькоТишинаНеТрогаетЭхо() {
         let gate = FeedGate(rules: .silence)
-        let echo = windows(Array(repeating: (mic: 0.06, system: 0.25), count: 40))
+        let echo = windows(Array(repeating: (mic: 0.06, system: 0.25), count: 40), cells: onlyEcho)
         XCTAssertTrue(
             gate.shouldSend(channel: .owner, windows: echo, secondsSinceLastSend: 0),
-            "чужая речь в микрофоне распознается и будет отброшена в absorb, как сегодня"
+            "чужая речь в микрофоне распознается и будет снята по тексту (`EchoDedup`)"
         )
     }
 

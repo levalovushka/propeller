@@ -161,6 +161,9 @@ enum LiveHarness {
 
         let chunk = Int(Double(sampleRate) * ingestChunkSeconds)
         let total = max(mic.count, system.count)
+        // Mirrors `LoudnessLog` in LiveTranscriptService: the same estimator on
+        // the same frames, so the gate here decides on what the app would see.
+        var coherence = EchoCoherence()
         var offset = 0
         // Lag is counted from the first frame of audio, so the clock starts here
         // — after `ready`, which on a cold sidecar can take seconds.
@@ -179,7 +182,10 @@ enum LiveHarness {
             // Recorded before the frames are handed over: the gate decides on a
             // portion that has only just been completed by them.
             windows.note(
-                FeedGate.Window(start: from, end: to, mic: micLevel, system: systemLevel)
+                FeedGate.Window(
+                    start: from, end: to, mic: micLevel, system: systemLevel,
+                    cells: coherence.note(mic: micSlice, system: systemSlice)
+                )
             )
 
             micSession.feed(micSlice)
