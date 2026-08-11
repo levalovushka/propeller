@@ -68,8 +68,9 @@ final class FeedGateTests: XCTestCase {
     }
 
     func testРовноПополамСчитаетсяЧужим() {
-        // То же правило, что в StemDominance: половина — не большинство, и
-        // сомнение трактуется в пользу дальней стороны.
+        // Сомнение трактуется в пользу дальней стороны: пропущенная порция стоит
+        // строки, которая всё равно приедет финальным проходом, а лишняя —
+        // электричества.
         let tie = windows(Array(repeating: (mic: 0.2, system: 0.2), count: 40))
         XCTAssertFalse(send(.owner, tie))
     }
@@ -96,10 +97,6 @@ final class FeedGateTests: XCTestCase {
     func testПорогKeepaliveНижеСерверногоТаймаута() {
         // Числа связаны: 300 с — это `--idle-timeout-secs` по умолчанию.
         XCTAssertLessThan(FeedGate.keepaliveSeconds, 300)
-    }
-
-    func testПорогТишиныТотЖеЧтоУПравилаДорожек() {
-        XCTAssertEqual(FeedGate.silenceFloor, StemDominance.silenceFloor)
     }
 
     // MARK: - Правила по отдельности

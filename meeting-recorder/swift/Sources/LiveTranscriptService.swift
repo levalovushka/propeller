@@ -30,9 +30,13 @@ final class LiveTranscriptService: ObservableObject {
 
     /// Сессии живут вне главного актора: кадры приходят с очереди записи.
     private let sessions = LiveSessionPair()
-    /// Кто из дорожек звучал громче, по окнам. Пишется с очереди записи,
-    /// читается с главного актора — отсюда замок.
+    /// Громкость обеих дорожек по окнам. Пишется с очереди записи, читается с
+    /// главного актора — отсюда замок.
     private let loudness = LoudnessLog()
+    /// Реплика владельца, уже сказанная дальней стороной, — это эхо из колонки.
+    /// Решение принимается по тексту: сравнение громкостей на этот вопрос
+    /// отвечать не может (`EchoDedup`).
+    private var dedup = EchoDedup()
     /// Была ли системная дорожка у этого захвата. На микрофонном пути её нет,
     /// и вторую сессию открывать не за чем.
     private var hasSystemAudio = false
@@ -57,6 +61,8 @@ final class LiveTranscriptService: ObservableObject {
     /// при закрытии, так что последние слова перед паузой не пропадают.
     func pause() {
         sessions.close()
+        // Ждать ответа дальней стороны больше нечего: её сессия закрыта.
+        show(dedup.flush())
     }
 
     func resume(at elapsed: TimeInterval) {
@@ -68,6 +74,7 @@ final class LiveTranscriptService: ObservableObject {
     /// встречу известно, пока не досчитан настоящий транскрипт.
     func stop() {
         sessions.close()
+        show(dedup.flush())
     }
 
     /// Совсем убрать — запись сброшена, или её транскрипт уже готов.
@@ -78,6 +85,7 @@ final class LiveTranscriptService: ObservableObject {
         attributesSpeakers = false
         // Счётчик кадров — часы записи: у следующей встречи они свои.
         loudness.reset()
+        dedup.reset()
     }
 
     /// Кадры 16 кГц моно с очереди записи. Не `@MainActor`: звук не ходит через
@@ -149,19 +157,61 @@ final class LiveTranscriptService: ObservableObject {
             debugLog("[Live] сессия \(channel.rawValue) слушает")
         case .text(let text, let start, let end):
             // Микрофонная сессия слышит владельца — и, если человек на колонках,
-            // дальнюю сторону тоже: 95.2 % её слов распознаётся из одного
+            // дальнюю сторону тоже: 95–97 % её слов распознаётся из одного
             // микрофона (`ECHO_AND_MIX_EXPERIMENTS.md` §1). Тогда её речь
-            // приезжает сюда под именем владельца. Сравнение громкостей на
-            // выровненных дорожках это отсекает; «не знаем» — оставляем.
-            if channel == .owner, loudness.ownerSpoke(from: start, to: end) == false {
-                debugLog("[Live] эхо на \(Int(start)) с — \(text.count) знаков не владельца, не показываю")
-                return
+            // приезжает сюда под именем владельца. Отсекает это `EchoDedup`: то,
+            // что дальняя сторона уже сказала, владелец сказать не мог.
+            switch channel {
+            case .remote:
+                transcript.absorb(channel: .remote, start: start, end: end, text: text)
+                debugLog(
+                    "[Live] remote +\(text.count) знаков на \(Int(start)) с, реплик \(transcript.turns.count)"
+                )
+                show(dedup.remoteSaid(start: start, end: end, text: text))
+            case .owner:
+                // «Звучал ли системный стем», а не «кто громче»: собственный
+                // голос владельца в его же микрофоне тише эха на 4–6 dB
+                // (замер 2026-08-11), и сравнивать уровни бессмысленно.
+                let audible = loudness.farSideAudible(from: start, to: end)
+                let admitted = dedup.ownerSaid(
+                    start: start, end: end, text: text,
+                    farSideAudible: audible, at: ProcessInfo.processInfo.systemUptime
+                )
+                if admitted.isEmpty {
+                    debugLog(
+                        "[Live] владелец на \(Int(start)) с: \(text.count) знаков "
+                        + (dedup.waitingCount > 0 ? "ждут дальнюю сторону" : "— эхо, не показываю")
+                    )
+                    scheduleDedupTick()
+                }
+                show(admitted)
             }
-            transcript.absorb(channel: channel, start: start, end: end, text: text)
-            // Длина, не текст: это лог, а встреча — не его дело.
+        }
+    }
+
+    /// Показать то, что дедуп выпустил. Пустой список — обычное дело: реплика
+    /// либо ещё ждёт, либо оказалась эхом.
+    private func show(_ lines: [EchoDedup.Line]) {
+        for line in lines {
+            transcript.absorb(channel: .owner, start: line.start, end: line.end, text: line.text)
             debugLog(
-                "[Live] \(channel.rawValue) +\(text.count) знаков на \(Int(start)) с, реплик \(transcript.turns.count)"
+                "[Live] owner +\(line.text.count) знаков на \(Int(line.start)) с, реплик \(transcript.turns.count)"
             )
+        }
+    }
+
+    /// Реплика ждёт ответа дальней стороны — а он может и не прийти (она молчит,
+    /// её сессия переподключается). Тогда через `holdSeconds` реплика
+    /// показывается: отсутствие замера не есть замер. Таймер одноразовый и
+    /// заводится только когда есть кого ждать — «ничего не должны ⇒ никаких
+    /// таймеров».
+    private func scheduleDedupTick() {
+        guard dedup.waitingCount > 0 else { return }
+        let id = recordingID
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(EchoDedup.holdSeconds * 1_000_000_000) + 100_000_000)
+            guard let self, self.recordingID == id else { return }
+            self.show(self.dedup.tick(at: ProcessInfo.processInfo.systemUptime))
         }
     }
 }
@@ -174,18 +224,15 @@ final class LiveTranscriptService: ObservableObject {
 /// встречи.
 private final class LoudnessLog: @unchecked Sendable {
     private let lock = NSLock()
-    private var dominance = StemDominance()
-    /// Те же окна, что уходят в `dominance`, но в форме, которую спрашивает
-    /// гейт. Хранятся здесь, а не выводятся из `dominance`: одно окно кладётся в
-    /// оба одним вызовом `note`, так что разойтись им негде, а гейту нужен срез
-    /// по отрезку, которого правилу атрибуции не требуется.
+    /// Окна громкости обеих дорожек. Их спрашивают двое — гейт (нужен срез по
+    /// отрезку порции) и дедуп (звучала ли дальняя сторона на отрезке реплики), —
+    /// и оба про одно и то же, поэтому список один.
     private var gateWindows: [FeedGate.Window] = []
     private var framesSeen = 0
 
     private static let sampleRate = 16_000.0
-    /// Столько же истории, сколько держит правило дорожек: живая реплика
-    /// приезжает через пару секунд, а встреча на восемь часов не имеет права
-    /// расти в памяти.
+    /// Живая реплика приезжает через пару секунд, минуты хватает с запасом, а
+    /// встреча на восемь часов не имеет права расти в памяти.
     private static let historySeconds = 60.0
 
     func note(mic: [Float], system: [Float]) {
@@ -199,7 +246,6 @@ private final class LoudnessLog: @unchecked Sendable {
         let start = Double(framesSeen) / Self.sampleRate
         framesSeen += mic.count
         let end = Double(framesSeen) / Self.sampleRate
-        dominance.note(from: start, to: end, mic: micLevel, system: systemLevel)
         gateWindows.append(
             FeedGate.Window(start: start, end: end, mic: micLevel, system: systemLevel)
         )
@@ -217,15 +263,26 @@ private final class LoudnessLog: @unchecked Sendable {
         return gateWindows.filter { $0.end > from && $0.start < to }
     }
 
-    func ownerSpoke(from start: Double, to end: Double) -> Bool? {
+    /// Звучал ли системный стем на этом отрезке — то есть могло ли эхо дальней
+    /// стороны попасть в микрофон.
+    ///
+    /// Сравнения дорожек здесь нет намеренно: замер 2026-08-11 показал, что
+    /// собственный голос владельца в его микрофоне тише эха на 4–6 dB, и любое
+    /// сравнение уровней отвечает на этот вопрос неверно. Спрашивается только
+    /// цифровая тишина, а она от усиления не зависит.
+    ///
+    /// Замера нет — `false`: отсутствие замера не есть замер, и реплика
+    /// показывается без задержки.
+    func farSideAudible(from start: Double, to end: Double) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        return dominance.ownerSpoke(from: start, to: end)
+        return gateWindows.contains {
+            $0.end > start && $0.start < end && $0.system >= FeedGate.silenceFloor
+        }
     }
 
     func reset() {
         lock.lock()
-        dominance = StemDominance()
         gateWindows.removeAll(keepingCapacity: true)
         framesSeen = 0
         lock.unlock()

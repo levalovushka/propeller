@@ -161,9 +161,6 @@ enum LiveHarness {
 
         let chunk = Int(Double(sampleRate) * ingestChunkSeconds)
         let total = max(mic.count, system.count)
-        // Mirrors `LoudnessLog` in LiveTranscriptService: the same windows, from
-        // the same frames, so the echo rule below sees what the app sees.
-        var dominance = StemDominance()
         var offset = 0
         // Lag is counted from the first frame of audio, so the clock starts here
         // — after `ready`, which on a cold sidecar can take seconds.
@@ -179,7 +176,6 @@ enum LiveHarness {
             let to = Double(end) / Double(sampleRate)
             let micLevel = rms(micSlice)
             let systemLevel = rms(systemSlice)
-            dominance.note(from: from, to: to, mic: micLevel, system: systemLevel)
             // Recorded before the frames are handed over: the gate decides on a
             // portion that has only just been completed by them.
             windows.note(
@@ -216,22 +212,47 @@ enum LiveHarness {
         systemSession?.close()
 
         // Same rule as the app (`LiveTranscriptService.absorb`): a mic-session
-        // decision from a stretch the owner did not dominate is the far side
-        // heard through the speakers, and it is not shown. Applying it here
-        // keeps the measured text equal to the shipped text.
+        // line the far side has already said is the far side heard through the
+        // speakers, and it is not shown. Applied here in arrival order — the
+        // order is what the rule has to survive — so the measured text equals
+        // the shipped text.
         var transcript = LiveTranscript()
-        var echoDropped = 0
-        for final in collector.finals.sorted(by: { $0.receivedAt < $1.receivedAt }) {
-            if final.channel == .owner,
-               dominance.ownerSpoke(from: final.start, to: final.end) == false {
-                echoDropped += 1
-                continue
+        var dedup = EchoDedup()
+        var admitted = 0
+        let finals = collector.finals.sorted(by: { $0.receivedAt < $1.receivedAt })
+        for final in finals {
+            let released: [EchoDedup.Line]
+            switch final.channel {
+            case .remote:
+                transcript.absorb(
+                    channel: .remote, start: final.start, end: final.end, text: final.text
+                )
+                released = dedup.remoteSaid(
+                    start: final.start, end: final.end, text: final.text
+                )
+            case .owner:
+                released = dedup.ownerSaid(
+                    start: final.start, end: final.end, text: final.text,
+                    farSideAudible: windows.farSideAudible(from: final.start, to: final.end),
+                    at: final.receivedAt
+                )
             }
-            transcript.absorb(
-                channel: final.channel, start: final.start, end: final.end, text: final.text
-            )
+            for line in released {
+                transcript.absorb(
+                    channel: .owner, start: line.start, end: line.end, text: line.text
+                )
+                admitted += 1
+            }
         }
-        if echoDropped > 0 { print("  echo rule dropped \(echoDropped) mic finals") }
+        // Whatever is still waiting has run out of things to wait for.
+        for line in dedup.flush() {
+            transcript.absorb(channel: .owner, start: line.start, end: line.end, text: line.text)
+            admitted += 1
+        }
+        let ownerFinals = finals.filter { $0.channel == .owner }.count
+        if ownerFinals > admitted {
+            print("  echo rule dropped \(ownerFinals - admitted) of \(ownerFinals) mic finals")
+        }
 
         let fed = micSession.framesFed + (systemSession?.framesFed ?? 0)
         let offered = micSession.framesOffered + (systemSession?.framesOffered ?? 0)
@@ -259,6 +280,16 @@ enum LiveHarness {
         func inRange(from: Double, to: Double) -> [FeedGate.Window] {
             lock.lock(); defer { lock.unlock() }
             return windows.filter { $0.end > from && $0.start < to }
+        }
+
+        /// Did the system stem carry anything on this stretch — the one question
+        /// `EchoDedup` asks of the audio. Not "which track was louder": the
+        /// owner's own voice measures 4–6 dB *below* the echo in his own mic.
+        func farSideAudible(from: Double, to: Double) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            return windows.contains {
+                $0.end > from && $0.start < to && $0.system >= FeedGate.silenceFloor
+            }
         }
     }
 
