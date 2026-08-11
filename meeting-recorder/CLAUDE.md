@@ -16,7 +16,15 @@ cd swift
 open -a Propeller
 ```
 
-Swift Package Manager (`Package.swift`). GigaAM ASR weights (~247 MB, INT8 set) ship **inside the .app** and are copied to Application Support on first use — no download, transcription works offline. Only the summary model (`qwen3.5:4b`, ~3.4 GB) is fetched over the network — automatically, on first
+Swift Package Manager (`Package.swift`). GigaAM ASR weights (~247 MB, INT8 set) ship **inside the .app** and are copied to Application Support on first use — no download, transcription works offline.
+
+The bundled Ollama engine is **slimmed** (`tools/slim-ollama.sh`, 139 → 34 MB): the MLX
+runtime and the Intel CPU backends are dropped, since the engine logs `using llama-server
+for model` for `qwen3.5:4b` and the app is arm64-only. Installation is unchanged — same
+tarball in the bundle, same unpack, no network — and `build.sh` refuses to ship an archive
+missing `ollama` or `llama-server`. **Raising `OllamaSidecar.releaseTag` means re-slimming
+and re-checking that log line**; MLX already handles Q4_K_M in preview, so this trade
+expires the day it claims our model. Only the summary model (`qwen3.5:4b`, ~3.4 GB) is fetched over the network — automatically, on first
 launch and whenever it goes missing (`AppState.ensureSummaryModel`, decision in
 `PropellerPure/ModelProvisioning`). «Саммари нет» is a legal depth for one meeting; «нет LLM» is not a
 legal state for the app, so there is no consent gate and no «Скачать» button to press.

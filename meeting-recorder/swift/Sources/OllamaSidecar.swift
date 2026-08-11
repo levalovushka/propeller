@@ -13,6 +13,22 @@ final class OllamaSidecar: @unchecked Sendable {
     static let port = 11434
     static let baseURL = URL(string: "http://127.0.0.1:\(port)")!
     /// Pinned for reproducible dogfood installs (not floating `latest`).
+    ///
+    /// **Raising this is three steps, not one.** The bundled tarball is slimmed
+    /// (`tools/slim-ollama.sh`): the MLX runtime and the Intel CPU backends are
+    /// removed, because this engine picks `llama-server` for our model and the app
+    /// is arm64-only — 139 MB of bundle becomes 34. Ollama does not support that
+    /// officially (ollama/ollama#7419), so the trade has to be re-verified per
+    /// version:
+    ///
+    /// 1. re-run `tools/slim-ollama.sh` for the new tag,
+    /// 2. build and generate one summary end to end,
+    /// 3. confirm the engine log still says `using llama-server for model`.
+    ///
+    /// If it ever says MLX instead, the slim archive is no longer safe and
+    /// `build.sh` must be pointed back at the full release. MLX already handles
+    /// Q4_K_M in preview, which is the quantisation we use, so this is a question
+    /// of when rather than whether.
     static let releaseTag = "v0.32.4"
     static let defaultModel = Preferences.defaultRecapModel
 

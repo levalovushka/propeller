@@ -25,6 +25,37 @@ done
 
 echo "=== Building Propeller (SPM)${APP_VARIANT} ==="
 
+# Inputs are resolved and checked BEFORE anything is destroyed. `rm -rf "$APP"`
+# below deletes the installed app and rebuilds in place, so a failure after that
+# line leaves a person without a working Propeller — and a missing engine binary
+# would only show up later, as a summary that never arrives.
+OLLAMA_TGZ="${OLLAMA_TGZ:-}"
+OLLAMA_TAG="v0.32.4"
+OLLAMA_SLIM="../../tools/ollama/ollama-darwin-${OLLAMA_TAG}-slim.tgz"
+OLLAMA_CACHE="../../tools/ollama/ollama-darwin-${OLLAMA_TAG}.tgz"
+if [ -z "$OLLAMA_TGZ" ]; then
+    # Slimmed archive first (34 MB instead of 139 — see tools/slim-ollama.sh),
+    # then the official one, then whatever a dev put in ../tools.
+    for candidate in "$OLLAMA_SLIM" "$OLLAMA_CACHE" \
+                     "../tools/ollama/ollama-darwin-${OLLAMA_TAG}.tgz"; do
+        if [ -f "$candidate" ]; then OLLAMA_TGZ="$candidate"; break; fi
+    done
+fi
+if [ -z "$OLLAMA_TGZ" ] || [ ! -f "$OLLAMA_TGZ" ]; then
+    echo "  Preparing Ollama ${OLLAMA_TAG} tarball…"
+    ../tools/slim-ollama.sh
+    OLLAMA_TGZ="$OLLAMA_SLIM"
+fi
+for required in ollama llama-server; do
+    if ! tar -tzf "$OLLAMA_TGZ" | grep -qx "$required"; then
+        echo "  ERROR: '$required' missing from $OLLAMA_TGZ"
+        echo "         Refusing to build: an engine that cannot serve turns into a summary"
+        echo "         that never arrives, with nothing in the interface to explain why."
+        echo "         Rebuild it with tools/slim-ollama.sh, or set OLLAMA_TGZ to the official release."
+        exit 1
+    fi
+done
+
 swift build -c release "${SWIFT_FLAGS[@]}" 2>&1
 
 echo "=== Building .app bundle ==="
@@ -144,25 +175,10 @@ else
     exit 1
 fi
 
-# Bundle Ollama engine tarball (~140 MB compressed). Model (~5 GB) still downloads on demand.
-OLLAMA_TGZ="${OLLAMA_TGZ:-}"
-OLLAMA_TAG="v0.32.4"
-OLLAMA_CACHE="../../tools/ollama/ollama-darwin-${OLLAMA_TAG}.tgz"
-OLLAMA_URL="https://github.com/ollama/ollama/releases/download/${OLLAMA_TAG}/ollama-darwin.tgz"
-if [ -z "$OLLAMA_TGZ" ]; then
-    if [ -f "$OLLAMA_CACHE" ]; then
-        OLLAMA_TGZ="$OLLAMA_CACHE"
-    elif [ -f "../tools/ollama/ollama-darwin-${OLLAMA_TAG}.tgz" ]; then
-        OLLAMA_TGZ="../tools/ollama/ollama-darwin-${OLLAMA_TAG}.tgz"
-    fi
-fi
-if [ -z "$OLLAMA_TGZ" ] || [ ! -f "$OLLAMA_TGZ" ]; then
-    echo "  Fetching Ollama ${OLLAMA_TAG} tarball for DMG…"
-    mkdir -p "$(dirname "$OLLAMA_CACHE")"
-    curl -L --fail --progress-bar -o "$OLLAMA_CACHE" "$OLLAMA_URL"
-    OLLAMA_TGZ="$OLLAMA_CACHE"
-fi
-echo "  Bundling Ollama engine from $OLLAMA_TGZ"
+# The engine tarball itself. Resolved and validated at the top of this script,
+# before the installed bundle is deleted; the model (~3.4 GB) still downloads on
+# demand.
+echo "  Bundling Ollama engine from $OLLAMA_TGZ ($(( $(stat -f%z "$OLLAMA_TGZ") / 1048576 )) MB)"
 cp "$OLLAMA_TGZ" "$APP/Contents/Resources/ollama-darwin.tgz"
 
 # App icon: Icon Composer .icon → Assets.car (Liquid Glass) + .icns (fallback)
