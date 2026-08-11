@@ -35,9 +35,14 @@ public struct PropellerMark: View {
 struct PropellerNavMark: View {
     var spinning: Bool
 
-    /// Top speed under power — one turn every two seconds, slow enough to read as
-    /// a mark rather than a fan. Negative: the blade turns counter-clockwise.
-    private static let topSpeed: Double = -180
+    /// Top speed under power — one full turn a second. Negative: the blade turns
+    /// counter-clockwise.
+    ///
+    /// Twice what it was, and the point is not the speed itself but the *range*:
+    /// the ramp below climbs to it with the same time constant, so doubling the top
+    /// doubles how hard the blade accelerates while the pointer sits on the row.
+    /// At 180 the climb was over before the eye had anything to compare it against.
+    private static let topSpeed: Double = -360
 
     /// How fast the power arrives: 63 % of top speed in this long, 95 % in three
     /// times it. Long enough that a brush past the row spins the blade a little
@@ -46,7 +51,11 @@ struct PropellerNavMark: View {
 
     /// Friction, as the time the blade would take to stop if it kept decaying at
     /// its initial rate — so `speed × spinDownTime` is the travel its momentum is
-    /// worth. At top speed that is 81°, a petal and a third.
+    /// worth. At top speed that is 162°, two petals and a bit.
+    ///
+    /// Unchanged with the faster top: friction is a property of the blade, not of
+    /// how hard it was driven. A faster blade therefore coasts *further*, which is
+    /// the whole reason it reads as heavier.
     private static let spinDownTime: Double = 0.45
 
     /// How thoroughly the coast decays before we call it stopped: the curve ends at
