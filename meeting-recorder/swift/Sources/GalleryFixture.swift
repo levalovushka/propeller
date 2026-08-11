@@ -235,8 +235,7 @@ enum GalleryFixture {
             state.isRecording = true
             state.galleryPoseRecording(posed.id)
             state.selectedRecordingID = posed.id
-            state.elapsedString = "12:38"
-            state.elapsedSeconds = 758
+            state.elapsedSeconds = 758   // строка выводится: 12:38
         }
         // A meeting with nothing left to do says so on its own row and in its
         // card — the resting reason, not an error and not a button
@@ -254,8 +253,7 @@ enum GalleryFixture {
         state.selectedRecordingID = entry.id
         state.isRecording = true
         state.galleryPoseRecording(entry.id)
-        state.elapsedString = "12:38"
-        state.elapsedSeconds = 758
+        state.elapsedSeconds = 758   // строка выводится: 12:38
 
         var live = LiveTranscript()
         live.absorb(channel: .owner, start: 731, end: 734,

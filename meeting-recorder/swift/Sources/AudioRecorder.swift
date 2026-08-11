@@ -83,9 +83,17 @@ class AudioRecorder: ObservableObject {
     private var pausedSince: Date?
 
     /// Rolling history of mic audio levels (0–1) for waveform display.
-    @Published var micLevelHistory: [Float] = []
+    /// Уровни звука по времени. **Не `@Published` намеренно.**
+    ///
+    /// Их единственный потребитель — лопасть в чёлке, и она берёт последнее
+    /// значение замыканием, когда сама решит рисовать
+    /// (`NotchController.face(on:)` → `NotchFace.level`). Публикация же
+    /// объявлялась 17.3 раза в секунду (замерено, `--live-probe`) — и каждая
+    /// заставляла SwiftUI пересобирать всё, что подписано на recorder, ради
+    /// значения, которого никто не ждал. Дефект P4 в его самой дорогой части.
+    var micLevelHistory: [Float] = []
     /// Rolling history of system audio levels (0–1) for waveform display.
-    @Published var systemLevelHistory: [Float] = []
+    var systemLevelHistory: [Float] = []
     private var meterTimer: Timer?
     private static let historySize = 50
     /// When false, metering is paused (window closed / accessory) — recording continues (E5).

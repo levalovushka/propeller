@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import Combine
 import Foundation
 import PropellerPure
 
@@ -93,6 +94,19 @@ enum LiveProbe {
         out("путь захвата: \(recorder.capturePath.rawValue), системная дорожка: "
             + (recorder.capturesSystemAudio ? "есть" : "нет"))
 
+        // Сколько раз за встречу источники объявляют изменение. Каждое из них —
+        // повод SwiftUI пересобрать всё, что на них подписано, а `MainView`
+        // подписан на `AppState` целиком (дефект P4). Считаем то, что можно
+        // посчитать точно: сами публикации.
+        // Уровни считаются только когда их кто-то показывает
+        // (`setMeteringDesired`), поэтому проба включает их сама: иначе она
+        // померила бы запись с закрытым окном, а дефект P4 — про открытое.
+        recorder.setMeteringDesired(true)
+        var publishes = (recorder: 0, live: 0)
+        var probes: [AnyCancellable] = []
+        probes.append(recorder.objectWillChange.sink { _ in publishes.recorder += 1 })
+        probes.append(live.objectWillChange.sink { _ in publishes.live += 1 })
+
         let started = Date()
         live.begin(
             recordingID: recorder.recordingID ?? "probe",
@@ -156,6 +170,13 @@ enum LiveProbe {
         } catch {
             out("❌ остановка не удалась: \(error.localizedDescription)")
         }
+
+        let seconds = max(1, Date().timeIntervalSince(started))
+        out(String(format: "\nпубликаций за %.0f с: recorder %d (%.1f/с), живой слой %d (%.1f/с)",
+                   seconds, publishes.recorder, Double(publishes.recorder) / seconds,
+                   publishes.live, Double(publishes.live) / seconds))
+        out("каждая — повод пересобрать всё, что подписано; MainView подписан на AppState целиком")
+        probes.removeAll()
 
         out("\n─── проба закончена ───")
         exitAfterFlush()

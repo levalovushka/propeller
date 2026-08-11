@@ -28,8 +28,14 @@ class AppState: ObservableObject {
     /// можно уйти читать другую встречу, и панель обязана понимать, на какую из
     /// двух она смотрит.
     @Published private(set) var activeRecordingID: String?
-    @Published var elapsedString = "00:00"
+    /// Время записи. Одна величина, а не две: строка выводится из секунд.
+    ///
+    /// Раньше рядом жил `@Published var elapsedString`, и тик таймера присваивал
+    /// обе — то есть объявлял изменение дважды в секунду, а `MainView` подписан на
+    /// `AppState` целиком и пересобирался столько же раз. Заодно это был второй
+    /// источник правды о том, сколько идёт встреча.
     @Published var elapsedSeconds: TimeInterval = 0
+    var elapsedString: String { Self.formatElapsed(elapsedSeconds) }
     private var displayTimer: Timer?
 
     // Pipeline
@@ -572,7 +578,6 @@ class AppState: ObservableObject {
             if meetingDetector.isInMeeting || meetingDetected {
                 recordingLinkedToCall = true
             }
-            elapsedString = "00:00"
             elapsedSeconds = 0
             startDisplayTimer()
             recorder.setMeteringDesired(true)
@@ -833,7 +838,6 @@ class AppState: ObservableObject {
                 guard let self = self else { return }
                 let secs = self.recorder.elapsed
                 self.elapsedSeconds = secs
-                self.elapsedString = Self.formatElapsed(secs)
 
                 if secs >= Self.maxRecordingSeconds, self.isRecording {
                     NSLog("[AppState] 8h recording ceiling reached — stopping")
