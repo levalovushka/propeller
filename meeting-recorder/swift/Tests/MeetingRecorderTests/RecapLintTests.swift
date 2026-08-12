@@ -6,6 +6,10 @@ import XCTest
 /// деле, а не то, что она могла бы написать.
 final class RecapLintTests: XCTestCase {
 
+    private func grounded(_ recap: String, transcript: String) -> String {
+        RecapLint.grounded(recap, transcript: transcript).recap
+    }
+
     private func kinds(_ recap: String, transcript: String = "") -> [RecapLint.Kind] {
         RecapLint.findings(recap: recap, transcript: transcript).map(\.kind)
     }
@@ -195,7 +199,7 @@ final class RecapLintTests: XCTestCase {
     /// `polished(...)` читает изменение формы как потерю содержания.
     func testПризрачныйИсполнительУходитАЗадачаОстаётся() {
         let recap = "## Задачи\n- **Команда дизайна VK Музыка** — доработать плашки.\n"
-        let grounded = RecapLint.grounded(recap, transcript: "")
+        let grounded = grounded(recap, transcript: "")
         XCTAssertEqual(grounded, "## Задачи\n- Доработать плашки.\n")
         XCTAssertEqual(RecapLint.shape(of: grounded).bullets, RecapLint.shape(of: recap).bullets)
     }
@@ -203,7 +207,7 @@ final class RecapLintTests: XCTestCase {
     /// Метка диаризации — не человек. qwen2.5:7b подписала ею задачу.
     func testМеткаСпикераНеСчитаетсяИсполнителем() {
         XCTAssertEqual(
-            RecapLint.grounded("- **Спикер S1** — доработать текстовое описание.", transcript: ""),
+            grounded("- **Спикер S1** — доработать текстовое описание.", transcript: ""),
             "- Доработать текстовое описание."
         )
     }
@@ -211,24 +215,24 @@ final class RecapLintTests: XCTestCase {
     /// Живого человека вырезка не трогает — иначе она стирала бы правду.
     func testНастоящийИсполнительОстаётся() {
         let recap = "- **Левон** — подготовить макеты."
-        XCTAssertEqual(RecapLint.grounded(recap, transcript: ""), recap)
+        XCTAssertEqual(grounded(recap, transcript: ""), recap)
     }
 
     func testВыдуманныйСрокУходитВместеСТире() {
         let recap = "- **Левон** — прислать доки — **к пятнице**."
         let transcript = "**Левон** · 00:10\nПришлю, как соберу.\n"
-        XCTAssertEqual(RecapLint.grounded(recap, transcript: transcript), "- **Левон** — прислать доки.")
+        XCTAssertEqual(grounded(recap, transcript: transcript), "- **Левон** — прислать доки.")
     }
 
     func testНазванныйСрокНеВырезается() {
         let recap = "- **Левон** — прислать доки к пятнице."
         let transcript = "**Левон** · 00:10\nДавай к пятнице пришлю.\n"
-        XCTAssertEqual(RecapLint.grounded(recap, transcript: transcript), recap)
+        XCTAssertEqual(grounded(recap, transcript: transcript), recap)
     }
 
     func testПосчитанныйСрокУходитВместеСоСкобками() {
         XCTAssertEqual(
-            RecapLint.grounded("- Левон готовит доки (срок: ~6 дней).", transcript: ""),
+            grounded("- Левон готовит доки (срок: ~6 дней).", transcript: ""),
             "- Левон готовит доки."
         )
     }
@@ -237,7 +241,7 @@ final class RecapLintTests: XCTestCase {
     /// Снести заголовок целиком значило бы выбросить его вместе с призраком.
     func testИмяИзСкобкиСтановитсяОтветственным() {
         XCTAssertEqual(
-            RecapLint.grounded("- **Команда дизайна (Левон)** — убрать подстрочники.", transcript: ""),
+            grounded("- **Команда дизайна (Левон)** — убрать подстрочники.", transcript: ""),
             "- **Левон** — убрать подстрочники."
         )
     }
@@ -252,7 +256,7 @@ final class RecapLintTests: XCTestCase {
             "- **Команда дизайна** — доработать форму отображения кластеров.",
         ]
         for line in lines {
-            let grounded = RecapLint.grounded(line, transcript: "")
+            let grounded = grounded(line, transcript: "")
             XCTAssertFalse(grounded.contains("**"), "исполнитель остался: \(grounded)")
             XCTAssertTrue(grounded.hasPrefix("- "), "пункт потерян: \(grounded)")
         }
@@ -262,6 +266,6 @@ final class RecapLintTests: XCTestCase {
     /// обсуждения») она не трогает, там нет назначений.
     func testПрозаНеТрогается() {
         let prose = "## Итог\nКоманда договорилась о трёх уровнях к 20:34.\n"
-        XCTAssertEqual(RecapLint.grounded(prose, transcript: ""), prose)
+        XCTAssertEqual(grounded(prose, transcript: ""), prose)
     }
 }

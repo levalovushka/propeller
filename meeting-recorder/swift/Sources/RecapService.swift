@@ -311,11 +311,14 @@ actor RecapService {
             // пережил редактуру в каждом прогоне. Всё, что можно снять без
             // модели, снимается без модели.
             let grounded = RecapLint.grounded(edited, transcript: trimmed)
+            if !grounded.removed.isEmpty {
+                NSLog("[RecapService] вырезано из конспекта: \(grounded.removed.joined(separator: " · "))")
+            }
 
             // Термины канонизируются здесь, а не промптом: модель не может
             // починить то, чего не видела — в транскрипте уже стоит «майплайн».
             // Правится только конспект; транскрипт остаётся как сказано.
-            let cleaned = TermCanon.normalize(grounded)
+            let cleaned = TermCanon.normalize(grounded.recap)
             guard !cleaned.isEmpty else { throw RecapError.emptyResponse }
 
             let body = wrapRecapDocument(

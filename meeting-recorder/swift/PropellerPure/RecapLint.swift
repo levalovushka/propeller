@@ -114,8 +114,12 @@ public enum RecapLint {
     /// «Спикер S1» в этом списке не случайно: дай слабой модели транскрипт, где
     /// 58 % реплик безымянны, и она подписывает задачу меткой диаризации
     /// (замерено на qwen2.5:7b). Метка — не человек.
+    /// Хвост есть у каждого призрака, а не только у «Команды»: живой прогон
+    /// 2026-08-12 выдал «**Система аналитики** — проанализировать данные», и
+    /// шаблон без хвоста её пропустил. Такого отдела на встрече не было — как и
+    /// команды дизайна.
     private static let ghostOwnerHead =
-        #"(?m)^(\s*-\s+)\*{0,2}(?:Система|Команда(?:\s+[^\-–—*\n(]{1,40})?|Участник(?:\s+[^\-–—*\n(]{1,40})?|Все|Разработка|Спикер\s*S?\d+|Speaker\s*S?\d+)\*{0,2}\s*[—–-]\s*"#
+        #"(?m)^(\s*-\s+)\*{0,2}(?:(?:Система|Команда|Участник|Разработка|Все)(?:\s+[^\-–—*\n(]{1,40})?|Спикер\s*S?\d+|Speaker\s*S?\d+)\*{0,2}\s*[—–-]\s*"#
 
     /// «**Команда дизайна (Левон)** — убрать подстрочники» → «**Левон** —».
     ///
@@ -214,8 +218,24 @@ public enum RecapLint {
     /// **Форму не трогает.** Строк, пунктов и секций после вызова ровно столько
     /// же: `polished(...)` сравнивает `shape` до и после, и сдвиг формы здесь
     /// прочитался бы как потеря содержания.
-    public static func grounded(_ recap: String, transcript: String) -> String {
+    public struct Grounding: Equatable {
+        public let recap: String
+        /// Что сняли, цитатами. Пусто — значит конспект и так был заземлён.
+        ///
+        /// Возвращается, а не выбрасывается: правка, которая молча переписывает
+        /// чужой текст, должна уметь сказать, что именно она переписала —
+        /// ровно как это делает редактура строкой ниже по пайплайну.
+        public let removed: [String]
+
+        public init(recap: String, removed: [String]) {
+            self.recap = recap
+            self.removed = removed
+        }
+    }
+
+    public static func grounded(_ recap: String, transcript: String) -> Grounding {
         let haystack = normalized(transcript)
+        var removed: [String] = []
         var lines = recap.components(separatedBy: "\n")
 
         for index in lines.indices {
@@ -236,19 +256,29 @@ public enum RecapLint {
                 of: ghostOwnerHead, with: "$1", options: [.regularExpression, .caseInsensitive]
             )
             if withoutGhost != edited {
+                removed.append(firstMatch(ghostOwnerHead, in: edited)?
+                    .trimmingCharacters(in: CharacterSet(charactersIn: " -–—*")) ?? "исполнитель")
                 edited = capitalizingBulletText(withoutGhost)
             }
 
             for pattern in [computedDeadline, timecodeDeadline] {
-                edited = strippingDeadline(pattern, from: edited)
+                let cut = strippingDeadline(pattern, from: edited)
+                if cut != edited, let quote = firstMatch(pattern, in: edited) {
+                    removed.append(quote)
+                }
+                edited = cut
             }
             for deadline in deadlines where !haystack.contains(deadline.stem) {
-                edited = strippingDeadline(deadline.phrase, from: edited)
+                let cut = strippingDeadline(deadline.phrase, from: edited)
+                if cut != edited, let quote = firstMatch(deadline.phrase, in: edited) {
+                    removed.append(quote)
+                }
+                edited = cut
             }
 
             lines[index] = tidied(edited)
         }
-        return lines.joined(separator: "\n")
+        return Grounding(recap: lines.joined(separator: "\n"), removed: removed)
     }
 
     /// Убрать срок вместе с обёрткой, в которой он стоит: «(срок: …)»,
