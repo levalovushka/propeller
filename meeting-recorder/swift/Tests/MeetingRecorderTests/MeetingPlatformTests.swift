@@ -240,6 +240,66 @@ final class MeetingPlatformTests: XCTestCase {
         XCTAssertFalse(MeetingPlatform.zoom.callHelperProcesses.contains("caphost"))
     }
 
+    // MARK: - Кто ещё запущен
+
+    private static let zoomApp = MeetingPlatform.RunningApp(
+        pid: 77524, bundleID: "us.zoom.xos", name: "zoom.us"
+    )
+    private static let vkApp = MeetingPlatform.RunningApp(
+        pid: 21372, bundleID: "com.vk.calls.native.1", name: "VK Звонки"
+    )
+
+    /// Человек закрыл VK Звонки, у него остался открытый Zoom — и автозапись
+    /// молчала до перезапуска приложения (12.08.2026: VK закрылся в 11:16:51,
+    /// Zoom-звонок в 14:00 не был опознан вовсе). Детектор снимал опрос на
+    /// завершении **любого** конференц-приложения, а поднимает его только
+    /// событие запуска — которого от давно запущенного Zoom не приходит.
+    func testQuittingOneConferencingAppLeavesTheOtherOneWatched() {
+        let live = MeetingPlatform.live(
+            in: [Self.zoomApp, Self.vkApp],
+            excludingPID: Self.vkApp.pid
+        )
+        XCTAssertEqual(live.map(\.id), ["zoom"])
+    }
+
+    /// `NSWorkspace.runningApplications` какое-то время ещё отдаёт покойника:
+    /// без исключения по pid «остался ли кто-нибудь» отвечает «да» про то самое
+    /// приложение, о завершении которого пришло уведомление, и опрос не гаснет
+    /// никогда.
+    func testTheAppThatJustQuitDoesNotCountAsStillRunning() {
+        let live = MeetingPlatform.live(in: [Self.vkApp], excludingPID: Self.vkApp.pid)
+        XCTAssertTrue(live.isEmpty)
+    }
+
+    /// Обратная сторона: когда не осталось никого, опрос обязан погаснуть —
+    /// иначе простаивающая машина платит пробуждениями (E3).
+    func testNothingLeftRunningIsTheOnlyCaseThatStopsTheWatch() {
+        XCTAssertTrue(MeetingPlatform.live(in: []).isEmpty)
+        XCTAssertEqual(MeetingPlatform.live(in: [Self.zoomApp, Self.vkApp]).count, 2)
+    }
+
+    /// Закрылся не конференц-звонок, а что угодно другое — опрос это не трогает.
+    func testAppsThatAreNotConferencingAreNotWatchedAtAll() {
+        let safari = MeetingPlatform.RunningApp(
+            pid: 501, bundleID: "com.apple.Safari", name: "Safari"
+        )
+        XCTAssertTrue(MeetingPlatform.live(in: [safari]).isEmpty)
+    }
+
+    /// Хелперы Zoom — отдельные приложения в `runningApplications`
+    /// (`us.zoom.cpthost`, `us.zoom.caphost`, «zoom.us Networking»), и их
+    /// завершение не должно читаться как «Zoom закрылся».
+    func testZoomHelpersAreNotTheZoomApp() {
+        let helpers = [
+            MeetingPlatform.RunningApp(pid: 29938, bundleID: "us.zoom.cpthost", name: "CptHost"),
+            MeetingPlatform.RunningApp(pid: 77538, bundleID: "us.zoom.caphost", name: "caphost"),
+            MeetingPlatform.RunningApp(
+                pid: 77561, bundleID: "com.apple.webkit.networking", name: "zoom.us Networking"
+            ),
+        ]
+        XCTAssertTrue(MeetingPlatform.live(in: helpers).isEmpty)
+    }
+
     // MARK: - Debounce
 
     func testACallIsOnlyStartedAfterTwoConsecutiveSightings() {

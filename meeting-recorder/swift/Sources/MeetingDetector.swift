@@ -74,6 +74,17 @@ final class MeetingDetector {
             queue: .main
         ) { [weak self] note in
             guard let self, Self.isConferencingApp(note) else { return }
+            // Гасить опрос можно, только если конференц-приложений не осталось
+            // вовсе — иначе закрытое приложение уносит с собой чужой звонок.
+            // Кто остался, решает `MeetingPlatform.live`, где это проверено.
+            let quitPID = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?
+                .processIdentifier
+            guard Self.livePlatforms(excludingPID: quitPID).isEmpty else {
+                // Опрос жив — но перечитать надо сейчас: закрытое приложение
+                // могло быть тем, чей звонок шёл.
+                if self.timer == nil { self.startPolling() } else { self.poll() }
+                return
+            }
             self.stopPolling(endedMeeting: true)
         }
 
@@ -153,10 +164,7 @@ final class MeetingDetector {
     /// Look for a call in any known platform (`MeetingPlatform.all`).
     /// Adding a service is a row in that table — this code does not change.
     static func captureSnapshot() -> MeetingSnapshot {
-        let running = NSWorkspace.shared.runningApplications
-        let live = MeetingPlatform.all.filter { platform in
-            running.contains { platform.owns(bundleID: $0.bundleIdentifier, appName: $0.localizedName) }
-        }
+        let live = livePlatforms()
 
         // A browser tab can be the call itself, so a web-capable platform is
         // worth checking even when its desktop app isn't installed.
@@ -201,11 +209,21 @@ final class MeetingDetector {
     }
 
     static func isAnyConferencingAppRunning() -> Bool {
-        NSWorkspace.shared.runningApplications.contains { app in
-            MeetingPlatform.all.contains {
-                $0.owns(bundleID: app.bundleIdentifier, appName: app.localizedName)
-            }
+        !livePlatforms().isEmpty
+    }
+
+    /// Платформы, чьи приложения запущены. Одно правило на всех, в
+    /// `PropellerPure`: «кто ещё открыт» спрашивают и снимок, и обработчик
+    /// закрытия приложения, и разойтись эти два ответа не должны.
+    static func livePlatforms(excludingPID pid: Int32? = nil) -> [MeetingPlatform] {
+        let apps = NSWorkspace.shared.runningApplications.map {
+            MeetingPlatform.RunningApp(
+                pid: $0.processIdentifier,
+                bundleID: $0.bundleIdentifier,
+                name: $0.localizedName
+            )
         }
+        return MeetingPlatform.live(in: apps, excludingPID: pid)
     }
 
     private static func isConferencingApp(_ note: Notification) -> Bool {

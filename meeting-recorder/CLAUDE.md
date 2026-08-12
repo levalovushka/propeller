@@ -254,6 +254,14 @@ Which apps count as a call, and which window titles mean "in one", is **data** i
   76 s, assertion held throughout). The rule is now `MeetingPlatform.callFromAssertion`, in
   `PropellerPure` with tests: one holder is the call, two are nobody's — there is one recording and
   nothing to choose with.
+- **Polling stops only when no conferencing app is left at all.** The timer is raised by a *launch*
+  notification and used to be dropped by any *termination* — so quitting VK Звонки killed detection
+  for a Zoom that had been running since the day before, and auto-record was silent until the app
+  restarted (measured 2026-08-12: `sample` caught 11993 of 11993 main-thread samples idle, and a live
+  Zoom call went unrecorded). Who is left is `MeetingPlatform.live(in:excludingPID:)`, with tests —
+  and the pid that just quit must be excluded, because `runningApplications` keeps reporting it for a
+  moment. One platform in the table hid this: "a conferencing app quit" and "none are left" were the
+  same event.
 - **A platform whose bundle id ends in something meaningless needs `ownsProcess` checked.** VK's is
   `com.vk.calls.native.1`, and the "last component is the process name" rule handed the platform every
   process with a `1` in its name until it started requiring three characters and a non-digit.

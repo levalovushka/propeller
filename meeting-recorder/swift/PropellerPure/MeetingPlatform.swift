@@ -217,6 +217,41 @@ extension MeetingPlatform {
         let holders = live.filter { $0.sleepAssertionMeansCall && ids.contains($0.id) }
         return holders.count == 1 ? holders[0].id : nil
     }
+
+    /// Запущенное приложение, каким его видит `NSWorkspace`.
+    public struct RunningApp: Equatable, Sendable {
+        public let pid: Int32
+        public let bundleID: String?
+        public let name: String?
+
+        public init(pid: Int32 = 0, bundleID: String? = nil, name: String? = nil) {
+            self.pid = pid
+            self.bundleID = bundleID
+            self.name = name
+        }
+    }
+
+    /// Платформы, чьи приложения сейчас запущены.
+    ///
+    /// - Parameter excludingPID: процесс, о завершении которого только что
+    ///   пришло уведомление. `NSWorkspace.runningApplications` какое-то время
+    ///   ещё отдаёт покойника, и без этого «остался ли кто-нибудь ещё» отвечает
+    ///   «да» про него самого.
+    ///
+    /// Ответ на этот вопрос решает, гасить ли опрос: гасить можно, только когда
+    /// не осталось **ни одного** конференц-приложения. Замерено 12.08.2026: VK
+    /// Звонки закрылись в 11:16:51 при запущенном с 10 августа Zoom, детектор
+    /// снял таймер на любом завершении — и автозапись молчала до перезапуска
+    /// приложения, потому что таймер поднимает только событие *запуска*, а Zoom
+    /// уже был запущен. Zoom-звонок в 14:00 не был опознан вовсе.
+    public static func live(in apps: [RunningApp], excludingPID: Int32? = nil) -> [MeetingPlatform] {
+        all.filter { platform in
+            apps.contains { app in
+                guard app.pid != excludingPID else { return false }
+                return platform.owns(bundleID: app.bundleID, appName: app.name)
+            }
+        }
+    }
 }
 
 // MARK: - Rules
