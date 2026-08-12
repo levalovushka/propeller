@@ -16,6 +16,57 @@ final class BoundaryResponseTests: XCTestCase {
         return try Data(contentsOf: url)
     }
 
+    // MARK: - Чекпойнт
+
+    /// Чекпойнт после расшифровки лежит в индексе на диске, и его читает та же
+    /// сборка или следующая. Метка дорожки поэтому обязана переживать круг через
+    /// JSON — иначе после падения между фазами лента соберётся как из микса, с
+    /// чужими словами под именем владельца.
+    func testМеткаДорожкиПереживаетЧекпойнт() throws {
+        let segments = [
+            ASRSegment(start: 0, end: 1, text: "своё", stem: .microphone),
+            ASRSegment(start: 1, end: 2, text: "чужое", stem: .system),
+            ASRSegment(start: 2, end: 3, text: "из микса"),
+        ]
+        let data = try JSONEncoder().encode(segments)
+        XCTAssertEqual(try JSONDecoder().decode([ASRSegment].self, from: data), segments)
+    }
+
+    /// Чекпойнт, записанный прежней сборкой, метки не содержит — и обязан
+    /// читаться, а не ронять расшифровку, которая уже стоила часа работы.
+    func testЧекпойнтБезМеткиЧитаетсяКакМикс() throws {
+        let old = Data(#"[{"start":0,"end":1.5,"text":"было записано до меток"}]"#.utf8)
+        let decoded = try JSONDecoder().decode([ASRSegment].self, from: old)
+        XCTAssertEqual(decoded.count, 1)
+        XCTAssertNil(decoded[0].stem)
+        XCTAssertEqual(decoded[0].text, "было записано до меток")
+    }
+
+    /// Слова с таймингами нужны сборке, чтобы отличить эхо от своей речи внутри
+    /// одной реплики. Сайдкар кладёт их внутрь сегментов — прочитаны должны быть
+    /// оттуда, а не из плоского списка, которого у него может и не быть.
+    func testСловаСТаймингамиЧитаютсяИзСегментов() throws {
+        let body = Data(#"""
+        {"text":"да хорошо","segments":[{"start":0.1,"end":0.9,"text":"да хорошо",
+        "words":[{"word":"да","start":0.1,"end":0.3},{"word":"хорошо","start":0.5,"end":0.9}]}]}
+        """#.utf8)
+        guard case .success(let asr) = BoundaryResponses.readASR(status: 200, data: body) else {
+            return XCTFail("ответ не разобран")
+        }
+        XCTAssertEqual(asr.words.map(\.text), ["да", "хорошо"])
+        XCTAssertEqual(asr.words[1].middle, 0.7, accuracy: 0.001)
+    }
+
+    /// Слово без времени бесполезно для вопроса «в это же мгновение» и не должно
+    /// притворяться, что оно в нуле: иначе началом встречи объявится эхо.
+    func testСловоБезВремениПропускается() throws {
+        let body = Data(#"{"text":"да","words":[{"word":"да"},{"word":"точно","start":1,"end":1.2}]}"#.utf8)
+        guard case .success(let asr) = BoundaryResponses.readASR(status: 200, data: body) else {
+            return XCTFail("ответ не разобран")
+        }
+        XCTAssertEqual(asr.words.map(\.text), ["точно"])
+    }
+
     // MARK: - ASR sidecar
 
     func testReadsSegmentsWithTimings() throws {

@@ -74,12 +74,21 @@ enum GigasttClient {
     ///
     /// Long files are split client-side: gigastt's default body limit (~50 MiB)
     /// and ~30 min duration cap otherwise yield HTTP 413 / "too long".
+    /// Что вернул сайдкар: реплики, весь текст и — если прислал — каждое слово
+    /// со своим временем. Слова нужны сборке ленты из стемов
+    /// (`StemAssembly.withoutEcho`); на пути микса они просто не используются.
+    struct ASRResult {
+        let segments: [ASRSegment]
+        let rawText: String
+        let words: [ASRWord]
+    }
+
     static func transcribe(
         audioURL: URL,
         baseURL: URL = defaultBaseURL,
         timeout: TimeInterval = 600,
         progressCallback: ((String) -> Void)? = nil
-    ) async throws -> (segments: [ASRSegment], rawText: String) {
+    ) async throws -> ASRResult {
         guard FileManager.default.fileExists(atPath: audioURL.path) else {
             throw ClientError.readFailed(audioURL.path)
         }
@@ -112,7 +121,7 @@ enum GigasttClient {
         audioURL: URL,
         baseURL: URL,
         timeout: TimeInterval
-    ) async throws -> (segments: [ASRSegment], rawText: String) {
+    ) async throws -> ASRResult {
         var comps = URLComponents(url: baseURL.appendingPathComponent("v1/transcribe"), resolvingAgainstBaseURL: false)!
         comps.queryItems = [
             URLQueryItem(name: "segments", value: "true"),
@@ -134,7 +143,11 @@ enum GigasttClient {
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         switch BoundaryResponses.readASR(status: status, data: data) {
         case .success(let transcription):
-            return (transcription.segments, transcription.rawText)
+            return ASRResult(
+                segments: transcription.segments,
+                rawText: transcription.rawText,
+                words: transcription.words
+            )
         case .failure(let failure):
             throw ClientError(failure)
         }
@@ -146,7 +159,7 @@ enum GigasttClient {
         baseURL: URL,
         timeout: TimeInterval,
         progressCallback: ((String) -> Void)?
-    ) async throws -> (segments: [ASRSegment], rawText: String) {
+    ) async throws -> ASRResult {
         let source: AVAudioFile
         do {
             source = try AVAudioFile(forReading: audioURL)
@@ -174,6 +187,10 @@ enum GigasttClient {
         defer { try? FileManager.default.removeItem(at: tmpDir) }
 
         var merged: [(offset: Float, segments: [GigasttChunking.Segment])] = []
+        // Слова сдвигаются и сортируются тем же кодом, что реплики: слово — это
+        // тоже кусок текста со временем, и второй арифметики для него быть не
+        // должно.
+        var mergedWords: [(offset: Float, segments: [GigasttChunking.Segment])] = []
         var texts: [String] = []
 
         var startFrame: AVAudioFramePosition = 0
@@ -188,7 +205,7 @@ enum GigasttClient {
             let chunkDur = Double(frames) / rate
             let chunkTimeout = max(timeout, chunkDur * 2.0 + 120)
 
-            let (segs, raw) = try await transcribeChunkDividingOnTooLarge(
+            let piece = try await transcribeChunkDividingOnTooLarge(
                 source: source,
                 startFrame: startFrame,
                 frameCount: frames,
@@ -201,9 +218,10 @@ enum GigasttClient {
             )
             merged.append((
                 offset: offsetSec,
-                segments: segs.map { GigasttChunking.Segment(start: $0.start, end: $0.end, text: $0.text) }
+                segments: piece.segments.map { GigasttChunking.Segment(start: $0.start, end: $0.end, text: $0.text) }
             ))
-            if !raw.isEmpty { texts.append(raw) }
+            mergedWords.append((offset: offsetSec, segments: piece.words.map(Self.asSegment)))
+            if !piece.rawText.isEmpty { texts.append(piece.rawText) }
 
             startFrame += AVAudioFramePosition(frames)
             index += 1
@@ -218,7 +236,11 @@ enum GigasttClient {
             "[GigasttClient] chunked ASR done chunks=%d segments=%d durationHint=%.1fs",
             chunkCount, segments.count, duration
         )
-        return (segments, rawText.isEmpty ? segments.map(\.text).joined(separator: " ") : rawText)
+        return ASRResult(
+            segments: segments,
+            rawText: rawText.isEmpty ? segments.map(\.text).joined(separator: " ") : rawText,
+            words: GigasttChunking.merge(mergedWords).map(Self.asWord)
+        )
     }
 
     /// Send one piece — and if the sidecar says it is too large, send it as two.
@@ -238,7 +260,7 @@ enum GigasttClient {
         baseURL: URL,
         timeout: TimeInterval,
         progressCallback: ((String) -> Void)?
-    ) async throws -> (segments: [ASRSegment], rawText: String) {
+    ) async throws -> ASRResult {
         let seconds = Double(frameCount) / rate
         let url = tmpDir.appendingPathComponent(
             String(format: "chunk-%02d-%.0f.wav", index, seconds)
@@ -260,13 +282,14 @@ enum GigasttClient {
             NSLog("[GigasttClient] 413 on a %.0fs chunk — dividing to %.0fs", seconds, smaller)
             let half = AVAudioFrameCount(max(1, Double(frameCount) / 2))
             var pieces: [(offset: Float, segments: [GigasttChunking.Segment])] = []
+            var wordPieces: [(offset: Float, segments: [GigasttChunking.Segment])] = []
             var texts: [String] = []
             var cursor = startFrame
             var part = 0
             while cursor < startFrame + AVAudioFramePosition(frameCount) {
                 let remaining = startFrame + AVAudioFramePosition(frameCount) - cursor
                 let take = AVAudioFrameCount(min(AVAudioFramePosition(half), remaining))
-                let (segs, raw) = try await transcribeChunkDividingOnTooLarge(
+                let half = try await transcribeChunkDividingOnTooLarge(
                     source: source,
                     startFrame: cursor,
                     frameCount: take,
@@ -280,22 +303,36 @@ enum GigasttClient {
                 // Each half reports times from its own start, so it merges at the
                 // distance between the two starts — not at zero, and not at the
                 // absolute position in the file, which the caller adds later.
+                let pieceOffset = Float(Double(cursor - startFrame) / rate)
                 pieces.append((
-                    offset: Float(Double(cursor - startFrame) / rate),
-                    segments: segs.map {
+                    offset: pieceOffset,
+                    segments: half.segments.map {
                         GigasttChunking.Segment(start: $0.start, end: $0.end, text: $0.text)
                     }
                 ))
-                if !raw.isEmpty { texts.append(raw) }
+                wordPieces.append((offset: pieceOffset, segments: half.words.map(Self.asSegment)))
+                if !half.rawText.isEmpty { texts.append(half.rawText) }
                 cursor += AVAudioFramePosition(take)
                 part += 1
             }
-            let merged = GigasttChunking.merge(pieces)
-            return (
-                merged.map { ASRSegment(start: $0.start, end: $0.end, text: $0.text) },
-                texts.joined(separator: " ")
+            return ASRResult(
+                segments: GigasttChunking.merge(pieces).map {
+                    ASRSegment(start: $0.start, end: $0.end, text: $0.text)
+                },
+                rawText: texts.joined(separator: " "),
+                words: GigasttChunking.merge(wordPieces).map(Self.asWord)
             )
         }
+    }
+
+    /// Слово как вырожденная реплика и обратно — ровно чтобы переиспользовать
+    /// `GigasttChunking.merge`, а не писать второй сдвиг времён.
+    private static func asSegment(_ word: ASRWord) -> GigasttChunking.Segment {
+        GigasttChunking.Segment(start: Float(word.start), end: Float(word.end), text: word.text)
+    }
+
+    private static func asWord(_ segment: GigasttChunking.Segment) -> ASRWord {
+        ASRWord(start: Double(segment.start), end: Double(segment.end), text: segment.text)
     }
 
     private static func writeWAVChunk(

@@ -18,6 +18,10 @@ protocol Transcriber: AnyObject {
     func transcribeAudio(
         audioURL: URL,
         languageOverride: String?,
+        /// Начало системного стема на часах встречи. Нужно уже здесь, а не только
+        /// диаризации: расшифровка читает дорожки по отдельности, и времена
+        /// системной приводятся к встрече на этом же шаге.
+        systemStemOffset: Double,
         progressCallback: ((String) -> Void)?,
         downloadProgress: ((Double) -> Void)?
     ) async throws -> RawTranscriptionResult

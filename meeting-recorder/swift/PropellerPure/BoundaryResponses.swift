@@ -2,14 +2,29 @@ import Foundation
 
 /// One recognised utterance from the ASR sidecar.
 public struct ASRSegment: Codable, Equatable, Sendable {
+    /// С какой дорожки эта реплика.
+    ///
+    /// Отвечает на вопрос, который иначе пришлось бы угадывать по энергии: на
+    /// микрофонной дорожке после снятия эха говорит владелец, на системной —
+    /// все остальные. Диаризация нужна только второй.
+    public enum Stem: String, Codable, Sendable {
+        case microphone
+        case system
+    }
+
     public var start: Float
     public var end: Float
     public var text: String
+    /// `nil` — реплика из микса: так пишет запасной путь и так лежат чекпойнты,
+    /// записанные прежними сборками. Поле опциональное именно поэтому: чекпойнт
+    /// с диска обязан читаться, а не роняться на неизвестном ключе.
+    public var stem: Stem?
 
-    public init(start: Float, end: Float, text: String) {
+    public init(start: Float, end: Float, text: String, stem: Stem? = nil) {
         self.start = start
         self.end = end
         self.text = text
+        self.stem = stem
     }
 }
 
@@ -71,6 +86,19 @@ extension BoundaryResponses {
     public struct ASRTranscription: Equatable, Sendable {
         public let segments: [ASRSegment]
         public let rawText: String
+        /// Каждое слово со своим временем, если сайдкар их прислал.
+        ///
+        /// Нужны там, где эхо и своя речь приезжают в одном сегменте
+        /// (`StemAssembly.withoutEcho`): без времени слова эхо не отличить от
+        /// своей речи внутри реплики. Пусто — сборка обходится построчным
+        /// правилом, а не падает.
+        public let words: [ASRWord]
+
+        public init(segments: [ASRSegment], rawText: String, words: [ASRWord] = []) {
+            self.segments = segments
+            self.rawText = rawText
+            self.words = words
+        }
     }
 
     /// Interpret an ASR response. `status` is the HTTP code, `data` the body.
@@ -96,7 +124,9 @@ extension BoundaryResponses {
         let rawText = (text?.isEmpty == false)
             ? text!
             : segments.map(\.text).joined(separator: " ")
-        return .success(ASRTranscription(segments: segments, rawText: rawText))
+        return .success(ASRTranscription(
+            segments: segments, rawText: rawText, words: extractWords(decoded)
+        ))
     }
 
     /// Three shapes in the wild, in order of preference: segments, words, or a
@@ -131,6 +161,20 @@ extension BoundaryResponses {
         return []
     }
 
+    /// Слова с таймингами: сначала те, что лежат внутри сегментов, иначе плоский
+    /// список верхнего уровня. Слово без времени пропускается — для вопроса «в
+    /// это же мгновение» оно бесполезно, а притворяться, что оно в нуле, значит
+    /// объявить эхом начало встречи.
+    private static func extractWords(_ decoded: Envelope) -> [ASRWord] {
+        let nested = (decoded.segments ?? []).flatMap { $0.words ?? [] }
+        let source = nested.isEmpty ? (decoded.words ?? []) : nested
+        return source.compactMap { word in
+            guard let text = word.word?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty, let start = word.start, let end = word.end else { return nil }
+            return ASRWord(start: start, end: max(start, end), text: text)
+        }
+    }
+
     public struct Envelope: Decodable {
         public let text: String?
         public let duration: Double?
@@ -144,6 +188,7 @@ extension BoundaryResponses {
             public let start: Double
             public let end: Double
             public let text: String
+            public let words: [Word]?
         }
 
         public struct Word: Decodable {

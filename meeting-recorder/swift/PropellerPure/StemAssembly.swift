@@ -128,7 +128,12 @@ public enum StemAssembly {
         window: Double = echoWindow
     ) -> [EchoDedup.Line] {
         let own = words.filter { $0.middle >= line.start && $0.middle <= line.end }
-        guard own.count > 1, !farWords.isEmpty else { return [line] }
+        // Реплика из одного слова проверяется так же, как длинная. Порог «хотя бы
+        // два слова» стоял здесь один прогон и сразу нашёлся в отчёте пробы:
+        // «Вот.» и «Сейчас скажу.» остались за владельцем, хотя это чужие слова,
+        // сказанные в то же мгновение. Своё «да» потерять дешевле, чем приписать
+        // владельцу чужое намерение: конспект читает второе как согласие.
+        guard !own.isEmpty, !farWords.isEmpty else { return [line] }
 
         var runs: [[ASRWord]] = []
         var current: [ASRWord] = []

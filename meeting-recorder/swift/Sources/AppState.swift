@@ -1947,6 +1947,7 @@ class AppState: ObservableObject {
                 let raw = try await transcriptionService.transcribeAudio(
                     audioURL: audioURL,
                     languageOverride: rec.language,
+                    systemStemOffset: recordingStore.recording(for: recordingID)?.systemStemOffset ?? 0,
                     progressCallback: progressCb,
                     downloadProgress: downloadCb
                 )

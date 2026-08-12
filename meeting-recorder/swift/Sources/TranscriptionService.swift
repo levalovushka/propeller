@@ -162,18 +162,21 @@ class TranscriptionService {
     func transcribe(
         audioURL: URL,
         languageOverride: String? = nil,
+        systemStemOffset: Double = 0,
         progressCallback: ((String) -> Void)? = nil,
         downloadProgress: ((Double) -> Void)? = nil
     ) async throws -> MeetingTranscriptionResult {
         let raw = try await transcribeAudio(
             audioURL: audioURL,
             languageOverride: languageOverride,
+            systemStemOffset: systemStemOffset,
             progressCallback: progressCallback,
             downloadProgress: downloadProgress
         )
         return try await diarize(
             audioURL: audioURL,
             asrSegments: raw.segments,
+            systemStemOffset: systemStemOffset,
             progressCallback: progressCallback
         )
     }
@@ -186,6 +189,10 @@ class TranscriptionService {
     func transcribeAudio(
         audioURL: URL,
         languageOverride: String? = nil,
+        /// Где начало системного стема на часах встречи. На нынешнем пути захвата
+        /// всегда 0 — обе дорожки читает одна IOProc, — но микшер умеет ставить
+        /// стем со сдвигом, и тогда времена его реплик надо привести к встрече.
+        systemStemOffset: Double = 0,
         progressCallback: ((String) -> Void)? = nil,
         downloadProgress: ((Double) -> Void)? = nil
     ) async throws -> RawTranscriptionResult {
@@ -201,12 +208,25 @@ class TranscriptionService {
 
         let (segments, rawText) = try await PipelineMetrics.interval(
             PipelineMetrics.pipeline, PipelineMetrics.asr
-        ) {
-            try await GigasttClient.transcribe(
+        ) { () async throws -> (segments: [ASRSegment], rawText: String) in
+            // Есть обе дорожки — читаем их по отдельности, а не микс. Микс
+            // теряет слова там, где стороны говорят одновременно: замерено на
+            // «Обеде» (58 минут, колонки) — до транскрипта доходит 57.1 % слов
+            // собеседника, остальные затирает своя же речь. Из дорожек по
+            // построению не теряется ничего.
+            if let stems = Self.usableStems(for: audioURL) {
+                return try await Self.transcribeStems(
+                    stems,
+                    systemStemOffset: systemStemOffset,
+                    progressCallback: progressCallback
+                )
+            }
+            let result = try await GigasttClient.transcribe(
                 audioURL: audioURL,
                 baseURL: GigasttSidecar.baseURL,
                 progressCallback: progressCallback
             )
+            return (result.segments, result.rawText)
         }
 
         NSLog("[TranscriptionService] gigastt returned \(segments.count) segment(s)")
@@ -220,6 +240,84 @@ class TranscriptionService {
         }
 
         return RawTranscriptionResult(segments: segments, rawText: rawText)
+    }
+
+    // MARK: - Две дорожки вместо микса
+
+    /// Расшифровать обе дорожки и собрать из них реплики владельца и остальных.
+    ///
+    /// Диаризации здесь нет: она в следующей фазе и только по системному стему.
+    /// Возвращаются реплики, помеченные дорожкой, — это и есть чекпойнт. Слова с
+    /// таймингами в него не едут: эхо снимается здесь и сейчас, а слова весили бы
+    /// как второй транскрипт в файле индекса.
+    ///
+    /// Пустая дорожка — не сбой: владелец мог молчать всю встречу (доклад
+    /// коллеги), а на встрече вживую наоборот молчит системный стем. Ноль на
+    /// обеих — это «никто не говорил», и оно обязано остаться терминальным
+    /// (`SilentRecording`), иначе очередь будет вечно перечитывать тот же файл.
+    private static func transcribeStems(
+        _ stems: AudioSourceStemURLs,
+        systemStemOffset: Double,
+        progressCallback: ((String) -> Void)?
+    ) async throws -> (segments: [ASRSegment], rawText: String) {
+        let mic = try await transcribeStem(stems.microphoneURL, progressCallback: progressCallback)
+        let sys = try await transcribeStem(stems.systemURL, progressCallback: progressCallback)
+        guard mic != nil || sys != nil else { throw TranscriptionError.noResults }
+
+        let farSegments = (sys?.segments ?? []).map {
+            ASRSegment(
+                start: $0.start + Float(systemStemOffset),
+                end: $0.end + Float(systemStemOffset),
+                text: $0.text,
+                stem: .system
+            )
+        }
+        let farWords = (sys?.words ?? []).map {
+            ASRWord(start: $0.start + systemStemOffset, end: $0.end + systemStemOffset, text: $0.text)
+        }
+        let owner = StemAssembly.ownerLines(
+            mic: (mic?.segments ?? []).map {
+                EchoDedup.Line(start: Double($0.start), end: Double($0.end), text: $0.text)
+            },
+            micWords: mic?.words ?? [],
+            farSide: farSegments.map {
+                EchoDedup.Line(start: Double($0.start), end: Double($0.end), text: $0.text)
+            },
+            farWords: farWords
+        )
+        NSLog(
+            "[TranscriptionService] стемы: микрофон %d реплик → %d своих, системный %d",
+            mic?.segments.count ?? 0, owner.count, farSegments.count
+        )
+
+        let segments = (owner.map {
+            ASRSegment(start: Float($0.start), end: Float($0.end), text: $0.text, stem: .microphone)
+        } + farSegments)
+            .sorted { ($0.start, $0.end) < ($1.start, $1.end) }
+        return (segments, segments.map(\.text).joined(separator: " "))
+    }
+
+    /// Одна дорожка. `nil` — сайдкар ответил и слов не нашёл.
+    private static func transcribeStem(
+        _ url: URL,
+        progressCallback: ((String) -> Void)?
+    ) async throws -> GigasttClient.ASRResult? {
+        do {
+            return try await GigasttClient.transcribe(
+                audioURL: url,
+                baseURL: GigasttSidecar.baseURL,
+                progressCallback: progressCallback
+            )
+        } catch GigasttClient.ClientError.emptyResult {
+            NSLog("[TranscriptionService] на дорожке \(url.lastPathComponent) речи нет")
+            return nil
+        }
+    }
+
+    /// Дорожки, по которым можно работать вместо микса.
+    private static func usableStems(for finalAudioURL: URL) -> AudioSourceStemURLs? {
+        guard hasUsableStems(for: finalAudioURL) else { return nil }
+        return AudioSourceStemURLs.expectedSiblings(for: finalAudioURL)
     }
 
     // MARK: - Phase 2: Diarization + Speaker Matching
@@ -259,6 +357,15 @@ class TranscriptionService {
         progressCallback?("Определяем спикеров…")
         var diarizedSegments: [DiarizedSegment] = []
 
+        // Реплики пришли с дорожек — значит владелец известен по построению, и
+        // кластеризовать надо **только системный стем**: в нём владельца нет
+        // вовсе, и диаризации больше не приходится отделять его голос от его же
+        // эха. На миксе это была её главная работа и главный промах.
+        let stems = Self.usableStems(for: audioURL)
+        let ownerFromStem = asrSegments.contains { $0.stem == .microphone }
+        let fromStems = ownerFromStem || asrSegments.contains { $0.stem == .system }
+        let diarizationTarget = (fromStems ? stems?.systemURL : nil) ?? audioURL
+
         // Дважды подряд не вернувшись из кластеризации, больше её не зовём: на
         // macOS 14 она убивает процесс сигналом, а сигнал не перехватить. Метка
         // ставится **до** вызова и переживает смерть — только так у петли
@@ -279,13 +386,16 @@ class TranscriptionService {
                 let diaResult = try await PipelineMetrics.interval(
                     PipelineMetrics.pipeline, PipelineMetrics.diarize
                 ) {
-                    try await diarizer.process(audioURL)
+                    try await diarizer.process(diarizationTarget)
                 }
+                // Диаризация системного стема считает время от начала стема, а
+                // реплики уже приведены к часам встречи — сдвиг тот же.
+                let shift = Float(diarizationTarget == audioURL ? 0 : systemStemOffset)
                 diarizedSegments = diaResult.segments.map { seg in
                     DiarizedSegment(
                         speakerId: seg.speakerId,
-                        startTime: seg.startTimeSeconds,
-                        endTime: seg.endTimeSeconds,
+                        startTime: seg.startTimeSeconds + shift,
+                        endTime: seg.endTimeSeconds + shift,
                         embedding: seg.embedding,
                         qualityScore: seg.qualityScore
                     )
@@ -293,6 +403,14 @@ class TranscriptionService {
             } catch {
                 print("Diarization failed: \(error). Continuing without speaker labels.")
             }
+        }
+
+        if fromStems {
+            return assembleFromStems(
+                asrSegments: asrSegments,
+                diarization: diarizedSegments,
+                progressCallback: progressCallback
+            )
         }
 
         let mergedSegments = mergeTranscriptionWithDiarization(
@@ -352,6 +470,68 @@ class TranscriptionService {
             transcript: transcript,
             mergedSegments: persisted,
             attribution: attribution
+        )
+    }
+
+    /// Собрать ленту из помеченных дорожкой реплик.
+    ///
+    /// Кто говорит, здесь не оценивается: микрофонная реплика после снятия эха —
+    /// владелец по построению, системная — кто-то из остальных, и вопрос только в
+    /// том, как их назвала кластеризация. Энергия дорожек не сравнивается вообще
+    /// (`captureSource` на этом пути не вызывается): сравнение громкостей — то
+    /// самое правило, которое замер 2026-08-11 опроверг.
+    private func assembleFromStems(
+        asrSegments: [ASRSegment],
+        diarization: [DiarizedSegment],
+        progressCallback: ((String) -> Void)?
+    ) -> MeetingTranscriptionResult {
+        let ownerName = Preferences.shared.ownerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let owner = asrSegments.filter { $0.stem == .microphone && !$0.text.isEmpty }.map {
+            StemMerge.Line(
+                start: Double($0.start),
+                end: Double($0.end),
+                speaker: ownerName.isEmpty ? SourceAwareSpeaker.defaultOwnerName : ownerName,
+                text: $0.text
+            )
+        }
+        // Кластеризация ставит метки только дальней стороне — она одна и
+        // кластеризовалась.
+        let labelled = mergeTranscriptionWithDiarization(
+            asrSegments: asrSegments.filter { $0.stem == .system },
+            diarization: diarization
+        )
+        // Кластеризации не было (не загрузилась, выключена после падения) —
+        // сколько людей на той стороне, узнать нечем, и они одно имя, а не
+        // угаданное число (`design/no-dead-ends.md`, Э1).
+        let others = labelled.filter { !$0.text.isEmpty }.map { segment in
+            StemMerge.Line(
+                start: Double(segment.startTime),
+                end: Double(segment.endTime),
+                speaker: diarization.isEmpty
+                    ? SourceAwareSpeaker.defaultRemoteName
+                    : segment.speakerLabel,
+                text: segment.text
+            )
+        }
+
+        let lines = StemMerge.merge(owner: owner, others: others)
+        let persisted = lines.enumerated().map { index, line in
+            PersistedSegment(
+                index: index,
+                startTime: line.start,
+                endTime: line.end,
+                text: line.text,
+                speaker: line.speaker
+            )
+        }
+        NSLog(
+            "[TranscriptionService] лента из дорожек: %d своих + %d чужих → %d строк",
+            owner.count, others.count, persisted.count
+        )
+        return MeetingTranscriptionResult(
+            transcript: TranscriptionService.formatTranscriptText(from: persisted),
+            mergedSegments: persisted,
+            attribution: diarization.isEmpty ? .stems : .diarized
         )
     }
 
