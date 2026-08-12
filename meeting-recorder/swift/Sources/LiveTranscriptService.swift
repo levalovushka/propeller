@@ -316,11 +316,16 @@ private final class LiveSessionPair: @unchecked Sendable {
     func open(mic: GigasttLiveSession, system: GigasttLiveSession?) {
         lock.lock()
         let old = (self.mic, self.system)
+        let wasOpen = self.mic != nil
         self.mic = mic
         self.system = system
         lock.unlock()
         old.0?.close()
         old.1?.close()
+        // Пока пара открыта, сайдкар нельзя перезапускать ради нового словаря.
+        // Скобка ставится один раз на пару, а не на сессию: их две, а слушатель
+        // один.
+        if !wasOpen { GigasttSidecar.shared.beginLiveUse() }
         mic.start()
         system?.start()
     }
@@ -337,10 +342,13 @@ private final class LiveSessionPair: @unchecked Sendable {
     func close() {
         lock.lock()
         let old = (mic, system)
+        let wasOpen = mic != nil
         mic = nil
         system = nil
         lock.unlock()
         old.0?.close()
         old.1?.close()
+        // `stop()` и `end()` обе зовут close(); скобка закрывается один раз.
+        if wasOpen { GigasttSidecar.shared.endLiveUse() }
     }
 }

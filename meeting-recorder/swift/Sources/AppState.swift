@@ -609,6 +609,10 @@ class AppState: ObservableObject {
                 calendarMeta: calendarMeta
             )
             recordingStore.add(entry)
+            // Кого пригласили — то и подсказываем распознавателю, с первой же
+            // секунды: живой слой открывает сессии сразу, а подсказки читаются
+            // при запуске сервера, не на запросе.
+            GigasttSidecar.shared.setMeetingTerms(MeetingHotwords.terms(for: calendarMeta))
             refreshStorageUsage()
             activeRecordingID = entry.id
             selectedRecordingID = entry.id
@@ -1925,6 +1929,10 @@ class AppState: ObservableObject {
 
         pipelineError = nil
         isTranscribing = true
+        // Догон разбирает чужую встречу: словарь берётся от неё, а не от той,
+        // что записывалась последней. Сервер перезапустится сам, если слова
+        // разошлись и никого не слушают.
+        GigasttSidecar.shared.setMeetingTerms(MeetingHotwords.terms(for: rec.calendarMeta))
         beginPipelineWork(recordingID, phase: phase)
         setActivityDetail(phase == .transcribing ? "Загрузка моделей…" : "Определяем спикеров…")
         modelDownloadProgress = nil

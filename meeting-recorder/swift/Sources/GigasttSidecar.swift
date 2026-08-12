@@ -22,8 +22,54 @@ final class GigasttSidecar: @unchecked Sendable {
     /// Consecutive unintentional exits — reset on a healthy spawn (S3).
     private var consecutiveCrashRestarts = 0
     private static let maxCrashRestarts = 5
+    /// Слова текущей встречи (`MeetingHotwords`) и слова, с которыми запущен
+    /// живой сервер. Подсказки — аргумент запуска, а не параметр запроса
+    /// (проверено 2026-08-12: строка «Hotword biasing enabled» пишется один раз
+    /// при загрузке сессии и не повторяется ни на одном запросе), поэтому
+    /// сменить их можно только перезапуском.
+    private var meetingTerms: [String] = []
+    private var loadedTerms: [String]?
+    /// Сколько живых сессий сейчас висит на сервере. Пока хоть одна открыта,
+    /// перезапуск запрещён: он убил бы ленту идущей встречи и расшифровку,
+    /// которая может идти фоном по прошлой.
+    private var liveUsers = 0
 
     private init() {}
+
+    /// Словарь одной встречи. Ставится до того, как сервер понадобится —
+    /// на старте записи (живой слой) и перед расшифровкой (офлайн-проход).
+    func setMeetingTerms(_ terms: [String]) {
+        lock.lock()
+        let changed = terms != meetingTerms
+        meetingTerms = terms
+        lock.unlock()
+        if changed {
+            NSLog("[GigasttSidecar] словарь встречи: \(terms.count) слов")
+        }
+    }
+
+    /// Живая сессия открылась/закрылась. Скобки нужны ровно затем, чтобы
+    /// перезапуск ради словаря не случился под ней.
+    func beginLiveUse() {
+        lock.lock(); liveUsers += 1; lock.unlock()
+    }
+
+    func endLiveUse() {
+        lock.lock(); liveUsers = max(0, liveUsers - 1); lock.unlock()
+    }
+
+    /// Нужен ли перезапуск здорового сервера: слова разошлись и никто не слушает.
+    /// Если слушают — работаем со старым словарём и говорим об этом в лог:
+    /// потерянная подсказка дешевле оборванной встречи.
+    private func restartForNewTerms() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let loadedTerms, loadedTerms != meetingTerms else { return false }
+        if liveUsers > 0 {
+            NSLog("[GigasttSidecar] словарь встречи сменился, но идёт живая сессия — оставляем прежний")
+            return false
+        }
+        return true
+    }
 
     var isReady: Bool {
         lock.lock(); defer { lock.unlock() }
@@ -155,11 +201,18 @@ final class GigasttSidecar: @unchecked Sendable {
     ) async throws {
         // Healthy AND ours → reuse. Healthy but no tracked child → maybe our orphan (C8).
         if await probeHealth() {
-            if isProcessAlive() {
+            if isProcessAlive(), !restartForNewTerms() {
                 lock.lock(); ready = true; lastFailureMessage = nil; lock.unlock()
                 statusCallback?("gigastt готов")
                 downloadProgress?(1.0)
                 return
+            }
+            if isProcessAlive() {
+                // Слова встречи сменились и никто не слушает — поднимаем заново.
+                // Не через `restart()`: мы уже внутри задачи, которую он бы стал
+                // ждать через `ensureReady`.
+                statusCallback?("Обновляем словарь встречи…")
+                stop()
             }
             // A server we just stopped can still be dying. Wait it out before
             // treating it as someone else's — quieter than signalling a process
@@ -626,7 +679,14 @@ final class GigasttSidecar: @unchecked Sendable {
     /// Transcription → Vocabulary. Always non-empty now that a baseline ships,
     /// so the file is only removed if the baseline itself is somehow empty.
     private func writeHotwordsFile() -> URL? {
-        let terms = BuiltinHotwords.merged(withUserTerms: Preferences.shared.domainTermsList)
+        lock.lock()
+        let meeting = meetingTerms
+        loadedTerms = meeting
+        lock.unlock()
+
+        let terms = BuiltinHotwords.merged(
+            withUserTerms: Preferences.shared.domainTermsList + meeting
+        )
         let url = Self.hotwordsFileURL
         guard !terms.isEmpty else {
             try? FileManager.default.removeItem(at: url)
