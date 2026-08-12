@@ -13,6 +13,29 @@ public struct ASRSegment: Codable, Equatable, Sendable {
     }
 }
 
+/// Одно распознанное слово со своим временем.
+///
+/// Нужно там, где эхо и своя речь приезжают в одном сегменте: снять чужие слова
+/// можно только зная, когда каждое сказано (`StemAssembly.withoutEcho`).
+/// Не `Codable` намеренно — слова живут в памяти на время прохода ASR и в
+/// чекпойнт не едут: там лежит уже собранная лента, а слова весили бы как второй
+/// транскрипт в файле индекса.
+public struct ASRWord: Equatable, Sendable {
+    public var start: Double
+    public var end: Double
+    public var text: String
+
+    /// Середина слова. Сравнивать начала бессмысленно: одно и то же слово на
+    /// двух дорожках получает границы, разъезжающиеся на доли секунды.
+    public var middle: Double { (start + end) / 2 }
+
+    public init(start: Double, end: Double, text: String) {
+        self.start = start
+        self.end = end
+        self.text = text
+    }
+}
+
 /// Reading what the two outside services actually said.
 ///
 /// Transport stays in `GigasttClient` / `RecapService`; only the *interpretation*
