@@ -57,6 +57,33 @@ class TranscriptionService {
     /// repo is broken, so it is removed and the load repeated (that path
     /// downloads afresh). Written out rather than delegated because
     /// `purgeDiarizerRepo` is private to the library.
+    /// Метка «зашли в кластеризацию и не вышли», пережившая смерть процесса.
+    ///
+    /// Файл, а не `UserDefaults`: между `set` и записью на диск проходит время,
+    /// которого у нас нет — падение случается через секунды после старта, и
+    /// незаписанная метка не спасла бы ни одного из тех запусков. `.atomic`
+    /// гарантирует, что к возвращению из `write` данные на диске.
+    private static var diarizerAttemptsURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("Meeting Recorder", isDirectory: true)
+            .appendingPathComponent("diarizer-attempts")
+    }
+
+    private static func readDiarizerAttempts() -> DiarizerAttempts {
+        guard let text = try? String(contentsOf: diarizerAttemptsURL, encoding: .utf8),
+              let n = Int(text.trimmingCharacters(in: .whitespacesAndNewlines))
+        else { return DiarizerAttempts() }
+        return DiarizerAttempts(unfinished: n)
+    }
+
+    private static func writeDiarizerAttempts(_ attempts: DiarizerAttempts) {
+        let url = diarizerAttemptsURL
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try? Data("\(attempts.unfinished)".utf8).write(to: url, options: .atomic)
+    }
+
     private static func loadDiarizerModels(into dia: OfflineDiarizerManager) async throws {
         let directory = OfflineDiarizerModels.defaultModelsDirectory().standardizedFileURL
         do {
@@ -211,7 +238,22 @@ class TranscriptionService {
         progressCallback?("Определяем спикеров…")
         var diarizedSegments: [DiarizedSegment] = []
 
-        if let diarizer = diarizer {
+        // Дважды подряд не вернувшись из кластеризации, больше её не зовём: на
+        // macOS 14 она убивает процесс сигналом, а сигнал не перехватить. Метка
+        // ставится **до** вызова и переживает смерть — только так у петли
+        // появляется выход.
+        var attempts = Self.readDiarizerAttempts()
+        if diarizer != nil, !attempts.mayRun {
+            NSLog("[TranscriptionService] диаризация убила процесс \(attempts.unfinished) раза подряд — спикеры по дорожкам")
+            Analytics.signal("Diarize.disabledAfterCrash")
+        } else if let diarizer = diarizer {
+            attempts.starting()
+            Self.writeDiarizerAttempts(attempts)
+            defer {
+                // Вернулись — значит живы, чем бы вызов ни кончился.
+                attempts.returned()
+                Self.writeDiarizerAttempts(attempts)
+            }
             do {
                 let diaResult = try await PipelineMetrics.interval(
                     PipelineMetrics.pipeline, PipelineMetrics.diarize
