@@ -14,7 +14,11 @@ let package = Package(
         .library(name: "PropellerUI", targets: ["PropellerUI"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.12.0"),
+        // Не ниже 0.15.5: до неё `OfflineDiarizerModels.load` **игнорировал**
+        // переданный `MLModelConfiguration` (внутри было жёсткое `.all`), то
+        // есть наш запасной заход `.cpuAndNeuralEngine` после падения на
+        // macOS 14 не делал ничего. Сверено по исходникам обеих версий.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.15.5"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.8.1"),
         .package(url: "https://github.com/pointfreeco/swift-snapshot-testing", from: "1.17.0"),
         .package(url: "https://github.com/TelemetryDeck/SwiftSDK", from: "2.0.0"),
