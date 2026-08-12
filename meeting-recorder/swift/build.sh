@@ -270,9 +270,9 @@ cat > "$APP/Contents/Info.plist" << PLIST
     <key>CFBundleIdentifier</key>
     <string>${BUNDLE_ID}</string>
     <key>CFBundleVersion</key>
-    <string>1.16.2</string>
+    <string>1.16.3</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.16.2</string>
+    <string>1.16.3</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleExecutable</key>
