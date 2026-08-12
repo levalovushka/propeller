@@ -35,6 +35,30 @@ public struct DiarizerAttempts: Equatable, Sendable {
         self.unfinished = max(0, unfinished)
     }
 
+    /// Чем пробовать на этот раз.
+    ///
+    /// Лестница, а не выключатель. Падает **конкретная** модель на конкретном
+    /// исполнителе: `runFbankBatch` через `MLE5Engine` уходит в BNNS на CPU и
+    /// умирает там. У CoreML есть чем это исполнить иначе, и здоровой машине это
+    /// знать незачем — поэтому другой исполнитель пробуется только тем, у кого
+    /// уже умирало. Не сработает и он — спикеры по дорожкам.
+    public enum Plan: Equatable, Sendable {
+        /// Как у всех: конфигурация по умолчанию.
+        case standard
+        /// Одна смерть позади. Тот же проход, другой исполнитель.
+        case alternateEngine
+        /// Две смерти. Кластеризации на этой машине нет.
+        case skip
+    }
+
+    public var plan: Plan {
+        switch unfinished {
+        case 0: return .standard
+        case 1: return .alternateEngine
+        default: return .skip
+        }
+    }
+
     /// Можно ли ещё пробовать. `false` — диаризацию на этой машине не зовём вовсе.
     public var mayRun: Bool { unfinished < Self.limit }
 

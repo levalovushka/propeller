@@ -47,6 +47,25 @@ final class DiarizerAttemptsTests: XCTestCase {
         XCTAssertEqual(DiarizerAttempts(unfinished: -5).unfinished, 0)
     }
 
+    func testЛестницаИсполнителей() {
+        // Здоровая машина не платит за чужую беду ничем.
+        XCTAssertEqual(DiarizerAttempts().plan, .standard)
+        // Одна смерть — тот же проход, другой исполнитель.
+        XCTAssertEqual(DiarizerAttempts(unfinished: 1).plan, .alternateEngine)
+        // Две — кластеризации нет, спикеры по дорожкам.
+        XCTAssertEqual(DiarizerAttempts(unfinished: 2).plan, .skip)
+        XCTAssertEqual(DiarizerAttempts(unfinished: 9).plan, .skip)
+    }
+
+    func testПланИРазрешениеНеРасходятся() {
+        // `plan == .skip` и `mayRun == false` обязаны означать одно и то же:
+        // два способа спросить об одном не должны отвечать по-разному.
+        for n in 0...5 {
+            let a = DiarizerAttempts(unfinished: n)
+            XCTAssertEqual(a.plan == .skip, !a.mayRun, "разошлись на \(n)")
+        }
+    }
+
     func testВыключеннаяКластеризацияНеВключаетсяСама() {
         // Пока никто не обнулил счётчик, каждая следующая встреча идёт по
         // дорожкам, а не пробует снова и снова.

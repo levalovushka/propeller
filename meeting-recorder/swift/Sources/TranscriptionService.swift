@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreML
 import Foundation
 import FluidAudio
 import PropellerMetrics
@@ -86,14 +87,34 @@ class TranscriptionService {
 
     private static func loadDiarizerModels(into dia: OfflineDiarizerManager) async throws {
         let directory = OfflineDiarizerModels.defaultModelsDirectory().standardizedFileURL
+        let configuration = engineConfiguration(for: readDiarizerAttempts().plan)
         do {
-            dia.initialize(models: try await OfflineDiarizerModels.load(from: directory))
+            dia.initialize(models: try await OfflineDiarizerModels.load(
+                from: directory, configuration: configuration))
         } catch {
             NSLog("[TranscriptionService] диаризатор не загрузился (\(error.localizedDescription)) — чищу кэш и качаю заново")
             let repo = directory.appendingPathComponent(Repo.diarizer.folderName, isDirectory: true)
             try? FileManager.default.removeItem(at: repo)
-            dia.initialize(models: try await OfflineDiarizerModels.load(from: directory))
+            dia.initialize(models: try await OfflineDiarizerModels.load(
+                from: directory, configuration: configuration))
         }
+    }
+
+    /// Чем исполнять модели на этой попытке.
+    ///
+    /// `nil` — умолчание библиотеки, то есть то, что работает у всех. Второй
+    /// заход снимает GPU и оставляет нейродвижок с процессором: падает
+    /// `MLE5Engine` на пути BNNS/CPU, и это единственный рычаг, который у нас
+    /// есть, не форкая FluidAudio. **Догадка, не замер** — машины с macOS 14 у
+    /// нас нет. Стоит она ровно одну попытку: не поможет — счётчик дойдёт до
+    /// предела и кластеризация выключится сама.
+    private static func engineConfiguration(for plan: DiarizerAttempts.Plan) -> MLModelConfiguration? {
+        guard plan == .alternateEngine else { return nil }
+        let configuration = MLModelConfiguration()
+        configuration.computeUnits = .cpuAndNeuralEngine
+        NSLog("[TranscriptionService] прошлая диаризация убила процесс — пробую .cpuAndNeuralEngine")
+        Analytics.signal("Diarize.retryAlternateEngine")
+        return configuration
     }
 
     // MARK: - Setup
