@@ -17,6 +17,12 @@ import Foundation
 /// Deliberately the *core* list, not `hotwords-full.txt`: gigastt boosts
 /// hotwords across the whole stream, and a longer list starts pulling false
 /// positives on similar-sounding ordinary words (лид/лит, шот/шёл, тап/там).
+///
+/// That risk is now audited rather than assumed (`vocab/mine.py --audit`): a
+/// short term whose phonetic signature collides with a *frequent ordinary word*
+/// is a landmine. «нид» and «эдит» were removed 2026-08-12 — neither was spoken
+/// once across 57 meetings, and they sit on top of «нет» (292 occurrences) and
+/// «идёт» (25). A hotword with nothing to fix can still break something.
 public enum BuiltinHotwords {
     public static let terms: [String] = [
         "дейлик", "дейлики", "пречек", "синк", "синки", "синкануться",
@@ -34,7 +40,7 @@ public enum BuiltinHotwords {
         "юзер", "юзать", "фрейм", "фреймы", "ваерфрейм", "варфреймы",
         "протик", "протики", "мокап", "лейаут", "грид", "таббар",
         "скролл", "свайп", "тап", "стейт", "стейты", "кейвижи",
-        "лукэндфил", "лук энд фил", "шот", "шоты", "эдит", "редачить",
+        "лукэндфил", "лук энд фил", "шот", "шоты", "редачить",
         "дотюнить", "тюнить", "потюнить", "фиксить", "пофиксить", "фикс",
         "апрувнул", "шер", "шерить", "пошерить", "шеринг", "шерабельный",
         "шерабилити", "шер-экран", "онбординг", "лендинг", "лендос", "диджитал",
@@ -56,7 +62,7 @@ public enum BuiltinHotwords {
         "зум-ин", "фигма", "фигме", "фигму", "мобин", "беханс",
         "дрибл", "фреймер", "вебфлоу", "манус", "тильда", "рилсы",
         "сторис", "впн", "инет", "мейби", "сейм", "литералли",
-        "энивей", "тугеза", "нид", "гайз", "гайс", "велком",
+        "энивей", "тугеза", "гайз", "гайс", "велком",
         "йес", "йеп", "йоу", "гуд", "кул", "изи",
         "крейзи", "кринж", "кринжово", "вайб", "вайбик", "вайбово",
         "чилл", "комбо", "имба", "имхо", "кмк", "офк",

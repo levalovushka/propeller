@@ -109,12 +109,51 @@ def vocabulary() -> dict[str, str]:
     return known
 
 
+def audit(freq: collections.Counter, known: dict[str, str]) -> int:
+    """Какие горячие слова опаснее, чем полезны.
+
+    Смещение работает по всему потоку, поэтому короткий термин, звучащий как
+    частое обычное слово, перетягивает на себя чужую речь. Замерено: «Кикс» из
+    списка превратил «диплинки» в «диплин Кикс». Термин, который вдобавок не
+    звучал ни разу, — чистый вред, и его место в этом отчёте, а не в словаре.
+    """
+    by_sig: dict[str, list[tuple[int, str]]] = collections.defaultdict(list)
+    for word, count in freq.items():
+        by_sig[signature(word)].append((count, word))
+
+    risky = []
+    for term, origin in known.items():
+        if origin != "core" or len(term) > 5:
+            continue
+        clash = [(n, w) for n, w in by_sig.get(signature(term), []) if w != term and n >= 5]
+        if clash:
+            risky.append((max(n for n, _ in clash), term, sorted(clash, reverse=True)[:3]))
+
+    ordinary = set()
+    flat = [w for _, _, clash in risky for _, w in clash]
+    foreign = not_russian(flat)
+    ordinary = {w for w in flat if w not in foreign}   # прошло проверку = обычное слово
+
+    print("=== ГОРЯЧИЕ СЛОВА, КОТОРЫЕ ПЕРЕТЯГИВАЮТ ОБЫЧНУЮ РЕЧЬ")
+    print(f"{'термин':12}{'звучал':>8}   сталкивается с")
+    for _, term, clash in sorted(risky, reverse=True):
+        hits = [(n, w) for n, w in clash if w in ordinary]
+        if not hits:
+            continue
+        heard = freq.get(term.lower(), 0)
+        verdict = "  ← ни разу не звучал, чистый вред" if heard == 0 else ""
+        print(f"  {term:12}{heard:>6}   " + ", ".join(f"{w}×{n}" for n, w in hits) + verdict)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--min", type=int, default=3, help="порог частоты кандидата")
     ap.add_argument("--source", choices=["transcripts", "recaps"], default="transcripts",
                     help="расшифровки (горячие слова) или конспекты (TermCanon)")
     ap.add_argument("--limit", type=int, default=80, help="сколько кандидатов показать")
+    ap.add_argument("--audit", action="store_true",
+                    help="искать не новые слова, а вредные: термины, которые перетягивают обычную речь")
     args = ap.parse_args()
 
     freq = corpus_words(args.source)
@@ -122,6 +161,9 @@ def main() -> int:
     if not freq:
         print(f"нет расшифровок в {MEETINGS}")
         return 1
+
+    if args.audit:
+        return audit(freq, known)
 
     by_signature: dict[str, set[str]] = collections.defaultdict(set)
     for word in freq:
