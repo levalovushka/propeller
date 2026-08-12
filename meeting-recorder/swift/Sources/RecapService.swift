@@ -305,10 +305,17 @@ actor RecapService {
                 numCtx: effectiveWindow, prefs: prefs
             )
 
+            // Выдуманный ответственный и выдуманный срок вырезаются здесь, а не
+            // просятся у редактора: редактор исполняет треть адресов, и на
+            // решётке моделей (`tools/recap-lab`, 2026-08-12) исполнитель-призрак
+            // пережил редактуру в каждом прогоне. Всё, что можно снять без
+            // модели, снимается без модели.
+            let grounded = RecapLint.grounded(edited, transcript: trimmed)
+
             // Термины канонизируются здесь, а не промптом: модель не может
             // починить то, чего не видела — в транскрипте уже стоит «майплайн».
             // Правится только конспект; транскрипт остаётся как сказано.
-            let cleaned = TermCanon.normalize(edited)
+            let cleaned = TermCanon.normalize(grounded)
             guard !cleaned.isEmpty else { throw RecapError.emptyResponse }
 
             let body = wrapRecapDocument(

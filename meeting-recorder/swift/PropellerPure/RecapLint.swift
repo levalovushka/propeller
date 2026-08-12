@@ -27,6 +27,11 @@ public enum RecapLint {
         case imperative
         /// «(срок: ~6 дней)» — арифметика вместо того, что прозвучало.
         case computedDeadline
+        /// «подготовить макет к 20:34 текущего дня встречи». Таймкод реплики,
+        /// прочитанный как срок. Отдельный вид, потому что `unspokenDeadline`
+        /// его не видит: «20:34» в транскрипте есть — это метка времени.
+        /// Замерено на qwen3.5:9b (`tools/recap-lab`, 2026-08-12).
+        case timecodeDeadline
         case passive
         case clerical
         case filler
@@ -80,8 +85,12 @@ public enum RecapLint {
     /// встрече не было никаких «сторонников» — было двое людей с именами.
     /// Ловится только в связке с глаголом договорённости: «участники» само по
     /// себе — обычное слово.
+    ///
+    /// Падеж и список глаголов расширены 2026-08-12: замер поймал «Сторонники
+    /// **пришли** к консенсусу» и «Сторонник**ам** поручено» — обе прошли мимо,
+    /// потому что проверка знала только именительный падеж и восемь глаголов.
     private static let inventedActor =
-        #"\b(Сторонник\w*|Сторон[ыа]|Участники|Коллеги|Команда|Стейкхолдер\w*)\s+(?:соглас\w+|отказ\w+|реши\w+|договор\w+|подтверд\w+|дообуч\w+|переда\w+|определи\w+)"#
+        #"\b(Сторонник\w*|Сторон[ыа]|Участник[иа]м?|Коллег[иа]м?|Команд[аеы]|Стейкхолдер\w*)\s+(?:соглас\w+|отказ\w+|реши\w+|договор\w+|подтверд\w+|дообуч\w+|переда\w+|определи\w+|пришл\w+|поручен\w*|назначен\w*|обязан\w*)"#
 
     /// Срок, посчитанный в днях или неделях. На встрече говорят «к пятнице» или
     /// «сегодня к шести»; «~6 дней» и «в течение 2 недель» — это арифметика
@@ -94,9 +103,33 @@ public enum RecapLint {
     private static let ghostOwner = [
         // Псевдо-ответственный имеет смысл только в начале пункта: «команда» в
         // середине фразы — обычное слово.
-        #"(?m)^\s*-\s*\*{0,2}(Система|Команда|Участник|Все|Разработка)\b"#,
+        #"(?m)^\s*-\s*\*{0,2}(Система|Команда|Участник|Все|Разработка|Спикер\s*S?\d+|Speaker\s*S?\d+)\b"#,
         #"(неявный ответственн\w*|участник с ответственностью|или участник)"#,
     ]
+
+    /// Тот же псевдо-ответственный, но целиком — вместе с хвостом вроде
+    /// «дизайна VK Музыка», и вместе с тире, которое его отделяет. Нужен, чтобы
+    /// не только найти, но и вырезать: `grounded(_:transcript:)`.
+    ///
+    /// «Спикер S1» в этом списке не случайно: дай слабой модели транскрипт, где
+    /// 58 % реплик безымянны, и она подписывает задачу меткой диаризации
+    /// (замерено на qwen2.5:7b). Метка — не человек.
+    private static let ghostOwnerHead =
+        #"(?m)^(\s*-\s+)\*{0,2}(?:Система|Команда(?:\s+[^\-–—*\n(]{1,40})?|Участник(?:\s+[^\-–—*\n(]{1,40})?|Все|Разработка|Спикер\s*S?\d+|Speaker\s*S?\d+)\*{0,2}\s*[—–-]\s*"#
+
+    /// «**Команда дизайна (Левон)** — убрать подстрочники» → «**Левон** —».
+    ///
+    /// Взято из реального прогона. Снести такой заголовок целиком значило бы
+    /// выбросить единственное живое имя в пункте: скобка — это то, что модель
+    /// про ответственного всё-таки знала. Поэтому призрак уходит, а скобка
+    /// занимает его место.
+    private static let ghostOwnerWithNames =
+        #"(?m)^(\s*-\s+)\*{0,2}(?:Система|Команда|Участник|Разработка)[^*\n(]{0,40}\(([^)\n]{1,60})\)\*{0,2}(\s*[—–-]\s*)"#
+
+    /// Срок, собранный из таймкода реплики: «к 20:34 текущего дня встречи».
+    /// Хвост перечислён, а не взят жадно: `[^\n]*` съедал остаток пункта.
+    private static let timecodeDeadline =
+        #"к\s+\d{1,2}:\d{2}(?:\s+(?:текущего|того|этого)\s+дня(?:\s+встречи)?)?"#
 
     private static let imperative =
         #"(?m)(?:^\s*-\s*|^|—\s+|:\s+)\*{0,2}([А-ЯЁа-яё]{4,}(?:йте|ьте|ните|шите|дите))\b"#
@@ -139,6 +172,7 @@ public enum RecapLint {
             found.append(Finding(kind: .inventedActor, text: quote))
         }
         found += matches(computedDeadline, in: body).map { Finding(kind: .computedDeadline, text: $0) }
+        found += matches(timecodeDeadline, in: body).map { Finding(kind: .timecodeDeadline, text: $0) }
         for quote in matches(imperative, in: body, group: 1) {
             found.append(Finding(kind: .imperative, text: quote))
         }
@@ -158,6 +192,108 @@ public enum RecapLint {
             }
         }
         return found
+    }
+
+    // MARK: - Вырезка того, чего не было
+
+    /// Убрать из конспекта выдуманного ответственного и выдуманный срок — без
+    /// модели, целиком и всегда.
+    ///
+    /// Почему не поручить это редактору, которому и так отдаются адреса: он
+    /// исполняет треть. Замер по восьми встречам — 49 находок из 153; замер
+    /// 2026-08-12 по решётке моделей — исполнитель-призрак стоит **в каждом**
+    /// прогоне qwen3.5:9b, притом что находка редактору отдавалась. Правило,
+    /// которое исполняется через раз, — не правило, а пожелание, и здесь оно
+    /// стоит дороже прочих: пункт «**Команда дизайна** — доработать» читается
+    /// как назначение и не называет никого, а «**Саша** — доработать» называет
+    /// живого человека, который этого не брал.
+    ///
+    /// Что осталось редактору: наклонение, пассив, канцелярит, длина. Их нельзя
+    /// вырезать — их надо переписать, а переписывать умеет только модель.
+    ///
+    /// **Форму не трогает.** Строк, пунктов и секций после вызова ровно столько
+    /// же: `polished(...)` сравнивает `shape` до и после, и сдвиг формы здесь
+    /// прочитался бы как потеря содержания.
+    public static func grounded(_ recap: String, transcript: String) -> String {
+        let haystack = normalized(transcript)
+        var lines = recap.components(separatedBy: "\n")
+
+        for index in lines.indices {
+            let line = lines[index]
+            guard line.trimmingCharacters(in: .whitespaces).hasPrefix("- ") else { continue }
+
+            // Сначала имя из скобки: иначе следующее правило снесло бы пункт
+            // вместе с ним.
+            var edited = line.replacingOccurrences(
+                of: ghostOwnerWithNames, with: "$1**$2**$3",
+                options: [.regularExpression, .caseInsensitive]
+            )
+
+            // Пункт остаётся, исполнитель уходит: «- **Команда** — сделать X»
+            // превращается в «- Сделать X», а не исчезает. Задача без
+            // ответственного — правда; задача с выдуманным — ложь.
+            let withoutGhost = edited.replacingOccurrences(
+                of: ghostOwnerHead, with: "$1", options: [.regularExpression, .caseInsensitive]
+            )
+            if withoutGhost != edited {
+                edited = capitalizingBulletText(withoutGhost)
+            }
+
+            for pattern in [computedDeadline, timecodeDeadline] {
+                edited = strippingDeadline(pattern, from: edited)
+            }
+            for deadline in deadlines where !haystack.contains(deadline.stem) {
+                edited = strippingDeadline(deadline.phrase, from: edited)
+            }
+
+            lines[index] = tidied(edited)
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Убрать срок вместе с обёрткой, в которой он стоит: «(срок: …)»,
+    /// «— **к пятнице**», «, к пятнице». Голая замена на пустую строку
+    /// оставляла за собой висящее тире и двойные пробелы.
+    private static func strippingDeadline(_ phrase: String, from line: String) -> String {
+        // Скобки вокруг альтернатив обязательны: у `computedDeadline` внутри
+        // свой `|`, и без них обёртка склеивалась с соседним куском строки.
+        let stem = #"(?:"# + phrase + #")"#
+        // Предлог отдельно от корня: сроки в словаре — корни («пятниц»), а в
+        // тексте стоит «к пятнице». Без этого вырезалось «пятниц», и в пункте
+        // оставалось «— **ке**».
+        let phrased = #"\*{0,2}(?:срок:?\s*)?(?:к|ко|до|на|в)?\s*\w*"# + stem + #"\w*\*{0,2}"#
+        let wrapped = [
+            // Скобка целиком: «(срок: ~6 дней)» — иначе оставались пустые «()».
+            #"\s*\([^)\n]*"# + stem + #"[^)\n]*\)"#,
+            #"\s*[—–-]\s*"# + phrased,
+            #"[,;]?\s+"# + phrased,
+        ]
+        for pattern in wrapped {
+            let cut = line.replacingOccurrences(
+                of: pattern, with: "", options: [.regularExpression, .caseInsensitive]
+            )
+            if cut != line { return cut }
+        }
+        return line
+    }
+
+    /// «- сделать X» → «- Сделать X». После снятия ответственного пункт
+    /// начинается со строчной, и это видно.
+    private static func capitalizingBulletText(_ line: String) -> String {
+        guard let dash = line.firstIndex(of: "-") else { return line }
+        let afterDash = line.index(after: dash)
+        guard let first = line[afterDash...].firstIndex(where: { !$0.isWhitespace }) else { return line }
+        return String(line[..<first]) + line[first].uppercased() + String(line[line.index(after: first)...])
+    }
+
+    /// Хвосты, которые остаются после вырезки: двойные пробелы, пробел перед
+    /// точкой, повисшее тире в конце пункта.
+    private static func tidied(_ line: String) -> String {
+        line
+            .replacingOccurrences(of: #" {2,}"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+([.,;])"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: #"\s*[—–-]\s*$"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+$"#, with: "", options: .regularExpression)
     }
 
     /// Из чего состоит конспект: заголовки секций и число пунктов.
@@ -237,6 +373,8 @@ public enum RecapLint {
             return "«\(finding.text)» — такого участника на встрече не было: в исправленном тексте здесь «Договорились…» или имя, которое звучало"
         case .computedDeadline:
             return "срок «\(finding.text)» посчитан, а не назван: в исправленном тексте срока нет, задача осталась"
+        case .timecodeDeadline:
+            return "«\(finding.text)» — это таймкод реплики, а не срок: в исправленном тексте срока нет, задача осталась"
         case .imperative:
             return "«\(finding.text)» — приказ читателю: в исправленном тексте здесь рассказ о том, что было"
         case .passive:

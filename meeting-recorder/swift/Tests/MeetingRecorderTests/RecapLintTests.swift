@@ -172,4 +172,96 @@ final class RecapLintTests: XCTestCase {
         XCTAssertEqual(kinds("- Левон готовит доки (срок: ~6 дней)."), [.computedDeadline])
         XCTAssertEqual(kinds("- Иконки в течение 2 недель."), [.computedDeadline])
     }
+
+    /// Замер по решётке моделей (`tools/recap-lab`, 2026-08-12): 9B прочитала
+    /// метку времени реплики как дедлайн. `unspokenDeadline` тут бессилен —
+    /// «20:34» в транскрипте есть, это таймкод.
+    func testТаймкодПрочитанныйКакСрок() {
+        let recap = "## Задачи\n- **Левон** — подготовить макет к 20:34 текущего дня встречи.\n"
+        let transcript = "**Левон** · 20:34\nДавайте сделаем ещё одну итерацию.\n"
+        XCTAssertTrue(kinds(recap, transcript: transcript).contains(.timecodeDeadline))
+    }
+
+    /// Обе формы прошли мимо старой проверки: она знала только именительный
+    /// падеж и восемь глаголов.
+    func testСторонникиВДругомПадежеИСДругимГлаголом() {
+        XCTAssertTrue(kinds("- Сторонники пришли к консенсусу по главной.").contains(.inventedActor))
+        XCTAssertTrue(kinds("- Сторонникам поручено сделать итерацию.").contains(.inventedActor))
+    }
+
+    // MARK: - Вырезка
+
+    /// Задача остаётся, выдуманный исполнитель уходит. Пунктов столько же:
+    /// `polished(...)` читает изменение формы как потерю содержания.
+    func testПризрачныйИсполнительУходитАЗадачаОстаётся() {
+        let recap = "## Задачи\n- **Команда дизайна VK Музыка** — доработать плашки.\n"
+        let grounded = RecapLint.grounded(recap, transcript: "")
+        XCTAssertEqual(grounded, "## Задачи\n- Доработать плашки.\n")
+        XCTAssertEqual(RecapLint.shape(of: grounded).bullets, RecapLint.shape(of: recap).bullets)
+    }
+
+    /// Метка диаризации — не человек. qwen2.5:7b подписала ею задачу.
+    func testМеткаСпикераНеСчитаетсяИсполнителем() {
+        XCTAssertEqual(
+            RecapLint.grounded("- **Спикер S1** — доработать текстовое описание.", transcript: ""),
+            "- Доработать текстовое описание."
+        )
+    }
+
+    /// Живого человека вырезка не трогает — иначе она стирала бы правду.
+    func testНастоящийИсполнительОстаётся() {
+        let recap = "- **Левон** — подготовить макеты."
+        XCTAssertEqual(RecapLint.grounded(recap, transcript: ""), recap)
+    }
+
+    func testВыдуманныйСрокУходитВместеСТире() {
+        let recap = "- **Левон** — прислать доки — **к пятнице**."
+        let transcript = "**Левон** · 00:10\nПришлю, как соберу.\n"
+        XCTAssertEqual(RecapLint.grounded(recap, transcript: transcript), "- **Левон** — прислать доки.")
+    }
+
+    func testНазванныйСрокНеВырезается() {
+        let recap = "- **Левон** — прислать доки к пятнице."
+        let transcript = "**Левон** · 00:10\nДавай к пятнице пришлю.\n"
+        XCTAssertEqual(RecapLint.grounded(recap, transcript: transcript), recap)
+    }
+
+    func testПосчитанныйСрокУходитВместеСоСкобками() {
+        XCTAssertEqual(
+            RecapLint.grounded("- Левон готовит доки (срок: ~6 дней).", transcript: ""),
+            "- Левон готовит доки."
+        )
+    }
+
+    /// Скобка с именем — единственное, что модель про ответственного знала.
+    /// Снести заголовок целиком значило бы выбросить его вместе с призраком.
+    func testИмяИзСкобкиСтановитсяОтветственным() {
+        XCTAssertEqual(
+            RecapLint.grounded("- **Команда дизайна (Левон)** — убрать подстрочники.", transcript: ""),
+            "- **Левон** — убрать подстрочники."
+        )
+    }
+
+    /// Дословно из прогонов решётки (`tools/recap-lab`, 2026-08-12): четыре
+    /// модели, четыре разных призрака, ни одного живого имени.
+    func testПризракиИзРеальныхПрогонов() {
+        let lines = [
+            "- **Speaker S1** — доработать макет главной страницы.",
+            "- **Команда VK Музыка** — подготовить концепцию отображения потоков.",
+            "- **Команда PG x VK Музыка** — реализовать облегчённый рич-текст.",
+            "- **Команда дизайна** — доработать форму отображения кластеров.",
+        ]
+        for line in lines {
+            let grounded = RecapLint.grounded(line, transcript: "")
+            XCTAssertFalse(grounded.contains("**"), "исполнитель остался: \(grounded)")
+            XCTAssertTrue(grounded.hasPrefix("- "), "пункт потерян: \(grounded)")
+        }
+    }
+
+    /// Вырезка работает только по пунктам: прозаические секции («Итог», «Ход
+    /// обсуждения») она не трогает, там нет назначений.
+    func testПрозаНеТрогается() {
+        let prose = "## Итог\nКоманда договорилась о трёх уровнях к 20:34.\n"
+        XCTAssertEqual(RecapLint.grounded(prose, transcript: ""), prose)
+    }
 }
