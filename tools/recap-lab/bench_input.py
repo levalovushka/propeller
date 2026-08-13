@@ -50,6 +50,7 @@ def main() -> int:
     ap.add_argument("--dump", action="store_true", help="только записать system.txt/user.txt")
     ap.add_argument("--ollama", action="store_true", help="прогнать через локальную модель")
     ap.add_argument("--model", default=MODEL)
+    ap.add_argument("--temperature", type=float, default=0.2)
     args = ap.parse_args()
 
     drift = p.check_context_constants()
@@ -69,7 +70,8 @@ def main() -> int:
 
     if args.ollama:
         started = time.time()
-        raw, stats = p.call_ollama(args.model, system, user)
+        raw, stats = p.call_ollama(args.model, system, user, temperature=args.temperature,
+                                   min_reply_tokens=p.REPLY_TOKENS_FLOOR['recap'])
         body = p.strip_code_fences(raw)
         (out / "recap.md").write_text(body + "\n", encoding="utf-8")
         (out / "stats.json").write_text(

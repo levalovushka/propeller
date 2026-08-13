@@ -76,7 +76,8 @@ def split_on_turns(transcript: str, limit: int = CHUNK_CHARACTERS) -> list[str]:
 
 def extract(model: str, piece: str, index: int, total: int) -> str | None:
     user = f"Фрагмент {index} из {total}.\n\n{piece}"
-    raw, _ = p.call_ollama(model, EXTRACT_PROMPT + p.language_lock(), user)
+    raw, _ = p.call_ollama(model, EXTRACT_PROMPT + p.language_lock(), user,
+                           min_reply_tokens=p.REPLY_TOKENS_FLOOR['facts'])
     text = p.strip_code_fences(raw).strip()
     return None if not text or text.upper().startswith("ПУСТО") else text
 
@@ -90,13 +91,15 @@ def main() -> int:
     ap.add_argument("--model", default=runner.MODEL)
     ap.add_argument("--chunk", type=int, default=CHUNK_CHARACTERS,
                     help="символов на фрагмент")
+    ap.add_argument("--meeting", default=None,
+                    help="встреча вне corpus.txt — свип нарезки меряется на размеченной встрече")
     args = ap.parse_args()
 
     system = p.system_prompt(args.variant)
     out_dir = HERE / "out" / (args.out or f"{args.variant}-chunked")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    for meeting in runner.corpus():
+    for meeting in ([args.meeting] if args.meeting else runner.corpus()):
         if args.only and args.only not in meeting:
             continue
         title, markdown = p.transcript(meeting)
@@ -136,7 +139,8 @@ def main() -> int:
             "",
             "Ответь строго на русском языке.",
         ])
-        raw, stats = p.call_ollama(args.model, system, user)
+        raw, stats = p.call_ollama(args.model, system, user,
+                                   min_reply_tokens=p.REPLY_TOKENS_FLOOR['recap'])
         body = p.strip_code_fences(raw)
         (out_dir / f"{meeting}.md").write_text(body + "\n", encoding="utf-8")
         (out_dir / f"{meeting}.json").write_text(json.dumps({

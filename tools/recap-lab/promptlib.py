@@ -117,33 +117,71 @@ def shipped_recap(meeting_id: str) -> str | None:
     return matches[0].read_text(encoding="utf-8") if matches else None
 
 
-def call_ollama(model: str, system: str, user: str, timeout: int = 1800) -> tuple[str, dict]:
-    """Same payload shape as `RecapService.callOllama` — think off, temp 0.2, sized window."""
+# Порог «ответ схлопнулся». Найден разбором 2026-08-13: счёт по golden оказался
+# почти функцией длины ответа (r = 0,78 на десяти прогонах «целиком», r = 0,90 на
+# одиннадцати прогонах нарезки), а сами длины двумодальны — при побайтово
+# одинаковом промпте модель отдаёт то ~700–1400 токенов, то 266–465. Короткий
+# ответ — это не «модель так решила», это сорвавшаяся генерация, и она тянет счёт
+# вниз независимо от проверяемой гипотезы.
+REPLY_TOKENS_FLOOR = {"recap": 800, "facts": 600}
+
+
+def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
+                temperature: float = 0.2,
+                min_reply_tokens: int | None = None) -> tuple[str, dict]:
+    """Same payload shape as `RecapService.callOllama` — think off, temp 0.2, sized window.
+
+    `min_reply_tokens` перегенерирует ответ **один раз**, если он схлопнулся.
+    Один, а не до победного: цикл превратил бы замер в отбор счастливых прогонов.
+    Длина обоих попыток уходит в `stats`, чтобы схлопывание было видно в таблице,
+    а не пряталось в среднем.
+    """
     ctx = num_ctx(len(system) + len(user))
     payload = {
         "model": model,
         "stream": False,
         "keep_alive": 90,
         "think": False,
-        "options": {"num_ctx": ctx, "temperature": 0.2},
+        "options": {"num_ctx": ctx, "temperature": temperature},
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
     }
-    req = urllib.request.Request(
-        "http://127.0.0.1:11434/api/chat",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        body = json.loads(response.read().decode("utf-8"))
-    content = (body.get("message") or {}).get("content", "")
+    def once() -> tuple[str, int, float, int]:
+        req = urllib.request.Request(
+            "http://127.0.0.1:11434/api/chat",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        return (
+            (body.get("message") or {}).get("content", ""),
+            body.get("eval_count") or 0,
+            round((body.get("total_duration") or 0) / 1e9, 1),
+            body.get("prompt_eval_count") or 0,
+        )
+
+    content, reply_tokens, seconds, prompt_tokens = once()
+    first_reply_tokens, retried = reply_tokens, False
+    if min_reply_tokens and reply_tokens < min_reply_tokens:
+        retried = True
+        second, second_tokens, second_seconds, _ = once()
+        seconds += second_seconds
+        # Берётся длинный из двух, а не второй: вторая попытка тоже может
+        # сорваться, и тогда менять один огрызок на другой — потеря без выигрыша.
+        if second_tokens > reply_tokens:
+            content, reply_tokens = second, second_tokens
+
     stats = {
         "num_ctx": ctx,
-        "prompt_tokens": body.get("prompt_eval_count"),
-        "reply_tokens": body.get("eval_count"),
-        "seconds": round((body.get("total_duration") or 0) / 1e9, 1),
+        "prompt_tokens": prompt_tokens,
+        "reply_tokens": reply_tokens,
+        "first_reply_tokens": first_reply_tokens,
+        "retried": retried,
+        "collapsed": bool(min_reply_tokens and reply_tokens < min_reply_tokens),
+        "seconds": seconds,
         "truncated": exceeds_largest_window(len(system) + len(user)),
     }
     return content, stats
