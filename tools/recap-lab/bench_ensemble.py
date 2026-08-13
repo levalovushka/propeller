@@ -400,6 +400,41 @@ def dedup_pass(kept: dict[str, list[str]], branch: dict[str, list[str]], model: 
     return calls, listing + "\n\nОТВЕТ:\n" + reply.strip()
 
 
+def lint_density(items: dict[str, list[str]], transcript: str) -> float:
+    """Находок заземления на буллет ветки."""
+    bullets = [(s, t) for s in SECTIONS for t in items.get(s, [])]
+    if not bullets:
+        return float("inf")
+    return sum(1 for s, t in bullets if ungrounded(t, s, transcript)) / len(bullets)
+
+
+def choose_draft_index(branches: list[dict], names: list[str], transcript: str) -> int:
+    """Какая ветка «целиком» становится неприкосновенным черновиком.
+
+    Политика `clean`, принятая 2026-08-13 после гейта №1: берётся ветка с **меньшей
+    плотностью выдумок на буллет** среди `t0` и `sample`. Черновик не редактируется
+    никем, поэтому его выдумки доезжают до пользователя целиком — значит выбирать
+    надо по чистоте, а не по жребию.
+
+    Почему не по длине и не по флагу схлопывания: на первой встрече `t0` короткий
+    (519 токенов, ниже порога) и при этом **хороший**, а на третьей короткий и
+    конфабулирующий — «Ильяс» превращается в «Илью Сафронова» и получает задачи.
+    Длина их не различает, плотность выдумок различает: 0,000 против 0,191 на второй
+    встрече (черновик остаётся `t0` во всех восьми прогонах), 0,636 против 0,291 на
+    третьей (во всех восьми меняется на сэмпл), поровну на первой — где выбор и не
+    важен.
+
+    Замер на сохранённых ветках (пять батчей, попарно против политики «всегда t0»):
+    выдумки на третьей встрече 14,9 → 7,2 при том же покрытии, покрытие первой
+    встречи 10,12 → 10,50, вторая встреча без изменений. Ноль новых вызовов: обе
+    ветки и так генерируются.
+    """
+    pool = [i for i, n in enumerate(names) if n in ("t0", "sample")]
+    if not pool:
+        return names.index("t0")
+    return min(pool, key=lambda i: lint_density(branches[i], transcript))
+
+
 def merge_asymmetric(draft: dict[str, list[str]], others: list[dict[str, list[str]]],
                      model: str, transcript: str | None,
                      budget: int = 0, per_candidate: bool = False,
@@ -513,6 +548,8 @@ def main() -> int:
 
     started = time.time()
     branches, names, log, summary, discussion = [], [], [], "", ""
+    prose: dict[str, tuple[str, str]] = {}
+    draft_branch = None
     for name in args.branches.split(","):
         name = name.strip()
         if name in ("t0", "sample"):
@@ -520,11 +557,12 @@ def main() -> int:
             recap, stats = whole_pass(title, markdown, args.model, temperature)
             branches.append(items_from_recap(recap))
             names.append(name)
-            # «Итог» и «Ход обсуждения» — проза, механически не сливаются.
-            # Берутся из детерминированной ветки, чтобы не зависеть от жребия.
-            if name == "t0" or not summary:
-                summary = section_text(recap, "Итог")
-                discussion = section_text(recap, "Ход обсуждения")
+            # «Итог» и «Ход обсуждения» — проза, механически не сливаются, поэтому
+            # берутся целиком из одной ветки. Из **той же, что стала черновиком**:
+            # иначе в документ поедет проза ветки, которую политика забраковала как
+            # грязную, — а «Итог» пользователь читает первым. На метрику это не
+            # влияет (матчер «Итог» пропускает), на продукт влияет.
+            prose[name] = (section_text(recap, "Итог"), section_text(recap, "Ход обсуждения"))
             log.append({"branch": name, "temperature": temperature, **stats})
             (out / f"branch-{len(branches)}-{name}.md").write_text(recap + "\n", encoding="utf-8")
         elif name == "chunks":
@@ -546,8 +584,11 @@ def main() -> int:
         if "t0" not in names:
             print("asym требует ветку t0: она и есть черновик")
             return 1
-        draft = branches[names.index("t0")]
-        others = [b for i, b in enumerate(branches) if i != names.index("t0")]
+        draft_index = choose_draft_index(branches, names, markdown)
+        draft = branches[draft_index]
+        draft_branch = names[draft_index]
+        summary, discussion = prose.get(draft_branch, (summary, discussion))
+        others = [b for i, b in enumerate(branches) if i != draft_index]
         merged, asym = merge_asymmetric(draft, others, args.model, markdown, args.budget,
                                         per_candidate=args.dedup == "asym-one",
                                         use_model=args.dedup != "budget")
@@ -565,6 +606,9 @@ def main() -> int:
         "branches": log,
         "asym": asym,
         "dedup": args.dedup,
+        # Какая ветка стала черновиком: без этого не видно, срабатывала ли политика
+        # выбора и на каких прогонах.
+        "draft_branch": draft_branch,
         "calls": calls,
         "items": {s: len(v) for s, v in merged.items()},
         "seconds": round(time.time() - started, 1),
