@@ -199,6 +199,47 @@ def greedy(additions: list, known: set, room: int, quotas: dict | None = None) -
     return survivors
 
 
+def lint_density(items: dict, transcript: str) -> float:
+    """Находок заземления на буллет. Сигнал выбора черновика, купленный m3.
+
+    Длина для выбора не годится: на первой встрече ветка t=0 короткая (519 токенов,
+    ниже порога) и при этом хорошая, а на третьей короткая и конфабулирующая —
+    «Ильяс» превращается в «Илью Сафронова» и получает задачи. Разделяет их не
+    длина, а плотность выдумок: черновик m3 несёт «Сафронова» пять раз, черновик
+    m1 чист.
+    """
+    bullets = [(s, t) for s in b.SECTIONS for t in items.get(s, [])]
+    if not bullets:
+        return float("inf")
+    found = sum(1 for s, t in bullets if b.ungrounded(t, s, transcript))
+    return found / len(bullets)
+
+
+def choose_draft(branches: dict[str, dict], policy: str, transcript: str) -> tuple[str, dict]:
+    """Какая ветка становится неприкосновенным черновиком.
+
+    `t0`       всегда ветка t=0 — конструкция гейта №1
+    `swap`     при схлопывании t=0 роли меняются: черновиком становится сэмпл,
+               буллеты t=0 уходят в кандидаты. Ноль новых вызовов
+    `clean`    черновик — ветка с наименьшей плотностью находок линта на буллет
+    `longest`  черновик — самая длинная ветка (для сравнения)
+    """
+    t0, sample = branches.get("t0"), branches.get("sample")
+    if policy == "t0" or sample is None:
+        return "t0", t0
+    if policy == "swap":
+        return ("sample", sample) if t0.get("collapsed") else ("t0", t0)
+    if policy == "clean":
+        best = min(("t0", "sample"),
+                   key=lambda n: lint_density(branches[n], transcript))
+        return best, branches[best]
+    if policy == "longest":
+        best = max(("t0", "sample"),
+                   key=lambda n: sum(len(t) for s in b.SECTIONS for t in branches[n].get(s, [])))
+        return best, branches[best]
+    raise SystemExit(f"неизвестная политика черновика: {policy}")
+
+
 def signalled(additions: list, draft: dict, regions: Regions, room: int,
               features: set[str], canon: dict[str, str] | None = None) -> list:
     """Отбор добавок с сигналами: те же кандидаты, другое ранжирование.
