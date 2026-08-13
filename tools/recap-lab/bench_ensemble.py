@@ -75,15 +75,34 @@ def items_from_recap(recap: str) -> dict[str, list[str]]:
 
 
 def items_from_facts(facts: str) -> dict[str, list[str]]:
+    """Разбор двух форм, в которых экстрактор пишет один и тот же список.
+
+    Он выдаёт то `ДОГОВОРИЛИСЬ: раз; два; три` одной строкой, то `ДОГОВОРИЛИСЬ:`
+    и буллеты следом. Первая версия разбора склеивала первую форму в один пункт,
+    а вторую теряла целиком: из двенадцати строк подхватывались шесть, и
+    механическая сборка выглядела вдвое хуже свободной. Это была цена разбора, а
+    не сборки.
+    """
     out = {s: [] for s in SECTIONS + [NARRATIVE]}
-    for line in facts.split("\n"):
-        stripped = re.sub(r"^\s*[-*]\s*", "", line).strip()
-        for label, section in FACT_LABELS.items():
-            if stripped.upper().startswith(label):
-                text = stripped[len(label):].lstrip(":—- ").strip()
-                if text:
-                    out[section].append(text)
-                break
+    current = None
+    for raw in facts.split("\n"):
+        line = raw.strip()
+        if not line or line.upper().startswith("ПУСТО"):
+            continue
+        bullet = re.match(r"^[-*]\s+(.*)$", line)
+        if bullet:
+            if current:
+                out[current].append(bullet.group(1).strip())
+            continue
+        head = next((l for l in FACT_LABELS if line.upper().startswith(l)), None)
+        if head:
+            current = FACT_LABELS[head]
+            body = line[len(head):].lstrip(":—- ").strip()
+            # «раз; два; три» — три пункта, а не один. Точка с запятой здесь
+            # разделитель списка: экстрактору так велено промптом.
+            out[current] += [part.strip() for part in body.split(";") if len(part.strip()) > 15]
+        elif current:
+            out[current].append(line)
     return out
 
 
