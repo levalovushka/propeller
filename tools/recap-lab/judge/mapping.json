@@ -1,0 +1,64 @@
+{
+  "seed": 4029255114412710897,
+  "meetings": {
+    "m1": "20260812_144201",
+    "m2": "20260812_153107",
+    "m3": "20260810_094722"
+  },
+  "cells": {
+    "m1": {
+      "cell-01": "code-8",
+      "cell-02": "code-4",
+      "cell-03": "code-2",
+      "cell-04": "code-7",
+      "cell-05": "base-4",
+      "cell-06": "base-7",
+      "cell-07": "base-2",
+      "cell-08": "code-6",
+      "cell-09": "base-6",
+      "cell-10": "code-5",
+      "cell-11": "base-5",
+      "cell-12": "base-1",
+      "cell-13": "code-3",
+      "cell-14": "base-3",
+      "cell-15": "base-8",
+      "cell-16": "code-1"
+    },
+    "m2": {
+      "cell-01": "base-4",
+      "cell-02": "code-5",
+      "cell-03": "base-6",
+      "cell-04": "base-8",
+      "cell-05": "base-3",
+      "cell-06": "code-1",
+      "cell-07": "base-1",
+      "cell-08": "code-2",
+      "cell-09": "base-2",
+      "cell-10": "base-5",
+      "cell-11": "code-3",
+      "cell-12": "code-7",
+      "cell-13": "code-4",
+      "cell-14": "base-7",
+      "cell-15": "code-8",
+      "cell-16": "code-6"
+    },
+    "m3": {
+      "cell-01": "base-6",
+      "cell-02": "base-2",
+      "cell-03": "base-3",
+      "cell-04": "base-5",
+      "cell-05": "base-1",
+      "cell-06": "base-7",
+      "cell-07": "base-4",
+      "cell-08": "code-1",
+      "cell-09": "code-4",
+      "cell-10": "code-7",
+      "cell-11": "code-6",
+      "cell-12": "code-3",
+      "cell-13": "base-8",
+      "cell-14": "code-5",
+      "cell-15": "code-2",
+      "cell-16": "code-8"
+    }
+  }
+}
