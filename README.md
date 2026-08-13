@@ -26,8 +26,8 @@ open -a Propeller
 | `design/` | UI spec, the principles list, state gallery, «no dead ends» |
 | `tools/` | `gigastt` + models (not in git), Ollama runtime, echo and live-transcript probes |
 | `product-ideas.md` | Idea / decision ledger (killed / deferred with reasons) |
-| `archive/` | Decision history — `plan-v1.md`, `plan-v2.md`, `plan-optimization.md`, `plan-testing-metrics.md`, `release-review.md`, migration brief, phase status notes. Superseded by `STATE.md` wherever they disagree. |
-| `phase0`–`phase6/` | Phase validation artifacts (models/WAVs not in git) |
+| `archive/` | Decision history — plans, reviews, migration brief, phase status notes, retired docs. Superseded by `STATE.md` wherever they disagree. |
+| `DOCS.md` | Documentation layers and rules: what goes where |
 | `propellericon.icon` | App icon (Icon Composer) |
 
 **Source of truth: [`STATE.md`](STATE.md)** — component-by-component status and open defects. When any other document disagrees with it, `STATE.md` wins.

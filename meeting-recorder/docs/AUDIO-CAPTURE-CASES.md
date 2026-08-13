@@ -6,7 +6,7 @@
 за раз.
 
 Замеры, на которые он опирается: [ECHO_AND_MIX_EXPERIMENTS.md](ECHO_AND_MIX_EXPERIMENTS.md)
-(эхо, сдвиг стемов, некогерентность) и [SYSTEM_AUDIO_CAPTURE_EXPERIMENTS.md](SYSTEM_AUDIO_CAPTURE_EXPERIMENTS.md)
+(эхо, сдвиг стемов, некогерентность) и [SYSTEM_AUDIO_CAPTURE_EXPERIMENTS.md](../../archive/SYSTEM_AUDIO_CAPTURE_EXPERIMENTS.md)
 (история с Process Tap и аудит стемов).
 
 ---

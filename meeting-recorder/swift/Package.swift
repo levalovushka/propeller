@@ -6,7 +6,7 @@ let package = Package(
     // 14.4, а не 14.0: захват держится на `AudioHardwareCreateProcessTap`,
     // которого раньше нет. Запасного пути на ScreenCaptureKit больше не
     // существует — он был удалён вместе с этим подъёмом, сознательно
-    // (см. docs/PLAN-CAPTURE-AND-LIVE.md).
+    // (см. archive/PLAN-CAPTURE-AND-LIVE.md).
     platforms: [.macOS("14.4")],
     products: [
         // Exposed as a product so Xcode generates a standalone scheme —
