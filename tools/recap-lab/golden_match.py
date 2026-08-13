@@ -10,12 +10,19 @@
 находил бы всё подряд.
 
 Матчер не заменяет разметку, он её **воспроизводит**: `--calibrate` сверяет его
-с 84 оценками, проставленными вручную по шести ячейкам встречи 20260812_144201.
-Пока сверка не сходится, числам матчера верить нельзя — и он об этом говорит.
+с ручными оценками. Правило действует на **обе** размеченные встречи — пока
+сверка не сходится, числам матчера верить нельзя, и он об этом говорит.
+
+    20260812_144201 — 84 оценки по шести ячейкам, совпадение 100 % (якоря
+                      доводились тремя итерациями)
+    20260812_153107 — 48 оценок по трём ячейкам, совпадение 96 % **без единой
+                      подгонки**. Это и есть проверка на оверфит: метод, а не
+                      якоря, переносится на другой жанр встречи
 
     python3 golden_match.py --calibrate
+    python3 golden_match.py --calibrate --meeting 20260812_153107
     python3 golden_match.py out/bench/A/recap.md
-    python3 golden_match.py --dir out/sweep-13k
+    python3 golden_match.py --dir out/ens --meeting 20260812_153107
 """
 
 from __future__ import annotations
@@ -100,9 +107,7 @@ ANCHORS_153107: dict[str, list[list[str]]] = {
     "Q2": [["меикап-каталог"], ["отделить", "каталог"], ["меикап", "уходов", "отдел"]],
 }
 
-MEETINGS = {"20260812_144201": ANCHORS_144201, "20260812_153107": ANCHORS_153107}
-ANCHORS = ANCHORS_144201
-ITEMS = list(ANCHORS)
+
 
 # Ручная разметка: 1 — пункт в конспекте есть (в таблице `+` или `~`), 0 — нет.
 # Отсюда матчер и проверяется; менять эти числа можно только **перечитав
@@ -117,7 +122,7 @@ ITEMS = list(ANCHORS)
 #   e/D2 — стояла 1 по «Итогу», а он пересказ. Отсюда общее правило разметки:
 #          **пункт засчитывается только вне «Итога»**. Иначе конспект, который
 #          ничего не разобрал, но бойко пересказал, получает те же баллы.
-HAND: dict[str, dict[str, int]] = {
+HAND_144201: dict[str, dict[str, int]] = {
     #        4b 7b 9b son 4b+ son+
     "D1": dict(zip("abcdef", [0, 0, 1, 1, 0, 1])),
     "D2": dict(zip("abcdef", [1, 1, 1, 1, 0, 1])),
@@ -135,7 +140,7 @@ HAND: dict[str, dict[str, int]] = {
     "Q3": dict(zip("abcdef", [0, 1, 1, 1, 1, 1])),
 }
 
-HAND_CELLS = {
+HAND_CELLS_144201 = {
     "a": ("out/bench/A/recap.md", "qwen3.5:4b"),
     "b": ("out/bench/7b-raw-a/recap.md", "qwen2.5:7b"),
     "c": ("out/bench/9b-raw-a/recap.md", "qwen3.5:9b"),
@@ -143,6 +148,56 @@ HAND_CELLS = {
     "e": ("out/bench/C/recap.md", "qwen3.5:4b чинёный"),
     "f": ("out/bench/D/recap.md", "sonnet чинёный"),
 }
+
+
+# Вторая встреча. Разметка по тем же правилам: 1 — пункт есть вне «Итога».
+# Расхождения матчера, документируются наравне с первой встречей:
+#
+#   a/T1 — матчер 1, рука 0. Якорь `12:30` ловит упоминание времени завтрашней
+#          встречи, а задача golden — про черновик к 10:00 и добавление Оли;
+#          у 4B её нет, есть только «прислать цифры до встречи в 12:30».
+#   a/Q1 — матчер 1, рука 0. Якорь `акци` срабатывает на «в референсах нет
+#          информации о продуктовой логике (акции, новинки)» — это про полноту
+#          референсов, а не про то, куда девать карусель акций.
+#
+# Оба — переоценка, и оба оставлены как есть: подгонять якоря после того, как
+# увидел расхождение, значит ровно тот оверфит, ради проверки на который эта
+# встреча и размечена. 46 из 48 — число **до** подгонки, и оно и стоит в доске.
+HAND_153107: dict[str, dict[str, int]] = {
+    #         4b son 9b
+    "D1":  dict(zip("abc", [1, 1, 1])),
+    "D2":  dict(zip("abc", [0, 1, 1])),
+    "D3":  dict(zip("abc", [1, 1, 1])),
+    "D4":  dict(zip("abc", [0, 1, 0])),
+    "D5":  dict(zip("abc", [1, 1, 1])),
+    "D6":  dict(zip("abc", [1, 1, 1])),
+    "D7":  dict(zip("abc", [1, 1, 1])),
+    "D8":  dict(zip("abc", [1, 1, 1])),
+    "D9":  dict(zip("abc", [1, 1, 1])),
+    "D10": dict(zip("abc", [1, 1, 1])),
+    "D11": dict(zip("abc", [1, 1, 1])),
+    "D12": dict(zip("abc", [1, 1, 1])),
+    "T1":  dict(zip("abc", [0, 1, 1])),
+    "T2":  dict(zip("abc", [1, 1, 1])),
+    "Q1":  dict(zip("abc", [0, 1, 1])),
+    "Q2":  dict(zip("abc", [0, 1, 0])),
+}
+
+HAND_CELLS_153107 = {
+    "a": ("out/bench2/A/recap.md", "qwen3.5:4b"),
+    "b": ("out/bench2/B/recap.md", "sonnet"),
+    "c": ("out/bench2/9b-raw-a/recap.md", "qwen3.5:9b"),
+}
+
+# Встреча → якоря, ручная разметка, ячейки. Правило «числам матчера верить
+# нельзя, пока сверка не сходится» действует на обе: у каждой свой `--calibrate`.
+MEETINGS = {
+    "20260812_144201": (ANCHORS_144201, HAND_144201, HAND_CELLS_144201),
+    "20260812_153107": (ANCHORS_153107, HAND_153107, HAND_CELLS_153107),
+}
+DEFAULT_MEETING = "20260812_144201"
+ANCHORS = ANCHORS_144201
+ITEMS = list(ANCHORS_144201)
 
 
 def normalize(text: str) -> str:
@@ -162,10 +217,10 @@ def claim_lines(recap: str) -> list[str]:
     return lines
 
 
-def found(recap: str) -> dict[str, bool]:
+def found(recap: str, meeting: str = DEFAULT_MEETING) -> dict[str, bool]:
     lines = claim_lines(recap)
     result = {}
-    for item, groups in ANCHORS.items():
+    for item, groups in MEETINGS[meeting][0].items():
         result[item] = any(
             all(word in line for word in group)
             for group in groups
@@ -174,29 +229,31 @@ def found(recap: str) -> dict[str, bool]:
     return result
 
 
-def score(recap: str) -> int:
-    return sum(found(recap).values())
+def score(recap: str, meeting: str = DEFAULT_MEETING) -> int:
+    return sum(found(recap, meeting).values())
 
 
-def calibrate() -> int:
-    print("сверка матчера с ручной разметкой (84 оценки)\n")
-    head = f"{'пункт':6}" + "".join(f"{k:>4}" for k in HAND_CELLS)
+def calibrate(meeting: str = DEFAULT_MEETING) -> int:
+    anchors, hand, cells = MEETINGS[meeting]
+    items = list(anchors)
+    total = len(items) * len(cells)
+    print(f"сверка матчера с ручной разметкой · встреча {meeting} · {total} оценок\n")
+    head = f"{'пункт':6}" + "".join(f"{k:>4}" for k in cells)
     print(head + "   расхождения")
     wrong = 0
-    per_cell = {k: 0 for k in HAND_CELLS}
-    for item in ITEMS:
+    per_cell = {k: 0 for k in cells}
+    for item in items:
         row = f"{item:6}"
         notes = []
-        for key, (path, _) in HAND_CELLS.items():
-            got = int(found((HERE / path).read_text(encoding="utf-8"))[item])
-            want = HAND[item][key]
+        for key, (path, _) in cells.items():
+            got = int(found((HERE / path).read_text(encoding="utf-8"), meeting)[item])
+            want = hand[item][key]
             row += f"{('да' if got else '—'):>4}"
             if got != want:
                 wrong += 1
                 per_cell[key] += 1
                 notes.append(f"{key}: матчер {got}, рука {want}")
         print(row + "   " + "; ".join(notes))
-    total = len(ITEMS) * len(HAND_CELLS)
     print(f"\nсовпало {total - wrong} из {total} ({(total - wrong) / total * 100:.0f} %)")
     if wrong:
         print("по ячейкам:", {k: v for k, v in per_cell.items() if v})
@@ -208,19 +265,20 @@ def main() -> int:
     ap.add_argument("recap", nargs="?", type=Path)
     ap.add_argument("--dir", type=Path, default=None, help="каталог с recap.md внутри подкаталогов")
     ap.add_argument("--calibrate", action="store_true")
+    ap.add_argument("--meeting", default=DEFAULT_MEETING, choices=sorted(MEETINGS))
     args = ap.parse_args()
 
     if args.calibrate:
-        return calibrate()
+        return calibrate(args.meeting)
     if args.recap:
-        hit = found(args.recap.read_text(encoding="utf-8"))
-        print(f"{sum(hit.values())}/{len(ITEMS)}: " + " ".join(k for k, v in hit.items() if v))
+        hit = found(args.recap.read_text(encoding="utf-8"), args.meeting)
+        print(f"{sum(hit.values())}/{len(hit)}: " + " ".join(k for k, v in hit.items() if v))
         return 0
     if args.dir:
         base = args.dir if args.dir.is_absolute() else HERE / args.dir
         for path in sorted(base.glob("*/recap.md")):
-            hit = found(path.read_text(encoding="utf-8"))
-            print(f"{path.parent.name:24} {sum(hit.values()):2}/{len(ITEMS)}  "
+            hit = found(path.read_text(encoding="utf-8"), args.meeting)
+            print(f"{path.parent.name:24} {sum(hit.values()):2}/{len(hit)}  "
                   + " ".join(k for k, v in hit.items() if v))
         return 0
     ap.print_help()

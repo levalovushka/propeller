@@ -165,7 +165,11 @@ def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
 
     content, reply_tokens, seconds, prompt_tokens = once()
     first_reply_tokens, retried = reply_tokens, False
-    if min_reply_tokens and reply_tokens < min_reply_tokens:
+    # При t=0 повтор детерминированно возвращает тот же текст — вызов сгорает
+    # впустую. Ансамбль платил его в каждом прогоне (ens-5: ветка t0 с
+    # `retried=true` и совпавшим sha). Менять температуру ради повтора нельзя:
+    # весь смысл ветки t=0 в воспроизводимости.
+    if temperature > 0 and min_reply_tokens and reply_tokens < min_reply_tokens:
         retried = True
         second, second_tokens, second_seconds, _ = once()
         seconds += second_seconds
@@ -181,6 +185,7 @@ def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
         "first_reply_tokens": first_reply_tokens,
         "retried": retried,
         "collapsed": bool(min_reply_tokens and reply_tokens < min_reply_tokens),
+        "calls": 2 if retried else 1,
         "seconds": seconds,
         "truncated": exceeds_largest_window(len(system) + len(user)),
     }

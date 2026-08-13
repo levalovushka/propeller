@@ -55,6 +55,7 @@ FACT_LABELS = {
     "ОТКРЫТО": "Открытые вопросы",
     "ТЕМА": NARRATIVE,
 }
+MAX_DUPLICATE_GROUP = 3
 STOP = {"это", "как", "для", "что", "при", "или", "она", "его", "все", "так", "там"}
 
 
@@ -135,6 +136,60 @@ def merge(branches: list[dict[str, list[str]]]) -> dict[str, list[str]]:
     return out
 
 
+DEDUP_PROMPT = """
+Перед тобой пронумерованный список пунктов конспекта встречи. Некоторые говорят об одном и том же разными словами.
+
+Найди такие группы и верни только номера: по группе на строку, номера через запятую.
+В группе два-три номера, не больше. Группа — это один и тот же факт разными словами, а не общая тема.
+Пункт, у которого нет пары, не упоминай вовсе. Ничего, кроме номеров и запятых, не пиши.
+Если повторов нет, ответь одним словом: НЕТ.
+""".strip()
+
+
+def dedup_by_model(merged: dict[str, list[str]], model: str) -> tuple[dict[str, list[str]], int]:
+    """Модель показывает пальцем, схлопывает код.
+
+    Она возвращает **номера**, а не текст: так она не может ни потерять пункт,
+    ни дописать свой. Это то же правило, что и везде в этой конструкции —
+    свободная пересборка теряет 1,9 пункта, — но применённое к списку из ~30
+    строк, где 4B надёжна, а не к целой встрече.
+
+    Механический дедуп по пересечению слов до цели не доводит: подбор порога от
+    0,55 до 0,25 даёт 28,0 → 22,8 пункта при цели ≤14, потому что разные ветки
+    называют одну договорённость разными словами.
+    """
+    flat = [(s, i, text) for s in SECTIONS for i, text in enumerate(merged[s])]
+    if len(flat) < 2:
+        return merged, 0
+    listing = "\n".join(f"{n + 1}. {text}" for n, (_, _, text) in enumerate(flat))
+    raw, stats = p.call_ollama(model, DEDUP_PROMPT, listing, temperature=0.0)
+    answer = p.strip_code_fences(raw).strip()
+    drop: set[int] = set()
+    for line in answer.split("\n"):
+        numbers = [int(x) - 1 for x in re.findall(r"\d+", line)]
+        numbers = [n for n in numbers if 0 <= n < len(flat)]
+        if len(numbers) < 2:
+            continue
+        # Право вето у кода, а не у модели. Без этих двух проверок 4B вернула
+        # **одну группу из 21 номера** через обе секции и схлопнула конспект в
+        # один пункт: покрытие 12,0 → 9,4 (p = 0,004). Настоящий дубль — это два-три
+        # пункта в одной секции; всё, что шире, — «общая тема», а не повтор.
+        if len(numbers) > MAX_DUPLICATE_GROUP:
+            continue
+        if len({flat[n][0] for n in numbers}) > 1:
+            continue
+        # Остаётся длинный: он обычно несёт и срок, и исполнителя.
+        keep = max(numbers, key=lambda n: len(flat[n][2]))
+        drop |= {n for n in numbers if n != keep}
+    if not drop:
+        return merged, stats["calls"]
+    out = {s: list(v) for s, v in merged.items()}
+    for section in SECTIONS:
+        out[section] = [text for i, text in enumerate(merged[section])
+                        if (section, i) not in {(s, i) for n, (s, i, _) in enumerate(flat) if n in drop}]
+    return out, stats["calls"]
+
+
 def render(merged: dict[str, list[str]], summary: str, discussion: str) -> str:
     parts = []
     if summary.strip():
@@ -162,14 +217,23 @@ def whole_pass(title: str, markdown: str, model: str, temperature: float) -> str
     return p.strip_code_fences(raw), stats
 
 
-def chunk_facts(markdown: str, model: str, limit: int = 13_000) -> tuple[str, int]:
+def chunk_facts(markdown: str, model: str, limit: int = 13_000) -> tuple[str, int, int]:
+    """Возвращает и число **фактических** вызовов: ретраи тоже стоят денег, а
+    в первой версии `calls` их не считал — цена ансамбля в таблицах была занижена
+    (до шести вызовов при записанных четырёх)."""
     pieces = chunked.split_on_turns(markdown, limit)
-    facts = []
+    facts, calls = [], 0
     for index, piece in enumerate(pieces, 1):
-        found = chunked.extract(model, piece, index, len(pieces))
-        if found:
-            facts.append(found)
-    return "\n".join(facts), len(pieces)
+        raw, stats = p.call_ollama(
+            model, chunked.EXTRACT_PROMPT + p.language_lock(),
+            f"Фрагмент {index} из {len(pieces)}.\n\n{piece}",
+            min_reply_tokens=p.REPLY_TOKENS_FLOOR["facts"],
+        )
+        calls += stats["calls"]
+        text = p.strip_code_fences(raw).strip()
+        if text and not text.upper().startswith("ПУСТО"):
+            facts.append(text)
+    return "\n".join(facts), len(pieces), calls
 
 
 def main() -> int:
@@ -179,6 +243,8 @@ def main() -> int:
     ap.add_argument("--model", default=MODEL)
     ap.add_argument("--branches", default="t0,sample,chunks",
                     help="через запятую: t0 · sample · chunks")
+    ap.add_argument("--dedup", choices=["mech", "model"], default="mech",
+                    help="mech — только пересечение слов; model — плюс вызов «покажи дубли»")
     args = ap.parse_args()
 
     title, markdown = p.transcript(args.meeting)
@@ -201,19 +267,22 @@ def main() -> int:
             log.append({"branch": name, "temperature": temperature, **stats})
             (out / f"branch-{len(branches)}-{name}.md").write_text(recap + "\n", encoding="utf-8")
         elif name == "chunks":
-            facts, pieces = chunk_facts(markdown, args.model)
+            facts, pieces, chunk_calls = chunk_facts(markdown, args.model)
             branches.append(items_from_facts(facts))
-            log.append({"branch": "chunks", "pieces": pieces, "characters": len(facts)})
+            log.append({"branch": "chunks", "pieces": pieces, "characters": len(facts),
+                        "calls": chunk_calls})
             (out / f"branch-{len(branches)}-facts.md").write_text(facts + "\n", encoding="utf-8")
         else:
             print(f"неизвестная ветка: {name}")
             return 1
 
     merged = merge(branches)
+    dedup_calls = 0
+    if args.dedup == "model":
+        merged, dedup_calls = dedup_by_model(merged, args.model)
     body = render(merged, summary, discussion)
     (out / "recap.md").write_text(body + "\n", encoding="utf-8")
-    calls = sum(1 for b in log if b["branch"] != "chunks") + sum(
-        b.get("pieces", 0) for b in log if b["branch"] == "chunks")
+    calls = sum(b.get("calls", 1) for b in log) + dedup_calls
     (out / "stats.json").write_text(json.dumps({
         "branches": log,
         "calls": calls,
