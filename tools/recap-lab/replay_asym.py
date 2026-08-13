@@ -121,9 +121,16 @@ def region_same(a: frozenset[int], b_: frozenset[int]) -> bool:
     return len(a & b_) / min(len(a), len(b_)) >= REGION_SAME
 
 
-def load_branches(run: Path) -> tuple[dict, list[dict], str, str]:
-    """Ветки прогона в том же виде, в каком их видит `bench_ensemble.main`."""
-    t0 = (run / "branch-1-t0.md").read_text(encoding="utf-8")
+def load_branches(run: Path, draft_from: Path | None = None) -> tuple[dict, list[dict], str, str]:
+    """Ветки прогона в том же виде, в каком их видит `bench_ensemble.main`.
+
+    `draft_from` подменяет **только черновик**, оставляя ветки кандидатов теми же.
+    Так проверяется починка схлопнувшегося черновика без единой генерации: черновик
+    берётся из здорового прогона базы, кандидаты — из сохранённых ветвей своего
+    прогона, попарно. Это превью, а не замер: живой ретрай при t=0,3 даст свой
+    черновик, а не чужой.
+    """
+    t0 = (draft_from or (run / "branch-1-t0.md")).read_text(encoding="utf-8")
     draft = b.items_from_recap(t0)
     others = []
     sample = run / "branch-2-sample.md"
@@ -355,8 +362,9 @@ VARIANTS = {
 
 
 def replay(run: Path, variant: str, transcript: str, meeting: str, budget: int,
-           regions: Regions | None = None, model: str = b.MODEL) -> str:
-    draft, others, summary, discussion = load_branches(run)
+           regions: Regions | None = None, model: str = b.MODEL,
+           draft_from: Path | None = None) -> str:
+    draft, others, summary, discussion = load_branches(run, draft_from)
     kept, additions = candidates_of(draft, others, transcript)
     if variant == "draft":
         # «Только черновик» — это «шипнуть одну ветку t=0», поэтому и «Ход

@@ -126,15 +126,22 @@ def shipped_recap(meeting_id: str) -> str | None:
 REPLY_TOKENS_FLOOR = {"recap": 800, "facts": 600}
 
 
+RETRY_TEMPERATURE = 0.3   # на ней перегенерируется схлопнувшийся ответ пути t=0
+
+
 def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
                 temperature: float = 0.2,
-                min_reply_tokens: int | None = None) -> tuple[str, dict]:
+                min_reply_tokens: int | None = None,
+                retry_temperature: float | None = None) -> tuple[str, dict]:
     """Same payload shape as `RecapService.callOllama` — think off, temp 0.2, sized window.
 
     `min_reply_tokens` перегенерирует ответ **один раз**, если он схлопнулся.
     Один, а не до победного: цикл превратил бы замер в отбор счастливых прогонов.
     Длина обоих попыток уходит в `stats`, чтобы схлопывание было видно в таблице,
     а не пряталось в среднем.
+
+    `retry_temperature` нужен пути t=0, где повтор на той же температуре бессмысленен:
+    он задаёт температуру **только повтора**, первый вызов остаётся детерминированным.
     """
     ctx = num_ctx(len(system) + len(user))
     payload = {
@@ -148,10 +155,14 @@ def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
             {"role": "user", "content": user},
         ],
     }
-    def once() -> tuple[str, int, float, int]:
+    def once(at_temperature: float | None = None) -> tuple[str, int, float, int]:
+        body_payload = payload
+        if at_temperature is not None and at_temperature != temperature:
+            body_payload = {**payload,
+                            "options": {**payload["options"], "temperature": at_temperature}}
         req = urllib.request.Request(
             "http://127.0.0.1:11434/api/chat",
-            data=json.dumps(payload).encode("utf-8"),
+            data=json.dumps(body_payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
         )
         with urllib.request.urlopen(req, timeout=timeout) as response:
@@ -167,11 +178,20 @@ def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
     first_reply_tokens, retried = reply_tokens, False
     # При t=0 повтор детерминированно возвращает тот же текст — вызов сгорает
     # впустую. Ансамбль платил его в каждом прогоне (ens-5: ветка t0 с
-    # `retried=true` и совпавшим sha). Менять температуру ради повтора нельзя:
-    # весь смысл ветки t=0 в воспроизводимости.
-    if temperature > 0 and min_reply_tokens and reply_tokens < min_reply_tokens:
+    # `retried=true` и совпавшим sha).
+    #
+    # Но «повтора нет» — неверное следствие (замер 2026-08-13, третья встреча):
+    # на `20260810_094722` ветка t=0 схлопнулась детерминированно во всех восьми
+    # прогонах (684 токена против порога 800) и дала черновик **хуже худшего** из
+    # восьми сэмплов базы. Детерминизм там не защищал, а закреплял плохой ответ.
+    # Поэтому вызывающий может задать `retry_temperature`: при t=0 повтор идёт на
+    # ней. Воспроизводимость сохраняется, пока ответ здоров, и приносится в жертву
+    # ровно в том случае, когда она вредна.
+    collapsed = bool(min_reply_tokens and reply_tokens < min_reply_tokens)
+    retry_at = temperature if temperature > 0 else (retry_temperature or 0.0)
+    if collapsed and retry_at > 0:
         retried = True
-        second, second_tokens, second_seconds, _ = once()
+        second, second_tokens, second_seconds, _ = once(retry_at)
         seconds += second_seconds
         # Берётся длинный из двух, а не второй: вторая попытка тоже может
         # сорваться, и тогда менять один огрызок на другой — потеря без выигрыша.
@@ -184,7 +204,11 @@ def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
         "reply_tokens": reply_tokens,
         "first_reply_tokens": first_reply_tokens,
         "retried": retried,
+        "retry_temperature": retry_at if retried else None,
+        # Схлопнулся ли **итоговый** ответ: после удачного повтора флаг снимается,
+        # иначе таблица говорила бы «схлопнулось», когда починка уже сработала.
         "collapsed": bool(min_reply_tokens and reply_tokens < min_reply_tokens),
+        "collapsed_first": collapsed,
         "calls": 2 if retried else 1,
         "seconds": seconds,
         "truncated": exceeds_largest_window(len(system) + len(user)),

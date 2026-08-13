@@ -229,11 +229,39 @@ HAND_153107: dict[str, dict[str, int]] = {
     "Q2":  dict(zip("abc", [0, 1, 0])),
 }
 
-# Третья встреча: разметка ячеек ещё не снята — её делает отдельный агент по
-# сгенерированным конспектам. Пустой словарь честнее нулей: `--calibrate` скажет,
-# что сверять не с чем.
-HAND_094722: dict[str, dict[str, int]] = {}
-HAND_CELLS_094722: dict[str, tuple[str, str]] = {}
+# Третья встреча: разметку ячеек снял отдельный агент (sonnet) по трём конспектам
+# гейт-батча — на входе только конспект и golden, без доски и без того, чем какой
+# конспект сделан. Три ячейки: один прогон базы и два прогона `code14`.
+HAND_094722: dict[str, dict[str, int]] = {
+    #         a  b  c
+    "D1":  dict(zip("abc", [1, 0, 0])),
+    "D2":  dict(zip("abc", [0, 1, 1])),
+    "D3":  dict(zip("abc", [0, 0, 1])),
+    "D4":  dict(zip("abc", [0, 0, 1])),
+    "D5":  dict(zip("abc", [1, 1, 1])),
+    "D6":  dict(zip("abc", [0, 1, 1])),
+    "D7":  dict(zip("abc", [1, 0, 1])),
+    "D8":  dict(zip("abc", [0, 1, 1])),
+    "D9":  dict(zip("abc", [0, 0, 1])),
+    "T1":  dict(zip("abc", [0, 0, 0])),
+    "T2":  dict(zip("abc", [0, 0, 0])),
+    "T3":  dict(zip("abc", [0, 0, 1])),
+    "T4":  dict(zip("abc", [1, 1, 1])),
+    "T5":  dict(zip("abc", [0, 1, 0])),
+    "T6":  dict(zip("abc", [0, 0, 0])),
+    "T7":  dict(zip("abc", [0, 1, 1])),
+    "Q1":  dict(zip("abc", [0, 0, 0])),
+    "Q2":  dict(zip("abc", [1, 1, 1])),
+    "Q3":  dict(zip("abc", [1, 1, 1])),
+    "Q4":  dict(zip("abc", [0, 0, 0])),
+    "Q5":  dict(zip("abc", [0, 0, 0])),
+}
+
+HAND_CELLS_094722 = {
+    "a": ("out/gate/m3/base-1/recap.md", "qwen3.5:4b, один проход"),
+    "b": ("out/gate/m3/code-1/recap.md", "qwen3.5:4b, ансамбль + бюджет 14"),
+    "c": ("out/gate/m3/code-2/recap.md", "qwen3.5:4b, ансамбль + бюджет 14"),
+}
 
 HAND_CELLS_153107 = {
     "a": ("out/bench2/A/recap.md", "qwen3.5:4b"),

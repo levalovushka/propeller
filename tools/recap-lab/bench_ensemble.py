@@ -450,9 +450,23 @@ def section_text(recap: str, name: str) -> str:
 
 
 def whole_pass(title: str, markdown: str, model: str, temperature: float) -> str:
+    """Ветка «целиком». Путь t=0 — это черновик, и он **страхуется ретраем**.
+
+    Изменение конструкции 2026-08-13, купленное третьей встречей: на
+    `20260810_094722` ветка t=0 схлопнулась детерминированно во всех восьми
+    прогонах (684 токена против порога 800), потеряла «Ход обсуждения» целиком и
+    дала черновик 6/21 — хуже худшего из восьми сэмплов базы (10–16). Черновик по
+    построению неприкосновенен, поэтому один плохой детерминированный ответ
+    закреплялся навсегда, да ещё съедал 11 буллетов бюджета из 14.
+
+    Материализовалось предупреждение A4: детерминизм t=0 доказан, а среднее — нет,
+    и на встрече такого жанра детерминированная точка оказалась хуже всего
+    распределения. Ретрай при t=0,3 — страховка ровно на этот случай.
+    """
     raw, stats = p.call_ollama(
         model, p.system_prompt(None), p.build_user_message(title, markdown),
         temperature=temperature, min_reply_tokens=p.REPLY_TOKENS_FLOOR["recap"],
+        retry_temperature=p.RETRY_TEMPERATURE if temperature == 0 else None,
     )
     return p.strip_code_fences(raw), stats
 
