@@ -1,0 +1,95 @@
+{
+  "rule": "обе ячейки с читаемостью 1 + четыре ячейки с читаемостью 2 по максимуму противоречий; плюс 4 случайные code-ячейки m2/m3, random.Random(20260814).sample",
+  "cells": [
+    {
+      "m": "m2",
+      "blind": "cell-06",
+      "cell": "code-1",
+      "r": 1,
+      "contr": 10,
+      "ok": 13,
+      "n": 16
+    },
+    {
+      "m": "m2",
+      "blind": "cell-16",
+      "cell": "code-6",
+      "r": 1,
+      "contr": 10,
+      "ok": 13,
+      "n": 16
+    },
+    {
+      "m": "m2",
+      "blind": "cell-12",
+      "cell": "code-7",
+      "r": 2,
+      "contr": 11,
+      "ok": 13,
+      "n": 16
+    },
+    {
+      "m": "m3",
+      "blind": "cell-08",
+      "cell": "code-1",
+      "r": 2,
+      "contr": 10,
+      "ok": 14,
+      "n": 21
+    },
+    {
+      "m": "m3",
+      "blind": "cell-11",
+      "cell": "code-6",
+      "r": 2,
+      "contr": 10,
+      "ok": 13,
+      "n": 21
+    },
+    {
+      "m": "m3",
+      "blind": "cell-10",
+      "cell": "code-7",
+      "r": 2,
+      "contr": 10,
+      "ok": 13,
+      "n": 21
+    },
+    {
+      "m": "m3",
+      "blind": "cell-15",
+      "cell": "code-2",
+      "r": 2,
+      "contr": 9,
+      "ok": 15,
+      "n": 21
+    },
+    {
+      "m": "m3",
+      "blind": "cell-14",
+      "cell": "code-5",
+      "r": 2,
+      "contr": 8,
+      "ok": 12,
+      "n": 21
+    },
+    {
+      "m": "m2",
+      "blind": "cell-08",
+      "cell": "code-2",
+      "r": 2,
+      "contr": 8,
+      "ok": 13,
+      "n": 16
+    },
+    {
+      "m": "m2",
+      "blind": "cell-13",
+      "cell": "code-4",
+      "r": 2,
+      "contr": 8,
+      "ok": 13,
+      "n": 16
+    }
+  ]
+}
