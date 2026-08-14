@@ -37,6 +37,7 @@ from pathlib import Path
 
 import chunked
 import lint
+import owners
 import promptlib as p
 
 HERE = Path(__file__).parent
@@ -76,14 +77,29 @@ def items_from_recap(recap: str) -> dict[str, list[str]]:
     return out
 
 
+# Метка ищется в строке, с которой сняты маркер буллета и болд: экстрактор пишет и
+# `- ДОГОВОРИЛИСЬ:`, и `**ЗАДАЧА:**`, и двоеточие оказывается то внутри болда, то вне.
+FACT_HEAD = re.compile(r"^\s*(?:[-*]\s+)?(?P<label>[А-ЯЁ]{4,})\s*:\s*(?P<body>.*)$")
+
+
 def items_from_facts(facts: str) -> dict[str, list[str]]:
-    """Разбор двух форм, в которых экстрактор пишет один и тот же список.
+    """Разбор форм, в которых экстрактор пишет один и тот же размеченный список.
 
     Он выдаёт то `ДОГОВОРИЛИСЬ: раз; два; три` одной строкой, то `ДОГОВОРИЛИСЬ:`
     и буллеты следом. Первая версия разбора склеивала первую форму в один пункт,
     а вторую теряла целиком: из двенадцати строк подхватывались шесть, и
     механическая сборка выглядела вдвое хуже свободной. Это была цена разбора, а
     не сборки.
+
+    **Четвёртая форма, найденная судейским аудитом:** `- ДОГОВОРИЛИСЬ: раз; два` —
+    метка внутри буллета. Разбор проверял буллет раньше метки, поэтому строка целиком,
+    вместе с ярлыком, падала в текущую секцию — а текущей к этому моменту стоял
+    «ОТКРЫТО», и в шестнадцати ячейках m2 решения и задачи уехали дословными
+    буллетами «ДОГОВОРИЛИСЬ:», «ЗАДАЧА:» внутрь «Открытых вопросов» (JUDGE.md,
+    раздел «Читаемость»). Отсюда правило: метка ищется **после** снятия маркера
+    буллета и болда, и строка с меткой не может попасть в конспект дословно ни при
+    какой форме. Формы зафиксированы фикстурами в `test_parse.py` — этот дефект
+    возвращался четыре раза, каждый раз новой формой.
     """
     out = {s: [] for s in SECTIONS + [NARRATIVE]}
     current = None
@@ -91,19 +107,27 @@ def items_from_facts(facts: str) -> dict[str, list[str]]:
         line = raw.strip()
         if not line or line.upper().startswith("ПУСТО"):
             continue
+        head = FACT_HEAD.match(line.replace("**", ""))
+        label = head.group("label").upper() if head else None
+        if label:
+            # Метка вне четырёх (`chunked.EXTRACT_PROMPT` просит ровно ДОГОВОРИЛИСЬ /
+            # ЗАДАЧА / ОТКРЫТО / ТЕМА) секцию не переключает, но и дословно в конспект
+            # не едет: остаётся тело без ярлыка. Пятая форма ярлыка — вопрос времени,
+            # и она не должна снова оказаться в документе.
+            target = FACT_LABELS.get(label, current)
+            if target:
+                current = target
+                # «раз; два; три» — три пункта, а не один. Точка с запятой здесь
+                # разделитель списка: экстрактору так велено промптом.
+                out[current] += [part.strip() for part in head.group("body").split(";")
+                                 if len(part.strip()) > 15]
+            continue
         bullet = re.match(r"^[-*]\s+(.*)$", line)
         if bullet:
             if current:
                 out[current].append(bullet.group(1).strip())
             continue
-        head = next((l for l in FACT_LABELS if line.upper().startswith(l)), None)
-        if head:
-            current = FACT_LABELS[head]
-            body = line[len(head):].lstrip(":—- ").strip()
-            # «раз; два; три» — три пункта, а не один. Точка с запятой здесь
-            # разделитель списка: экстрактору так велено промптом.
-            out[current] += [part.strip() for part in body.split(";") if len(part.strip()) > 15]
-        elif current:
+        if current:
             out[current].append(line)
     return out
 
@@ -118,6 +142,96 @@ def same(a: str, b: str, threshold: float = 0.55) -> bool:
     if not wa or not wb:
         return False
     return len(wa & wb) / min(len(wa), len(wb)) >= threshold
+
+
+TIMECODE = re.compile(r"\b(\d{1,2}):(\d{2})\b")
+
+
+HEADING_LINE = re.compile(r"^\s*\*\*.+\*\*\s*:?\s*$")
+HEADER_TIMECODE_LIMIT = 12   # символов от начала строки, где таймкод — это заголовок
+
+
+def block_head(line: str) -> bool:
+    """Начинает ли строка новый абзац «Хода обсуждения».
+
+    Заголовок абзаца выглядит двояко: `**00:15 – 06:28**: текст` (таймкод в начале) или
+    отдельной болд-строкой `**Тема (05:14 – 12:13)**` с телом следующей строкой.
+    Таймкод **в глубине** длинной строки заголовком не считается: в теле абзаца стоят
+    сроки («до следующей встречи в среду (9:30)»), и по ним абзац отрывался от своего
+    заголовка и уезжал в другое место хронологии.
+    """
+    found = TIMECODE.search(line)
+    if not found:
+        return False
+    return found.start() <= HEADER_TIMECODE_LIMIT or bool(HEADING_LINE.match(line))
+
+
+def prose_blocks(lines: list[str]) -> list[str]:
+    """Абзацы «Хода обсуждения» — блоки, а не строки.
+
+    `items_from_recap` собирает секцию построчно, и это верно для буллетов, но не для
+    прозы: у одной ветки блок выглядит как `**00:15 – 06:28**: текст` одной строкой, у
+    другой — болд-заголовок и тело отдельной строкой, у третьей за таймкодом идут
+    подпункты уровней. Строка, которая не начинает абзац, продолжает предыдущий; иначе
+    любая пересортировка рвёт заголовок от тела.
+    """
+    blocks: list[str] = []
+    for line in lines:
+        if block_head(line) or not blocks:
+            blocks.append(line)
+        else:
+            blocks[-1] += "\n" + line
+    return blocks
+
+
+def block_span(text: str) -> tuple[int, int] | None:
+    """Интервал блока — из его **заголовка**: первая строка, первые два таймкода.
+
+    Не min/max по всему блоку: в теле абзаца стоят сроки («завтра в 12:30», «встреча в
+    среду в 9:30»), и по ним блок про 20:46 оказывался в начале встречи. Блок, у
+    которого таймкода в заголовке нет вовсе, места в хронологии не занимает — он идёт
+    после неё (так уходит в конец ТЕМА-строка экстрактора, у которой заголовок —
+    название встречи).
+    """
+    head = text.split("\n", 1)[0]
+    seconds = [int(m.group(1)) * 60 + int(m.group(2)) for m in TIMECODE.finditer(head)]
+    if not seconds:
+        return None
+    start = seconds[0]
+    return (start, max(start, seconds[1]) if len(seconds) > 1 else start)
+
+
+def merge_prose(branches: list[dict[str, list[str]]]) -> list[str]:
+    """«Ход обсуждения» всех ветвей — **одна** секция: одна хронология, не две.
+
+    Дефект, найденный судейским аудитом: в шести code-ячейках m2 ход обсуждения выписан
+    дважды — сначала пять блоков ветки t=0 (00:15 → 28:51), потом три блока сэмпла
+    (05:14 → конец) своими, несогласованными таймкодами; две ячейки за это получили
+    читаемость 1 из 5, «пользоваться нельзя» (JUDGE.md). Причина механическая:
+    `merge()` сливал прозу тем же порогом пересечения слов, что и буллеты, а он на
+    пересказе не срабатывает никогда — и секция получалась конкатенацией ветвей в
+    порядке ветвей.
+
+    Что делает это слияние: разбирает прозу на блоки, ставит их в один хронологический
+    порядок по таймкоду блока и **ничего не выбрасывает**. Блоки без таймкода идут
+    после хронологии в порядке ветвей.
+
+    Почему не выбрасывает. Отбрасывание блока, чей интервал уже занят, убирает второй
+    проход целиком — и стоит **0,87 пункта покрытия на m2** (13,12 → 12,25 попарно на
+    восьми ячейках): у сэмпла в перекрытых минутах лежит то, чего нет ни в одном
+    буллете (Сбербанк как прецедент, «на коленках»). Отбрасывание «пересказов» по
+    новизне слов не помогает: на пороге, где оно вообще что-то режет, оно уже стоит
+    0,25 пункта на m3, а на m2 убирает 0,2 блока из 10,8 — лексическая новизна не
+    отличает «то же другими словами» от «другое», это та же стена, на которой сорвался
+    симметричный дедуп (A5.2). Значит выбор такой: одна хронология без потерь — или
+    краткость за счёт полноты; здесь взята первая, вторая посчитана и предъявлена.
+    """
+    kept: list[tuple[tuple[int, int] | None, str]] = []
+    for branch in branches:
+        for text in prose_blocks(branch.get(NARRATIVE, [])):
+            kept.append((block_span(text), text))
+    timed = sorted(((span, text) for span, text in kept if span), key=lambda pair: pair[0])
+    return [text for _, text in timed] + [text for span, text in kept if span is None]
 
 
 def merge(branches: list[dict[str, list[str]]]) -> dict[str, list[str]]:
@@ -465,13 +579,23 @@ def merge_asymmetric(draft: dict[str, list[str]], others: list[dict[str, list[st
     return kept, {"calls": calls, "exchange": "\n\n".join(exchanges), **diagnostics}
 
 
-def render(merged: dict[str, list[str]], summary: str, discussion: str) -> str:
+def render(merged: dict[str, list[str]], summary: str, discussion: str,
+           names: "owners.Names | None" = None) -> str:
+    """Собрать документ. `names` включает фильтр слота исполнителя (`owners.py`).
+
+    Фильтр стоит здесь, а не в разборе ветвей, потому что рендер — единственная точка,
+    через которую проходят и живой прогон, и пересборка `replay_asym`: иначе замер и
+    продукт разошлись бы. `names=None` — старое поведение, для фикстур разбора.
+    """
     parts = []
     if summary.strip():
         parts.append("## Итог\n" + summary.strip())
     for section in SECTIONS:
-        if merged[section]:
-            parts.append(f"## {section}\n" + "\n".join(f"- {i}" for i in merged[section]))
+        items = merged[section]
+        if names is not None and section == "Задачи":
+            items = [owners.scrub(item, names) for item in items]
+        if items:
+            parts.append(f"## {section}\n" + "\n".join(f"- {i}" for i in items))
     if merged[NARRATIVE]:
         parts.append(f"## {NARRATIVE}\n" + "\n\n".join(merged[NARRATIVE]))
     elif discussion.strip():
@@ -577,6 +701,9 @@ def main() -> int:
             return 1
 
     merged = merge(branches)
+    # Проза сливается своим правилом при любом варианте дедупа: `merge()` мерит
+    # пересечение слов, а на пересказе оно не срабатывает никогда.
+    merged[NARRATIVE] = merge_prose(branches)
     dedup_calls, asym = 0, None
     if args.dedup == "model":
         merged, dedup_calls = dedup_by_model(merged, args.model)
@@ -597,9 +724,10 @@ def main() -> int:
             (out / "dedup-asym.txt").write_text(asym.pop("exchange") + "\n", encoding="utf-8")
         # «Ход обсуждения» — абзацы, а не буллеты: он не тратит бюджет краткости,
         # ради которого всё это делается, а брать его из одной ветки стоило
-        # 12/14 → 9/14 (A5, поправка 2). Поэтому он сливается как раньше.
-        merged[NARRATIVE] = merge(branches)[NARRATIVE]
-    body = render(merged, summary, discussion)
+        # 12/14 → 9/14 (A5, поправка 2). Поэтому он сливается по всем ветвям — но
+        # хронологией, а не конкатенацией: см. `merge_prose`.
+        merged[NARRATIVE] = merge_prose([branches[draft_index]] + others)
+    body = render(merged, summary, discussion, owners.Names.of(markdown))
     (out / "recap.md").write_text(body + "\n", encoding="utf-8")
     calls = sum(b.get("calls", 1) for b in log) + dedup_calls
     (out / "stats.json").write_text(json.dumps({

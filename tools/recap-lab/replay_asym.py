@@ -42,6 +42,7 @@ from pathlib import Path
 import bench_ensemble as b
 import golden_match as gm
 import lint
+import owners
 import promptlib as p
 
 HERE = Path(__file__).parent
@@ -121,7 +122,8 @@ def region_same(a: frozenset[int], b_: frozenset[int]) -> bool:
     return len(a & b_) / min(len(a), len(b_)) >= REGION_SAME
 
 
-def load_branches(run: Path, draft_from: Path | None = None) -> tuple[dict, list[dict], str, str]:
+def load_branches(run: Path, draft_from: Path | None = None,
+                  draft_branch: str | None = None) -> tuple[dict, list[dict], str, str]:
     """Ветки прогона в том же виде, в каком их видит `bench_ensemble.main`.
 
     `draft_from` подменяет **только черновик**, оставляя ветки кандидатов теми же.
@@ -129,17 +131,27 @@ def load_branches(run: Path, draft_from: Path | None = None) -> tuple[dict, list
     берётся из здорового прогона базы, кандидаты — из сохранённых ветвей своего
     прогона, попарно. Это превью, а не замер: живой ретрай при t=0,3 даст свой
     черновик, а не чужой.
+
+    `draft_branch="sample"` воспроизводит политику `clean` живого прогона: с гейта №2
+    черновиком становится ветка с меньшей плотностью выдумок, и её имя записано в
+    `stats.json`. Без этого пересборка ячейки гейта №2 считала бы другую конструкцию,
+    чем та, которую прогоняли.
     """
-    t0 = (draft_from or (run / "branch-1-t0.md")).read_text(encoding="utf-8")
-    draft = b.items_from_recap(t0)
-    others = []
-    sample = run / "branch-2-sample.md"
-    if sample.exists():
-        others.append(b.items_from_recap(sample.read_text(encoding="utf-8")))
+    t0_text = (draft_from or (run / "branch-1-t0.md")).read_text(encoding="utf-8")
+    sample_file = run / "branch-2-sample.md"
+    sample_text = sample_file.read_text(encoding="utf-8") if sample_file.exists() else None
+    prose_from = t0_text
+    if draft_branch == "sample" and sample_text is not None:
+        draft, prose_from = b.items_from_recap(sample_text), sample_text
+        others = [b.items_from_recap(t0_text)]
+    else:
+        draft = b.items_from_recap(t0_text)
+        others = [b.items_from_recap(sample_text)] if sample_text is not None else []
     facts = run / "branch-3-facts.md"
     if facts.exists():
         others.append(b.items_from_facts(facts.read_text(encoding="utf-8")))
-    return draft, others, b.section_text(t0, "Итог"), b.section_text(t0, "Ход обсуждения")
+    return (draft, others, b.section_text(prose_from, "Итог"),
+            b.section_text(prose_from, "Ход обсуждения"))
 
 
 def candidates_of(draft: dict, others: list[dict], transcript: str) -> tuple[dict, list]:
@@ -153,7 +165,8 @@ def candidates_of(draft: dict, others: list[dict], transcript: str) -> tuple[dic
     # «Ход обсуждения» — как в `bench_ensemble.main`: сливается по всем веткам, а не
     # берётся из черновика. Бюджет буллетов он не тратит, но в счёт покрытия входит
     # (матчер пропускает только «Итог»), и брать его из одной ветки стоило 12/14 → 9/14.
-    kept[b.NARRATIVE] = b.merge([draft] + others)[b.NARRATIVE]
+    # Слияние — хронологией блоков (`merge_prose`), а не конкатенацией ветвей.
+    kept[b.NARRATIVE] = b.merge_prose([draft] + others)
     additions: list[tuple[str, str]] = []
     for branch in others:
         # Отбор кандидатов — против **снимка** черновика, как в `dedup_pass`: внутри
@@ -303,13 +316,13 @@ def signalled(additions: list, draft: dict, regions: Regions, room: int,
 
 
 def by_metric(additions: list, kept: dict, draft: dict, summary: str, discussion: str,
-              room: int, meeting: str) -> list:
+              room: int, meeting: str, names: "owners.Names | None" = None) -> list:
     """Оракул: жадно по самой метрике. Верхняя граница, не конструкция."""
     survivors, pool = [], list(additions)
     while pool and len(survivors) < room:
         best, best_score = None, -1
         for pair in pool:
-            trial = build(draft, survivors + [pair], summary, discussion, kept)
+            trial = build(draft, survivors + [pair], summary, discussion, kept, names)
             value = gm.score(trial, meeting)
             if value > best_score:
                 best, best_score = pair, value
@@ -318,12 +331,13 @@ def by_metric(additions: list, kept: dict, draft: dict, summary: str, discussion
     return survivors
 
 
-def build(draft: dict, survivors: list, summary: str, discussion: str, kept: dict) -> str:
+def build(draft: dict, survivors: list, summary: str, discussion: str, kept: dict,
+          names: "owners.Names | None" = None) -> str:
     out = {s: list(draft.get(s, [])) for s in b.SECTIONS}
     for section, item in survivors:
         out[section].append(item)
     out[b.NARRATIVE] = kept[b.NARRATIVE]
-    return b.render(out, summary, discussion)
+    return b.render(out, summary, discussion, names)
 
 
 CANON_PROMPT = """
@@ -404,16 +418,23 @@ VARIANTS = {
 
 def replay(run: Path, variant: str, transcript: str, meeting: str, budget: int,
            regions: Regions | None = None, model: str = b.MODEL,
-           draft_from: Path | None = None) -> str:
-    draft, others, summary, discussion = load_branches(run, draft_from)
+           draft_from: Path | None = None, names: "owners.Names | None" = None,
+           draft_branch: str | None = None) -> str:
+    draft, others, summary, discussion = load_branches(run, draft_from, draft_branch)
     kept, additions = candidates_of(draft, others, transcript)
+    # Фильтр слота исполнителя — часть сборки, значит и часть пересборки: иначе
+    # пересборка мерила бы не то, что уедет в продукт. Словарь считается из того же
+    # транскрипта; точка «до» для сравнения — сохранённые `recap.md` гейта, их
+    # пересборкой не восстановить (код починен).
+    if names is None:
+        names = owners.Names.of(transcript)
     if variant == "draft":
         # «Только черновик» — это «шипнуть одну ветку t=0», поэтому и «Ход
         # обсуждения» тут её собственный, а не слитый по всем веткам. Иначе строка
         # завышена на 1,6 пункта чужой находкой (9,6 против 8,0).
-        return build(draft, [], summary, discussion, {b.NARRATIVE: draft[b.NARRATIVE]})
+        return build(draft, [], summary, discussion, {b.NARRATIVE: draft[b.NARRATIVE]}, names)
     if variant == "mech":
-        return build(draft, additions, summary, discussion, kept)
+        return build(draft, additions, summary, discussion, kept, names)
     room = max(0, budget - sum(len(draft.get(s, [])) for s in b.SECTIONS))
     if variant == "quota14":
         known: set[str] = set()
@@ -422,7 +443,8 @@ def replay(run: Path, variant: str, transcript: str, meeting: str, budget: int,
                 known |= b.key_words(text)
         survivors = greedy(additions, known, room, QUOTAS)
     elif variant == "oracle14":
-        survivors = by_metric(additions, kept, draft, summary, discussion, room, meeting)
+        survivors = by_metric(additions, kept, draft, summary, discussion, room, meeting,
+                              names)
     elif variant in VARIANTS:
         features = VARIANTS[variant]
         canon = None
@@ -434,7 +456,7 @@ def replay(run: Path, variant: str, transcript: str, meeting: str, budget: int,
                               features, canon)
     else:
         raise SystemExit(f"неизвестный вариант: {variant}")
-    return build(draft, survivors, summary, discussion, kept)
+    return build(draft, survivors, summary, discussion, kept, names)
 
 
 def main() -> int:
