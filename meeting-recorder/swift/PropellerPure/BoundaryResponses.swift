@@ -213,6 +213,17 @@ extension BoundaryResponses {
         case malformed
     }
 
+    /// Сколько токенов модель ответила — Ollama пишет это в `eval_count` рядом с
+    /// `message`. Нужен политике ретрая (`RecapGenerationPolicy`): схлопнувшийся
+    /// ответ распознаётся по длине, а не по содержанию. nil — поле не пришло
+    /// (облачный бэкенд, старый Ollama): судить нечем, ответ считается здоровым.
+    public static func chatReplyTokens(data: Data) -> Int? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return json["eval_count"] as? Int
+    }
+
     /// Pull the assistant's reply out of an Ollama/OpenAI-style chat response.
     public static func readChatReply(data: Data) -> Result<String, ChatFailure> {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

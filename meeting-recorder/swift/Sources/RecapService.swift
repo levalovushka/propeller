@@ -70,6 +70,21 @@ struct RecapResult {
     let path: String
     let provider: String
     let body: String
+    /// Как генерация прошла — для телеметрии. nil у облачных бэкендов: их путь
+    /// в этом релизе не тронут, длину ответа они не сообщают.
+    var stats: RecapRunStats?
+}
+
+/// Статистика одной генерации конспекта — те же оси, что в таблицах стенда,
+/// чтобы прод-телеметрию и стендовые числа можно было читать одной головой.
+struct RecapRunStats {
+    /// Вызов, который писал конспект: у одиночного пути — он сам, у нарезки —
+    /// свод. Извлечения из фрагментов сюда не попадают: их ретраи видны в логе,
+    /// а ось телеметрии — судьба конспекта, не фрагмента.
+    let draft: RecapGenerationPolicy.CallStats?
+    let chunked: Bool
+    let window: Int
+    let seconds: Double
 }
 
 /// LLM meeting recap on top of a saved transcript markdown.
@@ -282,13 +297,29 @@ actor RecapService {
             // потому что упёрся в потолок бакета — то самое окно, ради ухода от
             // которого её и нарезали. Второй проход с ним поднимал свежий
             // llama-server на 4,3 ГБ поверх ещё не выгруженного на 3,6.
+            let started = Date()
             let draft: String
             let effectiveWindow: Int
+            var draftStats: RecapGenerationPolicy.CallStats?
             if cutUp {
-                (draft, effectiveWindow) = try await recapByChunks(
+                let run = try await recapByChunks(
                     title: title, transcriptMarkdown: trimmed, notes: notes,
                     system: prompt, prefs: prefs
                 )
+                draft = run.recap
+                effectiveWindow = run.window
+                draftStats = run.stats
+            } else if backend == "ollama" {
+                // Порог схлопывания есть только у локального пути: облако длину
+                // ответа не сообщает, и его путь в этом релизе не тронут (Г3).
+                let tracked = try await callOllamaTracked(
+                    model: prefs.ollamaModel, system: prompt, user: userContent,
+                    numCtx: window,
+                    minReplyTokens: RecapGenerationPolicy.recapMinReplyTokens
+                )
+                draft = tracked.content
+                draftStats = tracked.stats
+                effectiveWindow = window
             } else {
                 draft = try await callBackend(
                     backend, system: prompt, user: userContent, numCtx: window, prefs: prefs
@@ -337,7 +368,13 @@ actor RecapService {
                 content: body
             )
 
-            return .success(RecapResult(path: path, provider: backend, body: body))
+            return .success(RecapResult(
+                path: path, provider: backend, body: body,
+                stats: RecapRunStats(
+                    draft: draftStats, chunked: cutUp, window: effectiveWindow,
+                    seconds: Date().timeIntervalSince(started)
+                )
+            ))
         }
     }
 
@@ -376,7 +413,7 @@ actor RecapService {
         notes: String?,
         system: String,
         prefs: RecapPreferences
-    ) async throws -> (recap: String, window: Int) {
+    ) async throws -> (recap: String, window: Int, stats: RecapGenerationPolicy.CallStats) {
         let chunks = TranscriptChunking.split(transcriptMarkdown)
         let extractSystem = Self.chunkExtractPrompt + Self.languageLock
         // Окно одно на все фрагменты — иначе каждый платил бы холодную загрузку.
@@ -390,9 +427,12 @@ actor RecapService {
             let user = "Фрагмент \(index + 1) из \(chunks.count).\n\n\(chunk)"
             let raw: String
             do {
-                raw = try await callOllama(
-                    model: prefs.ollamaModel, system: extractSystem, user: user, numCtx: window
-                )
+                // Порог извлечения ниже конспектного: ответ фрагмента короче
+                // по построению (600 против 800, пороги со стенда).
+                raw = try await callOllamaTracked(
+                    model: prefs.ollamaModel, system: extractSystem, user: user, numCtx: window,
+                    minReplyTokens: RecapGenerationPolicy.extractMinReplyTokens
+                ).content
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
@@ -423,10 +463,12 @@ actor RecapService {
             "",
             "Ответь строго на русском языке.",
         ]
-        let reduced = try await callOllama(
-            model: prefs.ollamaModel, system: system, user: parts.joined(separator: "\n"), numCtx: window
+        let reduced = try await callOllamaTracked(
+            model: prefs.ollamaModel, system: system, user: parts.joined(separator: "\n"),
+            numCtx: window,
+            minReplyTokens: RecapGenerationPolicy.recapMinReplyTokens
         )
-        return (reduced, window)
+        return (reduced.content, window, reduced.stats)
     }
 
     /// Второй проход: та же модель правит форму по адресам от `RecapLint`.
@@ -777,6 +819,26 @@ actor RecapService {
         jsonMode: Bool = false,
         numCtx: Int? = nil
     ) async throws -> String {
+        try await callOllamaTracked(
+            model: model, system: system, user: user, jsonMode: jsonMode, numCtx: numCtx
+        ).content
+    }
+
+    /// То же, плюс политика схлопывания и статистика вызова.
+    ///
+    /// `minReplyTokens` включает страховку со стенда (`RecapGenerationPolicy`,
+    /// эталон — `promptlib.call_ollama`): ответ короче порога перегенерируется
+    /// **один раз** на t=0,3 — при t=0 повтор на той же температуре вернул бы
+    /// тот же огрызок, — и дальше уходит длинный из двух. Без порога — один
+    /// детерминированный вызов, как раньше.
+    private func callOllamaTracked(
+        model: String,
+        system: String,
+        user: String,
+        jsonMode: Bool = false,
+        numCtx: Int? = nil,
+        minReplyTokens: Int? = nil
+    ) async throws -> (content: String, stats: RecapGenerationPolicy.CallStats) {
         let url = URL(string: "http://127.0.0.1:11434/api/chat")!
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -796,6 +858,7 @@ actor RecapService {
             """)
         }
 
+        func makePayload(temperature: Double) -> [String: Any] {
         var payload: [String: Any] = [
             "model": model,
             "stream": false,
@@ -805,8 +868,10 @@ actor RecapService {
             "keep_alive": 90,
             "options": [
                 "num_ctx": numCtx,
-                // Match the cloud providers so the three backends drift less.
-                "temperature": 0.2,
+                // t=0 по замеру A4 (десять прогонов — один текст); повтор, если
+                // случился, идёт на 0,3. Облачные бэкенды остаются на 0,2 — их
+                // путь в этом релизе не тронут (RELEASE-1.16.5.md, Г3).
+                "temperature": temperature,
             ],
             "messages": [
                 ["role": "system", "content": system],
@@ -831,22 +896,58 @@ actor RecapService {
             // unparseable and silently cost the meeting its topics and tags.
             payload["format"] = "json"
         }
+        return payload
+        }
 
-        do {
-            let data = try await sendChat(req: req, payload: payload)
+        func once(temperature: Double) async throws -> RecapGenerationPolicy.ModelReply {
+            let data = try await sendChat(req: req, payload: makePayload(temperature: temperature))
+            let tokens = BoundaryResponses.chatReplyTokens(data: data)
             switch BoundaryResponses.readChatReply(data: data) {
             case .success(let content):
-                return content
+                return .init(content: content, replyTokens: tokens)
             case .failure(.reasonedItselfEmpty(let characters)):
                 // Distinct from a plain empty answer: retrying with the same
                 // settings burns the same minutes for the same nothing.
                 NSLog("[RecapService] \(model) returned only `thinking` (\(characters) chars), no content")
                 throw RecapError.providerUnavailable("\(model) — модель ушла в рассуждения и не выдала конспект")
             case .failure(.empty):
-                return ""
+                // Пустой ответ длину всё же имеет (eval_count) — политика ретрая
+                // увидит его как схлопнувшийся и даст один повтор.
+                return .init(content: "", replyTokens: tokens)
             case .failure(.malformed):
                 throw RecapError.badJSON
             }
+        }
+
+        do {
+            let first = try await once(temperature: RecapGenerationPolicy.temperature)
+            var retry: RecapGenerationPolicy.ModelReply?
+            if RecapGenerationPolicy.wantsRetry(first: first, threshold: minReplyTokens) {
+                try Task.checkCancellation()
+                NSLog("""
+                [RecapService] ответ схлопнулся (\(first.replyTokens ?? -1) токенов при пороге \
+                \(minReplyTokens ?? 0)) — один повтор на t=\(RecapGenerationPolicy.retryTemperature)
+                """)
+                do {
+                    retry = try await once(temperature: RecapGenerationPolicy.retryTemperature)
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    // Первый ответ есть; отдать его — лучше, чем уронить встречу
+                    // об неудавшийся повтор.
+                    NSLog("[RecapService] повтор не удался, остаёмся с первым ответом: \(error)")
+                }
+            }
+            let (winner, stats) = RecapGenerationPolicy.resolved(
+                first: first, retry: retry, threshold: minReplyTokens
+            )
+            if stats.retried {
+                NSLog("""
+                [RecapService] повтор: \(stats.firstReplyTokens ?? -1) → \(stats.replyTokens ?? -1) токенов, \
+                итог \(stats.collapsed ? "всё ещё схлопнут" : "здоров")
+                """)
+            }
+            return (winner.content, stats)
         } catch let error as URLError where error.code == .timedOut {
             throw RecapError.timedOut
         }
