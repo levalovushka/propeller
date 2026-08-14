@@ -304,8 +304,7 @@ actor RecapService {
             var draftStats: RecapGenerationPolicy.CallStats?
             if cutUp {
                 let run = try await recapByChunks(
-                    title: title, transcriptMarkdown: trimmed, notes: notes,
-                    system: prompt, prefs: prefs
+                    title: title, transcriptMarkdown: trimmed, prefs: prefs
                 )
                 draft = run.recap
                 effectiveWindow = run.window
@@ -399,8 +398,14 @@ actor RecapService {
     ///
     /// Раньше такая встреча доходила до модели наполовину — Ollama выбрасывала
     /// начало разговора, а приложение писало строчку в `NSLog` и отдавало
-    /// уверенный конспект. Теперь транскрипт режется по границам реплик, факты
-    /// собираются с каждого фрагмента, и конспект строится из них.
+    /// уверенный конспект. Транскрипт режется по границам реплик, факты
+    /// собираются с каждого фрагмента, а конспект из них **собирает код, не
+    /// модель** (`RecapAssembly`, порт A5.1): свободный свод выбрасывал до пяти
+    /// найденных пунктов и умел схлопнуться — сборке нечем. Цена решения:
+    /// у такого конспекта нет «Итога» — прозу пишет только модель, а этот путь
+    /// существует ровно потому, что её свод ломался. Заметки пользователя в
+    /// документ кладёт `wrapRecapDocument` — дословно, отдельным блоком
+    /// (решение в RELEASE-1.16.5.md, «Решения до старта порта»).
     ///
     /// Все вызовы идут в одном окне (фрагмент подобран так, чтобы влезать в
     /// 16384): одна загрузка модели на всю встречу и 3,6 ГБ памяти вместо 4,3 ГБ,
@@ -408,13 +413,12 @@ actor RecapService {
     /// Возвращает конспект **и окно, в котором он посчитан**: дальше по встрече
     /// идёт ещё один вызов (редактура), и он обязан идти в том же окне. Иначе
     /// нарезка, сделанная ради 3,6 ГБ вместо 4,3, тут же оплачивает и то и другое.
+    /// `stats` пуст: вызова-свода больше нет, а судьба фрагментов — в логе.
     private func recapByChunks(
         title: String,
         transcriptMarkdown: String,
-        notes: String?,
-        system: String,
         prefs: RecapPreferences
-    ) async throws -> (recap: String, window: Int, stats: RecapGenerationPolicy.CallStats) {
+    ) async throws -> (recap: String, window: Int, stats: RecapGenerationPolicy.CallStats?) {
         let chunks = TranscriptChunking.split(transcriptMarkdown)
         let extractSystem = Self.chunkExtractPrompt + Self.languageLock
         // Окно одно на все фрагменты — иначе каждый платил бы холодную загрузку.
@@ -450,26 +454,9 @@ actor RecapService {
         guard !facts.isEmpty else { throw RecapError.emptyResponse }
         NSLog("[RecapService] встреча не влезла в окно: \(chunks.count) фрагментов, разобрано \(facts.count)")
 
-        var parts = ["Встреча: \(title.isEmpty ? "без названия" : title)"]
-        let trimmedNotes = notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !trimmedNotes.isEmpty {
-            parts += ["", "Заметки пользователя (якоря — приоритетнее болтовни в транскрипте):", trimmedNotes]
-        }
-        parts += [
-            "",
-            "Ниже — факты, выписанные из транскрипта по частям, по порядку встречи.",
-            "Это единственный источник: транскрипт целиком в контекст не помещается.",
-            "",
-            facts.joined(separator: "\n\n"),
-            "",
-            "Ответь строго на русском языке.",
-        ]
-        let reduced = try await callOllamaTracked(
-            model: prefs.ollamaModel, system: system, user: parts.joined(separator: "\n"),
-            numCtx: window,
-            minReplyTokens: RecapGenerationPolicy.recapMinReplyTokens
-        )
-        return (reduced.content, window, reduced.stats)
+        let assembled = RecapAssembly.assemble(facts: facts.joined(separator: "\n"))
+        guard !assembled.isEmpty else { throw RecapError.emptyResponse }
+        return (assembled, window, nil)
     }
 
     /// Второй проход: та же модель правит форму по адресам от `RecapLint`.
