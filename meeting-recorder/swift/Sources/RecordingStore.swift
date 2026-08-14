@@ -210,7 +210,8 @@ class RecordingStore: ObservableObject {
         systemCaptureAppScoped: Bool? = nil,
         systemStemOffset: Double? = nil,
         speakerAttribution: SpeakerAttribution? = nil,
-        lastFailure: PipelineFailure?? = nil
+        lastFailure: PipelineFailure?? = nil,
+        recapGeneratorVersion: Int? = nil
     ) {
         guard let idx = recordings.firstIndex(where: { $0.id == id }) else { return }
         if let t = transcript {
@@ -242,6 +243,7 @@ class RecordingStore: ObservableObject {
         if let so = systemStemOffset { recordings[idx].systemStemOffset = so }
         if let sa = speakerAttribution { recordings[idx].speakerAttribution = sa }
         if let lf = lastFailure { recordings[idx].lastFailure = lf }
+        if let gv = recapGeneratorVersion { recordings[idx].recapGeneratorVersion = gv }
         scheduleSave()
     }
 

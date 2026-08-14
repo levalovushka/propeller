@@ -84,6 +84,13 @@ struct RecordingEntry: Identifiable, Codable {
     /// stops the work for good (`design/no-dead-ends.md`). Nothing in the
     /// interface reads it directly — `MeetingRest` is the answer views ask for.
     var lastFailure: PipelineFailure?
+    /// Версия конструкции генератора, собравшей текущий конспект
+    /// (`RecapGenerationPolicy.generatorVersion`). nil = конспект до версий
+    /// (1.16.4 и раньше: t=0,2 без ретрая) или облачный провайдер, чья
+    /// конструкция в 1.16.5 не менялась. Нужна телеметрии по версиям и откату:
+    /// старый код поля не знает, молча роняет его при своей записи индекса —
+    /// это допустимо (RELEASE-1.16.5.md, Г6), поле вернёт следующий конспект.
+    var recapGeneratorVersion: Int?
     /// What the calendar knew about this meeting when recording started: series
     /// and event identifiers, invitees, call link. Written once, at start, and
     /// never revised — the calendar entry may change or vanish afterwards, and

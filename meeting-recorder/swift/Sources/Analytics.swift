@@ -1,4 +1,5 @@
 import Foundation
+import PropellerPure
 import TelemetryDeck
 
 /// Thin TelemetryDeck facade for dogfood product signals.
@@ -202,6 +203,36 @@ enum Analytics {
         if let backend { params["backend"] = backend }
         if let skip { params["skip"] = skip }
         signal("Recap.finished", parameters: params)
+    }
+
+    /// Как прошла локальная генерация конспекта — оси со стенда, чтобы прод и
+    /// стендовые таблицы читались одной головой (RELEASE-1.16.5.md, Г5): длина
+    /// ответа в токенах, был ли повтор и схлопнулся ли итог, сколько пунктов
+    /// уехало читателю, версия конструкции, когорта памяти. Длительность — в
+    /// `value`. Только числа и флаги, ни слова из встречи.
+    ///
+    /// Это же — линейка отката после релиза: доля `collapsed` и время генерации
+    /// в проде против стендовых. Облачные бэкенды сигнал не шлют: их
+    /// конструкция в 1.16.5 не менялась, и длину ответа они не сообщают.
+    static func recapGenerated(
+        replyTokens: Int?,
+        retried: Bool,
+        collapsed: Bool,
+        seconds: Double,
+        bullets: Int,
+        chunked: Bool,
+        version: Int
+    ) {
+        var params = [
+            "retried": retried ? "1" : "0",
+            "collapsed": collapsed ? "1" : "0",
+            "bullets": String(bullets),
+            "chunked": chunked ? "1" : "0",
+            "generator": String(version),
+            "ram": RecapGenerationPolicy.ramCohort(bytes: ProcessInfo.processInfo.physicalMemory),
+        ]
+        if let replyTokens { params["reply_tokens"] = String(replyTokens) }
+        signal("Recap.generated", parameters: params, value: seconds)
     }
 
     /// How long the person waited between the meeting ending and the summary

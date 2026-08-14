@@ -2258,6 +2258,24 @@ class AppState: ObservableObject {
                 }
             case .success(let recap):
                 Analytics.recapFinished(ok: true, backend: recap.provider)
+                // Версия конструкции и телеметрия генерации — только у локального
+                // пути: облачная конструкция в 1.16.5 не менялась и остаётся
+                // без версии, как весь архив до неё.
+                if recap.provider == "ollama", let stats = recap.stats {
+                    recordingStore.update(
+                        id: recordingID,
+                        recapGeneratorVersion: RecapGenerationPolicy.generatorVersion
+                    )
+                    Analytics.recapGenerated(
+                        replyTokens: stats.draft?.replyTokens,
+                        retried: stats.draft?.retried ?? false,
+                        collapsed: stats.draft?.collapsed ?? false,
+                        seconds: stats.seconds,
+                        bullets: RecapLint.shape(of: recap.body).bullets,
+                        chunked: stats.chunked,
+                        version: RecapGenerationPolicy.generatorVersion
+                    )
+                }
                 // The wait a person felt: from the meeting ending to the summary
                 // existing. `date` is when the recording began, so the end of it
                 // is `date + duration` — no new state to keep in sync.
