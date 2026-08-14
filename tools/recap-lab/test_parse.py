@@ -26,6 +26,7 @@ from __future__ import annotations
 import sys
 
 import bench_ensemble as b
+import bench_extract as be
 import chunked
 import owners
 
@@ -272,6 +273,125 @@ def test_artifact_findings_name_the_class() -> None:
             "тема (с таймкодом начала в том виде, как он стоит в транскрипте)")
     got = [f.split(": ")[1] for f in b.artifact_findings(text, ARTIFACT_TRANSCRIPT)]
     check("три класса найдены", sorted(got), ["иероглиф", "сращение", "эхо промпта"])
+
+
+# ---------------------------------------------------------------------------
+# Стенд v3: окна, спан-проверка, рендер списка (П0)
+# ---------------------------------------------------------------------------
+
+V3_TRANSCRIPT = """# Проба
+
+**Participants:** Левон
+
+## Transcript
+
+**Левон** · 00:10
+Давайте перенесём релиз на пятницу, иначе не успеем с макетами.
+
+**Speaker S1** · 00:40
+Согласен, к пятнице успеем. Я подготовлю макеты к четвергу.
+
+**Левон** · 01:20
+Тогда решено: релиз в пятницу, а по метрикам вернёмся отдельно.
+"""
+
+
+def test_windows_overlap_repeats_tail() -> None:
+    """Окно начинается хвостом предыдущего: утверждение на границе видит оба."""
+    pieces = be.windows(V3_TRANSCRIPT, limit=200, overlap=0.5)
+    check("окон больше одного", len(pieces) > 1, True)
+    tail = "Согласен, к пятнице успеем"
+    check("хвост повторён в следующем окне",
+          sum(tail in piece for piece in pieces) >= 2, True)
+
+
+def test_span_contiguous() -> None:
+    position, contiguous = be.span_check("Давайте перенесём релиз на пятницу", V3_TRANSCRIPT)
+    check("непрерывный спан найден", (position is not None, contiguous), (True, True))
+
+
+def test_span_case_folded() -> None:
+    """Спан с середины фразы модель пишет с заглавной — это оформление, не выдумка."""
+    position, _ = be.span_check("Иначе не успеем с макетами", V3_TRANSCRIPT)
+    check("регистр не отбрасывает спан", position is not None, True)
+
+
+def test_span_spliced_passes_fragmentwise() -> None:
+    """Склейка через многоточие: каждый фрагмент дословный — пункт живёт, но
+    `contiguous` False, и в таблицу это уходит отдельной колонкой."""
+    quote = "Давайте перенесём релиз на пятницу... Я подготовлю макеты к четвергу"
+    position, contiguous = be.span_check(quote, V3_TRANSCRIPT)
+    check("склейка проходит пофрагментно", (position is not None, contiguous), (True, False))
+
+
+def test_span_invented_fragment_dropped() -> None:
+    """Один выдуманный фрагмент убивает всю цитату — иначе проверка ничего не даёт."""
+    quote = "Давайте перенесём релиз на пятницу... И бюджет утвердили на сто тысяч"
+    check("выдуманный фрагмент отброшен", be.span_check(quote, V3_TRANSCRIPT)[0], None)
+
+
+def test_span_paraphrase_dropped() -> None:
+    check("пересказ отброшен",
+          be.span_check("Участники решили перенести релиз на конец недели", V3_TRANSCRIPT)[0],
+          None)
+
+
+def test_verify_drops_alien_owner_not_claim() -> None:
+    """Чужое имя стоит полю, а не пункту: «дубль лучше пропуска» запрещает обратное."""
+    claim = {"type": "task", "text": "подготовить макеты к четвергу",
+             "quote": "Я подготовлю макеты к четвергу", "t": "00:40",
+             "owner": "Саболь", "deadline": "к четвергу"}
+    checked, why = be.verify(claim, V3_TRANSCRIPT, ["Левон"])
+    check("пункт выжил", (checked is not None, why), (True, ""))
+    check("исполнитель снят", (checked["owner"], checked["owner_dropped"]), (None, True))
+    check("таймкод посчитан кодом", checked["t"], "00:40")
+
+
+def test_verify_drops_unspoken_deadline() -> None:
+    claim = {"type": "task", "text": "подготовить макеты",
+             "quote": "Я подготовлю макеты к четвергу", "t": "00:40",
+             "owner": None, "deadline": "к понедельнику"}
+    checked, _ = be.verify(claim, V3_TRANSCRIPT, ["Левон"])
+    check("невыговоренный срок снят",
+          (checked["deadline"], checked["deadline_dropped"]), (None, True))
+
+
+def test_meeting_names_keep_speakers_drop_labels() -> None:
+    names = be.meeting_names(V3_TRANSCRIPT)
+    check("имя из шапки реплики в списке", "Левон" in names, True)
+    check("ярлык диаризации не имя",
+          any("Speaker" in n for n in names), False)
+
+
+def test_render_sections_and_owner_slot() -> None:
+    pool = [
+        {"type": "agreement", "text": "релиз переносится на пятницу", "t": "00:10",
+         "owner": None, "deadline": None},
+        {"type": "task", "text": "подготовить макеты", "t": "00:40",
+         "owner": "Левон", "deadline": None},
+        {"type": "question", "text": "метрики не обсудили", "t": "01:20",
+         "owner": None, "deadline": None},
+    ]
+    body = be.render(pool)
+    check("три секции", [line for line in body.split("\n") if line.startswith("## ")],
+          ["## Решения", "## Задачи", "## Открытые вопросы"])
+    check("слот исполнителя", "- **Левон** — подготовить макеты" in body, True)
+
+
+def test_dedup_keeps_the_longer_wording() -> None:
+    claims = [
+        {"type": "agreement", "text": "релиз переносится на пятницу", "t": "00:10",
+         "owner": None, "deadline": None},
+        {"type": "agreement", "text": "релиз переносится на пятницу окончательно",
+         "t": "00:10", "owner": None, "deadline": "пятница"},
+        {"type": "agreement", "text": "метрики выносятся в отдельную встречу",
+         "t": "01:20", "owner": None, "deadline": None},
+    ]
+    pool, dropped = be.dedup(claims)
+    check("почти-дубль схлопнут", (len(pool), dropped), (2, 1))
+    check("осталась длинная формулировка", pool[0]["text"],
+          "релиз переносится на пятницу окончательно")
+    check("срок подобран у дубля", pool[0]["deadline"], "пятница")
 
 
 def main() -> int:

@@ -132,7 +132,8 @@ RETRY_TEMPERATURE = 0.3   # на ней перегенерируется схл�
 def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
                 temperature: float = 0.2,
                 min_reply_tokens: int | None = None,
-                retry_temperature: float | None = None) -> tuple[str, dict]:
+                retry_temperature: float | None = None,
+                fmt: dict | None = None) -> tuple[str, dict]:
     """Same payload shape as `RecapService.callOllama` — think off, temp 0.2, sized window.
 
     `min_reply_tokens` перегенерирует ответ **один раз**, если он схлопнулся.
@@ -142,6 +143,11 @@ def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
 
     `retry_temperature` нужен пути t=0, где повтор на той же температуре бессмысленен:
     он задаёт температуру **только повтора**, первый вызов остаётся детерминированным.
+
+    `fmt` — JSON-схема в поле `format` (structured outputs Ollama ≥ 0.5). Приложение
+    её сегодня не шлёт; путь v3 (`bench_extract.py`) стоит на ней целиком, поэтому
+    схема идёт параметром, а не вторым клиентом: ретрай схлопнувшегося ответа и
+    `stats` должны быть одни и те же на обоих путях.
     """
     ctx = num_ctx(len(system) + len(user))
     payload = {
@@ -155,6 +161,8 @@ def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
             {"role": "user", "content": user},
         ],
     }
+    if fmt is not None:
+        payload["format"] = fmt
     def once(at_temperature: float | None = None) -> tuple[str, int, float, int]:
         body_payload = payload
         if at_temperature is not None and at_temperature != temperature:

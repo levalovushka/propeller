@@ -47,19 +47,28 @@ EXTRACT_PROMPT = """
 """.strip()
 
 
+def turns(transcript: str) -> tuple[str, list[str]]:
+    """(header, speaker turns) — та же резка, что у `split_on_turns`.
+
+    Вынесена, потому что окна `bench_extract.py` режутся по тем же границам, но с
+    перекрытием: два способа делить транскрипт разошлись бы молча.
+    """
+    header, _, body = transcript.partition("## Transcript")
+    pieces = re.split(r"(?=^\*\*[^*]+\*\*\s*·\s*\d)", body, flags=re.M)
+    return header, [t for t in pieces if t.strip()]
+
+
 def split_on_turns(transcript: str, limit: int = CHUNK_CHARACTERS) -> list[str]:
     """Cut between speaker turns, never inside one.
 
     Splitting mid-turn costs the piece its speaker and its timecode, and the
     extraction then attributes the sentence to whoever spoke next.
     """
-    header, _, body = transcript.partition("## Transcript")
-    turns = re.split(r"(?=^\*\*[^*]+\*\*\s*·\s*\d)", body, flags=re.M)
-    turns = [t for t in turns if t.strip()]
+    header, turn_list = turns(transcript)
 
     pieces: list[str] = []
     current = ""
-    for turn in turns:
+    for turn in turn_list:
         if current and len(current) + len(turn) > limit:
             pieces.append(current)
             current = turn
