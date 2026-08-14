@@ -579,13 +579,115 @@ def merge_asymmetric(draft: dict[str, list[str]], others: list[dict[str, list[st
     return kept, {"calls": calls, "exchange": "\n\n".join(exchanges), **diagnostics}
 
 
-def render(merged: dict[str, list[str]], summary: str, discussion: str,
-           names: "owners.Names | None" = None) -> str:
-    """Собрать документ. `names` включает фильтр слота исполнителя (`owners.py`).
+# ---------------------------------------------------------------------------
+# Артефакты генерации: иероглиф, сращение письменностей, эхо промпта
+# ---------------------------------------------------------------------------
+#
+# Класс дефектов, которого в первом судейском аудите не было вовсе, а в пере-суде
+# gate2 (`judge/JUDGE-2.md`) он появился: иероглифы посреди русской фразы («но暂定
+# позиция», «полноценно接手 проекты»), сросшиеся письменности внутри одного слова
+# («дrafта», «Деbate», «familiarность») и дословно вписанная в документ оговорка из
+# промпта экстрактора. Все три ловятся **детерминированно**, без модели, значит их
+# место — рендер, единственная точка, общая живому прогону и пересборке.
+#
+# Правило одно и то же, что у фильтра исполнителя: строка не теряется никогда —
+# уходит только токен. Кривое слово выбросить лучше, чем выбросить фразу.
 
-    Фильтр стоит здесь, а не в разборе ветвей, потому что рендер — единственная точка,
-    через которую проходят и живой прогон, и пересборка `replay_asym`: иначе замер и
-    продукт разошлись бы. `names=None` — старое поведение, для фикстур разбора.
+# Иероглифика и японская кана вместе с CJK-пунктуацией и полноширинными формами.
+CJK = re.compile("[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff"
+                 "\uf900-\ufaff\ufe30-\ufe4f\uff00-\uffef]")
+CYRILLIC = re.compile(r"[А-Яа-яЁё]")
+LATIN = re.compile(r"[A-Za-z]")
+LETTER_OR_DIGIT = re.compile(r"[^\W_]", re.U)
+# Слово — непрерывный прогон букв, и только он. Всё остальное (дефис, слэш, точка,
+# апостроф, `**`) разделяет слова: «Радио/VK», «сбербанка.ru», «Rich-playlist'ам»,
+# «hover/клик» — это по два законных слова рядом, а не сращение. Пока правило резало
+# по пробелу и дефису, детектор давал 14 ложных находок из 31 на gate2.
+WORD_RUN = re.compile(r"[^\W\d_]+", re.U)
+
+# Промпт просит писать ТЕМУ «с таймкодом начала в том виде, как он стоит в
+# транскрипте» — и модель раз за разом печатает саму оговорку внутрь темы. Это
+# подстрока `chunked.EXTRACT_PROMPT`, а не текст встречи; связь держит `test_parse`.
+PROMPT_ECHO_TEXT = "с таймкодом начала в том виде, как он стоит в транскрипте"
+PROMPT_ECHO = re.compile(
+    r"\s*[(\[]?\s*с таймкодом начала в том виде,\s*(?:как|в каком)\s+он стоит\s+"
+    r"в транскрипте\s*[)\]]?\s*\.?", re.I)
+
+
+def fused_word(word: str, transcript_lower: str) -> bool:
+    """Сросшиеся письменности внутри одного слова — и такой формы нет в транскрипте.
+
+    Три класса, а не один. Латиница целиком («Fast Play», «VK Mix», «Figma») —
+    легитимная терминология встреч, на ней стоят якоря матчера, её не трогает ничто.
+    Кириллица целиком — тем более. Режется только слово, где письменности срослись
+    **и** которого в такой форме в транскрипте нет: ASR порождает своих уродцев, и
+    процитированный уродец — не выдумка модели, а цитата.
+
+    `word` — прогон букв (`WORD_RUN`), а не токен между пробелами: иначе «Радио/VK»
+    и «сбербанка.ru» считались бы сращением, а это два законных слова через
+    разделитель.
+    """
+    if not (CYRILLIC.search(word) and LATIN.search(word)):
+        return False
+    return word.lower() not in transcript_lower
+
+
+def strip_artifact_token(token: str, transcript_lower: str) -> str | None:
+    """Токен без артефактов, или None — если от него не осталось ничего.
+
+    Иероглифы снимаются с токена, а не вместе с ним: в «но暂定» кириллическое «но» —
+    нормальное русское слово, и оно остаётся. Сросшееся слово уходит целиком, но
+    только оно: составное («VK-микс», «Радио/VK») оценивается по частям, и законная
+    часть остаётся на месте. Мусор пунктуации на краях среза снимается.
+    """
+    if not token:
+        return token
+    cleaned = CJK.sub("", token)
+    if LETTER_OR_DIGIT.search(token) and not LETTER_OR_DIGIT.search(cleaned):
+        return None
+    cut = WORD_RUN.sub(
+        lambda found: "" if fused_word(found.group(0), transcript_lower) else found.group(0),
+        cleaned)
+    if cut == cleaned:
+        return cleaned
+    cut = re.sub(r"^\W+|\W+$", "", cut)
+    return cut if LETTER_OR_DIGIT.search(cut) else None
+
+
+def strip_artifacts(text: str, transcript: str) -> str:
+    """Снять артефакты генерации со всего документа, сохранив каждую строку."""
+    lowered = transcript.lower()
+    lines = []
+    for line in PROMPT_ECHO.sub("", text).split("\n"):
+        tokens = [strip_artifact_token(token, lowered) for token in line.split(" ")]
+        lines.append(" ".join(token for token in tokens if token is not None))
+    return "\n".join(lines)
+
+
+def artifact_findings(text: str, transcript: str) -> list[str]:
+    """Детектор тех же трёх классов: что именно нашлось и где. Ничего не меняет."""
+    lowered = transcript.lower()
+    findings = []
+    for number, line in enumerate(text.split("\n"), 1):
+        for found in PROMPT_ECHO.finditer(line):
+            findings.append(f"стр.{number}: эхо промпта: «{found.group(0).strip()}»")
+        for token in line.split(" "):
+            if CJK.search(token):
+                findings.append(f"стр.{number}: иероглиф: {token}")
+            for word in WORD_RUN.findall(token):
+                if fused_word(word, lowered):
+                    findings.append(f"стр.{number}: сращение: {word}")
+    return findings
+
+
+def render(merged: dict[str, list[str]], summary: str, discussion: str,
+           names: "owners.Names | None" = None, transcript: str | None = None) -> str:
+    """Собрать документ. `names` включает фильтр слота исполнителя (`owners.py`),
+    `transcript` — фильтр артефактов генерации (`strip_artifacts`).
+
+    Оба фильтра стоят здесь, а не в разборе ветвей, потому что рендер — единственная
+    точка, через которую проходят и живой прогон, и пересборка `replay_asym`: иначе
+    замер и продукт разошлись бы. `None` — старое поведение, для фикстур разбора.
     """
     parts = []
     if summary.strip():
@@ -600,7 +702,8 @@ def render(merged: dict[str, list[str]], summary: str, discussion: str,
         parts.append(f"## {NARRATIVE}\n" + "\n\n".join(merged[NARRATIVE]))
     elif discussion.strip():
         parts.append(f"## {NARRATIVE}\n" + discussion.strip())
-    return "\n\n".join(parts)
+    body = "\n\n".join(parts)
+    return strip_artifacts(body, transcript) if transcript is not None else body
 
 
 def section_text(recap: str, name: str) -> str:
@@ -727,7 +830,7 @@ def main() -> int:
         # 12/14 → 9/14 (A5, поправка 2). Поэтому он сливается по всем ветвям — но
         # хронологией, а не конкатенацией: см. `merge_prose`.
         merged[NARRATIVE] = merge_prose([branches[draft_index]] + others)
-    body = render(merged, summary, discussion, owners.Names.of(markdown))
+    body = render(merged, summary, discussion, owners.Names.of(markdown), markdown)
     (out / "recap.md").write_text(body + "\n", encoding="utf-8")
     calls = sum(b.get("calls", 1) for b in log) + dedup_calls
     (out / "stats.json").write_text(json.dumps({

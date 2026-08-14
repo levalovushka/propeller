@@ -316,13 +316,15 @@ def signalled(additions: list, draft: dict, regions: Regions, room: int,
 
 
 def by_metric(additions: list, kept: dict, draft: dict, summary: str, discussion: str,
-              room: int, meeting: str, names: "owners.Names | None" = None) -> list:
+              room: int, meeting: str, names: "owners.Names | None" = None,
+              transcript: str | None = None) -> list:
     """Оракул: жадно по самой метрике. Верхняя граница, не конструкция."""
     survivors, pool = [], list(additions)
     while pool and len(survivors) < room:
         best, best_score = None, -1
         for pair in pool:
-            trial = build(draft, survivors + [pair], summary, discussion, kept, names)
+            trial = build(draft, survivors + [pair], summary, discussion, kept, names,
+                          transcript)
             value = gm.score(trial, meeting)
             if value > best_score:
                 best, best_score = pair, value
@@ -332,12 +334,12 @@ def by_metric(additions: list, kept: dict, draft: dict, summary: str, discussion
 
 
 def build(draft: dict, survivors: list, summary: str, discussion: str, kept: dict,
-          names: "owners.Names | None" = None) -> str:
+          names: "owners.Names | None" = None, transcript: str | None = None) -> str:
     out = {s: list(draft.get(s, [])) for s in b.SECTIONS}
     for section, item in survivors:
         out[section].append(item)
     out[b.NARRATIVE] = kept[b.NARRATIVE]
-    return b.render(out, summary, discussion, names)
+    return b.render(out, summary, discussion, names, transcript)
 
 
 CANON_PROMPT = """
@@ -422,19 +424,20 @@ def replay(run: Path, variant: str, transcript: str, meeting: str, budget: int,
            draft_branch: str | None = None) -> str:
     draft, others, summary, discussion = load_branches(run, draft_from, draft_branch)
     kept, additions = candidates_of(draft, others, transcript)
-    # Фильтр слота исполнителя — часть сборки, значит и часть пересборки: иначе
-    # пересборка мерила бы не то, что уедет в продукт. Словарь считается из того же
-    # транскрипта; точка «до» для сравнения — сохранённые `recap.md` гейта, их
-    # пересборкой не восстановить (код починен).
+    # Фильтр слота исполнителя и фильтр артефактов генерации — часть сборки, значит и
+    # часть пересборки: иначе пересборка мерила бы не то, что уедет в продукт. Словарь
+    # имён и словарь форм считаются из того же транскрипта; точка «до» для сравнения —
+    # сохранённые `recap.md` гейта, их пересборкой не восстановить (код починен).
     if names is None:
         names = owners.Names.of(transcript)
     if variant == "draft":
         # «Только черновик» — это «шипнуть одну ветку t=0», поэтому и «Ход
         # обсуждения» тут её собственный, а не слитый по всем веткам. Иначе строка
         # завышена на 1,6 пункта чужой находкой (9,6 против 8,0).
-        return build(draft, [], summary, discussion, {b.NARRATIVE: draft[b.NARRATIVE]}, names)
+        return build(draft, [], summary, discussion, {b.NARRATIVE: draft[b.NARRATIVE]},
+                     names, transcript)
     if variant == "mech":
-        return build(draft, additions, summary, discussion, kept, names)
+        return build(draft, additions, summary, discussion, kept, names, transcript)
     room = max(0, budget - sum(len(draft.get(s, [])) for s in b.SECTIONS))
     if variant == "quota14":
         known: set[str] = set()
@@ -444,7 +447,7 @@ def replay(run: Path, variant: str, transcript: str, meeting: str, budget: int,
         survivors = greedy(additions, known, room, QUOTAS)
     elif variant == "oracle14":
         survivors = by_metric(additions, kept, draft, summary, discussion, room, meeting,
-                              names)
+                              names, transcript)
     elif variant in VARIANTS:
         features = VARIANTS[variant]
         canon = None
@@ -456,7 +459,7 @@ def replay(run: Path, variant: str, transcript: str, meeting: str, budget: int,
                               features, canon)
     else:
         raise SystemExit(f"неизвестный вариант: {variant}")
-    return build(draft, survivors, summary, discussion, kept, names)
+    return build(draft, survivors, summary, discussion, kept, names, transcript)
 
 
 def main() -> int:

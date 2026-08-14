@@ -10,6 +10,12 @@
     (в) в слоте исполнителя — «Speaker S1», коллективы, выдуманные и составленные
         из двух людей имена.
 
+Пере-суд (`judge/JUDGE-2.md`) назвал четвёртый, которого в первом заходе не было:
+
+    (г) артефакты генерации — иероглифы посреди русской фразы, сросшиеся внутри
+        одного слова письменности и дословно вписанная в документ оговорка из
+        промпта экстрактора.
+
 Здесь каждый из трёх описан **детектором**, то есть проверяемым кодом, а не глазом
 судьи, и посчитан дважды: на сохранённых `recap.md` гейта («до») и на пересборке тех
 же ветвей починенным кодом («после»). Пересборка — `replay_asym.replay(code14)`:
@@ -111,10 +117,28 @@ def bad_owners(recap: str, names: owners.Names) -> list[str]:
     return findings
 
 
-def defects(recap: str, names: owners.Names) -> dict[str, list[str]]:
+# ---------------------------------------------------------------------------
+# Детектор (г): артефакт генерации — иероглиф, сращение письменностей, эхо промпта
+# ---------------------------------------------------------------------------
+
+def artifacts(recap: str, transcript: str) -> list[str]:
+    """Три класса разом, детектор в `bench_ensemble.artifact_findings`.
+
+    Класс появился в пере-суде (`judge/JUDGE-2.md`) и в первом суде его не было вовсе.
+    Латиница целиком не в счёт: «Fast Play», «VK Mix», «Figma» — терминология встреч,
+    на ней стоят якоря матчера.
+    """
+    return b.artifact_findings(recap, transcript)
+
+
+CLASSES = ("иероглиф", "сращение", "эхо промпта")
+
+
+def defects(recap: str, names: owners.Names, transcript: str) -> dict[str, list[str]]:
     return {"а·дубль секции": doubled_section(recap),
             "б·сырая метка": raw_labels(recap),
-            "в·чужой исполнитель": bad_owners(recap, names)}
+            "в·чужой исполнитель": bad_owners(recap, names),
+            "г·артефакт генерации": artifacts(recap, transcript)}
 
 
 # ---------------------------------------------------------------------------
@@ -152,8 +176,8 @@ def main() -> int:
                 after = rebuild(run, transcript, meeting, names)
             row = {
                 "cell": cell, "meeting": meeting, "kind": run.name.split("-")[0],
-                "before": defects(before, names),
-                "after": defects(after, names) if after else None,
+                "before": defects(before, names, transcript),
+                "after": defects(after, names, transcript) if after else None,
                 "coverage": (gm.score(before, meeting),
                              gm.score(after, meeting) if after else None),
                 "bullets": (r.bullets(before), r.bullets(after) if after else None),
@@ -178,7 +202,8 @@ def main() -> int:
         print(f"нет такой ячейки: {args.detail}")
         return 1
 
-    checks = ["а·дубль секции", "б·сырая метка", "в·чужой исполнитель"]
+    checks = ["а·дубль секции", "б·сырая метка", "в·чужой исполнитель",
+              "г·артефакт генерации"]
     print(f"ДЕФЕКТЫ СБОРКИ · out/{args.batch} · {len(rows)} ячеек · "
           f"пересобрано {sum(1 for x in rows if x['after'] is not None)}\n")
 
@@ -195,6 +220,20 @@ def main() -> int:
                 cells.append(f"{before} → {after}")
             print(f"  {short}/{kind:5} " + "   ".join(f"{c:>12}" for c in cells))
     print(f"\n  {'':11} " + "   ".join(f"{c:>12}" for c in checks) + "   (сумма по 8 ячейкам)")
+
+    def of_class(row: dict, stage: str, name: str) -> int:
+        return sum(1 for f in row[stage]["г·артефакт генерации"]
+                   if f.split(": ")[1] == name)
+
+    print("\n(г) по классам · на всех ячейках · на пересобранных до → после:\n")
+    for name in CLASSES:
+        found = [x for x in rows if of_class(x, "before", name)]
+        total = sum(of_class(x, "before", name) for x in rows)
+        pair = [x for x in rows if x["after"] is not None]
+        print(f"  {name:12} {total:3} находок в {len(found):2} ячейках · "
+              f"на пересобранных {sum(of_class(x, 'before', name) for x in pair):3} → "
+              f"{sum(of_class(x, 'after', name) for x in pair):<3} · "
+              f"{', '.join(x['cell'] for x in found) or '—'}")
 
     print("\nпопарно по метрикам стенда (только пересобранные ячейки):\n")
     print(f"  {'встреча':9} {'покрытие':>16} {'буллетов':>16} {'выдумок':>16} {'находок линта':>18}")
