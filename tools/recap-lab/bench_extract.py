@@ -484,7 +484,9 @@ def report(batch: str) -> int:
 
     import gate_score
     import statistics
-    kinds = ("base", "ens", "v3")
+    # Виды ячеек берутся из имён, а не из списка: батчи П0 разные (v3, lean, free),
+    # и забытый вид тихо выпал бы из сводки.
+    kinds = sorted({row["cell"].split("-")[1] for row in rows if "-" in row["cell"]})
     print()
     print(f"{'встреча':8} {'ячейка':8} {'n':>2} {'покрытие':>22} {'сред':>6} "
           f"{'булл':>5} {'выдум':>6} {'токены':>8}")
@@ -503,14 +505,17 @@ def report(batch: str) -> int:
                   f"{statistics.mean(row['bullets'] for row in cells):5.1f} "
                   f"{statistics.mean(row['fabrications'] for row in cells):6.1f} "
                   f"{(f'{min(tokens)}–{max(tokens)}' if tokens else '—'):>8}")
-    for against in ("base", "ens"):
-        strata = [(means[(short, against)], means[(short, "v3")])
-                  for short in sorted({s for s, k in means if k == "v3"})
-                  if (short, against) in means]
-        if strata:
-            observed, probability = gate_score.stratified_p(strata)
-            print(f"v3 − {against}: {observed:+.2f} пункта, перестановочный тест "
-                  f"{probability * 100:.1f} %")
+    for kind in kinds:
+        for against in ("base", "ens"):
+            if kind in ("base", against):
+                continue
+            strata = [(means[(short, against)], means[(short, kind)])
+                      for short in sorted({s for s, k in means if k == kind})
+                      if (short, against) in means]
+            if strata:
+                observed, probability = gate_score.stratified_p(strata)
+                print(f"{kind} − {against}: {observed:+.2f} пункта, перестановочный тест "
+                      f"{probability * 100:.1f} %")
     return 0
 
 
