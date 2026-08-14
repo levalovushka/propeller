@@ -2219,7 +2219,10 @@ class AppState: ObservableObject {
                 speakers: speakers,
                 duration: duration,
                 recordingID: recordingID,
-                prefs: RecapPreferences.fromShared()
+                prefs: RecapPreferences.fromShared(),
+                progress: { [weak self] detail in
+                    Task { @MainActor in self?.setActivityDetail(detail) }
+                }
             )
             switch result {
             case .failure(let reason):

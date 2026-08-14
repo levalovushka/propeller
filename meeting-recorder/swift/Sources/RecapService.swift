@@ -259,7 +259,8 @@ actor RecapService {
         speakers: [String],
         duration: TimeInterval,
         recordingID: String,
-        prefs: RecapPreferences
+        prefs: RecapPreferences,
+        progress: (@Sendable (String) -> Void)? = nil
     ) async throws -> Result<RecapResult, RecapSkipReason> {
         try await PipelineMetrics.interval(PipelineMetrics.pipeline, PipelineMetrics.recap) {
             let trimmed = transcriptMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -304,7 +305,8 @@ actor RecapService {
             var draftStats: RecapGenerationPolicy.CallStats?
             if cutUp {
                 let run = try await recapByChunks(
-                    title: title, transcriptMarkdown: trimmed, prefs: prefs
+                    title: title, transcriptMarkdown: trimmed, prefs: prefs,
+                    progress: progress
                 )
                 draft = run.recap
                 effectiveWindow = run.window
@@ -417,7 +419,8 @@ actor RecapService {
     private func recapByChunks(
         title: String,
         transcriptMarkdown: String,
-        prefs: RecapPreferences
+        prefs: RecapPreferences,
+        progress: (@Sendable (String) -> Void)? = nil
     ) async throws -> (recap: String, window: Int, stats: RecapGenerationPolicy.CallStats?) {
         let chunks = TranscriptChunking.split(transcriptMarkdown)
         let extractSystem = Self.chunkExtractPrompt + Self.languageLock
@@ -429,6 +432,9 @@ actor RecapService {
         var facts: [String] = []
         for (index, chunk) in chunks.enumerated() {
             try Task.checkCancellation()
+            // Минуты генерации не должны выглядеть зависанием: деталь активности
+            // считает фрагменты (RELEASE-1.16.5.md, «Что едет»).
+            progress?("Саммари: фрагмент \(index + 1) из \(chunks.count)…")
             let user = "Фрагмент \(index + 1) из \(chunks.count).\n\n\(chunk)"
             let raw: String
             do {

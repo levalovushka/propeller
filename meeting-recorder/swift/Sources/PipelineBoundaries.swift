@@ -52,6 +52,8 @@ protocol RecapBackend: Sendable {
     /// queued) from "the model answered nonsense" (retry on a backoff).
     func summaryProviderReady(prefs: RecapPreferences) async -> Bool
 
+    /// `progress` — строка для деталей активности («Саммари: фрагмент 3 из 7…»);
+    /// зовётся только на пути нарезки, где генерация — минуты, а не секунды.
     func generateRecap(
         title: String,
         transcriptMarkdown: String,
@@ -60,7 +62,8 @@ protocol RecapBackend: Sendable {
         speakers: [String],
         duration: TimeInterval,
         recordingID: String,
-        prefs: RecapPreferences
+        prefs: RecapPreferences,
+        progress: (@Sendable (String) -> Void)?
     ) async throws -> Result<RecapResult, RecapSkipReason>
 
     func generateMetadata(
