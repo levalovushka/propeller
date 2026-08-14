@@ -65,6 +65,17 @@ EXTRACT_PROMPT = """
 Фрагмент — единственный источник, ничего не додумывай. Не о чем писать — верни пустой список.
 """.strip()
 
+LEAN_PROMPT = """
+Ты выписываешь из фрагмента транскрипта рабочей встречи то, о чём договорились, кто что делает и что осталось нерешённым. Не пересказывай реплики: пиши только то, что участники проговорили как решение, задачу или нерешённый вопрос.
+
+Поля каждого пункта:
+- type: agreement — договорённость; task — кто что делает; question — обсудили и не решили.
+- text: формулировка пункта по-русски, одной фразой.
+- quote: одно-два предложения подряд из фрагмента, по которым пункт виден. Копируй символ в символ, подряд, с одного места. Нельзя: сокращать, ставить многоточие, склеивать два куска.
+
+Фрагмент — единственный источник, ничего не додумывай. Не о чем писать — верни пустой список.
+""".strip()
+
 
 # ---------------------------------------------------------------------------
 # Окна
@@ -153,25 +164,35 @@ def meeting_names(markdown: str, min_mentions: int = 2) -> list[str]:
     return list(seen.values())
 
 
-def schema(names: list[str]) -> dict:
-    """JSON-схема контракта утверждения. `owner` — enum по именам встречи."""
+def schema(names: list[str], lean: bool = False) -> dict:
+    """JSON-схема контракта утверждения. `owner` — enum по именам встречи.
+
+    `lean` — заход на упрощение, предусмотренный стоп-условием П0: в схеме
+    остаются `type`, `text`, `quote`, и ничего больше. Каждое снятое поле снято по
+    числу, а не по вкусу: `t` модель ставит неверно в 4–14 случаях на ячейку (код
+    считает его по спану точно), `deadline` снимался спан-проверкой до шести раз на
+    ячейку, а `owner` в 10 выборах из 15 оказался междометием из механического
+    словаря имён. Поля, которые нечем заполнить, — это токены, потраченные не на
+    поиск договорённостей.
+    """
+    fields: dict[str, dict] = {
+        "type": {"type": "string", "enum": list(TYPE_SECTION)},
+        "text": {"type": "string"},
+        "quote": {"type": "string"},
+    }
+    if not lean:
+        fields |= {
+            "t": {"type": "string"},
+            "owner": {"type": ["string", "null"], "enum": [*names, None]},
+            "deadline": {"type": ["string", "null"]},
+        }
     return {
         "type": "object",
         "properties": {
             "claims": {
                 "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "type": {"type": "string", "enum": list(TYPE_SECTION)},
-                        "text": {"type": "string"},
-                        "quote": {"type": "string"},
-                        "t": {"type": "string"},
-                        "owner": {"type": ["string", "null"], "enum": [*names, None]},
-                        "deadline": {"type": ["string", "null"]},
-                    },
-                    "required": ["type", "text", "quote", "t", "owner", "deadline"],
-                },
+                "items": {"type": "object", "properties": fields,
+                          "required": list(fields)},
             }
         },
         "required": ["claims"],
@@ -382,16 +403,17 @@ def render(claims: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 def extract_window(model: str, window: str, index: int, total: int, names: list[str],
-                   temperature: float, floor: int | None) -> tuple[list[dict], dict, str]:
+                   temperature: float, floor: int | None,
+                   lean: bool = False) -> tuple[list[dict], dict, str]:
     user = "\n".join([
         f"Окно {index} из {total}.",
-        "Допустимые имена: " + ", ".join(names) + ".",
+        *([] if lean else ["Допустимые имена: " + ", ".join(names) + "."]),
         "",
         window,
     ])
     raw, stats = p.call_ollama(
-        model, EXTRACT_PROMPT + p.language_lock(), user,
-        temperature=temperature, fmt=schema(names),
+        model, (LEAN_PROMPT if lean else EXTRACT_PROMPT) + p.language_lock(), user,
+        temperature=temperature, fmt=schema(names, lean),
         min_reply_tokens=floor,
         retry_temperature=p.RETRY_TEMPERATURE if temperature == 0 else None,
     )
@@ -459,6 +481,36 @@ def report(batch: str) -> int:
               f"{total:8} {row['seconds']:5.0f}")
     (base / "report.json").write_text(
         json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    import gate_score
+    import statistics
+    kinds = ("base", "ens", "v3")
+    print()
+    print(f"{'встреча':8} {'ячейка':8} {'n':>2} {'покрытие':>22} {'сред':>6} "
+          f"{'булл':>5} {'выдум':>6} {'токены':>8}")
+    means: dict[tuple[str, str], list[int]] = {}
+    for short in sorted({row["cell"].split("-")[0] for row in rows}):
+        for kind in kinds:
+            cells = [row for row in rows if row["cell"].startswith(f"{short}-{kind}-")]
+            if not cells:
+                continue
+            coverage = sorted(row["coverage"] for row in cells)
+            means[(short, kind)] = coverage
+            tokens = [t for row in cells for t in row["reply_tokens"] if t]
+            print(f"{short:8} {kind:8} {len(cells):2} "
+                  f"{' '.join(str(c) for c in coverage):>22} "
+                  f"{statistics.mean(coverage):6.1f} "
+                  f"{statistics.mean(row['bullets'] for row in cells):5.1f} "
+                  f"{statistics.mean(row['fabrications'] for row in cells):6.1f} "
+                  f"{(f'{min(tokens)}–{max(tokens)}' if tokens else '—'):>8}")
+    for against in ("base", "ens"):
+        strata = [(means[(short, against)], means[(short, "v3")])
+                  for short in sorted({s for s, k in means if k == "v3"})
+                  if (short, against) in means]
+        if strata:
+            observed, probability = gate_score.stratified_p(strata)
+            print(f"v3 − {against}: {observed:+.2f} пункта, перестановочный тест "
+                  f"{probability * 100:.1f} %")
     return 0
 
 
@@ -474,6 +526,8 @@ def main() -> int:
                     help="порог схлопывания ответа в токенах; 0 — без ретрая")
     ap.add_argument("--free", action="store_true",
                     help="контроль формы: те же окна старым свободным промптом")
+    ap.add_argument("--lean", action="store_true",
+                    help="упрощённая схема: только type/text/quote (заход по стоп-условию П0)")
     args = ap.parse_args()
 
     if args.report:
@@ -520,7 +574,7 @@ def main() -> int:
         for temperature in (0.0, SAMPLE_TEMPERATURE):
             claims, stats, raw = extract_window(
                 args.model, window, index, len(pieces), names, temperature,
-                args.floor or None)
+                args.floor or None, args.lean)
             (out / f"window-{index}-t{temperature}.json").write_text(raw + "\n", encoding="utf-8")
             passed = 0
             for claim in claims:
@@ -544,7 +598,7 @@ def main() -> int:
 
     span_drops = drops.get("спан не найден", 0)
     stats = {
-        "mode": "schema", "meeting": args.meeting, "title": title,
+        "mode": "lean" if args.lean else "schema", "meeting": args.meeting, "title": title,
         "model": args.model, "ollama": p_version(),
         "windows": [len(x) for x in pieces], "names": names,
         "branches": log,
