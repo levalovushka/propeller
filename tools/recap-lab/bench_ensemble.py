@@ -681,13 +681,20 @@ def artifact_findings(text: str, transcript: str) -> list[str]:
 
 
 def render(merged: dict[str, list[str]], summary: str, discussion: str,
-           names: "owners.Names | None" = None, transcript: str | None = None) -> str:
+           names: "owners.Names | None" = None, transcript: str | None = None,
+           narrative: bool = True) -> str:
     """Собрать документ. `names` включает фильтр слота исполнителя (`owners.py`),
     `transcript` — фильтр артефактов генерации (`strip_artifacts`).
 
     Оба фильтра стоят здесь, а не в разборе ветвей, потому что рендер — единственная
     точка, через которую проходят и живой прогон, и пересборка `replay_asym`: иначе
     замер и продукт разошлись бы. `None` — старое поведение, для фикстур разбора.
+
+    `narrative=False` («только буллеты») выбрасывает «Ход обсуждения» целиком — и
+    слитый по ветвям, и запасной из черновика. Это не фильтр, а конструкция: суд
+    (`judge/JUDGE-3.md`) назвал двойной пересказ встречи главной причиной, по которой
+    читаемость ансамбля 2,10 против 3,25 у базы, а сама проза бюджет буллетов не
+    тратит. Флаг добавлен, действующая точка (`narrative=True`) не двигается.
     """
     parts = []
     if summary.strip():
@@ -698,7 +705,9 @@ def render(merged: dict[str, list[str]], summary: str, discussion: str,
             items = [owners.scrub(item, names) for item in items]
         if items:
             parts.append(f"## {section}\n" + "\n".join(f"- {i}" for i in items))
-    if merged[NARRATIVE]:
+    if not narrative:
+        pass
+    elif merged[NARRATIVE]:
         parts.append(f"## {NARRATIVE}\n" + "\n\n".join(merged[NARRATIVE]))
     elif discussion.strip():
         parts.append(f"## {NARRATIVE}\n" + discussion.strip())
@@ -767,6 +776,8 @@ def main() -> int:
                          "asym — ветка t0 как черновик, остальные только кандидатами; "
                          "asym-one — то же, но по вызову на кандидата; "
                          "budget — черновик плюс добавки, отбирает только код")
+    ap.add_argument("--no-narrative", action="store_true",
+                    help="документ без «Хода обсуждения»: «Итог» плюс буллеты")
     args = ap.parse_args()
 
     title, markdown = p.transcript(args.meeting)
@@ -830,7 +841,8 @@ def main() -> int:
         # 12/14 → 9/14 (A5, поправка 2). Поэтому он сливается по всем ветвям — но
         # хронологией, а не конкатенацией: см. `merge_prose`.
         merged[NARRATIVE] = merge_prose([branches[draft_index]] + others)
-    body = render(merged, summary, discussion, owners.Names.of(markdown), markdown)
+    body = render(merged, summary, discussion, owners.Names.of(markdown), markdown,
+                  narrative=not args.no_narrative)
     (out / "recap.md").write_text(body + "\n", encoding="utf-8")
     calls = sum(b.get("calls", 1) for b in log) + dedup_calls
     (out / "stats.json").write_text(json.dumps({

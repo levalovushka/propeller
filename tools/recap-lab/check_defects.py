@@ -145,20 +145,25 @@ def defects(recap: str, names: owners.Names, transcript: str) -> dict[str, list[
 # Замер
 # ---------------------------------------------------------------------------
 
-def rebuild(run: Path, transcript: str, meeting: str, names: owners.Names) -> str:
+def rebuild(run: Path, transcript: str, meeting: str, names: owners.Names,
+            budget: int = BUDGET, narrative: bool = True) -> str:
     """Пересборка ячейки починенным кодом. Черновик — тот же, что в живом прогоне."""
     stats = run / "stats.json"
     draft_branch = None
     if stats.exists():
         draft_branch = json.loads(stats.read_text(encoding="utf-8")).get("draft_branch")
-    return r.replay(run, "code14", transcript, meeting, BUDGET,
-                    names=names, draft_branch=draft_branch) + "\n"
+    return r.replay(run, "code14", transcript, meeting, budget,
+                    names=names, draft_branch=draft_branch, narrative=narrative) + "\n"
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--batch", default="gate", help="каталог батча в out/: gate или gate2")
     ap.add_argument("--detail", default=None, help="показать находки одной ячейки, m2/code-1")
+    ap.add_argument("--budget", type=int, default=BUDGET, help="бюджет буллетов пересборки")
+    ap.add_argument("--no-narrative", action="store_true",
+                    help="пересобирать без «Хода обсуждения»: столбец «после» — вариант "
+                         "«только буллеты»")
     args = ap.parse_args()
 
     rows: list[dict] = []
@@ -173,7 +178,8 @@ def main() -> int:
             before = recap_file.read_text(encoding="utf-8")
             after = None
             if (run / "branch-1-t0.md").exists():
-                after = rebuild(run, transcript, meeting, names)
+                after = rebuild(run, transcript, meeting, names, args.budget,
+                                not args.no_narrative)
             row = {
                 "cell": cell, "meeting": meeting, "kind": run.name.split("-")[0],
                 "before": defects(before, names, transcript),

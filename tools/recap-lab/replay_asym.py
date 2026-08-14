@@ -317,14 +317,14 @@ def signalled(additions: list, draft: dict, regions: Regions, room: int,
 
 def by_metric(additions: list, kept: dict, draft: dict, summary: str, discussion: str,
               room: int, meeting: str, names: "owners.Names | None" = None,
-              transcript: str | None = None) -> list:
+              transcript: str | None = None, narrative: bool = True) -> list:
     """Оракул: жадно по самой метрике. Верхняя граница, не конструкция."""
     survivors, pool = [], list(additions)
     while pool and len(survivors) < room:
         best, best_score = None, -1
         for pair in pool:
             trial = build(draft, survivors + [pair], summary, discussion, kept, names,
-                          transcript)
+                          transcript, narrative)
             value = gm.score(trial, meeting)
             if value > best_score:
                 best, best_score = pair, value
@@ -334,12 +334,13 @@ def by_metric(additions: list, kept: dict, draft: dict, summary: str, discussion
 
 
 def build(draft: dict, survivors: list, summary: str, discussion: str, kept: dict,
-          names: "owners.Names | None" = None, transcript: str | None = None) -> str:
+          names: "owners.Names | None" = None, transcript: str | None = None,
+          narrative: bool = True) -> str:
     out = {s: list(draft.get(s, [])) for s in b.SECTIONS}
     for section, item in survivors:
         out[section].append(item)
     out[b.NARRATIVE] = kept[b.NARRATIVE]
-    return b.render(out, summary, discussion, names, transcript)
+    return b.render(out, summary, discussion, names, transcript, narrative)
 
 
 CANON_PROMPT = """
@@ -421,7 +422,7 @@ VARIANTS = {
 def replay(run: Path, variant: str, transcript: str, meeting: str, budget: int,
            regions: Regions | None = None, model: str = b.MODEL,
            draft_from: Path | None = None, names: "owners.Names | None" = None,
-           draft_branch: str | None = None) -> str:
+           draft_branch: str | None = None, narrative: bool = True) -> str:
     draft, others, summary, discussion = load_branches(run, draft_from, draft_branch)
     kept, additions = candidates_of(draft, others, transcript)
     # Фильтр слота исполнителя и фильтр артефактов генерации — часть сборки, значит и
@@ -435,9 +436,10 @@ def replay(run: Path, variant: str, transcript: str, meeting: str, budget: int,
         # обсуждения» тут её собственный, а не слитый по всем веткам. Иначе строка
         # завышена на 1,6 пункта чужой находкой (9,6 против 8,0).
         return build(draft, [], summary, discussion, {b.NARRATIVE: draft[b.NARRATIVE]},
-                     names, transcript)
+                     names, transcript, narrative)
     if variant == "mech":
-        return build(draft, additions, summary, discussion, kept, names, transcript)
+        return build(draft, additions, summary, discussion, kept, names, transcript,
+                     narrative)
     room = max(0, budget - sum(len(draft.get(s, [])) for s in b.SECTIONS))
     if variant == "quota14":
         known: set[str] = set()
@@ -447,7 +449,7 @@ def replay(run: Path, variant: str, transcript: str, meeting: str, budget: int,
         survivors = greedy(additions, known, room, QUOTAS)
     elif variant == "oracle14":
         survivors = by_metric(additions, kept, draft, summary, discussion, room, meeting,
-                              names, transcript)
+                              names, transcript, narrative)
     elif variant in VARIANTS:
         features = VARIANTS[variant]
         canon = None
@@ -459,7 +461,7 @@ def replay(run: Path, variant: str, transcript: str, meeting: str, budget: int,
                               features, canon)
     else:
         raise SystemExit(f"неизвестный вариант: {variant}")
-    return build(draft, survivors, summary, discussion, kept, names, transcript)
+    return build(draft, survivors, summary, discussion, kept, names, transcript, narrative)
 
 
 def main() -> int:
@@ -471,6 +473,12 @@ def main() -> int:
     ap.add_argument("--variants", default="draft,code14,quota14,oracle14")
     ap.add_argument("--model", default=b.MODEL, help="только для варианта canon")
     ap.add_argument("--write", action="store_true", help="сохранить пересборки рядом с ветками")
+    ap.add_argument("--no-narrative", action="store_true",
+                    help="собрать без «Хода обсуждения»: «Итог» плюс буллеты")
+    ap.add_argument("--draft-from-stats", action="store_true",
+                    help="черновик брать из `draft_branch` в stats.json прогона — "
+                         "иначе им всегда становится ветка t=0 и пересборка ячейки "
+                         "гейта №2 считает не ту конструкцию, что живой прогон")
     args = ap.parse_args()
 
     _, transcript = p.transcript(args.meeting)
@@ -485,9 +493,14 @@ def main() -> int:
 
     table: dict[str, list[tuple[int, int, int]]] = {v: [] for v in variants}
     for run in runs:
+        draft_branch = None
+        stats = run / "stats.json"
+        if args.draft_from_stats and stats.exists():
+            draft_branch = json.loads(stats.read_text(encoding="utf-8")).get("draft_branch")
         for variant in variants:
             recap = replay(run, variant, transcript, args.meeting, args.budget,
-                           regions, args.model)
+                           regions, args.model, draft_branch=draft_branch,
+                           narrative=not args.no_narrative)
             row = (gm.score(recap, args.meeting), bullets(recap),
                    fabrications(recap, transcript))
             table[variant].append(row)
@@ -495,7 +508,8 @@ def main() -> int:
                 (run / f"replay-{variant}.md").write_text(recap + "\n", encoding="utf-8")
 
     print(f"{base.name} · встреча {args.meeting} · шкала {scale} · n={len(runs)} "
-          f"· бюджет {args.budget}\n")
+          f"· бюджет {args.budget}"
+          + (" · без «Хода обсуждения»" if args.no_narrative else "") + "\n")
     width = max(len(v) for v in variants) + 1
     print(f"{'вариант':{width}} {'покрытие':22} {'среднее':>8} {'буллетов':>9} {'выдумок':>8}")
     for variant in variants:
