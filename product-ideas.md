@@ -33,7 +33,7 @@ _Свежие идеи триажим в [plan-v2.md](archive/plan-v2.md). По�
 
 ## Решения августа 2026 (качество саммари, релиз 1.17)
 
-_Основание — замеры [tools/recap-lab/OPTIMIZATION.md](tools/recap-lab/OPTIMIZATION.md), план — [RELEASE-1.16.5.md](RELEASE-1.16.5.md) (бывший 1.17, сокращён до lite 2026-08-14)._
+_Основание — замеры [tools/recap-lab/OPTIMIZATION.md](tools/recap-lab/OPTIMIZATION.md), план — [RELEASE-1.16.5.md](archive/RELEASE-1.16.5.md) (бывший 1.17, сокращён до lite 2026-08-14)._
 
 | Идея | Статус | Комментарий |
 |---|---|---|

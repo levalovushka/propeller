@@ -1,4 +1,4 @@
-# Паритет механической сборки со стендом (Г1, RELEASE-1.16.5.md)
+# Паритет механической сборки со стендом (Г1, archive/RELEASE-1.16.5.md)
 
 `facts-live.md` — живой выход экстрактора со стенда:
 `tools/recap-lab/out/gate2-fixed/m3/code-1/branch-3-facts.md` (встреча
