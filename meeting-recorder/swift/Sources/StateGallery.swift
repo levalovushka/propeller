@@ -143,10 +143,18 @@ enum GalleryScreenFactory {
             }
             .frame(width: windowSize.width, height: windowSize.height)
             .background(Color.black)
+        } else if UIStateCatalog.settingsClaude.contains(where: { $0.id == id }) {
+            // Доска, а не окно: ячейка живёт в самом низу длинного столбца
+            // настроек, и в кадре окна её просто не видно — первый прогон снял
+            // шесть одинаковых шапок «Основное». Тот же приём, что у рельса:
+            // компонент показывается целиком, в тёмной и светлой сразу.
+            SidebarGallery.Board {
+                ClaudeSettingsGroup(state: state)
+                    .frame(width: Tokens.Settings.maxWidth)
+            }
         } else if UIStateCatalog.meetingStates.contains(where: { $0.id == id })
                     || id.hasPrefix("tab-") || id.hasPrefix("lib-")
-                    || id.hasPrefix("rec-") || id.hasPrefix("rail-prompt-")
-                    || id.hasPrefix("settings-claude-") {
+                    || id.hasPrefix("rec-") || id.hasPrefix("rail-prompt-") {
             // Pipeline states are rows in the list; tab states are the detail
             // inside the same chrome. Both are `MainView` deciding what to show
             // from the posed state — photographing `RecordingDetailView` on its

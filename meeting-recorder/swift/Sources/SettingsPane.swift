@@ -361,7 +361,10 @@ private struct ModelsSettingsGroup: View {
 ///
 /// Кнопки «Перезапустить» здесь нет намеренно: закрывать чужое приложение с
 /// открытыми разговорами — не наше дело.
-private struct ClaudeSettingsGroup: View {
+///
+/// Не `private` только ради галереи: её кадры рисуют эту же группу, а не её
+/// копию, — иначе справочник показывал бы то, чего в приложении нет.
+struct ClaudeSettingsGroup: View {
     @ObservedObject var state: AppState
     @State private var cell: ClaudeCellState = .offer
     /// Живёт до следующего нажатия. Это ответ на действие, а не свойство
