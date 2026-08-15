@@ -8,23 +8,31 @@ import Foundation
 /// чего ответ, — поэтому они переехали в рельс одним блоком у его подошвы.
 /// На отдельном экране осталось то, что нужно спросить у самой macOS.
 ///
+/// Третьим встал Клод, и он той же породы: предложение, а не ворота. Без него
+/// приложение работает целиком, поэтому он идёт последним и только там, где
+/// Claude Desktop вообще стоит.
+///
 /// Здесь и решение, какой вопрос сейчас на виду, и его слова: тест может
 /// поставить «календарь уже выдан, имени нет», не поднимая EventKit, и увидеть
 /// ровно то, что увидит человек.
 public enum SetupPrompt: String, Equatable, Sendable, CaseIterable {
     case calendar
     case name
+    case claude
 
-    /// Место в счётчике «1/2».
+    /// Место в счётчике «1/3».
     ///
     /// Закреплено, а не выведено из того, что осталось спросить: счётчик говорит,
     /// сколько пути пройдено, и шаг имени, назвавший себя «1/1» из-за уже
     /// подключённого календаря, соврал бы про длину блока ровно тогда, когда она
-    /// другая.
+    /// другая. Человек, у которого календарь и имя уже отвечены, увидит одинокое
+    /// «3/3» — некрасиво ровно настолько же, насколько сегодня одинокое «2/2», и
+    /// по той же причине.
     public var index: Int {
         switch self {
         case .calendar: return 1
         case .name:     return 2
+        case .claude:   return 3
         }
     }
 
@@ -36,6 +44,7 @@ public enum SetupPrompt: String, Equatable, Sendable, CaseIterable {
         switch self {
         case .calendar: return "Подключите календарь"
         case .name:     return "Как вас зовут?"
+        case .claude:   return "Подключите Claude"
         }
     }
 
@@ -45,6 +54,7 @@ public enum SetupPrompt: String, Equatable, Sendable, CaseIterable {
         switch self {
         case .calendar: return "Возьмём там встречи и имена"
         case .name:     return "Учтём в расшифровках"
+        case .claude:   return "Он будет в курсе ваших встреч"
         }
     }
 
@@ -53,6 +63,7 @@ public enum SetupPrompt: String, Equatable, Sendable, CaseIterable {
         switch self {
         case .calendar: return "Подключить"
         case .name:     return nil
+        case .claude:   return "Подключить"
         }
     }
 
@@ -61,6 +72,7 @@ public enum SetupPrompt: String, Equatable, Sendable, CaseIterable {
         switch self {
         case .calendar: return nil
         case .name:     return "Ваше имя"
+        case .claude:   return nil
         }
     }
 }
@@ -85,11 +97,16 @@ public enum SetupPromptMachine {
         setupCompleted: Bool,
         calendarGranted: Bool,
         calendarAsked: Bool,
-        knownName: String
+        knownName: String,
+        claudeInstalled: Bool,
+        claudeAsked: Bool
     ) -> SetupPrompt? {
         guard setupCompleted else { return nil }
         if !calendarGranted, !calendarAsked { return .calendar }
         if knownName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .name }
+        // Последним и только когда есть что предлагать: без Claude Desktop это
+        // была бы реклама чужого приложения в подошве рельса.
+        if claudeInstalled, !claudeAsked { return .claude }
         return nil
     }
 }

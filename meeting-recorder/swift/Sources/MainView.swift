@@ -320,10 +320,13 @@ struct MainView: View {
                 Analytics.signal("Search.opened")
             },
             onPromptAction: { id in
-                // Only the calendar step has a button; the id comes back so the
-                // window is not guessing which question it just answered.
-                guard SetupPrompt(rawValue: id) == .calendar else { return }
-                state.connectCalendarFromRail()
+                // The id comes back so the window is not guessing which question
+                // it just answered — two of the three steps wear a button.
+                switch SetupPrompt(rawValue: id) {
+                case .calendar: state.connectCalendarFromRail()
+                case .claude:   state.connectClaudeFromRail()
+                default:        break
+                }
             },
             onPromptSubmit: { id, value in
                 guard SetupPrompt(rawValue: id) == .name else { return }

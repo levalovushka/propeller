@@ -1,7 +1,7 @@
 import XCTest
 @testable import PropellerPure
 
-/// Онбординг стал одной плашкой, а два его вопроса — блоком в рельсе. Тесты
+/// Онбординг стал одной плашкой, а его вопросы — блоком в рельсе. Тесты
 /// названы тем, что видит человек: блок не должен появиться там, где вопрос уже
 /// задавали, и не должен исчезнуть, пока на него не ответили.
 final class SetupPromptTests: XCTestCase {
@@ -10,13 +10,17 @@ final class SetupPromptTests: XCTestCase {
         setupCompleted: Bool = true,
         calendarGranted: Bool = false,
         calendarAsked: Bool = false,
-        knownName: String = ""
+        knownName: String = "",
+        claudeInstalled: Bool = false,
+        claudeAsked: Bool = false
     ) -> SetupPrompt? {
         SetupPromptMachine.step(
             setupCompleted: setupCompleted,
             calendarGranted: calendarGranted,
             calendarAsked: calendarAsked,
-            knownName: knownName
+            knownName: knownName,
+            claudeInstalled: claudeInstalled,
+            claudeAsked: claudeAsked
         )
     }
 
@@ -30,8 +34,34 @@ final class SetupPromptTests: XCTestCase {
         XCTAssertEqual(step(calendarAsked: true), .name)
     }
 
-    func testКогдаОтвеченоОбоеБлокаНет() {
+    func testКогдаОтвеченоВсёБлокаНет() {
         XCTAssertNil(step(calendarAsked: true, knownName: "Лёва"))
+        XCTAssertNil(step(calendarAsked: true, knownName: "Лёва",
+                          claudeInstalled: true, claudeAsked: true))
+    }
+
+    /// Клод идёт последним и только когда есть что предлагать: без Claude
+    /// Desktop это была бы реклама чужого приложения в подошве рельса.
+    func testПослеИмениСпрашиваетПроКлодаЕслиОнЕсть() {
+        XCTAssertEqual(step(calendarAsked: true, knownName: "Лёва", claudeInstalled: true), .claude)
+    }
+
+    func testБезКлодаТретьегоВопросаНет() {
+        XCTAssertNil(step(calendarAsked: true, knownName: "Лёва", claudeInstalled: false))
+    }
+
+    /// Тот же уговор, что у календаря: шаг тратится нажатием. Не записался
+    /// конфиг — про это скажет ячейка в настройках, а не вернувшийся вопрос.
+    func testНажатиеПодключитьЗакрываетШагПроКлода() {
+        XCTAssertNil(step(calendarAsked: true, knownName: "Лёва",
+                          claudeInstalled: true, claudeAsked: true))
+    }
+
+    /// Порядок держится лесенкой: пока имя не названо, про Клода не спрашивают,
+    /// даже если он стоит.
+    func testКлодНеПеребиваетПредыдущиеВопросы() {
+        XCTAssertEqual(step(claudeInstalled: true), .calendar)
+        XCTAssertEqual(step(calendarAsked: true, claudeInstalled: true), .name)
     }
 
     /// Пока плашка настройки на экране, рельса не видно вовсе — но состояние не
@@ -74,16 +104,22 @@ final class SetupPromptTests: XCTestCase {
 
     // MARK: - Слова
 
-    func testСчётчикВсегдаИзДвух() {
-        XCTAssertEqual(SetupPrompt.calendar.counter, "1/2")
-        XCTAssertEqual(SetupPrompt.name.counter, "2/2")
+    func testСчётчикВсегдаИзТрёх() {
+        XCTAssertEqual(SetupPrompt.calendar.counter, "1/3")
+        XCTAssertEqual(SetupPrompt.name.counter, "2/3")
+        XCTAssertEqual(SetupPrompt.claude.counter, "3/3")
         XCTAssertEqual(SetupPrompt.total, SetupPrompt.allCases.count)
     }
 
     /// Счётчик не сжимается, когда календарь уже выдан: шаг имени остаётся
     /// вторым из двух, а не становится «1/1».
     func testСчётчикНеЗависитОтТогоЧтоУжеОтвечено() {
-        XCTAssertEqual(step(calendarGranted: true)?.counter, "2/2")
+        XCTAssertEqual(step(calendarGranted: true)?.counter, "2/3")
+        // Одинокое «3/3» у того, кто ответил всё остальное, — принято как есть:
+        // индекс закреплён, чтобы шаг не врал про длину блока.
+        XCTAssertEqual(
+            step(calendarGranted: true, knownName: "Лёва", claudeInstalled: true)?.counter, "3/3"
+        )
     }
 
     /// У каждого шага ровно одна форма ответа — кнопка или поле. И то и другое

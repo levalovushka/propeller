@@ -305,6 +305,18 @@ class Preferences {
         set { defaults.set(newValue, forKey: "setupCalendarAsked") }
     }
 
+    /// The rail asked about Claude and the user pressed «Подключить».
+    ///
+    /// Same shape as `setupCalendarAsked`, and for the same reason: the step is
+    /// spent on the press, not on the outcome. Whether the connection then took
+    /// is answered by the settings cell, which reads the config and the marker;
+    /// bringing the rail's question back because it did not would turn a
+    /// suggestion into nagging.
+    var setupClaudeAsked: Bool {
+        get { defaults.bool(forKey: "setupClaudeAsked") }
+        set { defaults.set(newValue, forKey: "setupClaudeAsked") }
+    }
+
     /// Read the system Calendar (EventKit) to name recordings. Off until the
     /// user opts in, since it triggers a calendar-access permission prompt.
     var calendarEnabled: Bool {
