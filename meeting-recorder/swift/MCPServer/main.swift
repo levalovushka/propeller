@@ -103,6 +103,10 @@ private func handle(_ message: [String: Any]) -> [String: Any]? {
         }
         do {
             let text = try Tools.call(name: name, arguments: arguments)
+            // Считается состоявшийся вызов, а не `initialize` и не `tools/list`:
+            // и то и другое Клод делает сам на своём старте, и в вопросе
+            // «пользуются ли фичей» это шум, который был бы принят за ответ.
+            UsageLog.record(tool: name)
             return reply(id: id, result: [
                 "content": [["type": "text", "text": text]],
                 "isError": false,

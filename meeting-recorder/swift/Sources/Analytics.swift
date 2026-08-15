@@ -61,6 +61,8 @@ enum Analytics {
             "version": ver,
             "test_mode": config.testMode ? "1" : "0",
         ])
+        // Всё, что Клод наспрашивал, пока приложение было закрыто.
+        reportClaudeUsage()
         // Menu-bar apps often quit before the default 10s batch timer — push once.
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.0) {
             TelemetryDeck.requestImmediateSync()
@@ -137,6 +139,10 @@ enum Analytics {
         guard lastSessionDay != day else { return }
         lastSessionDay = day
         TelemetryDeck.generateNewSession()
+        // День перевалил — самое время отдать накопленное: приложение из меню
+        // бара живёт неделями, и ждать его перезапуска значило бы не увидеть
+        // использования вовсе.
+        reportClaudeUsage()
     }
 
     // MARK: - Funnel helpers (no content)
@@ -241,6 +247,49 @@ enum Analytics {
         if let replyTokens { params["reply_tokens"] = String(replyTokens) }
         if let author { params["author"] = author.rawValue }
         signal("Recap.generated", parameters: params, value: seconds)
+    }
+
+    // MARK: - Claude
+
+    /// Сколько раз человек на самом деле спросил Клода о встречах.
+    ///
+    /// Единственный сигнал, который отвечает на вопрос «пользуются ли фичей».
+    /// `Claude.connected` говорит, что кнопку нажали; отметка — что Клод поднял
+    /// наш процесс, а он поднимает его на своём старте, у всех подключивших,
+    /// каждый день. Ни то ни другое не про использование.
+    ///
+    /// Вызовы считает сервер (`ClaudeUsage`), потому что случаются они в его
+    /// процессе; отправляем их отсюда, чтобы у того процесса не заводилось ни
+    /// сети, ни SDK, ни очереди. Читается журнал **переименованием**: сервер в
+    /// это время может дописывать, и подмена имени — единственный способ забрать
+    /// накопленное, ничего не потеряв между чтением и стиранием.
+    ///
+    /// В сигнале нет ни одной строки из архива: имя инструмента и число.
+    static func reportClaudeUsage() {
+        let manager = FileManager.default
+        let log = ClaudeConnector.usageLogURL
+        guard manager.fileExists(atPath: log.path) else { return }
+        let taken = log.deletingLastPathComponent()
+            .appendingPathComponent(ClaudeUsage.logFileName + ".taken")
+        try? manager.removeItem(at: taken)
+        do {
+            try manager.moveItem(at: log, to: taken)
+        } catch {
+            return
+        }
+        defer { try? manager.removeItem(at: taken) }
+
+        guard let text = try? String(contentsOf: taken, encoding: .utf8) else { return }
+        let summary = ClaudeUsage.summarize(text)
+        guard !summary.isEmpty else { return }
+
+        for (tool, count) in summary.calls.sorted(by: { $0.key < $1.key }) {
+            signal("Claude.used", parameters: [
+                "tool": tool,
+                "frequency": ClaudeUsage.frequencyBucket(count),
+                "days": String(summary.activeDays),
+            ], value: Double(count))
+        }
     }
 
     /// How long the person waited between the meeting ending and the summary

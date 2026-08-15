@@ -41,6 +41,13 @@ enum Archive {
         return ArchivePath.normalized(defaults.string(forKey: "meetingsPath"), default: fallback)
     }
 
+    /// Переключатель телеметрии из настроек приложения. Сервер спрашивает его
+    /// перед тем, как записать хоть одну строку про свои вызовы: выключено —
+    /// значит счёт не ведётся, а не ведётся и лежит.
+    static var analyticsEnabled: Bool {
+        defaults.object(forKey: "analyticsEnabled") as? Bool ?? true
+    }
+
     static var indexURL: URL {
         URL(fileURLWithPath: recordingsPath).appendingPathComponent("recordings.json")
     }

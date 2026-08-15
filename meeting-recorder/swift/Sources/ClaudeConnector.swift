@@ -32,6 +32,15 @@ enum ClaudeConnector {
             .appendingPathComponent(ClaudeConnection.configFileName)
     }
 
+    /// Журнал вызовов, который дописывает сервер (`ClaudeUsage`). `nonisolated`,
+    /// потому что читает его `Analytics`, живущий вне главного актора, а путь —
+    /// это знание, а не состояние.
+    nonisolated static var usageLogURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent(ClaudeConnection.supportDirectoryName, isDirectory: true)
+            .appendingPathComponent(ClaudeUsage.logFileName)
+    }
+
     static var markerURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent(ClaudeConnection.supportDirectoryName, isDirectory: true)
