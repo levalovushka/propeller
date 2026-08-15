@@ -35,6 +35,14 @@ public enum TranscriptChunking {
         OllamaContext.exceedsLargestWindow(promptCharacters: promptCharacters)
     }
 
+    /// Маршрутизация пути конспекта целиком: нарезка существует только у
+    /// локального пути. Облачный провайдер получает встречу одним вызовом при
+    /// любой длине — его путь в 1.16.5 не тронут, и это правило раньше жило
+    /// невынутой строкой в `RecapService`, где тест его не доставал.
+    public static func needed(backend: String, promptCharacters: Int) -> Bool {
+        backend == "ollama" && needed(promptCharacters: promptCharacters)
+    }
+
     /// Разрезать по границам реплик, никогда внутри одной.
     ///
     /// Разрез посреди реплики стоит фрагменту имени говорящего и таймкода, и

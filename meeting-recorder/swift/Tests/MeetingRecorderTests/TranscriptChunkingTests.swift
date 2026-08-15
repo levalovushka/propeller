@@ -86,6 +86,16 @@ final class TranscriptChunkingTests: XCTestCase {
                        OllamaContext.exceedsLargestWindow(promptCharacters: overflows))
     }
 
+    /// Нарезка — свойство локального пути, а не длины: облачный провайдер
+    /// получает встречу одним вызовом при любой длине (его путь не тронут).
+    func testНарезкаТолькоДляЛокальногоПути() {
+        let overflows = 200_000
+        XCTAssertTrue(TranscriptChunking.needed(backend: "ollama", promptCharacters: overflows))
+        XCTAssertFalse(TranscriptChunking.needed(backend: "ollama", promptCharacters: 30_000))
+        XCTAssertFalse(TranscriptChunking.needed(backend: "openai", promptCharacters: overflows))
+        XCTAssertFalse(TranscriptChunking.needed(backend: "claude", promptCharacters: overflows))
+    }
+
     /// Фрагмент подобран так, чтобы всегда влезать в маленькое окно: это и
     /// качество извлечения, и 0,7 ГБ памяти, которые иначе платятся за 32768.
     func testФрагментВлезаетВМаленькоеОкно() {

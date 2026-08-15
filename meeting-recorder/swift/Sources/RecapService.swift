@@ -294,8 +294,9 @@ actor RecapService {
             // второй вызов в том же окне платит 0,2 с за модель, в другом — 2,3 с,
             // потому что Ollama поднимает свежий llama-server (`OllamaContext`).
             let window = OllamaContext.numCtx(promptCharacters: prompt.count + userContent.count)
-            let cutUp = backend == "ollama"
-                && TranscriptChunking.needed(promptCharacters: prompt.count + userContent.count)
+            let cutUp = TranscriptChunking.needed(
+                backend: backend, promptCharacters: prompt.count + userContent.count
+            )
 
             // Окно, в котором встреча **на самом деле** считалась. У нарезанной
             // это окно фрагмента, а не `window`: `window` для неё равен 32768,
