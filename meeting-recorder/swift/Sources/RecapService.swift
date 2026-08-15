@@ -468,7 +468,7 @@ actor RecapService {
             } catch {
                 // Один упавший фрагмент — это дыра в конспекте, но целая встреча
                 // без конспекта хуже. Дыра называется вслух в логе.
-                NSLog("[RecapService] фрагмент \(index + 1)/\(chunks.count) не разобран: \(error)")
+                debugLog("[RecapService] фрагмент \(index + 1)/\(chunks.count) не разобран: \(error)")
                 continue
             }
             let text = RecapMetadataParser.stripCodeFences(raw).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -477,7 +477,7 @@ actor RecapService {
         }
 
         guard !facts.isEmpty else { throw RecapError.emptyResponse }
-        NSLog("[RecapService] встреча не влезла в окно: \(chunks.count) фрагментов, разобрано \(facts.count)")
+        debugLog("[RecapService] встреча не влезла в окно: \(chunks.count) фрагментов, разобрано \(facts.count)")
 
         // Линейка считается до вызова и всегда: она бесплатна (кода на неё
         // микросекунды) и нужна ровно в тот момент, когда свод сорвался.
@@ -511,7 +511,7 @@ actor RecapService {
         } catch {
             // Свод не состоялся вовсе — это ровно тот случай, ради которого
             // сборка и держится. Встреча без конспекта хуже конспекта без «Итога».
-            NSLog("[RecapService] свод не удался, документ отдаёт сборка: \(error)")
+            debugLog("[RecapService] свод не удался, документ отдаёт сборка: \(error)")
             digest = nil
         }
 
@@ -521,9 +521,9 @@ actor RecapService {
             assembly: assembled
         )
         if let reason = decision.reason {
-            NSLog("[RecapService] документ отдан сборке: \(reason)")
+            debugLog("[RecapService] документ отдан сборке: \(reason)")
         } else {
-            NSLog("[RecapService] документ пишет свод модели")
+            debugLog("[RecapService] документ пишет свод модели")
         }
         guard !decision.recap.isEmpty else { throw RecapError.emptyResponse }
         return (decision.recap, window, digest?.stats, decision.author)

@@ -262,6 +262,23 @@ public struct SettingsValue: View {
     }
 }
 
+/// Галочка справа — «это уже сделано, трогать нечего».
+///
+/// Не плашка и не бейдж: по канону студии (PR-005) статус разводится с текстом
+/// расстоянием и типографикой, а не рамкой. Стоит там же, где стояло бы
+/// управление, потому что она его и заменяет.
+public struct SettingsCheck: View {
+    public init() {}
+
+    public var body: some View {
+        Image(systemName: "checkmark")
+            .font(.system(size: Tokens.Settings.Typo.value.size, weight: .medium))
+            .foregroundStyle(Tokens.Paint.Status.accent)
+            .frame(height: Tokens.Settings.controlHeight)
+            .accessibilityLabel("Подключено")
+    }
+}
+
 /// Выключатель. Тот же, что на установочной плашке, — системный, потому что
 /// системный выключатель в macOS человек узнаёт быстрее любого нарисованного.
 public struct SettingsSwitch: View {

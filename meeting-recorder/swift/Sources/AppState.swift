@@ -62,6 +62,12 @@ class AppState: ObservableObject {
     /// neither of which a screenshot run may touch.
     var galleryRecapModelOverride: Bool?
 
+    /// Forces the Claude cell's state. The real one is read off another
+    /// application's config file and a marker on disk — a screenshot run may
+    /// touch neither, and six of the frames exist precisely to show states this
+    /// machine is not in.
+    var galleryClaudeCellOverride: ClaudeCellState?
+
     /// Opens the summary in its editor. Editing is entered by tapping the
     /// rendered recap, i.e. through private `@State` no poser can reach —
     /// without this, "Саммари — правка" photographed the read view.
@@ -162,7 +168,9 @@ class AppState: ObservableObject {
         setupCompleted: Preferences.shared.onboardingCompleted,
         calendarGranted: Preferences.shared.calendarEnabled,
         calendarAsked: Preferences.shared.setupCalendarAsked,
-        knownName: Preferences.shared.userName
+        knownName: Preferences.shared.userName,
+        claudeInstalled: ClaudeConnector.isClaudeInstalled,
+        claudeAsked: Preferences.shared.setupClaudeAsked
     )
     private var didBootstrap = false
     @Published var meetingDetected = false
@@ -304,7 +312,9 @@ class AppState: ObservableObject {
             setupCompleted: Preferences.shared.onboardingCompleted,
             calendarGranted: Preferences.shared.calendarEnabled,
             calendarAsked: Preferences.shared.setupCalendarAsked,
-            knownName: Preferences.shared.userName
+            knownName: Preferences.shared.userName,
+            claudeInstalled: ClaudeConnector.isClaudeInstalled,
+            claudeAsked: Preferences.shared.setupClaudeAsked
         )
     }
 
@@ -349,6 +359,19 @@ class AppState: ObservableObject {
         Preferences.shared.userName = trimmed
         refreshSetupPrompt()
         Analytics.signal("Setup.nameGiven")
+    }
+
+    /// «Подключить» на шаге про Клода.
+    ///
+    /// Тот же уговор, что у календаря: шаг тратится нажатием, а не результатом.
+    /// Получилось ли записать конфиг — вопрос ячейки в настройках, у которой
+    /// есть слова на все исходы; возвращать вопрос в рельс из-за отказа значило
+    /// бы превратить предложение в приставание.
+    func connectClaudeFromRail() {
+        Preferences.shared.setupClaudeAsked = true
+        let ok = ClaudeConnector.connect()
+        refreshSetupPrompt()
+        Analytics.signal("Setup.claudeAsked", parameters: ["result": ok ? "ok" : "fail"])
     }
 
     // MARK: - Call auto-detect

@@ -35,6 +35,7 @@ struct SettingsPane: View {
             GeneralSettingsGroup(state: state)
             AnalyticsSettingsGroup()
             ModelsSettingsGroup(state: state)
+            ClaudeSettingsGroup(state: state)
             StorageSettingsGroup(state: state)
             AboutSettingsGroup()
         }
@@ -340,6 +341,76 @@ private struct ModelsSettingsGroup: View {
         }
         pendingRestart = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
+    }
+}
+
+// MARK: - Claude
+
+/// Одна ячейка, одна кнопка, и ни одного диалога.
+///
+/// Конфиг Клода можно отредактировать руками — сегодня это единственный способ,
+/// и он не работает: путь надо знать. Здесь всё, что от человека требуется, —
+/// нажать; остальное (найти Claude Desktop, сделать копию его конфига, дописать
+/// в него запись) делает `ClaudeConnector`.
+///
+/// **Состояние выводится при каждом открытии, а не хранится.** Файл чужой: его
+/// может переписать сам Claude Desktop, и сохранённое «подключено» разошлось бы
+/// с правдой молча. Плюс перечитывание на возврате в приложение — человек уходит
+/// перезапускать Клода при открытых настройках и возвращается к строке, которая
+/// обязана уже поменяться.
+///
+/// Кнопки «Перезапустить» здесь нет намеренно: закрывать чужое приложение с
+/// открытыми разговорами — не наше дело.
+private struct ClaudeSettingsGroup: View {
+    @ObservedObject var state: AppState
+    @State private var cell: ClaudeCellState = .offer
+    /// Живёт до следующего нажатия. Это ответ на действие, а не свойство
+    /// системы, и переживать открытие настроек ему незачем.
+    @State private var writeFailed = false
+
+    var body: some View {
+        SettingsGroup("Claude") {
+            SettingsCell(cell.subtitle) {
+                control
+            }
+        }
+        .onAppear(perform: refresh)
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification
+        )) { _ in refresh() }
+    }
+
+    @ViewBuilder
+    private var control: some View {
+        if let title = cell.actionTitle {
+            SettingsButton(title) { connect() }
+        } else if cell.showsCheckmark {
+            SettingsCheck()
+        } else if let link = cell.linkURL, let url = URL(string: link) {
+            // Ссылка, а не кнопка: нажимать нам тут не на что, предложить можно
+            // только страницу загрузки.
+            Link("Скачать", destination: url)
+                .typo(Tokens.Settings.Typo.value)
+                .foregroundStyle(Tokens.Paint.Status.accent)
+                .frame(height: Tokens.Settings.controlHeight)
+        } else {
+            EmptyView()
+        }
+    }
+
+    private func connect() {
+        writeFailed = !ClaudeConnector.connect()
+        refresh()
+    }
+
+    private func refresh() {
+#if GALLERY
+        if let forced = state.galleryClaudeCellOverride {
+            cell = forced
+            return
+        }
+#endif
+        cell = ClaudeConnector.cellState(lastWriteFailed: writeFailed)
     }
 }
 
