@@ -214,6 +214,12 @@ enum Analytics {
     /// Это же — линейка отката после релиза: доля `collapsed` и время генерации
     /// в проде против стендовых. Облачные бэкенды сигнал не шлют: их
     /// конструкция в 1.16.5 не менялась, и длину ответа они не сообщают.
+    ///
+    /// `author` — кто написал документ переполняющей встречи: свод модели или
+    /// механическая сборка, отобравшая его гвардом (`RecapDigestGuard`). Только
+    /// у пути нарезки: на одиночном выбирать не из чего. Доля `assembly` — это и
+    /// есть частота срыва свода в проде, то самое число, ради которого страховку
+    /// оставили видимой.
     static func recapGenerated(
         replyTokens: Int?,
         retried: Bool,
@@ -221,7 +227,8 @@ enum Analytics {
         seconds: Double,
         bullets: Int,
         chunked: Bool,
-        version: Int
+        version: Int,
+        author: RecapDigestGuard.Author? = nil
     ) {
         var params = [
             "retried": retried ? "1" : "0",
@@ -232,6 +239,7 @@ enum Analytics {
             "ram": RecapGenerationPolicy.ramCohort(bytes: ProcessInfo.processInfo.physicalMemory),
         ]
         if let replyTokens { params["reply_tokens"] = String(replyTokens) }
+        if let author { params["author"] = author.rawValue }
         signal("Recap.generated", parameters: params, value: seconds)
     }
 

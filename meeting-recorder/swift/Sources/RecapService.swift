@@ -86,6 +86,9 @@ struct RecapRunStats {
     let chunked: Bool
     let window: Int
     let seconds: Double
+    /// Чей документ уехал читателю на пути нарезки. `nil` у одиночного пути:
+    /// там выбирать не из чего, автор один.
+    let author: RecapDigestGuard.Author?
 }
 
 /// LLM meeting recap on top of a saved transcript markdown.
@@ -303,14 +306,16 @@ actor RecapService {
             let draft: String
             let effectiveWindow: Int
             var draftStats: RecapGenerationPolicy.CallStats?
+            var author: RecapDigestGuard.Author?
             if cutUp {
                 let run = try await recapByChunks(
-                    title: title, transcriptMarkdown: trimmed, prefs: prefs,
-                    progress: progress
+                    title: title, transcriptMarkdown: trimmed, notes: notes,
+                    system: prompt, prefs: prefs, progress: progress
                 )
                 draft = run.recap
                 effectiveWindow = run.window
                 draftStats = run.stats
+                author = run.author
             } else if backend == "ollama" {
                 // Порог схлопывания есть только у локального пути: облако длину
                 // ответа не сообщает, и его путь в этом релизе не тронут (Г3).
@@ -374,7 +379,7 @@ actor RecapService {
                 path: path, provider: backend, body: body,
                 stats: RecapRunStats(
                     draft: draftStats, chunked: cutUp, window: effectiveWindow,
-                    seconds: Date().timeIntervalSince(started)
+                    seconds: Date().timeIntervalSince(started), author: author
                 )
             ))
         }
@@ -401,27 +406,40 @@ actor RecapService {
     /// Раньше такая встреча доходила до модели наполовину — Ollama выбрасывала
     /// начало разговора, а приложение писало строчку в `NSLog` и отдавало
     /// уверенный конспект. Транскрипт режется по границам реплик, факты
-    /// собираются с каждого фрагмента, а конспект из них **собирает код, не
-    /// модель** (`RecapAssembly`, порт A5.1): свободный свод выбрасывал до пяти
-    /// найденных пунктов и умел схлопнуться — сборке нечем. Цена решения:
-    /// у такого конспекта нет «Итога» — прозу пишет только модель, а этот путь
-    /// существует ровно потому, что её свод ломался. Заметки пользователя в
-    /// документ кладёт `wrapRecapDocument` — дословно, отдельным блоком
-    /// (решение в RELEASE-1.16.5.md, «Решения до старта порта»).
+    /// собираются с каждого фрагмента, а документ из них пишет **единый автор** —
+    /// свод модели одним вызовом (решение владельца 2026-08-15, OPTIMIZATION.md,
+    /// «Финал»: связность есть свойство одного автора, и сборка из фрагментов
+    /// проигрывает ему по читаемости на всех замеренных жанрах).
+    ///
+    /// Сборка кодом (`RecapAssembly`, порт A5.1) при этом считается на тех же
+    /// фактах — но не для показа: это невидимая линейка и запасной выход. У
+    /// свода есть режим схлопывания, в котором он выбрасывает до пяти найденных
+    /// пунктов, и `RecapDigestGuard` отдаёт документ сборке ровно тогда, когда
+    /// это случилось. Цена страховки: у такого конспекта нет «Итога» — прозу
+    /// пишет только модель. Заметки пользователя в документ кладёт
+    /// `wrapRecapDocument` — дословно, отдельным блоком, чей бы документ ни
+    /// победил (решение в RELEASE-1.16.5.md, «Решения до старта порта»).
     ///
     /// Все вызовы идут в одном окне (фрагмент подобран так, чтобы влезать в
     /// 16384): одна загрузка модели на всю встречу и 3,6 ГБ памяти вместо 4,3 ГБ,
-    /// которые стоит окно 32768.
+    /// которые стоит окно 32768. **Свод — тоже вызов в этом окне**, а не в
+    /// `OllamaContext.numCtx` по длине фактов: другое окно поднимет свежий
+    /// llama-server поверх ещё не выгруженного.
     /// Возвращает конспект **и окно, в котором он посчитан**: дальше по встрече
     /// идёт ещё один вызов (редактура), и он обязан идти в том же окне. Иначе
     /// нарезка, сделанная ради 3,6 ГБ вместо 4,3, тут же оплачивает и то и другое.
-    /// `stats` пуст: вызова-свода больше нет, а судьба фрагментов — в логе.
+    /// `stats` — про вызов свода; судьба фрагментов остаётся в логе.
     private func recapByChunks(
         title: String,
         transcriptMarkdown: String,
+        notes: String?,
+        system: String,
         prefs: RecapPreferences,
         progress: (@Sendable (String) -> Void)? = nil
-    ) async throws -> (recap: String, window: Int, stats: RecapGenerationPolicy.CallStats?) {
+    ) async throws -> (
+        recap: String, window: Int,
+        stats: RecapGenerationPolicy.CallStats?, author: RecapDigestGuard.Author
+    ) {
         let chunks = TranscriptChunking.split(transcriptMarkdown)
         let extractSystem = Self.chunkExtractPrompt + Self.languageLock
         // Окно одно на все фрагменты — иначе каждый платил бы холодную загрузку.
@@ -460,9 +478,54 @@ actor RecapService {
         guard !facts.isEmpty else { throw RecapError.emptyResponse }
         NSLog("[RecapService] встреча не влезла в окно: \(chunks.count) фрагментов, разобрано \(facts.count)")
 
+        // Линейка считается до вызова и всегда: она бесплатна (кода на неё
+        // микросекунды) и нужна ровно в тот момент, когда свод сорвался.
         let assembled = RecapAssembly.assemble(facts: facts.joined(separator: "\n"))
-        guard !assembled.isEmpty else { throw RecapError.emptyResponse }
-        return (assembled, window, nil)
+
+        var parts = ["Встреча: \(title.isEmpty ? "без названия" : title)"]
+        let trimmedNotes = notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedNotes.isEmpty {
+            parts += ["", "Заметки пользователя (якоря — приоритетнее болтовни в транскрипте):", trimmedNotes]
+        }
+        parts += [
+            "",
+            "Ниже — факты, выписанные из транскрипта по частям, по порядку встречи.",
+            "Это единственный источник: транскрипт целиком в контекст не помещается.",
+            "",
+            facts.joined(separator: "\n\n"),
+            "",
+            "Ответь строго на русском языке.",
+        ]
+
+        progress?("Саммари: собираем конспект…")
+        let digest: (content: String, stats: RecapGenerationPolicy.CallStats)?
+        do {
+            digest = try await callOllamaTracked(
+                model: prefs.ollamaModel, system: system, user: parts.joined(separator: "\n"),
+                numCtx: window,
+                minReplyTokens: RecapGenerationPolicy.recapMinReplyTokens
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // Свод не состоялся вовсе — это ровно тот случай, ради которого
+            // сборка и держится. Встреча без конспекта хуже конспекта без «Итога».
+            NSLog("[RecapService] свод не удался, документ отдаёт сборка: \(error)")
+            digest = nil
+        }
+
+        let decision = RecapDigestGuard.decide(
+            digest: RecapMetadataParser.stripCodeFences(digest?.content ?? ""),
+            collapsed: digest?.stats.collapsed ?? true,
+            assembly: assembled
+        )
+        if let reason = decision.reason {
+            NSLog("[RecapService] документ отдан сборке: \(reason)")
+        } else {
+            NSLog("[RecapService] документ пишет свод модели")
+        }
+        guard !decision.recap.isEmpty else { throw RecapError.emptyResponse }
+        return (decision.recap, window, digest?.stats, decision.author)
     }
 
     /// Второй проход: та же модель правит форму по адресам от `RecapLint`.

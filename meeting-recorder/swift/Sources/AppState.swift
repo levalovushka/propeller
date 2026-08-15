@@ -2276,7 +2276,8 @@ class AppState: ObservableObject {
                         seconds: stats.seconds,
                         bullets: RecapLint.shape(of: recap.body).bullets,
                         chunked: stats.chunked,
-                        version: RecapGenerationPolicy.generatorVersion
+                        version: RecapGenerationPolicy.generatorVersion,
+                        author: stats.author
                     )
                 }
                 // The wait a person felt: from the meeting ending to the summary
