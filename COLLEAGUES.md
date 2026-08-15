@@ -9,9 +9,10 @@
 
 1. Скачай `.dmg` из GitHub Releases (или получи файл у Левона).
 2. Открой DMG → перетащи **Propeller** в **Applications**.
-3. Первый запуск macOS может сказать «неизвестный разработчик».
-   **ПКМ по Propeller → Открыть → Открыть** (один раз).
-   Пока нет Developer ID / нотаризации — это ожидаемо.
+3. Запусти двойным кликом. Ничего обходить не надо: сборка подписана
+   Developer ID и нотаризована Apple, тикет лежит внутри — работает и без сети.
+   Если macOS всё-таки ругается на «неизвестного разработчика» — это старый
+   образ, скачанный до 1.16.5; возьми свежий.
 
 ## Разрешения
 
@@ -87,16 +88,27 @@
 # Нужен бинарь tools/gigastt/gigastt (без него build.sh падает)
 cd meeting-recorder/swift
 ./build.sh          # → /Applications/Propeller.app (TelemetryDeck App ID уже вшит)
-./package-dmg.sh    # → ../../dist/Propeller-….dmg
+./notarize.sh       # нотаризует и стейплит .app (нужен Developer ID + профиль notarytool)
+./package-dmg.sh    # → ../../dist/Propeller-….dmg, подписывает и нотаризует образ
 ./make-appcast.sh   # → ../../dist/appcast.xml (нужен private key)
 ```
 
-Обновления: меню приложения или Настройки → Основное → «О программе» →
-**Проверить обновления…** (Sparkle + GitHub Releases). Первый запуск по-прежнему **ПКМ → Открыть** (нет Developer ID).
+`.app` нотаризуется отдельно от образа, и порядок именно такой: Sparkle ставит
+обновление без DMG, так что тикет должен лежать внутри бандла, иначе первый
+запуск без сети упрётся в Gatekeeper. `package-dmg.sh` откажется паковать
+приложение без тикета. Учётка для нотаризации живёт в связке ключей:
 
-Для стабильных TCC между пересборками создай self-signed identity
-**`MeetingRecorder Dev`** (Keychain → Certificate Assistant → Code Signing). Без
-него каждый rebuild = заново микрофон и календарь.
+```bash
+xcrun notarytool store-credentials propbuild --apple-id <apple-id> --team-id <team-id>
+```
+
+Обновления: меню приложения или Настройки → Основное → «О программе» →
+**Проверить обновления…** (Sparkle + GitHub Releases).
+
+Без Developer ID в связке `build.sh` спускается по лестнице: self-signed
+**`MeetingRecorder Dev`** (Keychain → Certificate Assistant → Code Signing), потом
+ad-hoc. Оба годятся только локально — раздавать можно лишь нотаризованное, — но
+стабильная идентичность нужна, иначе каждый rebuild = заново микрофон и календарь.
 
 Телеметрия (TelemetryDeck): по умолчанию вкл, Настройки → Основное → выкл.
 Сигналы без содержания встреч: `App.opened`, `Recording.*`, `Transcription.*`,
