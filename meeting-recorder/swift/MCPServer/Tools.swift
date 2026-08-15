@@ -75,6 +75,7 @@ enum Tools {
             if !card.topics.isEmpty { lines.append("Темы: \(card.topics.joined(separator: ", "))") }
             if !card.tags.isEmpty { lines.append("Теги: \(card.tags.joined(separator: ", "))") }
             if !card.people.isEmpty { lines.append("Говорили: \(card.people.joined(separator: ", "))") }
+            if !card.invited.isEmpty { lines.append("Звали: \(card.invited.joined(separator: ", "))") }
             if let snippet = result.snippet {
                 lines.append("Фрагмент: \(snippet.prefix)\(snippet.match)\(snippet.suffix)")
             }
@@ -96,6 +97,8 @@ enum Tools {
         var lines = [header(entry)]
         let people = Set(Archive.segments(of: entry).map(\.speaker)).sorted()
         if !people.isEmpty { lines.append("Говорили: \(people.joined(separator: ", "))") }
+        let invited = Archive.invited(of: entry)
+        if !invited.isEmpty { lines.append("Звали: \(invited.joined(separator: ", "))") }
         if let topics = entry.topics, !topics.isEmpty {
             lines.append("Темы: \(topics.joined(separator: ", "))")
         }

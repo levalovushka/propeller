@@ -1,5 +1,5 @@
 import XCTest
-import PropellerPure
+@testable import PropellerPure
 
 /// Отбор встреч для Клода. Проверяется тем, что человек увидит в разговоре:
 /// «такой встречи не было» — худший из возможных ответов, и почти всегда он
@@ -22,11 +22,12 @@ final class MeetingLookupTests: XCTestCase {
         topics: [String] = [],
         tags: [String] = [],
         people: [String] = [],
+        invited: [String] = [],
         body: String = ""
     ) -> MeetingCard {
         MeetingCard(
             id: id, date: date(day), title: title, durationSeconds: 600,
-            topics: topics, tags: tags, people: people,
+            topics: topics, tags: tags, people: people, invited: invited,
             dateLabel: "\(day) августа 2026", bodies: body.isEmpty ? [] : [body]
         )
     }
@@ -37,7 +38,8 @@ final class MeetingLookupTests: XCTestCase {
                  people: ["Левон", "Speaker S1"], body: "обсудили переход к консалтингу"),
             card("b", day: 10, title: "Синк по релизу", tags: ["планирование"],
                  people: ["Левон", "Костя"], body: "релиз в пятницу, вебхуки чинит Костя"),
-            card("a", day: 3, title: "Один на один", people: ["Марина"],
+            card("a", day: 3, title: "1х1 с Даней", people: ["Левон", "Speaker S1"],
+                 invited: ["ani@pragmatica.design", "Марина Петрова"],
                  body: "нагрузка и отпуск"),
         ]
     }
@@ -84,8 +86,8 @@ final class MeetingLookupTests: XCTestCase {
 
     // MARK: - Люди
 
-    func testAskingAboutAPersonIgnoresCaseAndShortForms() {
-        for asked in ["Костя", "костя", "кост"] {
+    func testAskingAboutAPersonIgnoresCase() {
+        for asked in ["Костя", "костя", "Кости"] {
             let filter = MeetingLookup.Filter(people: [asked])
             XCTAssertEqual(MeetingLookup.run(cards: archive, filter: filter).map(\.card.id), ["b"], asked)
         }
@@ -94,6 +96,48 @@ final class MeetingLookupTests: XCTestCase {
     func testNamingSeveralPeopleMeansAnyOfThem() {
         let filter = MeetingLookup.Filter(people: ["Марина", "Костя"])
         XCTAssertEqual(MeetingLookup.run(cards: archive, filter: filter).map(\.card.id), ["b", "a"])
+    }
+
+    /// Самый частый вопрос к архиву — «что было со встреч с N», а диаризация
+    /// называет по имени только владельца микрофона. Имя Дани есть лишь в
+    /// заголовке, и в падеже: «1х1 с Даней».
+    func testAPersonIsFoundByTheTitleAndInAnyCase() {
+        for asked in ["Даня", "Дане", "даней"] {
+            let filter = MeetingLookup.Filter(people: [asked])
+            XCTAssertEqual(MeetingLookup.run(cards: archive, filter: filter).map(\.card.id), ["a"], asked)
+        }
+    }
+
+    /// Приглашённые из календаря — единственное место, где участники названы
+    /// по-настоящему. Почта считается именем: другого написания у человека в
+    /// событии может не быть вовсе.
+    func testCalendarInviteesCount() {
+        XCTAssertEqual(
+            MeetingLookup.run(cards: archive, filter: .init(people: ["ani@pragmatica.design"])).map(\.card.id),
+            ["a"]
+        )
+        XCTAssertEqual(
+            MeetingLookup.run(cards: archive, filter: .init(people: ["Петрова"])).map(\.card.id),
+            ["a"]
+        )
+    }
+
+    /// Сито обязано оставаться ситом: две буквы совпадения — не человек.
+    func testAStrangerStillMatchesNothing() {
+        XCTAssertTrue(MeetingLookup.run(cards: archive, filter: .init(people: ["Аркадий"])).isEmpty)
+        XCTAssertTrue(MeetingLookup.run(cards: archive, filter: .init(people: ["к"])).isEmpty)
+    }
+
+    func testStemStopsAfterTwoLetters() {
+        XCTAssertEqual(MeetingLookup.stem("даней"), "дан")
+        XCTAssertEqual(MeetingLookup.stem("даня"), "дан")
+        XCTAssertEqual(MeetingLookup.stem("левон"), "левон")
+        XCTAssertEqual(MeetingLookup.stem("левона"), "левон")
+        // Снимаются только окончания и не больше двух знаков, так что основа
+        // остаётся именем, а не слогом: «марка» доходит до «марк» и с «марией»
+        // не сходится.
+        XCTAssertEqual(MeetingLookup.stem("мария"), "мар")
+        XCTAssertEqual(MeetingLookup.stem("марка"), "марк")
     }
 
     // MARK: - Слова

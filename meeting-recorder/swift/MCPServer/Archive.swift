@@ -15,8 +15,16 @@ enum Archive {
 
     static let defaultsDomain = "com.simplyai.meeting-recorder"
 
-    private static var defaults: UserDefaults? {
-        UserDefaults(suiteName: defaultsDomain)
+    /// Настройки приложения — те же самые, а не копия.
+    ///
+    /// Бинарь лежит в `Propeller.app/Contents/MacOS`, поэтому `Bundle.main` для
+    /// него — само приложение, и `UserDefaults.standard` уже читает его домен.
+    /// Просить ту же сюиту по имени **нельзя**: `UserDefaults(suiteName:)` со
+    /// своим же bundle id не работает и говорит об этом в stderr. Сюита нужна
+    /// только когда бинарь запущен сам по себе — из `.build/debug` на отладке.
+    private static var defaults: UserDefaults {
+        if Bundle.main.bundleIdentifier == defaultsDomain { return .standard }
+        return UserDefaults(suiteName: defaultsDomain) ?? .standard
     }
 
     private static func home() -> URL {
@@ -25,12 +33,12 @@ enum Archive {
 
     static var recordingsPath: String {
         let fallback = home().appendingPathComponent(".meeting-recorder/recordings").path
-        return ArchivePath.normalized(defaults?.string(forKey: "recordingsPath"), default: fallback)
+        return ArchivePath.normalized(defaults.string(forKey: "recordingsPath"), default: fallback)
     }
 
     static var meetingsPath: String {
         let fallback = home().appendingPathComponent(".meeting-recorder/meetings").path
-        return ArchivePath.normalized(defaults?.string(forKey: "meetingsPath"), default: fallback)
+        return ArchivePath.normalized(defaults.string(forKey: "meetingsPath"), default: fallback)
     }
 
     static var indexURL: URL {
@@ -50,13 +58,15 @@ enum Archive {
         let date: Date
         let title: String
         let duration: Double
-        let status: String?
         let transcript: String?
         let notes: String?
         let topics: [String]?
         let tags: [String]?
         let mergedSegmentsJSON: String?
         let liveSegmentsJSON: String?
+        /// Кого звали. Единственное место в архиве, где у участников есть
+        /// настоящие имена: диаризация называет только владельца микрофона.
+        let calendarMeta: CalendarMeta?
     }
 
     /// Индекс, от новых встреч к старым.
@@ -124,11 +134,12 @@ enum Archive {
     /// Конспекты читаются здесь, один раз на запрос, а не по разу на встречу в
     /// цикле сравнения — тот же урок, что стоил `SearchPalette` двухсот чтений
     /// на нажатие клавиши (`ArchiveSearch`).
-    static func cards(withRecaps: Bool = true) -> [(card: MeetingCard, recap: String?)] {
+    static func cards() -> [(card: MeetingCard, recap: String?)] {
         let files = meetingFiles()
         return entries().map { entry in
-            let recap = withRecaps ? recap(for: entry.id, in: files) : nil
+            let recap = recap(for: entry.id, in: files)
             let people = Array(Set(segments(of: entry).map(\.speaker))).sorted()
+            let invited = invited(of: entry)
             var bodies: [String] = []
             if let transcript = entry.transcript, !transcript.isEmpty { bodies.append(transcript) }
             if let notes = entry.notes, !notes.isEmpty { bodies.append(notes) }
@@ -141,6 +152,7 @@ enum Archive {
                 topics: entry.topics ?? [],
                 tags: entry.tags ?? [],
                 people: people,
+                invited: invited,
                 dateLabel: dateLabel(entry.date),
                 bodies: bodies
             )
@@ -150,5 +162,14 @@ enum Archive {
 
     static func entry(id: String) -> Entry? {
         entries().first { $0.id == id }
+    }
+
+    /// Приглашённые и организатор, без повторов и в том виде, в каком их знает
+    /// календарь: где-то имена, где-то почты.
+    static func invited(of entry: Entry) -> [String] {
+        guard let meta = entry.calendarMeta else { return [] }
+        var seen = Set<String>()
+        return (meta.attendees + [meta.organizer].compactMap { $0 })
+            .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
     }
 }

@@ -50,6 +50,16 @@ if [ ! -x "$APP/Contents/MacOS/gigastt" ]; then
     exit 1
 fi
 
+# Same rule for the MCP server: the button in Settings writes this binary's
+# absolute path into Claude's own config. Shipping without it means a person
+# presses «Подключить», sees «Перезапустите Claude», restarts, and waits for a
+# checkmark that can never arrive.
+if [ ! -x "$APP/Contents/MacOS/PropellerMCP" ]; then
+    echo "ERROR: PropellerMCP missing from the app bundle — refuse to package a build whose"
+    echo "       Claude connection would point at nothing."
+    exit 1
+fi
+
 # The app has to carry its own notarization ticket before it is sealed into the image.
 # Stapling the DMG afterwards does not reach inside it, and a Sparkle update installs the
 # app *without* the DMG — so an unstapled app here ships an update that has to phone Apple

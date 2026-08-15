@@ -33,11 +33,6 @@ public struct RecapDigest: Equatable, Sendable {
         }
 
         public var isEmpty: Bool { items.isEmpty && prose.isEmpty }
-
-        /// Секция, собранная обратно в текст — то, что уезжает в разговор.
-        public var text: String {
-            (prose + items.map { "- \($0)" }).joined(separator: "\n")
-        }
     }
 
     public let sections: [Section]
@@ -52,8 +47,6 @@ public struct RecapDigest: Equatable, Sendable {
     public static let decisionsTitle = "Решения"
     public static let tasksTitle = "Задачи"
     public static let openQuestionsTitle = "Открытые вопросы"
-    public static let narrativeTitle = RecapAssembly.narrative
-    public static let notesTitle = "Заметки"
 
     public func section(named title: String) -> Section? {
         let wanted = Self.foldTitle(title)

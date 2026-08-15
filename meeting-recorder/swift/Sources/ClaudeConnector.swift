@@ -62,8 +62,20 @@ enum ClaudeConnector {
         try? Data(contentsOf: configURL)
     }
 
+    /// Есть ли в конфиге запись, которую Клод может запустить.
+    ///
+    /// Мало того, что запись есть, — она должна указывать на существующий
+    /// бинарь. Человек, перенёсший Propeller из «Программ» или переименовавший
+    /// его, оставляет в чужом конфиге путь в пустоту; галочка «Claude
+    /// подключён» над таким путём — это ровно то враньё, ради предотвращения
+    /// которого состояние вообще выводится из файлов, а не хранится. Ответ
+    /// «нет» здесь даёт «Подключение потерялось» и кнопку, которая перепишет
+    /// путь на нынешний.
     static var isConfigured: Bool {
-        ClaudeConfigMerge.contains(ClaudeMCP.serverName, in: configData)
+        guard let command = ClaudeConfigMerge.command(of: ClaudeMCP.serverName, in: configData) else {
+            return false
+        }
+        return FileManager.default.isExecutableFile(atPath: command)
     }
 
     /// Когда Claude Desktop последний раз поднимал наш сервер.

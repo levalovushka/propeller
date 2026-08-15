@@ -13,7 +13,14 @@ public struct MeetingCard: Equatable, Sendable {
     public let topics: [String]
     public let tags: [String]
     /// Кто говорил — из размеченной расшифровки. Пусто, если её ещё нет.
+    ///
+    /// На живом архиве это почти всегда `Speaker N`: имя получает только
+    /// владелец микрофона. Поэтому одного этого списка для вопроса «что было со
+    /// встреч с Даней» не хватает — см. `invited` и `passesPeople`.
     public let people: [String]
+    /// Кого звали — приглашённые и организатор из календарного события.
+    /// Настоящие личности встречи и лежат здесь: имена или почты.
+    public let invited: [String]
     /// Дата словами — по ней тоже ищут («август», «14.08»).
     public let dateLabel: String
     /// Расшифровка, заметки, конспект — всё, где ищется текст.
@@ -27,6 +34,7 @@ public struct MeetingCard: Equatable, Sendable {
         topics: [String],
         tags: [String],
         people: [String],
+        invited: [String] = [],
         dateLabel: String,
         bodies: [String]
     ) {
@@ -37,6 +45,7 @@ public struct MeetingCard: Equatable, Sendable {
         self.topics = topics
         self.tags = tags
         self.people = people
+        self.invited = invited
         self.dateLabel = dateLabel
         self.bodies = bodies
     }
@@ -119,19 +128,49 @@ public enum MeetingLookup {
         return true
     }
 
-    /// Человек назван — значит хотя бы один из названных в этой встрече говорил.
+    /// Человек назван — значит он в этой встрече был.
     ///
-    /// Сравнение по вхождению, а не по равенству: в расшифровке стоит «Левон», а
-    /// спросят про «левона» или «Лёву». Пропустить встречу из-за регистра —
-    /// худший из двух исходов, потому что выглядит как «такой встречи не было».
+    /// «Был» приходится собирать из трёх мест, и это не щедрость, а состояние
+    /// данных. Диаризация даёт имя одному человеку — владельцу микрофона, —
+    /// остальные остаются `Speaker N`; настоящие личности живут в приглашённых
+    /// из календаря и в заголовке («1х1 с Даней»). Спросив про Даню и получив
+    /// «ничего не нашлось», человек прочитает «такой встречи не было», а она
+    /// была — это худший ответ из возможных, и собирать стог из трёх источников
+    /// дешевле, чем его давать.
     static func passesPeople(_ card: MeetingCard, _ filter: Filter) -> Bool {
         guard !filter.people.isEmpty else { return true }
-        let known = card.people.map(ArchiveSearch.fold)
-        return filter.people.contains { wanted in
-            let needle = ArchiveSearch.fold(wanted.trimmingCharacters(in: .whitespacesAndNewlines))
-            guard !needle.isEmpty else { return false }
-            return known.contains { $0.contains(needle) || needle.contains($0) }
+        let haystack = Set((card.people + card.invited + [card.title]).flatMap(nameStems))
+        return filter.people.contains { asked in
+            let wanted = nameStems(asked)
+            return !wanted.isEmpty && wanted.contains { haystack.contains($0) }
         }
+    }
+
+    /// Слова строки, приведённые к основе.
+    ///
+    /// Русское имя в заголовке стоит в падеже — «с Даней», — а спрашивают
+    /// именительным. Поэтому сравниваются не строки, а основы: с конца слова
+    /// снимается не больше двух гласных и мягких знаков, и «даня» с «даней»
+    /// сходятся на «дан». Больше двух снимать нельзя — короткие слова начнут
+    /// совпадать друг с другом, и фильтр перестанет фильтровать.
+    static func nameStems(_ text: String) -> [String] {
+        ArchiveSearch.fold(text)
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+            .filter { $0.count >= 3 }
+            .map(stem)
+    }
+
+    private static let endings: Set<Character> = ["а", "е", "и", "о", "у", "ы", "э", "ю", "я", "й", "ь", "ъ"]
+
+    static func stem(_ word: String) -> String {
+        var out = word
+        var trimmed = 0
+        while trimmed < 2, out.count > 2, let last = out.last, endings.contains(last) {
+            out.removeLast()
+            trimmed += 1
+        }
+        return out
     }
 
     // MARK: - Решения и открытые вопросы
