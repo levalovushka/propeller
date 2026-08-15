@@ -3,6 +3,31 @@
 Что сделано, зачем, как проверено, что осталось. Новейшее сверху.
 Формат — DOCS.md, слой «Рабочий лог».
 
+## 2026-08-15 · Developer ID: подпись, hardened runtime, нотаризация
+
+- **Что:** `build.sh` подписывает изнутри наружу под Developer ID Application
+  (hardened runtime + secure timestamp), `--deep` убран, `xattr -cr` перенесён
+  до подписи; каждый вложенный бинарь Sparkle (Downloader.xpc, Installer.xpc,
+  Autoupdate, Updater.app, сам фреймворк) подписывается отдельно. Новый
+  `notarize.sh` — отправка, ожидание, staple, `spctl` для `.app` или `.dmg`.
+  `package-dmg.sh` отказывается паковать `.app` без тикета, подписывает и
+  нотаризует образ, хардлинк `Propeller.dmg` делает после staple.
+- **Зачем:** ad-hoc/self-signed подпись требовала «ПКМ → Открыть» на каждом
+  новом Mac. `--deep` навешивал entitlements приложения на XPC-сервисы Sparkle
+  и не умел ставить runtime — ровно то, что notary отклоняет. `.app`
+  нотаризуется отдельно от образа, потому что Sparkle ставит обновление без
+  DMG, и без тикета внутри бандла первый запуск без сети упёрся бы в Gatekeeper.
+- **Проверено:** `./build.sh` → `flags=0x10000(runtime)`, `TeamIdentifier=9T455555U3`,
+  `codesign --verify --strict` — `satisfies its Designated Requirement`;
+  notary `Accepted` дважды (`0405713c…` для .app, `1956b4ca…` для .dmg);
+  копия образа с карантином Safari смонтирована →
+  `/Volumes/Propeller/Propeller.app: accepted, source=Notarized Developer ID`;
+  `swift test` — 747 тестов, 0 падений, 5 пропущено.
+- **Осталось:** не проверено обновление Sparkle с установленной ad-hoc 1.16.5 на
+  Developer ID билд (смена подписанта) и запуск Ollama под hardened runtime —
+  и то и другое видно только на живой встрече. `COLLEAGUES.md`, `STATE.md`,
+  `dogfood-checklist.md` всё ещё описывают «ПКМ → Открыть».
+
 ## 2026-08-14 · Стенд: эксперимент «только буллеты, бюджет вверх»
 
 - **Что:** флаг `--no-narrative` в `bench_ensemble.py` (параметр `narrative` у

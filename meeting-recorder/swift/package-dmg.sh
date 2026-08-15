@@ -50,6 +50,17 @@ if [ ! -x "$APP/Contents/MacOS/gigastt" ]; then
     exit 1
 fi
 
+# The app has to carry its own notarization ticket before it is sealed into the image.
+# Stapling the DMG afterwards does not reach inside it, and a Sparkle update installs the
+# app *without* the DMG — so an unstapled app here ships an update that has to phone Apple
+# on first launch and blocks if it cannot. SKIP_NOTARIZE=1 is for iterating on the image's
+# appearance, never for a release.
+if [ "${SKIP_NOTARIZE:-0}" != "1" ] && ! xcrun stapler validate "$APP" >/dev/null 2>&1; then
+    echo "ERROR: $APP has no notarization ticket. Run ./notarize.sh first."
+    echo "       (SKIP_NOTARIZE=1 packages an unnotarized image — appearance work only.)"
+    exit 1
+fi
+
 if [ ! -f "$ASSETS/background.tiff" ]; then
     echo "ERROR: $ASSETS/background.tiff missing. Rebuild it from the PNG pair:"
     echo "  tiffutil -cathidpicheck $ASSETS/background.png $ASSETS/background@2x.png -out $ASSETS/background.tiff"
@@ -140,6 +151,24 @@ hdiutil detach "$MOUNT" -quiet
 
 hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 -o "$DMG_PATH" -ov -quiet
 
+# Sign and notarize the image itself. This is what decides whether a person who downloads it
+# sees the app or "Propeller is damaged" — the app's own ticket does not cover the container.
+if [ "${SKIP_NOTARIZE:-0}" != "1" ]; then
+    # Read once, parse after — the same `pipefail` + early-exiting-filter trap that made
+    # notarize.sh reject a correctly signed image (see its comment).
+    IDENTITIES=$(security find-identity -v -p codesigning 2>/dev/null || true)
+    DMG_SIGN_HASH=$(awk '/Developer ID Application/ {print $2; exit}' <<< "$IDENTITIES")
+    if [ -z "$DMG_SIGN_HASH" ]; then
+        echo "ERROR: no Developer ID Application identity — cannot sign the image."
+        exit 1
+    fi
+    echo "=== Signing the image ==="
+    codesign --force --sign "$DMG_SIGN_HASH" --timestamp "$DMG_PATH"
+    ./notarize.sh "$DMG_PATH"
+else
+    echo "=== SKIP_NOTARIZE=1: unsigned, unnotarized image — do not ship this ==="
+fi
+
 # The landing page's "Download" button links to a stable, ever-green name
 # (releases/latest/download/${APP_NAME}.dmg) so the site never needs editing on release day.
 # Every release therefore ships a second asset under that name, next to the versioned one.
@@ -147,6 +176,10 @@ hdiutil convert "$RW_DMG" -format UDZO -imagekey zlib-level=9 -o "$DMG_PATH" -ov
 # them, and a hard link on APFS costs no extra space. This name must never collide with the
 # Propeller-*.dmg glob make-appcast.sh uses to pick the image to sign — "Propeller.dmg" has no
 # hyphen after the app name, so it does not match that pattern.
+#
+# The link is made *after* stapling on purpose: the ticket is written into the image, and a
+# link taken before it would either miss the ticket or leave two names disagreeing about
+# which bytes are the release.
 STABLE_PATH="${OUT_DIR}/${APP_NAME}.dmg"
 rm -f "$STABLE_PATH"
 if ! ln "$DMG_PATH" "$STABLE_PATH"; then
@@ -158,4 +191,4 @@ echo ""
 echo "=== DMG ready: $DMG_PATH ==="
 echo "=== Stable alias: $STABLE_PATH ==="
 echo "Upload both to the release (versioned + stable name)."
-echo "Share with COLLEAGUES.md (ПКМ → Open on first launch)."
+echo "Notarized and stapled — a first launch is a double click, no ПКМ → Открыть."

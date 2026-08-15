@@ -333,47 +333,66 @@ cat > "$BUILD_DIR/entitlements.plist" << 'ENT'
 </plist>
 ENT
 
-# Sign with entitlements.
-# Prefer a local "MeetingRecorder Dev" certificate for stable signing (TCC permissions
-# survive rebuilds). Falls back to ad-hoc if the cert doesn't exist.
-# NOTE: no `-v` — a self-signed cert is untrusted (CSSMERR_TP_NOT_TRUSTED) and so
-# wouldn't pass the "valid identities" filter, but codesign signs with it fine and
-# the stable signature is what makes TCC (Mic/Screen/Calendar) survive rebuilds.
-SIGN_IDENTITY="MeetingRecorder Dev"
-SIGN_HASH=$(security find-identity -p codesigning 2>/dev/null | grep "$SIGN_IDENTITY" | head -1 | awk '{print $2}')
+# Extended attributes are stripped BEFORE signing, not after: `xattr -cr` rewrites files the
+# signature seals over, so doing it last quietly invalidates the seal on resources.
+xattr -cr "$APP"
+
+# Sign inside out — nested code first, the bundle last. `--deep` is gone on purpose: it stamps
+# the app's entitlements onto Sparkle's XPC services and cannot carry per-target options, and
+# that combination is what the notary service rejects.
+#
+# Identity ladder:
+#   1. "Developer ID Application" — the shipping one. Adds the hardened runtime and a secure
+#      timestamp, both mandatory for notarization (see notarize.sh).
+#   2. "MeetingRecorder Dev" — self-signed and untrusted, but a *stable* identity, so TCC
+#      (Mic / Calendar) survives rebuilds. Local development only, never shippable.
+#   3. ad-hoc — TCC resets on every rebuild.
+# NOTE on 2: no `-v` in that lookup — a self-signed cert is untrusted (CSSMERR_TP_NOT_TRUSTED)
+# and so is filtered out of "valid identities", yet codesign signs with it fine.
+SIGN_OPTS=()
+SIGN_HASH=$(security find-identity -v -p codesigning 2>/dev/null | grep "Developer ID Application" | head -1 | awk '{print $2}')
 if [ -n "$SIGN_HASH" ]; then
-    echo "  Signing with '$SIGN_IDENTITY' certificate (stable identity)"
-    if [ -x "$APP/Contents/MacOS/gigastt" ]; then
-        codesign --force --sign "$SIGN_HASH" \
-            --entitlements "$BUILD_DIR/entitlements.plist" \
-            "$APP/Contents/MacOS/gigastt"
-    fi
-    if [ -d "$APP/Contents/Frameworks/Sparkle.framework" ]; then
-        codesign --force --deep --sign "$SIGN_HASH" \
-            "$APP/Contents/Frameworks/Sparkle.framework"
-    fi
-    codesign --force --deep --sign "$SIGN_HASH" \
-        --entitlements "$BUILD_DIR/entitlements.plist" \
-        "$APP"
+    echo "  Signing with Developer ID Application (hardened runtime + secure timestamp)"
+    SIGN_OPTS=(--options runtime --timestamp)
 else
-    echo "  WARNING: '$SIGN_IDENTITY' not found — signing ad-hoc"
-    echo "  TCC (Mic / Screen Recording / Calendar) will reset on every rebuild."
-    echo "  Create a self-signed codesign identity named '$SIGN_IDENTITY' for stable local builds."
-    if [ -x "$APP/Contents/MacOS/gigastt" ]; then
-        codesign --force --sign - \
-            --entitlements "$BUILD_DIR/entitlements.plist" \
-            "$APP/Contents/MacOS/gigastt"
+    SIGN_HASH=$(security find-identity -p codesigning 2>/dev/null | grep "MeetingRecorder Dev" | head -1 | awk '{print $2}')
+    if [ -n "$SIGN_HASH" ]; then
+        echo "  Signing with 'MeetingRecorder Dev' (stable local identity — not shippable)"
+    else
+        echo "  WARNING: no signing identity found — signing ad-hoc"
+        echo "  TCC (Mic / Calendar) will reset on every rebuild."
+        SIGN_HASH="-"
     fi
-    if [ -d "$APP/Contents/Frameworks/Sparkle.framework" ]; then
-        codesign --force --deep --sign - \
-            "$APP/Contents/Frameworks/Sparkle.framework"
-    fi
-    codesign --force --deep --sign - \
-        --entitlements "$BUILD_DIR/entitlements.plist" \
-        "$APP"
 fi
 
-xattr -cr "$APP"
+sign_target() {
+    codesign --force --sign "$SIGN_HASH" ${SIGN_OPTS[@]+"${SIGN_OPTS[@]}"} "$@"
+}
+
+# Sparkle's own signing order: services, helper, updater app, then the framework itself.
+# The version directory is resolved rather than hardcoded ("B" today) — and "Current" is
+# skipped deliberately, codesign wants the concrete directory, not the symlink.
+SPARKLE_V=$(ls -d "$APP/Contents/Frameworks/Sparkle.framework/Versions"/[A-Z] 2>/dev/null | head -1)
+if [ -n "$SPARKLE_V" ]; then
+    for target in \
+        "$SPARKLE_V/XPCServices/Downloader.xpc" \
+        "$SPARKLE_V/XPCServices/Installer.xpc" \
+        "$SPARKLE_V/Autoupdate" \
+        "$SPARKLE_V/Updater.app"
+    do
+        if [ -e "$target" ]; then
+            sign_target "$target"
+        fi
+    done
+    sign_target "$APP/Contents/Frameworks/Sparkle.framework"
+fi
+
+if [ -x "$APP/Contents/MacOS/gigastt" ]; then
+    sign_target --entitlements "$BUILD_DIR/entitlements.plist" "$APP/Contents/MacOS/gigastt"
+fi
+sign_target --entitlements "$BUILD_DIR/entitlements.plist" "$APP"
+
+codesign --verify --strict --verbose=2 "$APP" 2>&1 | sed 's/^/  /'
 
 echo ""
 echo "=== Installed: $APP ==="
