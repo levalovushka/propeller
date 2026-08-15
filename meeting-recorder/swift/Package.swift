@@ -65,6 +65,15 @@ let package = Package(
             ],
             path: "Sources"
         ),
+        /// Read-only MCP server for Claude Desktop — a separate binary inside
+        /// the bundle, because Claude owns the process: it is launched at
+        /// Claude's start, has to work with Propeller closed, and must never be
+        /// a second writer of the archive index.
+        .executableTarget(
+            name: "PropellerMCP",
+            dependencies: ["PropellerPure"],
+            path: "MCPServer"
+        ),
         .executableTarget(
             name: "Experiments",
             dependencies: [

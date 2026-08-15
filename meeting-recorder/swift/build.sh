@@ -146,6 +146,21 @@ else
     exit 1
 fi
 
+# MCP server for Claude Desktop. A second executable in MacOS/, launched by
+# Claude rather than by us — which is exactly why it is a binary and not a mode
+# of the app: it has to run with Propeller closed. Its absolute path goes into
+# claude_desktop_config.json, and Sparkle replaces the whole bundle, so the path
+# a person's config points at stays valid across updates.
+if [ -x "$BUILD_DIR/PropellerMCP" ]; then
+    cp "$BUILD_DIR/PropellerMCP" "$APP/Contents/MacOS/PropellerMCP"
+    chmod +x "$APP/Contents/MacOS/PropellerMCP"
+    echo "  Bundling PropellerMCP (read-only MCP server)"
+else
+    echo "  ERROR: PropellerMCP not found in $BUILD_DIR — the Claude connection would be"
+    echo "         a button that writes a config pointing at a binary that is not there."
+    exit 1
+fi
+
 # Bundle GigaAM ASR weights (~247 MB, INT8 set only).
 # Shipping these removes the whole first-run ASR download: no progress bar to
 # strand on a flaky link, no disk gate, and transcription works offline from
@@ -389,6 +404,12 @@ fi
 
 if [ -x "$APP/Contents/MacOS/gigastt" ]; then
     sign_target --entitlements "$BUILD_DIR/entitlements.plist" "$APP/Contents/MacOS/gigastt"
+fi
+# No entitlements on the MCP server, deliberately: it reads files and speaks
+# JSON on a pipe. The audio-input entitlement would be a permission the binary
+# has no use for, on a process someone else launches.
+if [ -x "$APP/Contents/MacOS/PropellerMCP" ]; then
+    sign_target "$APP/Contents/MacOS/PropellerMCP"
 fi
 sign_target --entitlements "$BUILD_DIR/entitlements.plist" "$APP"
 
