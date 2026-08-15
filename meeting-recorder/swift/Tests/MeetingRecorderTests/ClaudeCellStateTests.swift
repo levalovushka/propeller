@@ -64,6 +64,29 @@ final class ClaudeCellStateTests: XCTestCase {
         XCTAssertEqual(Set(ClaudeCellState.allCases.map(\.subtitle)).count, ClaudeCellState.allCases.count)
     }
 
+    /// Заголовок строки называет клиента и не зависит от состояния: группа
+    /// называется «MCP», и рядом встанут другие строки — заголовок, меняющийся
+    /// вместе со статусом, перестанет отвечать на «кто это».
+    func testTheRowIsNamedAfterTheClientAndTheStateStaysInTheSecondLine() {
+        XCTAssertEqual(ClaudeCellState.rowTitle, "Claude Desktop")
+        // Ни одна подпись не повторяет имя: оно уже стоит слева.
+        for state in ClaudeCellState.allCases {
+            XCTAssertFalse(state.subtitle.contains("Claude"),
+                           "«\(state.subtitle)» повторяет заголовок строки")
+        }
+    }
+
+    /// Русская типографика в интерфейсных строках (`checks.yaml`):
+    /// однобуквенный предлог не остаётся в конце строки.
+    func testOneLetterPrepositionsAreTiedToTheirWord() {
+        for state in ClaudeCellState.allCases {
+            for preposition in [" с ", " о ", " в ", " к ", " и ", " у "] {
+                XCTAssertFalse(state.subtitle.contains(preposition),
+                               "«\(state.subtitle)» рвётся на «\(preposition.trimmingCharacters(in: .whitespaces))»")
+            }
+        }
+    }
+
     /// Кнопка есть ровно там, где нажатие что-то меняет. «Перезапустите» и
     /// «подключён» кнопки не носят: в первом случае очередь за человеком и его
     /// открытыми чатами, во втором делать уже нечего.

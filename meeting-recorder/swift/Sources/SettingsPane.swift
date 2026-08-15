@@ -372,8 +372,10 @@ struct ClaudeSettingsGroup: View {
     @State private var writeFailed = false
 
     var body: some View {
-        SettingsGroup("Claude") {
-            SettingsCell(cell.subtitle) {
+        // Группа — «MCP», а не «Claude»: подключение к модели через MCP это
+        // способ, а не имя, и рядом с Клодом со временем встанут другие клиенты.
+        SettingsGroup("MCP") {
+            SettingsCell(ClaudeCellState.rowTitle, subtitle: cell.subtitle) {
                 control
             }
         }

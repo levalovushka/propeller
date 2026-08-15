@@ -148,7 +148,7 @@ public enum UIStateCatalog {
     /// стоит справа, и в этом весь смысл кадров.
     public static var settingsClaude: [Screen] {
         ClaudeCellState.allCases.map {
-            Screen(id: "settings-claude-\($0.slug)", label: "Настройки — Claude: \($0.subtitle)")
+            Screen(id: "settings-claude-\($0.slug)", label: "Настройки — MCP · Claude: \($0.subtitle)")
         }
     }
 
