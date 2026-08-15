@@ -130,10 +130,27 @@ public enum UIStateCatalog {
     /// Оба шага живут в приложении, поверх списка встреч, поэтому их кадры — это
     /// кадры рельса, а не плашки. Снимаются в окне: вопрос, на который они
     /// отвечают, — «не спорит ли блок со списком под ним».
-    public static let railPrompt: [Screen] = [
-        .init(id: "rail-prompt-calendar", label: "Рельс — «Подключите календарь» 1/2"),
-        .init(id: "rail-prompt-name",     label: "Рельс — «Как вас зовут?» 2/2"),
-    ]
+    ///
+    /// Выводится из `SetupPrompt`, а не перечисляется руками: третий вопрос —
+    /// про Клода — обязан получить кадр от того, что он появился в типе, а не
+    /// от того, что кто-то вспомнил про галерею.
+    public static var railPrompt: [Screen] {
+        SetupPrompt.allCases.map {
+            Screen(id: "rail-prompt-\($0.rawValue)", label: "Рельс — «\($0.title)» \($0.counter)")
+        }
+    }
+
+    /// Ячейка «Claude» в настройках — все её состояния.
+    ///
+    /// Тоже из типа (`ClaudeCellState`): четыре состояния таблицы плюс «нет
+    /// Claude Desktop» и «не записался конфиг». Ни одно из них не повторяет
+    /// другое ничем, кроме рамки, — они отличаются ровно строкой и тем, что
+    /// стоит справа, и в этом весь смысл кадров.
+    public static var settingsClaude: [Screen] {
+        ClaudeCellState.allCases.map {
+            Screen(id: "settings-claude-\($0.slug)", label: "Настройки — Claude: \($0.subtitle)")
+        }
+    }
 
     /// Экран идущей записи.
     ///
@@ -172,6 +189,6 @@ public enum UIStateCatalog {
     /// Everything the gallery has to be able to show, in shooting order.
     public static var allScreenIDs: [String] {
         meetingStates.map(\.id)
-            + (recording + onboarding + railPrompt + detailTabs + library).map(\.id)
+            + (recording + onboarding + railPrompt + settingsClaude + detailTabs + library).map(\.id)
     }
 }

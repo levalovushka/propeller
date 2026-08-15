@@ -172,6 +172,19 @@ enum GalleryFixture {
             poseRecording(id, state: state)
             return
         }
+        // Ячейка Claude: панель переключается на настройки, состояние ячейки
+        // навязывается. Настоящее пришлось бы читать из конфига чужого
+        // приложения, а шесть кадров из семи — это состояния, в которых машина
+        // снимающего не находится.
+        if let cell = ClaudeCellState.allCases.first(where: { id == "settings-claude-\($0.slug)" }) {
+            state.paneRoute = .settings
+            state.galleryClaudeCellOverride = cell
+            return
+        }
+        if let prompt = SetupPrompt.allCases.first(where: { id == "rail-prompt-\($0.rawValue)" }) {
+            state.galleryPoseSetupPrompt(prompt)
+            return
+        }
         switch id {
         case "lib-empty":
             state.recordingStore.recordings = []
@@ -183,10 +196,6 @@ enum GalleryFixture {
                 state.galleryPoseDeletion(victim)
                 state.selectedRecordingID = library.dropFirst().first?.id
             }
-        case "rail-prompt-calendar":
-            state.galleryPoseSetupPrompt(.calendar)
-        case "rail-prompt-name":
-            state.galleryPoseSetupPrompt(.name)
         default:
             break                       // lib-populated / lib-search / setup
         }
@@ -211,6 +220,10 @@ enum GalleryFixture {
         state.galleryPoseDeletion(nil)
         state.galleryPoseMicDenied(false)
         state.galleryPoseSetupPrompt(nil)
+        state.galleryClaudeCellOverride = nil
+        // Панель помнит, куда её переключили, — как и вкладку карточки. Кадр,
+        // который про настройки не просил, обязан просить встречу явно.
+        state.paneRoute = .meeting
         state.recordingStore.recordings = library
     }
 

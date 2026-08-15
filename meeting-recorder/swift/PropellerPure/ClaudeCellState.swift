@@ -59,6 +59,20 @@ public enum ClaudeCellState: String, CaseIterable, Equatable, Sendable {
     }
 
     public var showsCheckmark: Bool { self == .connected }
+
+    /// Имя кадра в галерее и в Figma. Своё, а не `rawValue`: идентификаторы
+    /// кадров живут в именах файлов, и там разрешены только `[a-z0-9-]`
+    /// (`UIStateCatalogTests`).
+    public var slug: String {
+        switch self {
+        case .notInstalled:  return "not-installed"
+        case .offer:         return "offer"
+        case .restartNeeded: return "restart-needed"
+        case .connected:     return "connected"
+        case .lost:          return "lost"
+        case .writeFailed:   return "write-failed"
+        }
+    }
 }
 
 public enum ClaudeCellMachine {

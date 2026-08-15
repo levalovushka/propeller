@@ -58,6 +58,29 @@ final class UIStateCatalogTests: XCTestCase {
         XCTAssertTrue(UIStateCatalog.meetingStates.contains(where: \.hasFailure))
     }
 
+    /// Настройки и рельс — единственные поверхности, чьи кадры выводятся из
+    /// типа, а не перечисляются руками. Добавить состояние ячейки или вопрос
+    /// рельса и забыть кадр теперь нельзя: список — это и есть тип.
+    func testEveryClaudeCellStateAndRailQuestionHasAFrame() {
+        let ids = Set(UIStateCatalog.allScreenIDs)
+        for state in ClaudeCellState.allCases {
+            XCTAssertTrue(ids.contains("settings-claude-\(state.slug)"), state.rawValue)
+        }
+        for prompt in SetupPrompt.allCases {
+            XCTAssertTrue(ids.contains("rail-prompt-\(prompt.rawValue)"), prompt.rawValue)
+        }
+        XCTAssertEqual(UIStateCatalog.settingsClaude.count, ClaudeCellState.allCases.count)
+        XCTAssertEqual(UIStateCatalog.railPrompt.count, SetupPrompt.allCases.count)
+    }
+
+    /// Кадр, который фотографируется как соседний, — это состояние, которого
+    /// справочник не документирует. У ячейки Claude различие — ровно подпись,
+    /// поэтому одинаковых подписей у неё быть не может.
+    func testTheClaudeFramesAreToldApartByTheirWords() {
+        let labels = UIStateCatalog.settingsClaude.map(\.label)
+        XCTAssertEqual(Set(labels).count, labels.count)
+    }
+
     /// IDs become screenshot filenames and Figma frame names — a duplicate would
     /// silently overwrite another state's frame.
     func testScreenIDsAreUniqueAndFilenameSafe() {
