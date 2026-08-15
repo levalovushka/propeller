@@ -84,10 +84,27 @@ final class TermCanonTests: XCTestCase {
         XCTAssertEqual(TermCanon.normalize("Стейтбук готов"), "Storybook готов")
     }
 
+    /// Замер по 20 встречам августа: «лендос» в архиве не написан правильно ни
+    /// разу — он приходит «лондосом» и «лундосом», и в конспект переезжает как
+    /// услышан. Падежи чинятся той же одной строкой.
+    func testПоломкиАвгустовскогоЗамера() {
+        XCTAssertEqual(TermCanon.normalize("кейсы лондосов"), "кейсы лендосов")
+        XCTAssertEqual(TermCanon.normalize("лундос сайт"), "лендос сайт")
+        XCTAssertEqual(TermCanon.normalize("блок «реч-текст»"), "блок «рич-текст»")
+        XCTAssertEqual(TermCanon.normalize("прислать мадборды"), "прислать мудборды")
+        XCTAssertEqual(TermCanon.normalize("зовём на лок-шопы"), "зовём на воркшопы")
+        XCTAssertEqual(TermCanon.normalize("гранулированные классеры"), "гранулированные кластеры")
+        XCTAssertEqual(TermCanon.normalize("сториеллинг страницы"), "сторителлинг страницы")
+        XCTAssertEqual(TermCanon.normalize("вейпкодил приложение"), "вайбкодил приложение")
+        XCTAssertEqual(TermCanon.normalize("Лондосы Pragmatica"), "Лендосы Pragmatica")
+    }
+
     /// «Инстант-кофе» и «стрижка» под правило не попадают: одно короче основы,
     /// другое начинается иначе. Проверяем, что замена не расползлась.
     func testСоседниеСловаНеЗадеты() {
         XCTAssertEqual(TermCanon.normalize("стрижка ежиком"), "стрижка ежиком")
         XCTAssertEqual(TermCanon.normalize("рич-текст остаётся"), "рич-текст остаётся")
+        XCTAssertEqual(TermCanon.normalize("классная работа"), "классная работа")
+        XCTAssertEqual(TermCanon.normalize("речь про Лондон"), "речь про Лондон")
     }
 }
