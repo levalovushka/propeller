@@ -574,6 +574,10 @@ final class OllamaSidecar: @unchecked Sendable {
         // Prefer libs sitting next to the extracted binary.
         let existing = env["DYLD_LIBRARY_PATH"] ?? ""
         env["DYLD_LIBRARY_PATH"] = existing.isEmpty ? installDir.path : "\(installDir.path):\(existing)"
+        // Backfill memory: the runner's prompt cache is retention we never use
+        // (measured Г4 2026-08-15: +5,5 ГБ за 19 минут). Decision and numbers
+        // live in `OllamaServeTuning`; llama-server inherits this env.
+        env = OllamaServeTuning.apply(to: env)
         proc.environment = env
         proc.terminationHandler = { [weak self] p in
             guard let self else { return }
