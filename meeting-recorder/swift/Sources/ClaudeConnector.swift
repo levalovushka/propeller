@@ -164,9 +164,4 @@ enum ClaudeConnector {
         Analytics.signal("Claude.connected", parameters: ["again": wasConfigured ? "1" : "0"])
         return true
     }
-
-    static func openDownloadPage() {
-        guard let url = URL(string: ClaudeConnection.downloadURL) else { return }
-        NSWorkspace.shared.open(url)
-    }
 }

@@ -391,14 +391,10 @@ struct ClaudeSettingsGroup: View {
             SettingsButton(title) { connect() }
         } else if cell.showsCheckmark {
             SettingsCheck()
-        } else if let link = cell.linkURL, let url = URL(string: link) {
-            // Ссылка, а не кнопка: нажимать нам тут не на что, предложить можно
-            // только страницу загрузки.
-            Link("Скачать", destination: url)
-                .typo(Tokens.Settings.Typo.value)
-                .foregroundStyle(Tokens.Paint.Status.accent)
-                .frame(height: Tokens.Settings.controlHeight)
         } else {
+            // У «не установлен» справа нет ничего. Кнопки «Скачать» здесь не
+            // будет: нажимать нам не на что, а уводить человека из настроек в
+            // браузер за чужим приложением — не наше дело и не наш приём.
             EmptyView()
         }
     }

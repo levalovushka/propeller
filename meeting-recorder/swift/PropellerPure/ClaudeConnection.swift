@@ -27,7 +27,4 @@ public enum ClaudeConnection {
     /// Application Support).
     public static let configDirectoryName = "Claude"
     public static let configFileName = "claude_desktop_config.json"
-
-    /// Куда вести человека, у которого Клода нет.
-    public static let downloadURL = "https://claude.ai/download"
 }

@@ -57,11 +57,26 @@ final class ClaudeCellStateTests: XCTestCase {
 
     // MARK: - Слова
 
-    func testEveryStateSaysSomething() {
-        for state in ClaudeCellState.allCases {
-            XCTAssertFalse(state.subtitle.isEmpty, state.rawValue)
-        }
-        XCTAssertEqual(Set(ClaudeCellState.allCases.map(\.subtitle)).count, ClaudeCellState.allCases.count)
+    /// Каждое состояние либо говорит что-то своё, либо молчит — и молчит ровно
+    /// одно: у отказа записи сказать по делу нечего, а «не получилось» слово в
+    /// слово повторило бы кнопку.
+    func testEveryStateEitherSaysSomethingOfItsOwnOrSaysNothing() {
+        let said = ClaudeCellState.allCases.compactMap(\.subtitle)
+        XCTAssertEqual(Set(said).count, said.count)
+        XCTAssertTrue(said.allSatisfy { !$0.isEmpty })
+        XCTAssertEqual(ClaudeCellState.allCases.filter { $0.subtitle == nil }, [.writeFailed])
+    }
+
+    /// Молчащее состояние обязано нести смысл кнопкой — иначе строка не
+    /// отличается от предложения подключиться.
+    func testTheSilentStateSaysItInTheButton() {
+        XCTAssertEqual(ClaudeCellState.writeFailed.actionTitle, "Попробовать снова")
+    }
+
+    /// Просьба перезапустить — единственная строка, где имя приложения уместно:
+    /// у неё есть адресат, а на экране в этот момент три приложения сразу.
+    func testTheRestartLineNamesWhatToRestart() {
+        XCTAssertEqual(ClaudeCellState.restartNeeded.subtitle?.contains(ClaudeCellState.rowTitle), true)
     }
 
     /// Заголовок строки называет клиента и не зависит от состояния: группа
@@ -69,10 +84,12 @@ final class ClaudeCellStateTests: XCTestCase {
     /// вместе со статусом, перестанет отвечать на «кто это».
     func testTheRowIsNamedAfterTheClientAndTheStateStaysInTheSecondLine() {
         XCTAssertEqual(ClaudeCellState.rowTitle, "Claude Desktop")
-        // Ни одна подпись не повторяет имя: оно уже стоит слева.
+        // Ни одна подпись не начинается с имени: оно уже стоит слева. Внутри
+        // строки оно появляется там, где без адресата нельзя, — см.
+        // `testTheRestartLineNamesWhatToRestart`.
         for state in ClaudeCellState.allCases {
-            XCTAssertFalse(state.subtitle.contains("Claude"),
-                           "«\(state.subtitle)» повторяет заголовок строки")
+            XCTAssertFalse(state.subtitle?.hasPrefix(ClaudeCellState.rowTitle) == true,
+                           "«\(state.subtitle ?? "")» начинается с заголовка строки")
         }
     }
 
@@ -80,9 +97,10 @@ final class ClaudeCellStateTests: XCTestCase {
     /// однобуквенный предлог не остаётся в конце строки.
     func testOneLetterPrepositionsAreTiedToTheirWord() {
         for state in ClaudeCellState.allCases {
+            guard let subtitle = state.subtitle else { continue }
             for preposition in [" с ", " о ", " в ", " к ", " и ", " у "] {
-                XCTAssertFalse(state.subtitle.contains(preposition),
-                               "«\(state.subtitle)» рвётся на «\(preposition.trimmingCharacters(in: .whitespaces))»")
+                XCTAssertFalse(subtitle.contains(preposition),
+                               "«\(subtitle)» рвётся на «\(preposition.trimmingCharacters(in: .whitespaces))»")
             }
         }
     }
@@ -93,7 +111,7 @@ final class ClaudeCellStateTests: XCTestCase {
     func testTheButtonIsOnlyWhereAPressWouldChangeSomething() {
         XCTAssertEqual(state().actionTitle, "Подключить")
         XCTAssertEqual(state(configured: false, marked: Date()).actionTitle, "Подключить")
-        XCTAssertEqual(state(failed: true).actionTitle, "Подключить")
+        XCTAssertEqual(state(failed: true).actionTitle, "Попробовать снова")
         XCTAssertNil(state(configured: true).actionTitle)
         XCTAssertNil(state(configured: true, marked: Date()).actionTitle)
         XCTAssertNil(state(installed: false).actionTitle)
@@ -105,11 +123,11 @@ final class ClaudeCellStateTests: XCTestCase {
         XCTAssertEqual(state().actionTitle, state(configured: false, marked: Date()).actionTitle)
     }
 
-    func testOnlyTheMissingAppOffersALink() {
-        XCTAssertEqual(state(installed: false).linkURL, ClaudeConnection.downloadURL)
-        for state in ClaudeCellState.allCases where state != .notInstalled {
-            XCTAssertNil(state.linkURL, state.rawValue)
-        }
+    /// У «не установлен» справа нет ничего: уводить человека в браузер за чужим
+    /// приложением — не наше дело, и такой кнопки в приложении нет нигде.
+    func testTheMissingAppOffersNoControlAtAll() {
+        XCTAssertNil(state(installed: false).actionTitle)
+        XCTAssertFalse(state(installed: false).showsCheckmark)
     }
 
     func testTheCheckmarkBelongsToConnectedAlone() {
@@ -120,8 +138,9 @@ final class ClaudeCellStateTests: XCTestCase {
     /// уезжает в телеметрию, а не в строку под заголовком.
     func testNoStateAsksThePersonToDebugAnything() {
         for state in ClaudeCellState.allCases {
-            for word in ["Повтор", "Попроб", "Ошибка", "ажмите", "путь", "JSON"] {
-                XCTAssertFalse(state.subtitle.contains(word), "«\(state.subtitle)» содержит «\(word)»")
+            guard let subtitle = state.subtitle else { continue }
+            for word in ["Ошибка", "ажмите", "путь", "JSON"] {
+                XCTAssertFalse(subtitle.contains(word), "«\(subtitle)» содержит «\(word)»")
             }
         }
     }

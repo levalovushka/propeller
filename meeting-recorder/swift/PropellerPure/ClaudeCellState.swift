@@ -40,17 +40,30 @@ public enum ClaudeCellState: String, CaseIterable, Equatable, Sendable {
     /// между «поставьте программу» и «у вас нет Клода».
     public static let rowTitle = "Claude Desktop"
 
-    /// Тихая вторая строка — единственное, что меняется. Имени клиента в ней
-    /// нет ни разу: оно уже стоит заголовком слева, и повторить его значит
-    /// написать «Claude Desktop · Claude Desktop не установлен».
-    public var subtitle: String {
+    /// Тихая вторая строка — единственное, что меняется.
+    ///
+    /// Имя приложения в ней не повторяется: оно уже стоит заголовком слева.
+    /// Исключение одно — просьба перезапустить: у неё есть адресат, и «просто
+    /// перезапустите» не говорит кого, притом что на экране в этот момент три
+    /// приложения сразу (Propeller, Claude Desktop и то, где человек работает).
+    ///
+    /// У отказа записи подписи нет вовсе, и это решение владельца: сказать по
+    /// делу нечего — причина уехала в телеметрию, разбираемся мы, — а «не
+    /// получилось» слово в слово повторяет то, что и так написано на кнопке.
+    public var subtitle: String? {
         switch self {
         case .notInstalled:  return "Не установлен — приложение с\u{00A0}сайта Anthropic"
         case .offer:         return "Сможет читать ваши встречи"
-        case .restartNeeded: return "Перезапустите, чтобы он увидел встречи"
-        case .connected:     return "Подключён. Спросите его о\u{00A0}встречах"
-        case .lost:          return "Подключение потерялось"
-        case .writeFailed:   return "Не получилось подключить"
+        case .restartNeeded: return "Перезапустите Claude Desktop, чтобы он увидел встречи"
+        case .connected:     return "Подключён"
+        // Конкретнее, чем «подключение потерялось», и верно в обоих случаях,
+        // которыми это бывает: запись пропала из чужого конфига (его переписал
+        // сам Claude Desktop) или путь в ней указывает в пустоту, потому что
+        // Propeller переехал. Подпись читается вместе с заголовком строки —
+        // «Claude Desktop · Больше не видит Propeller», — поэтому подлежащее
+        // здесь не нужно.
+        case .lost:          return "Больше не видит Propeller"
+        case .writeFailed:   return nil
         }
     }
 
@@ -62,14 +75,12 @@ public enum ClaudeCellState: String, CaseIterable, Equatable, Sendable {
     /// закрывать чужое приложение с открытыми разговорами мы не будем.
     public var actionTitle: String? {
         switch self {
-        case .offer, .lost, .writeFailed: return "Подключить"
+        case .offer, .lost: return "Подключить"
+        // Кнопка и есть сообщение об отказе: «снова» говорит, что попытка уже
+        // была и не удалась, — поэтому второй строки у этого состояния нет.
+        case .writeFailed:  return "Попробовать снова"
         case .notInstalled, .restartNeeded, .connected: return nil
         }
-    }
-
-    /// Ссылка на скачивание — только там, где скачивать и надо.
-    public var linkURL: String? {
-        self == .notInstalled ? ClaudeConnection.downloadURL : nil
     }
 
     public var showsCheckmark: Bool { self == .connected }
