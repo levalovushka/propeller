@@ -38,6 +38,7 @@ struct TranscriptNoteRow: View {
         VStack(alignment: .leading, spacing: Tokens.Pane.transcriptLineGap) {
             Text(note.time)
                 .typoBlock(Tokens.Pane.Typo.transcriptMeta, monospacedDigit: true)
+                .lineLimit(1)
                 .frame(width: Tokens.Pane.transcriptTimeWidth, alignment: .leading)
                 .foregroundStyle(Tokens.Pane.meta)
             Text(note.text)

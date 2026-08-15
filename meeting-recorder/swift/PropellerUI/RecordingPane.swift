@@ -189,6 +189,7 @@ public struct LiveTranscriptColumn: View {
                 }
                 Text(turn.timestamp)
                     .typoBlock(Tokens.Pane.Typo.transcriptMeta, monospacedDigit: true)
+                    .lineLimit(1)
                     .frame(width: Tokens.Pane.transcriptTimeWidth, alignment: .leading)
             }
             .foregroundStyle(Tokens.Pane.meta)

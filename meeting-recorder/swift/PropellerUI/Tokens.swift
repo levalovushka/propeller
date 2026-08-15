@@ -867,7 +867,17 @@ public enum Tokens {
         /// Speaker to timecode.
         public static let transcriptMetaGap = Space.s8
         /// Fixed, so the timecodes form a column instead of drifting with names.
-        public static let transcriptTimeWidth: CGFloat = 40
+        ///
+        /// Sized for the widest form `formatTimestamp` emits below the ten-hour
+        /// mark — `H:MM:SS`, e.g. `1:23:12` — not just `MM:SS`: at 40 pt a
+        /// meeting past the one-hour mark wrapped its own timecode onto a
+        /// second line next to the speaker name (measured on a live meeting,
+        /// `1:23:12` → `1:23:1` / `2`). Monospaced digits make every digit
+        /// combination the same width, so only the extra colon's width
+        /// (`H:MM:SS` measures ~41.5 pt in `transcriptMeta` at the rail's
+        /// weight trim) decides the minimum; 48 keeps the same margin the
+        /// original 40 gave `MM:SS`.
+        public static let transcriptTimeWidth: CGFloat = Space.s48
         /// Насколько плашка заметки вылезает за её текст.
         ///
         /// Наружу, а не внутрь: заметка стоит в ленте между репликами, и её
