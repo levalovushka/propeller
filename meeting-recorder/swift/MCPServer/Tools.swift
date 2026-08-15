@@ -133,7 +133,10 @@ enum Tools {
         let items = MeetingLookup.harvest(section: section, from: meetings, topic: topic)
         guard !items.isEmpty else {
             let where_ = topic.isEmpty ? "в архиве" : "по теме «\(topic)»"
-            return "\(noun) \(where_) не нашлись. Всего встреч с саммари: \(meetings.count)."
+            // «Просмотрено», а не «всего»: под фильтром по датам это число —
+            // размер выборки, и назвать его размером архива значит подсказать
+            // модели уверенно неверный итог.
+            return "\(noun) \(where_) не нашлись. Просмотрено встреч с саммари: \(meetings.count)."
         }
 
         let scope = topic.isEmpty ? "" : " по теме «\(topic)»"
