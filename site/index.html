@@ -7,19 +7,20 @@
 <title>Propeller — записи и саммари встреч</title>
 <meta name="description" content="Сам включает запись и оставляет текст, а не ощущение. Бесплатно, локально, на русском. Для macOS.">
 
-<!-- ЗАМЕНИТЬ ДОМЕН перед публикацией: og:url и og:image должны быть абсолютными,
-     иначе телеграм не покажет карточку. -->
+<!-- og:url и og:image обязаны быть абсолютными, иначе телеграм не покажет
+     карточку. Домен появится свой — править здесь, оба тега. -->
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://propeller.example/">
+<meta property="og:url" content="https://propellerapp.netlify.app/">
 <meta property="og:title" content="Записи и саммари встреч. Бесплатно, локально, на русском.">
 <meta property="og:description" content="Сам включает запись и оставляет текст, а не ощущение: вечером видно, о чём договорились, через месяц — как шёл проект.">
-<meta property="og:image" content="https://propeller.example/assets/og.png">
+<meta property="og:image" content="https://propellerapp.netlify.app/assets/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:locale" content="ru_RU">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" content="#0a0a0a">
 
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
 <link rel="icon" type="image/png" href="assets/favicon.png">
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
 <link rel="preload" href="assets/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
@@ -130,7 +131,10 @@ body {
   padding-block: 0.5rem;
 }
 
-.wordmark { display: block; width: 7.0625rem; height: 1.5rem; }
+/* Знак без подписи: имя уже стоит в <title> и в первом экране, а в шапке
+   надпись только повторяла его. Высота ведущая, ширина следует за рисунком —
+   он 623.6 × 695.4, не квадрат. */
+.mark { display: block; height: 2rem; width: auto; }
 
 .links { display: flex; align-items: center; gap: 0.5rem; }
 
@@ -309,7 +313,7 @@ h1        { animation-delay: 0s; }
     <div class="stack">
 
       <header class="masthead">
-        <img class="wordmark" src="assets/wordmark.svg" alt="Propeller" width="113" height="24">
+        <img class="mark" src="assets/mark.svg" alt="Propeller" width="29" height="32">
         <nav class="links">
           <a href="https://github.com/levalovushka/propeller" target="_blank" rel="noopener">Github</a>
           <a href="https://t.me/+RUtCftekov1lNGUy" target="_blank" rel="noopener">Telegram</a>
