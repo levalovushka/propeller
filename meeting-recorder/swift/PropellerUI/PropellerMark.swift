@@ -1,6 +1,14 @@
 import SwiftUI
 
-/// Propeller mark from Figma End (642:2477) — square viewBox, six petals.
+/// Propeller mark, six petals — the same drawing the app icon is cut from
+/// (`propellericon.icon/Assets/propeller.svg`, a 794 square).
+///
+/// The petals below are that file scaled *uniformly* to fill the height of the
+/// 48-unit box `PropellerMarkShape` authors in, and centred across it. Uniform
+/// is the whole point: the drawing is 623.6 × 695.4, and squaring it up would
+/// cost the exact rotational symmetry the blade animation leans on. The 2.5 of
+/// slack left either side is the drawing's own proportion, not padding — the
+/// icon's padding lives in the icon, where the platform grid asks for it.
 ///
 /// Fills with the ambient foreground style, so a parent can tint it for light /
 /// dark (or for a selected nav row) the same way an SF Symbol would.
@@ -64,11 +72,12 @@ struct PropellerNavMark: View {
     private static let spinDownDecay: Double = 4
 
     /// Six petals, one every 60°, so a sixth of a turn is already the mark again.
-    /// The exact symmetry is 180° (the petals sit in three 180°-opposed pairs,
-    /// spaced 58.9 / 62.4 / 58.7 rather than a clean 60), but at
-    /// `Tokens.Sidebar.navIconSize` a petal tip lives ~5 pt out, so the worst
-    /// 1.7° of error is 0.15 pt — under a retina pixel, and worth trading for a
-    /// coast a third as long.
+    /// This is now exact, and it was not before: rotating any petal of the current
+    /// drawing onto the next leaves 0.001 of a unit on the 794 canvas it comes
+    /// from — 0.0001 in the 48-unit box, far under a retina pixel at any size the
+    /// mark is drawn. The previous drawing sat at 58.9 / 62.4 / 58.7, and the 1.7°
+    /// of error was a deliberate trade for a coast a third as long; there is
+    /// nothing left to trade, the pose the blade parks on *is* the resting mark.
     private static let symmetryPeriod: Double = 60
 
     /// A blade that never got going has nothing to coast on: rather than drift for
@@ -206,95 +215,132 @@ private struct PropellerMarkShape: Shape {
             all.append(p)
         }
         petal { p in
-            p.move(to: CGPoint(x: 14.3159, y: 7.34584))
-            p.addCurve(to: CGPoint(x: 16.2902, y: 25.4193),
-                       control1: CGPoint(x: 12.4047, y: 15.515),
-                       control2: CGPoint(x: 14.4907, y: 22.4541))
-            p.addCurve(to: CGPoint(x: 25.4964, y: 6.4449),
-                       control1: CGPoint(x: 14.0962, y: 15.3481),
-                       control2: CGPoint(x: 24.2379, y: 11.8242))
-            p.addCurve(to: CGPoint(x: 22.0909, y: 0.108196),
-                       control1: CGPoint(x: 26.2378, y: 3.27595),
-                       control2: CGPoint(x: 24.8179, y: 0.627215))
-            p.addCurve(to: CGPoint(x: 14.3159, y: 7.34584),
-                       control1: CGPoint(x: 19.2049, y: -0.441063),
-                       control2: CGPoint(x: 15.8072, y: 0.971545))
+            p.move(to: CGPoint(x: 22.7809, y: 0.171))
+            p.addCurve(to: CGPoint(x: 16.5739, y: 18.9259),
+                       control1: CGPoint(x: 18.8923, y: 1.1238),
+                       control2: CGPoint(x: 13.8141, y: 7.6627))
+            p.addCurve(to: CGPoint(x: 17.3972, y: 21.8512),
+                       control1: CGPoint(x: 16.7545, y: 19.6634),
+                       control2: CGPoint(x: 17.2315, y: 21.4653))
+            p.addCurve(to: CGPoint(x: 18.2736, y: 22.3827),
+                       control1: CGPoint(x: 17.5879, y: 22.2957),
+                       control2: CGPoint(x: 17.9049, y: 22.4731))
+            p.addCurve(to: CGPoint(x: 18.697, y: 21.355),
+                       control1: CGPoint(x: 18.6424, y: 22.2924),
+                       control2: CGPoint(x: 18.8613, y: 22.0255))
+            p.addCurve(to: CGPoint(x: 28.426, y: 3.0519),
+                       control1: CGPoint(x: 16.504, y: 12.4048),
+                       control2: CGPoint(x: 30.3644, y: 10.963))
+            p.addCurve(to: CGPoint(x: 22.7809, y: 0.171),
+                       control1: CGPoint(x: 27.925, y: 1.0071),
+                       control2: CGPoint(x: 25.6302, y: -0.5271))
         }
         petal { p in
-            p.move(to: CGPoint(x: 4.03346, y: 23.6707))
-            p.addCurve(to: CGPoint(x: 21.4341, y: 31.077),
-                       control1: CGPoint(x: 10.4967, y: 29.3336),
-                       control2: CGPoint(x: 17.8414, y: 31.0805))
-            p.addCurve(to: CGPoint(x: 8.80553, y: 13.9868),
-                       control1: CGPoint(x: 11.1909, y: 27.8533),
-                       control2: CGPoint(x: 13.0615, y: 17.7158))
-            p.addCurve(to: CGPoint(x: 1.34805, y: 13.631),
-                       control1: CGPoint(x: 6.29833, y: 11.79),
-                       control2: CGPoint(x: 3.18292, y: 11.6383))
-            p.addCurve(to: CGPoint(x: 4.03346, y: 23.6707),
-                       control1: CGPoint(x: -0.593732, y: 15.7397),
-                       control2: CGPoint(x: -1.00973, y: 19.252))
+            p.move(to: CGPoint(x: 2.7539, y: 13.1413))
+            p.addCurve(to: CGPoint(x: 15.8926, y: 27.8943),
+                       control1: CGPoint(x: 1.6348, y: 16.9852),
+                       control2: CGPoint(x: 4.7584, y: 24.6526))
+            p.addCurve(to: CGPoint(x: 18.8377, y: 28.6438),
+                       control1: CGPoint(x: 16.6216, y: 28.1065),
+                       control2: CGPoint(x: 18.4207, y: 28.5943))
+            p.addCurve(to: CGPoint(x: 19.7362, y: 28.1506),
+                       control1: CGPoint(x: 19.318, y: 28.7008),
+                       control2: CGPoint(x: 19.63, y: 28.5151))
+            p.addCurve(to: CGPoint(x: 19.0579, y: 27.2701),
+                       control1: CGPoint(x: 19.8423, y: 27.786),
+                       control2: CGPoint(x: 19.7206, y: 27.4631))
+            p.addCurve(to: CGPoint(x: 8.0714, y: 9.6929),
+                       control1: CGPoint(x: 10.2102, y: 24.6941),
+                       control2: CGPoint(x: 15.8919, y: 11.9698))
+            p.addCurve(to: CGPoint(x: 2.7539, y: 13.1413),
+                       control1: CGPoint(x: 6.0501, y: 9.1044),
+                       control2: CGPoint(x: 3.574, y: 10.3247))
         }
         petal { p in
-            p.move(to: CGPoint(x: 13.7178, y: 40.3249))
-            p.addCurve(to: CGPoint(x: 29.1441, y: 29.6577),
-                       control1: CGPoint(x: 22.0922, y: 37.8187),
-                       control2: CGPoint(x: 27.351, y: 32.6265))
-            p.addCurve(to: CGPoint(x: 7.30936, y: 31.5419),
-                       control1: CGPoint(x: 21.095, y: 36.5053),
-                       control2: CGPoint(x: 12.8238, y: 29.8916))
-            p.addCurve(to: CGPoint(x: 3.25747, y: 37.5228),
-                       control1: CGPoint(x: 4.06079, y: 32.5141),
-                       control2: CGPoint(x: 2.36529, y: 35.0111))
-            p.addCurve(to: CGPoint(x: 13.7178, y: 40.3249),
-                       control1: CGPoint(x: 4.20163, y: 40.1808),
-                       control2: CGPoint(x: 7.18334, y: 42.2805))
+            p.move(to: CGPoint(x: 3.9731, y: 36.9703))
+            p.addCurve(to: CGPoint(x: 23.3188, y: 32.9683),
+                       control1: CGPoint(x: 6.7424, y: 39.8615),
+                       control2: CGPoint(x: 14.9443, y: 40.99))
+            p.addCurve(to: CGPoint(x: 25.4405, y: 30.7926),
+                       control1: CGPoint(x: 23.8671, y: 32.443),
+                       control2: CGPoint(x: 25.1891, y: 31.1289))
+            p.addCurve(to: CGPoint(x: 25.4625, y: 29.7679),
+                       control1: CGPoint(x: 25.73, y: 30.4052),
+                       control2: CGPoint(x: 25.7251, y: 30.042))
+            p.addCurve(to: CGPoint(x: 24.3609, y: 29.915),
+                       control1: CGPoint(x: 25.1999, y: 29.4937),
+                       control2: CGPoint(x: 24.8594, y: 29.4376))
+            p.addCurve(to: CGPoint(x: 3.6454, y: 30.641),
+                       control1: CGPoint(x: 17.7062, y: 36.2894),
+                       control2: CGPoint(x: 9.5274, y: 25.0068))
+            p.addCurve(to: CGPoint(x: 3.9731, y: 36.9703),
+                       control1: CGPoint(x: 2.1251, y: 32.0974),
+                       control2: CGPoint(x: 1.9438, y: 34.8518))
         }
         petal { p in
-            p.move(to: CGPoint(x: 33.6843, y: 40.6542))
-            p.addCurve(to: CGPoint(x: 31.71, y: 22.5807),
-                       control1: CGPoint(x: 35.5955, y: 32.485),
-                       control2: CGPoint(x: 33.5096, y: 25.5459))
-            p.addCurve(to: CGPoint(x: 22.5038, y: 41.5551),
-                       control1: CGPoint(x: 33.9041, y: 32.6519),
-                       control2: CGPoint(x: 23.7623, y: 36.1758))
-            p.addCurve(to: CGPoint(x: 25.9094, y: 47.8918),
-                       control1: CGPoint(x: 21.7624, y: 44.724),
-                       control2: CGPoint(x: 23.1823, y: 47.3728))
-            p.addCurve(to: CGPoint(x: 33.6843, y: 40.6542),
-                       control1: CGPoint(x: 28.7953, y: 48.4411),
-                       control2: CGPoint(x: 32.193, y: 47.0285))
+            p.move(to: CGPoint(x: 25.2192, y: 47.829))
+            p.addCurve(to: CGPoint(x: 31.4262, y: 29.0741),
+                       control1: CGPoint(x: 29.1076, y: 46.8762),
+                       control2: CGPoint(x: 34.1859, y: 40.3373))
+            p.addCurve(to: CGPoint(x: 30.6028, y: 26.1488),
+                       control1: CGPoint(x: 31.2454, y: 28.3366),
+                       control2: CGPoint(x: 30.7684, y: 26.5346))
+            p.addCurve(to: CGPoint(x: 29.7264, y: 25.6173),
+                       control1: CGPoint(x: 30.412, y: 25.7043),
+                       control2: CGPoint(x: 30.0951, y: 25.5269))
+            p.addCurve(to: CGPoint(x: 29.303, y: 26.645),
+                       control1: CGPoint(x: 29.3576, y: 25.7076),
+                       control2: CGPoint(x: 29.1388, y: 25.9745))
+            p.addCurve(to: CGPoint(x: 19.574, y: 44.948),
+                       control1: CGPoint(x: 31.496, y: 35.5952),
+                       control2: CGPoint(x: 17.6356, y: 37.037))
+            p.addCurve(to: CGPoint(x: 25.2192, y: 47.829),
+                       control1: CGPoint(x: 20.075, y: 46.9929),
+                       control2: CGPoint(x: 22.3698, y: 48.5271))
         }
         petal { p in
-            p.move(to: CGPoint(x: 43.9665, y: 24.3292))
-            p.addCurve(to: CGPoint(x: 26.5659, y: 16.9229),
-                       control1: CGPoint(x: 37.5033, y: 18.6662),
-                       control2: CGPoint(x: 30.1586, y: 16.9194))
-            p.addCurve(to: CGPoint(x: 39.1945, y: 34.0131),
-                       control1: CGPoint(x: 36.8091, y: 20.1465),
-                       control2: CGPoint(x: 34.9385, y: 30.2841))
-            p.addCurve(to: CGPoint(x: 46.652, y: 34.3689),
-                       control1: CGPoint(x: 41.7017, y: 36.2098),
-                       control2: CGPoint(x: 44.8171, y: 36.3616))
-            p.addCurve(to: CGPoint(x: 43.9665, y: 24.3292),
-                       control1: CGPoint(x: 48.5937, y: 32.2602),
-                       control2: CGPoint(x: 49.0097, y: 28.7479))
+            p.move(to: CGPoint(x: 45.2461, y: 34.8586))
+            p.addCurve(to: CGPoint(x: 32.1074, y: 20.1057),
+                       control1: CGPoint(x: 46.3652, y: 31.0148),
+                       control2: CGPoint(x: 43.2415, y: 23.3474))
+            p.addCurve(to: CGPoint(x: 29.1624, y: 19.3562),
+                       control1: CGPoint(x: 31.3783, y: 19.8935),
+                       control2: CGPoint(x: 29.5793, y: 19.4057))
+            p.addCurve(to: CGPoint(x: 28.2638, y: 19.8494),
+                       control1: CGPoint(x: 28.682, y: 19.2992),
+                       control2: CGPoint(x: 28.3699, y: 19.4849))
+            p.addCurve(to: CGPoint(x: 28.9421, y: 20.7299),
+                       control1: CGPoint(x: 28.1577, y: 20.214),
+                       control2: CGPoint(x: 28.2794, y: 20.5369))
+            p.addCurve(to: CGPoint(x: 39.9286, y: 38.3071),
+                       control1: CGPoint(x: 37.7898, y: 23.3059),
+                       control2: CGPoint(x: 32.1081, y: 36.0302))
+            p.addCurve(to: CGPoint(x: 45.2461, y: 34.8586),
+                       control1: CGPoint(x: 41.9499, y: 38.8956),
+                       control2: CGPoint(x: 44.4261, y: 37.6753))
         }
         petal { p in
-            p.move(to: CGPoint(x: 34.2824, y: 7.67513))
-            p.addCurve(to: CGPoint(x: 18.8561, y: 18.3424),
-                       control1: CGPoint(x: 25.908, y: 10.1813),
-                       control2: CGPoint(x: 20.6492, y: 15.3736))
-            p.addCurve(to: CGPoint(x: 40.6908, y: 16.4581),
-                       control1: CGPoint(x: 26.9052, y: 11.4948),
-                       control2: CGPoint(x: 35.1764, y: 18.1084))
-            p.addCurve(to: CGPoint(x: 44.7427, y: 10.4773),
-                       control1: CGPoint(x: 43.9394, y: 15.4859),
-                       control2: CGPoint(x: 45.6349, y: 12.9889))
-            p.addCurve(to: CGPoint(x: 34.2824, y: 7.67513),
-                       control1: CGPoint(x: 43.7986, y: 7.81927),
-                       control2: CGPoint(x: 40.8168, y: 5.71956))
+            p.move(to: CGPoint(x: 44.027, y: 11.0297))
+            p.addCurve(to: CGPoint(x: 24.6812, y: 15.0317),
+                       control1: CGPoint(x: 41.2576, y: 8.1385),
+                       control2: CGPoint(x: 33.0556, y: 7.01))
+            p.addCurve(to: CGPoint(x: 22.5595, y: 17.2074),
+                       control1: CGPoint(x: 24.1329, y: 15.5569),
+                       control2: CGPoint(x: 22.8108, y: 16.871))
+            p.addCurve(to: CGPoint(x: 22.5375, y: 18.2321),
+                       control1: CGPoint(x: 22.27, y: 17.5948),
+                       control2: CGPoint(x: 22.2748, y: 17.958))
+            p.addCurve(to: CGPoint(x: 23.6391, y: 18.085),
+                       control1: CGPoint(x: 22.8001, y: 18.5063),
+                       control2: CGPoint(x: 23.1406, y: 18.5624))
+            p.addCurve(to: CGPoint(x: 44.3546, y: 17.359),
+                       control1: CGPoint(x: 30.2938, y: 11.7106),
+                       control2: CGPoint(x: 38.4725, y: 22.9932))
+            p.addCurve(to: CGPoint(x: 44.027, y: 11.0297),
+                       control1: CGPoint(x: 45.8749, y: 15.9026),
+                       control2: CGPoint(x: 46.0563, y: 13.1482))
         }
+
         return all
     }()
 }
