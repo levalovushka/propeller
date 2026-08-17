@@ -131,6 +131,33 @@ class Preferences {
         set { defaults.set(newValue.rawValue, forKey: "markdownOutputFormat") }
     }
 
+    // MARK: - Retention
+
+    /// Когда аудио уходит само (`AudioRetention`).
+    ///
+    /// Дефолт — `keep`, и это не осторожность вообще: у обновления нет способа
+    /// спросить, а включённый retention с любым N в первый же запуск после
+    /// апдейта прошёл бы по всему архиву, который у человека уже лежит.
+    /// Расшифровки и конспекты остались бы, аудио — нет, и вернуть его нечем.
+    /// Включать по умолчанию — решение владельца, не кода.
+    var audioRetentionMode: AudioRetentionMode {
+        get {
+            AudioRetentionMode(rawValue: defaults.string(forKey: "audioRetentionMode") ?? "")
+                ?? .keep
+        }
+        set { defaults.set(newValue.rawValue, forKey: "audioRetentionMode") }
+    }
+
+    /// Через сколько дней. Живёт независимо от режима, чтобы выключение и
+    /// включение обратно не сбрасывало выбранное число.
+    var audioRetentionDays: Int {
+        get {
+            let stored = defaults.integer(forKey: "audioRetentionDays")
+            return stored == 0 ? AudioRetention.defaultDays : AudioRetention.clampedDays(stored)
+        }
+        set { defaults.set(AudioRetention.clampedDays(newValue), forKey: "audioRetentionDays") }
+    }
+
     // MARK: - Recap (LLM)
 
     var recapProvider: RecapProviderKind {

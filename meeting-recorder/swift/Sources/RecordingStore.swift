@@ -22,10 +22,17 @@ class RecordingStore: ObservableObject {
     private var pendingSaveWork: DispatchWorkItem?
     private let saveDebounceInterval: TimeInterval = 0.2
 
-    private var indexURL: URL {
-        URL(fileURLWithPath: Preferences.shared.recordingsPath)
-            .appendingPathComponent("recordings.json")
+    /// Где лежит архив — один тип вместо путей, собираемых заново в каждом
+    /// месте. Читается из настроек каждый раз: человек может сменить папку, и
+    /// стирание обязано идти по той, которая настроена сейчас.
+    private var layout: ArchiveLayout {
+        ArchiveLayout(
+            recordingsPath: Preferences.shared.recordingsPath,
+            meetingsPath: Preferences.shared.meetingsPath
+        )
     }
+
+    private var indexURL: URL { layout.indexURL }
 
     /// Кого человек удалил (`MeetingTombstone`).
     ///
@@ -34,10 +41,7 @@ class RecordingStore: ObservableObject {
     /// «удалённой» значило бы, что каждый читатель массива обязан помнить про
     /// фильтр, а забытый фильтр — это ровно тот класс ошибок, ради которого
     /// решения вынесены в `PropellerPure`.
-    private var tombstonesURL: URL {
-        URL(fileURLWithPath: Preferences.shared.recordingsPath)
-            .appendingPathComponent("deleted.json")
-    }
+    private var tombstonesURL: URL { layout.tombstonesURL }
 
     /// Надгробия, прочитанные с диска. Живут всю сессию: их читает скан сирот,
     /// а он теперь бегает не только на запуске.
@@ -154,10 +158,7 @@ class RecordingStore: ObservableObject {
     // MARK: - Надгробия
 
     private func loadTombstones() {
-        guard let data = try? Data(contentsOf: tombstonesURL) else { return }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        tombstones = (try? decoder.decode([MeetingTombstone].self, from: data)) ?? []
+        tombstones = TombstoneFile.read(tombstonesURL)
     }
 
     /// Записывается **синхронно**, без дебаунса, и до того, как аудио тронут.
@@ -167,8 +168,8 @@ class RecordingStore: ObservableObject {
     /// платить за это нечем.
     private func markDeleted(_ id: String) {
         guard !tombstones.contains(where: { $0.id == id }) else { return }
-        tombstones.append(MeetingTombstone(id: id, at: Date()))
-        writeTombstones()
+        TombstoneFile.mark(id, in: layout)
+        loadTombstones()
     }
 
     /// ⌘Z: удаления не было. Камень убирается сразу — иначе следующий скан
@@ -176,15 +177,8 @@ class RecordingStore: ObservableObject {
     /// разрешает этот спор в пользу индекса, оставлять его незачем.
     private func unmarkDeleted(_ id: String) {
         guard tombstones.contains(where: { $0.id == id }) else { return }
-        tombstones.removeAll { $0.id == id }
-        writeTombstones()
-    }
-
-    private func writeTombstones() {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(tombstones) else { return }
-        try? data.write(to: tombstonesURL, options: .atomic)
+        TombstoneFile.unmark(id, in: layout)
+        loadTombstones()
     }
 
     // MARK: - CRUD
@@ -305,19 +299,33 @@ class RecordingStore: ObservableObject {
         scheduleSave()
     }
 
-    /// Remove the recording entirely (audio files + index entry)
-    /// Delete for good: the audio goes, then the entry.
+    /// Стереть встречу целиком: аудио и стемы, расшифровка и конспект в
+    /// `meetings/`, строка индекса, та же строка во всех копиях индекса,
+    /// надгробие. И всё, что появится позже и будет названо по встрече —
+    /// правило в `ArchiveEraser` спрашивает имя файла, а не список видов.
     ///
-    /// Надгробие ставится **до** удаления файлов: если стереть их не удалось —
-    /// том отмонтирован, файл занят, — на диске остаётся wav без записи в
-    /// индексе, то есть ровно то, что скан сирот считает потерянной встречей.
+    /// До этого уходили только аудио и строка индекса, а расшифровка с конспектом
+    /// оставались сиротами навсегда (STATE, компонент 5, rev-9), и `.bak` держал
+    /// целую копию удалённой записи вместе с транскриптом.
+    ///
+    /// Надгробие ставится **до** того, как тронут первый файл: если стереть не
+    /// удалось — том отмонтирован, файл занят, — камень остаётся, и дочистка
+    /// доведёт дело (`ArchiveEraser.finishPendingErasures`).
     func remove(_ entry: RecordingEntry) {
         markDeleted(entry.id)
-        for url in audioFileURLs(for: entry) {
-            try? FileManager.default.removeItem(at: url)
-        }
+        // Из памяти и на диск **до** стирания: `flush()` сбрасывает и чужие
+        // отложенные правки, а стирание потом перепишет индекс и его копии уже
+        // без этой строки. Обратный порядок дал бы отложенному `save()` шанс
+        // вернуть стёртую запись обратно.
         recordings.removeAll { $0.id == entry.id }
-        scheduleSave()
+        flush()
+        let residue = ArchiveEraser.erase(meeting: entry.id, in: layout)
+        loadTombstones()
+        if !residue.isEmpty {
+            // Не отказ и не тупик: камень на месте, дочистка придёт. Но соврать
+            // «стёрто» про то, что осталось, нельзя.
+            NSLog("[RecordingStore] \(entry.id): стёрто не всё — \(residue.summary)")
+        }
     }
 
     /// Take a meeting out of the list but leave its audio alone.
@@ -410,6 +418,71 @@ class RecordingStore: ObservableObject {
         // записанного файла.
         save()
         return targets.count
+    }
+
+    // MARK: - Retention
+
+    /// Забрать аудио у всех, чей срок вышел (`AudioRetention`). Возвращает, у
+    /// скольких встреч.
+    ///
+    /// Таймера у этого нет намеренно: «нет причитающейся работы ⇒ нет таймеров»
+    /// — инварианты пайплайна. Срок проверяется на тех же событиях, на которых
+    /// приложение и так просматривает архив: запуск и конец цепочки воркера.
+    /// Пропущенный день ничего не стоит — на следующем событии срок всё ещё
+    /// вышел.
+    @discardableResult
+    func applyAudioRetention(now: Date = Date()) -> Int {
+        let mode = Preferences.shared.audioRetentionMode
+        guard mode != .keep else { return 0 }
+        let candidates = recordings.map {
+            AudioRetention.Candidate(
+                id: $0.id,
+                date: $0.date,
+                stage: $0.status,
+                hasTranscript: $0.transcript?.isEmpty == false,
+                hasAudio: $0.audioFileExists
+            )
+        }
+        let expired = Set(AudioRetention.expired(
+            candidates,
+            mode: mode,
+            days: Preferences.shared.audioRetentionDays,
+            now: now
+        ))
+        guard !expired.isEmpty else { return 0 }
+        let fm = FileManager.default
+        for entry in recordings where expired.contains(entry.id) {
+            for url in audioFileURLs(for: entry) {
+                try? fm.removeItem(at: url)
+            }
+            // Длительность остаётся: человек по-прежнему видит, сколько шла
+            // встреча (то же правило, что у ручной чистки).
+        }
+        NSLog("[RecordingStore] Retention (\(mode.rawValue)): аудио убрано у \(expired.count)")
+        save()
+        return expired.count
+    }
+
+    // MARK: - Стереть человека
+
+    /// Убрать имя человека из всех встреч: метки спикеров, сегменты, проза
+    /// конспекта, заголовки, темы, заметки, приглашённые из календаря и slug в
+    /// имени файла (`ArchivePersonEraser`).
+    ///
+    /// Индекс правится **на диске**, а не в памяти, потому что там же лежат его
+    /// копии и человек в них тот же. Поэтому после стирания массив
+    /// перечитывается: иначе в памяти остался бы прежний текст, и первый же
+    /// `save()` вернул бы имя обратно.
+    @discardableResult
+    func erasePerson(named name: String) -> PersonErasureReport {
+        flush()
+        let report = ArchivePersonEraser.erase(person: name, in: layout)
+        guard !report.filesChanged.isEmpty else { return report }
+        load()
+        if !report.isComplete {
+            NSLog("[RecordingStore] «\(name)» остался в: \(report.remaining.joined(separator: ", "))")
+        }
+        return report
     }
 
     /// Drop parked failures for one phase across the archive, returning how many
@@ -592,33 +665,26 @@ class RecordingStore: ObservableObject {
             wavs[id] = file
         }
 
-        // Надгробие, у которого файл ещё на месте, значит удаление не довели до
-        // конца. Довести сейчас — иначе аудио удалённой встречи лежит на диске
-        // вечно: в списке его нет, в подсчёте размера библиотеки нет (там проход
-        // по индексу), и предъявить его человеку негде. Замерено 2026-08-09:
-        // 24 МБ от одной удалённой встречи пережили штатный выход приложения.
+        // Надгробие, у которого след ещё на месте, значит удаление не довели до
+        // конца. Довести сейчас — иначе оно лежит на диске вечно: в списке его
+        // нет, в подсчёте размера библиотеки нет (там проход по индексу), и
+        // предъявить его человеку негде. Замерено 2026-08-09: 24 МБ от одной
+        // удалённой встречи пережили штатный выход приложения.
         //
-        // Это и делает надгробие самоубирающимся: файл уходит, следом уходит
+        // Раньше здесь дочищалось только аудио, а расшифровка и конспект
+        // оставались всегда. Теперь дочистка — то же стирание, что и по кнопке
+        // (`ArchiveEraser`), поэтому виды следов перечислены в одном месте, а не
+        // в двух, которые разъедутся.
+        //
+        // Это и делает надгробие самоубирающимся: следы уходят, следом уходит
         // камень, и `deleted.json` не превращается в список всего, что человек
         // когда-либо удалил.
-        for stone in tombstones where stone.id != undoableID {
-            guard let file = wavs[stone.id] else { continue }
-            let stems = AudioSourceStemURLs.expectedSiblings(for: file)
-            for url in [file, stems.microphoneURL, stems.systemURL] {
-                try? FileManager.default.removeItem(at: url)
-            }
-            if !FileManager.default.fileExists(atPath: file.path) {
-                wavs.removeValue(forKey: stone.id)
-                NSLog("[RecordingStore] Дочистили аудио удалённой встречи \(stone.id)")
-            }
+        let finished = ArchiveEraser.finishPendingErasures(in: layout, keeping: undoableID)
+        if !finished.isEmpty {
+            NSLog("[RecordingStore] Дочищено незакрытых удалений: \(finished.count)")
+            for id in finished { wavs.removeValue(forKey: id) }
         }
-
-        // Камень сторожит один файл; файла нет — камень уходит.
-        let kept = OrphanAdoption.pruned(tombstones, fileIDs: Set(wavs.keys))
-        if kept.count != tombstones.count {
-            tombstones = kept
-            writeTombstones()
-        }
+        loadTombstones()
 
         let adoptableIDs = OrphanAdoption.adoptable(
             fileIDs: Array(wavs.keys),

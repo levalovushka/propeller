@@ -48,25 +48,9 @@ final class OrphanAdoptionTests: XCTestCase {
         )
     }
 
-    func testНадгробиеБезФайлаУходит() {
-        // Аудио стёрлось — сторожить нечего. Иначе список удалённого рос бы
-        // вечно, по камню за каждую встречу, которую человек когда-либо убрал.
-        let stones = [
-            MeetingTombstone(id: "gone", at: Date(timeIntervalSince1970: 0)),
-            MeetingTombstone(id: "still-here", at: Date(timeIntervalSince1970: 0)),
-        ]
-        XCTAssertEqual(
-            OrphanAdoption.pruned(stones, fileIDs: ["still-here"]).map(\.id),
-            ["still-here"]
-        )
-    }
-
-    func testПокаФайлЛежитКаменьОстаётся() {
-        // Стереть аудио не удалось — том отмонтирован, файл занят. Камень обязан
-        // пережить это, иначе следующий скан усыновит удалённое.
-        let stones = [MeetingTombstone(id: "a", at: Date(timeIntervalSince1970: 0))]
-        XCTAssertEqual(OrphanAdoption.pruned(stones, fileIDs: ["a"]).count, 1)
-    }
+    // Когда камень уходит и когда обязан остаться — в `MeetingErasureTests`:
+    // теперь он сторожит все следы встречи, а не только её wav, и проверяется на
+    // настоящем каталоге, а не на списке имён.
 
     // MARK: - Неудавшийся старт
 

@@ -423,7 +423,12 @@ private struct StorageSettingsGroup: View {
     @AppStorage("meetingsPath") private var meetingsPath = ""
     @AppStorage("recordingsPath") private var recordingsPath = ""
     @AppStorage("peoplePagesPath") private var peoplePagesPath = ""
+    @AppStorage("audioRetentionMode") private var audioRetentionMode = AudioRetentionMode.keep.rawValue
+    @AppStorage("audioRetentionDays") private var audioRetentionDays = AudioRetention.defaultDays
     @State private var showingClearConfirm = false
+    @State private var personToErase = ""
+    @State private var showingEraseConfirm = false
+    @State private var personErasureResult: String?
 
     /// Сколько заберёт «Очистить» — не то же, что «Аудио на диске»: у идущей
     /// записи и у нерасшифрованной встречи звук не забирают (`AudioReclaim`).
@@ -472,6 +477,47 @@ private struct StorageSettingsGroup: View {
                     }
                 }
             }
+
+            SettingsCell("Хранить аудио", subtitle: retentionHelp) {
+                HStack(spacing: Tokens.Space.s8) {
+                    Picker("", selection: $audioRetentionMode) {
+                        ForEach(AudioRetentionMode.allCases) { mode in
+                            Text(Self.retentionTitle(mode)).tag(mode.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    if audioRetentionMode == AudioRetentionMode.afterDays.rawValue {
+                        Stepper(
+                            "\(audioRetentionDays) дн.",
+                            value: $audioRetentionDays,
+                            in: AudioRetention.dayRange
+                        )
+                        .fixedSize()
+                    }
+                }
+            }
+            .onChange(of: audioRetentionDays) { _, val in
+                // Через `Preferences`, а не только `@AppStorage`: там живёт
+                // приведение к допустимому диапазону, и записанное руками в
+                // defaults число обязано проходить через него.
+                Preferences.shared.audioRetentionDays = val
+            }
+
+            SettingsStack(
+                "Стереть человека",
+                subtitle: "Имя уходит из всех встреч: метки реплик, конспекты, заголовки, заметки, приглашённые. Записи и расшифровки остаются — уходит атрибуция, а не разговор. Вернуть нельзя."
+            ) {
+                HStack(spacing: Tokens.Space.s8) {
+                    SettingsField("Имя и фамилия", text: $personToErase)
+                    if !personToErase.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        SettingsButton("Стереть") { showingEraseConfirm = true }
+                    }
+                }
+                if let personErasureResult {
+                    SettingsValue(personErasureResult)
+                }
+            }
         }
         // Подтверждение необратимого действия, начатого человеком: он за
         // клавиатурой, окно возможности — его же клик. Единственная роль, в
@@ -488,6 +534,16 @@ private struct StorageSettingsGroup: View {
         } message: {
             Text("Освободится \(Self.bytes(reclaimable)). Расшифровки и саммари останутся, аудио вернуть будет нельзя.")
         }
+        .confirmationDialog(
+            "Стереть «\(personToErase)» из всех встреч?",
+            isPresented: $showingEraseConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Стереть", role: .destructive) { erasePerson() }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text("Имя исчезнет из расшифровок, конспектов, заголовков и заметок по всему архиву. Отменить это нечем.")
+        }
         .onAppear {
             if meetingsPath.isEmpty { meetingsPath = Preferences.shared.meetingsPath }
             if recordingsPath.isEmpty { recordingsPath = Preferences.shared.recordingsPath }
@@ -499,6 +555,39 @@ private struct StorageSettingsGroup: View {
         markdownOutputFormat == MarkdownOutputFormat.obsidian.rawValue
             ? "YAML frontmatter + [[wikilinks]] для vault Obsidian."
             : "Читаемый markdown: заголовок, участники, расшифровка. По умолчанию для обмена."
+    }
+
+    private var retentionHelp: String {
+        switch AudioRetentionMode(rawValue: audioRetentionMode) ?? .keep {
+        case .keep:
+            return "Аудио не удаляется само. Освободить место можно кнопкой выше."
+        case .afterTranscript:
+            return "Звук уходит, как только расшифровка и спикеры готовы. Слушать встречу потом будет нечем."
+        case .afterDays:
+            return "Через \(audioRetentionDays) дн. звук уходит у встреч, которым он больше не нужен. Расшифровки и конспекты остаются."
+        }
+    }
+
+    private static func retentionTitle(_ mode: AudioRetentionMode) -> String {
+        switch mode {
+        case .keep:            return "Всегда"
+        case .afterTranscript: return "До расшифровки"
+        case .afterDays:       return "Столько дней"
+        }
+    }
+
+    private func erasePerson() {
+        let name = personToErase.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        let report = state.erasePerson(named: name)
+        // Показание, а не тост: результат живёт в той же строке, где действие, и
+        // говорит ровно то, что произошло. У неполного стирания это перечисление
+        // файлов, а не «что-то пошло не так».
+        personErasureResult = report.isComplete
+            ? "Стёрто во встречах: \(report.entriesChanged)"
+            : "Осталось в: \(report.remaining.joined(separator: ", "))"
+        if report.isComplete { personToErase = "" }
+        state.refreshStorageUsage()
     }
 
     private func pathCell(

@@ -15,7 +15,7 @@ import Foundation
 /// апдейта унёс бы аудио всего архива, который у человека уже лежит. Число N
 /// свой разумный дефолт имеет (`defaultDays`) и ждёт включения; **включать
 /// retention по умолчанию — решение владельца, не кода.**
-public enum AudioRetentionMode: String, Codable, CaseIterable, Sendable {
+public enum AudioRetentionMode: String, Codable, CaseIterable, Identifiable, Sendable {
     /// Аудио не удаляется само никогда. Ручная «Очистить» в настройках работает
     /// как работала.
     case keep

@@ -256,6 +256,11 @@ class AppState: ObservableObject {
         // «остановились и надеемся, что нас пнут», от которого избавлялись в I12.
         Task { [weak self] in
             _ = await self?.recordingStore.recoverMissingFinalMixes()
+            // Срок аудио — после пересборки миксов, а не до: иначе запуск сначала
+            // собрал бы микс из стемов, а следующая строка его же и унесла.
+            if (self?.recordingStore.applyAudioRetention() ?? 0) > 0 {
+                self?.refreshStorageUsage()
+            }
             self?.kickPipeline("mixes rebuilt")
         }
         refreshStorageUsage()
@@ -1405,6 +1410,28 @@ class AppState: ObservableObject {
         }
     }
 
+    /// «Стереть человека»: имени не остаётся ни в одной встрече.
+    ///
+    /// Одна операция на весь архив, а не по встрече за раз, потому что человек не
+    /// принадлежит встрече — он в двадцати, и в копии индекса, снятой до
+    /// половины из них. Аудио при этом не трогается ни у одной: уходит личность,
+    /// не встреча.
+    ///
+    /// Возвращает отчёт, а не `Bool`: у необратимой операции «получилось» — это
+    /// перечисление того, где имя ещё осталось, а не обещание.
+    @discardableResult
+    func erasePerson(named name: String) -> PersonErasureReport {
+        player.stop()
+        let report = recordingStore.erasePerson(named: name)
+        // Текст выбранной встречи в окне — копия из индекса, снятая при выборе.
+        // После правки на диске она устарела, и без этого на экране осталось бы
+        // стёртое имя до следующего переключения встречи.
+        if let id = selectedRecordingID, let entry = recordingStore.recording(for: id) {
+            selectRecording(entry)
+        }
+        return report
+    }
+
     /// «Очистить» в настройках: аудио уходит у всех, у кого оно уже лишнее.
     ///
     /// Ни одной встречи при этом не пропадает и ни одна не встаёт — за это
@@ -1570,6 +1597,12 @@ class AppState: ObservableObject {
         let adopted = recordingStore.scanForOrphanRecordings(
             undoableID: pendingDeletion?.id
         )
+        // Срок аудио проверяется здесь, а не по таймеру: «нет причитающейся
+        // работы ⇒ нет таймеров», и это ровно те два события, на которых
+        // приложение и так просматривает архив, — запуск и конец цепочки
+        // воркера. Пропущенный день не стоит ничего: на следующем событии срок
+        // всё ещё вышел.
+        recordingStore.applyAudioRetention()
         refreshStorageUsage()
         return adopted
     }
