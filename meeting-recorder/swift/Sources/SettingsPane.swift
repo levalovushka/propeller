@@ -423,12 +423,9 @@ private struct StorageSettingsGroup: View {
     @AppStorage("meetingsPath") private var meetingsPath = ""
     @AppStorage("recordingsPath") private var recordingsPath = ""
     @AppStorage("peoplePagesPath") private var peoplePagesPath = ""
-    @AppStorage("audioRetentionMode") private var audioRetentionMode = AudioRetentionMode.keep.rawValue
+    @AppStorage("audioRetentionMode") private var audioRetentionMode = AudioRetentionMode.afterDays.rawValue
     @AppStorage("audioRetentionDays") private var audioRetentionDays = AudioRetention.defaultDays
     @State private var showingClearConfirm = false
-    @State private var personToErase = ""
-    @State private var showingEraseConfirm = false
-    @State private var personErasureResult: String?
 
     /// Сколько заберёт «Очистить» — не то же, что «Аудио на диске»: у идущей
     /// записи и у нерасшифрованной встречи звук не забирают (`AudioReclaim`).
@@ -504,20 +501,11 @@ private struct StorageSettingsGroup: View {
                 Preferences.shared.audioRetentionDays = val
             }
 
-            SettingsStack(
-                "Стереть человека",
-                subtitle: "Имя уходит из всех встреч: метки реплик, конспекты, заголовки, заметки, приглашённые. Записи и расшифровки остаются — уходит атрибуция, а не разговор. Вернуть нельзя."
-            ) {
-                HStack(spacing: Tokens.Space.s8) {
-                    SettingsField("Имя и фамилия", text: $personToErase)
-                    if !personToErase.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        SettingsButton("Стереть") { showingEraseConfirm = true }
-                    }
-                }
-                if let personErasureResult {
-                    SettingsValue(personErasureResult)
-                }
-            }
+            // «Стереть человека» двери не получает намеренно (решение владельца
+            // 2026-08-17): постоянных спикеров в продукте пока нет, а стирание
+            // по имени не согласуется по падежу («с Иваном» → «с Участник») и
+            // сливает двух стёртых в одного. Механизм есть и покрыт тестами
+            // (`AppState.erasePerson`), поверхность появится вместе с людьми.
         }
         // Подтверждение необратимого действия, начатого человеком: он за
         // клавиатурой, окно возможности — его же клик. Единственная роль, в
@@ -533,16 +521,6 @@ private struct StorageSettingsGroup: View {
             Button("Отмена", role: .cancel) {}
         } message: {
             Text("Освободится \(Self.bytes(reclaimable)). Расшифровки и саммари останутся, аудио вернуть будет нельзя.")
-        }
-        .confirmationDialog(
-            "Стереть «\(personToErase)» из всех встреч?",
-            isPresented: $showingEraseConfirm,
-            titleVisibility: .visible
-        ) {
-            Button("Стереть", role: .destructive) { erasePerson() }
-            Button("Отмена", role: .cancel) {}
-        } message: {
-            Text("Имя исчезнет из расшифровок, конспектов, заголовков и заметок по всему архиву. Отменить это нечем.")
         }
         .onAppear {
             if meetingsPath.isEmpty { meetingsPath = Preferences.shared.meetingsPath }
@@ -574,20 +552,6 @@ private struct StorageSettingsGroup: View {
         case .afterTranscript: return "До расшифровки"
         case .afterDays:       return "Столько дней"
         }
-    }
-
-    private func erasePerson() {
-        let name = personToErase.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        let report = state.erasePerson(named: name)
-        // Показание, а не тост: результат живёт в той же строке, где действие, и
-        // говорит ровно то, что произошло. У неполного стирания это перечисление
-        // файлов, а не «что-то пошло не так».
-        personErasureResult = report.isComplete
-            ? "Стёрто во встречах: \(report.entriesChanged)"
-            : "Осталось в: \(report.remaining.joined(separator: ", "))"
-        if report.isComplete { personToErase = "" }
-        state.refreshStorageUsage()
     }
 
     private func pathCell(
