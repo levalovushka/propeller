@@ -226,7 +226,7 @@ stateDiagram-v2
 |---|---|---|---|
 | I1 | Завершение работы ⇒ `activity == .idle` | Зависшую строку прогресса (`2a75e10`) | ✅ тест + рантайм-ассерт |
 | I2 | Спиннер ровно у одной записи: `.working(id:)` | `BUG-PIPE-02/03` | ✅ `PipelineActivityTests` |
-| I3 | Стадия монотонна; вниз — только явный `reprocess` | Откат `transcribed → recorded` | ✅ `PipelineActivityTests` |
+| I3 | Стадия монотонна. Вниз с 2026-08-18 не ходит **никто по просьбе человека** — `reprocess` удалён; единственный откат остался машинный: потерянный чекпоинт починяет стадию до `recorded` (`AppState.swift:1968`) | Откат `transcribed → recorded` | ✅ `PipelineActivityTests` |
 | I4 | Ошибка ASR после чекпоинта оставляет `transcribedRaw` | Потерю часа работы GPU | ✅ `PureFunctionTests` |
 | I5 | `stop()` ⇒ запись достигает `recorded` и попадает в очередь | «Стоп в никуда» | ✅ `PipelineActivityTests` |
 | I6 | Любая строка статуса из старого `recordings.json` декодируется | Потерю архива | ✅ `RecordingStageTests` |
