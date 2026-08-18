@@ -35,14 +35,6 @@ protocol Transcriber: AnyObject {
 
     /// Frees ASR/diarizer memory between jobs.
     func releaseHeavyResources()
-
-    /// Re-assign speakers from mic vs system stem energy, or nil when the stems
-    /// aren't usable. Not part of the queue — invoked from «Уточнить спикеров».
-    func relabelSegmentsFromStems(
-        audioURL: URL,
-        segments: [PersistedSegment],
-        systemStemOffset: Double
-    ) -> [PersistedSegment]?
 }
 
 protocol RecapBackend: Sendable {

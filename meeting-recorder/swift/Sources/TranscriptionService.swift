@@ -535,37 +535,6 @@ class TranscriptionService {
         )
     }
 
-    /// Re-label already-persisted segments using mic/sys stem energy — no ASR.
-    /// Fixes headphone meetings where FluidAudio collapsed everyone into the owner.
-    func relabelSegmentsFromStems(
-        audioURL: URL,
-        segments: [PersistedSegment],
-        systemStemOffset: Double = 0
-    ) -> [PersistedSegment]? {
-        guard Self.hasUsableStems(for: audioURL) else { return nil }
-        let ownerName = Preferences.shared.ownerName
-        return segments.map { seg in
-            let source = Self.captureSource(
-                audioURL: audioURL,
-                start: seg.startTime,
-                end: seg.endTime,
-                systemStemOffset: systemStemOffset
-            )
-            let speaker = SourceAwareSpeaker.resolve(
-                fluidDisplayName: seg.speaker,
-                source: source,
-                ownerName: ownerName
-            )
-            return PersistedSegment(
-                index: seg.index,
-                startTime: seg.startTime,
-                endTime: seg.endTime,
-                text: seg.text,
-                speaker: speaker
-            )
-        }
-    }
-
     private static func hasUsableStems(for finalAudioURL: URL) -> Bool {
         let stems = AudioSourceStemURLs.expectedSiblings(for: finalAudioURL)
         guard let mic = stems.existingMicrophoneURL,

@@ -1910,10 +1910,9 @@ class AppState: ObservableObject {
     /// resumes from the checkpoint a crash left behind. Keeping them apart meant
     /// ~90 duplicated lines of orchestration (D6).
     ///
-    /// Only the worker calls this. The user-facing buttons ask the queue instead
-    /// (`reprocess`, `requestProcessing`) — a direct call while a phase was in
-    /// flight used to hit the guard below and vanish, leaving a button that did
-    /// nothing.
+    /// Only the worker calls this. The user-facing button asks the queue instead
+    /// (`requestProcessing`) — a direct call while a phase was in flight used to
+    /// hit the guard below and vanish, leaving a button that did nothing.
     private func runASR(recordingID: String, phase: PipelineActivity.Phase) async {
         if isTranscribing {
             // One worker, one ASR — belt and braces rather than a queueing
@@ -2579,45 +2578,6 @@ class AppState: ObservableObject {
         title.hasPrefix("Запись ") || title.hasPrefix("Recording ")
     }
 
-    /// «Расшифровать» / «Повторить» on the open meeting.
-    ///
-    /// Goes through the queue instead of calling ASR directly. A direct call
-    /// while the worker happened to be mid-phase hit the re-entrancy guard and
-    /// returned — the button did nothing at all, and nothing re-queued the
-    /// meeting afterwards. Hand-requested meetings jump the queue, so "through
-    /// the queue" does not mean "behind the backlog".
-    func reprocess() async {
-        guard let id = selectedRecordingID else {
-            surfacePipelineError("Запись не выбрана")
-            return
-        }
-        pipelineError = nil
-        clearFailure(id)
-        userRequestedID = id
-        // Headphones on a call: FluidAudio often collapses everyone into the owner.
-        // If we already have segments + mic/sys stems, re-split by energy — no ASR.
-        if recordingStore.recording(for: id)?.mergedSegmentsJSON != nil {
-            // Relabelling *is* diarization, so it reports as that phase rather
-            // than through a separate status line nobody else can clear.
-            beginPipelineWork(id, phase: .diarizing)
-            let repaired = await repairSpeakerAttribution(recordingID: id)
-            endPipelineWork(id)
-            if repaired {
-                kickPipeline("relabelled")
-                return
-            }
-        }
-        // A finished meeting owes nothing, so asking for it again has to walk the
-        // stage back — the one thing only an explicit user action may do (I3).
-        // Guarded on audio: rewinding a meeting whose audio was deleted would
-        // strand it at `.recorded` and lose the summary it already has.
-        if let rec = recordingStore.recording(for: id),
-           rec.status == .summarized, rec.audioAvailable {
-            recordingStore.update(id: id, status: .recorded)
-        }
-        kickPipeline("user asked")
-    }
-
     /// «Завершить» — resume diarization on a meeting whose ASR finished. The
     /// queue already owes exactly that phase for a `.transcribedRaw` meeting, so
     /// the button only has to ask to be next in line.
@@ -2626,50 +2586,6 @@ class AppState: ObservableObject {
         clearFailure(entry.id)
         userRequestedID = entry.id
         kickPipeline("user asked")
-    }
-
-    /// Re-assign speakers from mic vs system stem energy. Returns false when
-    /// stems/segments are missing (caller should fall back to full ASR).
-    @discardableResult
-    func repairSpeakerAttribution(recordingID: String) async -> Bool {
-        guard let rec = recordingStore.recording(for: recordingID),
-              let audioURL = recordingStore.audioURL(for: rec),
-              let segments = loadPersistedSegments(for: rec),
-              !segments.isEmpty else { return false }
-        guard let relabeled = transcriptionService.relabelSegmentsFromStems(
-            audioURL: audioURL,
-            segments: segments,
-            systemStemOffset: rec.systemStemOffset ?? 0
-        ) else { return false }
-
-        let before = Set(segments.map(\.speaker))
-        let after = Set(relabeled.map(\.speaker))
-        let newTranscript = TranscriptionService.formatTranscriptText(from: relabeled)
-        let segJSON = encodePersistedSegments(relabeled)
-        recordingStore.update(
-            id: recordingID,
-            transcript: newTranscript,
-            mergedSegmentsJSON: .some(segJSON)
-        )
-        if selectedRecordingID == recordingID {
-            transcript = newTranscript
-        }
-        // Rewrite markdown only — don't kick another qwen pass just for speaker labels.
-        let speakers = MarkdownWriter.extractSpeakers(from: newTranscript)
-        _ = try? MarkdownWriter.save(
-            title: rec.title,
-            transcript: newTranscript,
-            recordingID: recordingID,
-            duration: rec.duration,
-            speakers: speakers,
-            notes: rec.notes,
-            calendarMeta: rec.calendarMeta
-        )
-        let msg = before == after
-            ? "Спикеры без изменений"
-            : "Спикеры: \(after.sorted().joined(separator: ", "))"
-        debugLog("[AppState] stem speaker repair \(recordingID): \(before) → \(after)")
-        return true
     }
 
     /// Download Ollama binary (if needed), start serve, pull the recap model.
