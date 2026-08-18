@@ -1,0 +1,3312 @@
+[
+ {
+  "speaker": "ILYA",
+  "start": 722.92,
+  "end": 724.28
+ },
+ {
+  "speaker": "ILYA",
+  "start": 727.36,
+  "end": 734.12
+ },
+ {
+  "speaker": "ILYA",
+  "start": 734.36,
+  "end": 735.92
+ },
+ {
+  "speaker": "ILYA",
+  "start": 736.04,
+  "end": 743.32
+ },
+ {
+  "speaker": "ILYA",
+  "start": 743.48,
+  "end": 744.96
+ },
+ {
+  "speaker": "ILYA",
+  "start": 746.36,
+  "end": 750.4
+ },
+ {
+  "speaker": "ILYA",
+  "start": 750.76,
+  "end": 751.52
+ },
+ {
+  "speaker": "ILYA",
+  "start": 751.68,
+  "end": 754.92
+ },
+ {
+  "speaker": "ILYA",
+  "start": 755.08,
+  "end": 755.08
+ },
+ {
+  "speaker": "ILYA",
+  "start": 755.24,
+  "end": 756.08
+ },
+ {
+  "speaker": "ILYA",
+  "start": 758.36,
+  "end": 760.0
+ },
+ {
+  "speaker": "ILYA",
+  "start": 760.4,
+  "end": 761.12
+ },
+ {
+  "speaker": "ILYA",
+  "start": 761.2,
+  "end": 762.68
+ },
+ {
+  "speaker": "ILYA",
+  "start": 762.92,
+  "end": 768.72
+ },
+ {
+  "speaker": "ILYA",
+  "start": 769.04,
+  "end": 776.24
+ },
+ {
+  "speaker": "ILYA",
+  "start": 776.36,
+  "end": 786.84
+ },
+ {
+  "speaker": "ILYA",
+  "start": 787.52,
+  "end": 800.88
+ },
+ {
+  "speaker": "ILYA",
+  "start": 826.36,
+  "end": 827.12
+ },
+ {
+  "speaker": "ILYA",
+  "start": 827.28,
+  "end": 829.04
+ },
+ {
+  "speaker": "ILYA",
+  "start": 829.4,
+  "end": 830.28
+ },
+ {
+  "speaker": "ILYA",
+  "start": 831.84,
+  "end": 834.68
+ },
+ {
+  "speaker": "ILYA",
+  "start": 835.6,
+  "end": 841.88
+ },
+ {
+  "speaker": "ILYA",
+  "start": 842.0,
+  "end": 845.28
+ },
+ {
+  "speaker": "ILYA",
+  "start": 846.76,
+  "end": 854.16
+ },
+ {
+  "speaker": "ILYA",
+  "start": 855.48,
+  "end": 855.48
+ },
+ {
+  "speaker": "ILYA",
+  "start": 855.84,
+  "end": 863.44
+ },
+ {
+  "speaker": "ILYA",
+  "start": 864.44,
+  "end": 871.36
+ },
+ {
+  "speaker": "ILYA",
+  "start": 871.44,
+  "end": 879.08
+ },
+ {
+  "speaker": "ILYA",
+  "start": 880.28,
+  "end": 888.88
+ },
+ {
+  "speaker": "ILYA",
+  "start": 889.44,
+  "end": 891.68
+ },
+ {
+  "speaker": "ILYA",
+  "start": 892.4,
+  "end": 892.4
+ },
+ {
+  "speaker": "ILYA",
+  "start": 892.64,
+  "end": 898.16
+ },
+ {
+  "speaker": "ILYA",
+  "start": 900.96,
+  "end": 915.16
+ },
+ {
+  "speaker": "ILYA",
+  "start": 915.48,
+  "end": 920.96
+ },
+ {
+  "speaker": "ILYA",
+  "start": 921.32,
+  "end": 924.6
+ },
+ {
+  "speaker": "ILYA",
+  "start": 924.72,
+  "end": 929.52
+ },
+ {
+  "speaker": "ILYA",
+  "start": 930.12,
+  "end": 932.12
+ },
+ {
+  "speaker": "ILYA",
+  "start": 932.2,
+  "end": 939.32
+ },
+ {
+  "speaker": "ILYA",
+  "start": 939.4,
+  "end": 946.76
+ },
+ {
+  "speaker": "ILYA",
+  "start": 947.24,
+  "end": 949.68
+ },
+ {
+  "speaker": "ILYA",
+  "start": 949.88,
+  "end": 950.52
+ },
+ {
+  "speaker": "ILYA",
+  "start": 951.52,
+  "end": 954.16
+ },
+ {
+  "speaker": "ILYA",
+  "start": 955.24,
+  "end": 967.44
+ },
+ {
+  "speaker": "ILYA",
+  "start": 967.76,
+  "end": 975.4
+ },
+ {
+  "speaker": "ILYA",
+  "start": 976.68,
+  "end": 989.92
+ },
+ {
+  "speaker": "ILYA",
+  "start": 991.08,
+  "end": 995.72
+ },
+ {
+  "speaker": "ILYA",
+  "start": 996.88,
+  "end": 997.72
+ },
+ {
+  "speaker": "ILYA",
+  "start": 997.84,
+  "end": 1002.44
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1002.6,
+  "end": 1005.96
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1006.76,
+  "end": 1015.08
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1016.36,
+  "end": 1019.44
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1019.56,
+  "end": 1023.84
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1025.68,
+  "end": 1025.68
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1026.12,
+  "end": 1026.84
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1027.12,
+  "end": 1028.6
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1029.68,
+  "end": 1035.92
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1036.12,
+  "end": 1041.56
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1042.44,
+  "end": 1046.32
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1046.6,
+  "end": 1060.04
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1060.52,
+  "end": 1060.52
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1061.72,
+  "end": 1062.08
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1062.96,
+  "end": 1062.96
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1063.4,
+  "end": 1071.32
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1071.44,
+  "end": 1079.2
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1079.36,
+  "end": 1079.84
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1080.04,
+  "end": 1082.08
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1083.8,
+  "end": 1083.8
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1084.04,
+  "end": 1091.28
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1091.8,
+  "end": 1092.0
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1092.12,
+  "end": 1096.92
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1099.0,
+  "end": 1101.48
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1101.56,
+  "end": 1103.76
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1110.32,
+  "end": 1110.36
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1110.64,
+  "end": 1115.0
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1116.6,
+  "end": 1117.84
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1117.96,
+  "end": 1123.6
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1123.88,
+  "end": 1125.72
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1125.92,
+  "end": 1128.4
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1128.56,
+  "end": 1132.72
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1132.88,
+  "end": 1137.36
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1137.56,
+  "end": 1140.0
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1141.2,
+  "end": 1141.2
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1141.56,
+  "end": 1147.28
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1147.64,
+  "end": 1151.56
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1151.68,
+  "end": 1153.52
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1153.6,
+  "end": 1155.48
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1155.56,
+  "end": 1156.28
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1157.0,
+  "end": 1157.0
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1157.16,
+  "end": 1167.52
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1168.4,
+  "end": 1172.28
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1173.2,
+  "end": 1175.68
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1176.88,
+  "end": 1181.24
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1182.28,
+  "end": 1186.12
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1187.76,
+  "end": 1189.92
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1190.12,
+  "end": 1196.84
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1197.84,
+  "end": 1197.84
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1198.32,
+  "end": 1216.68
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1217.2,
+  "end": 1217.44
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1217.88,
+  "end": 1226.8
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1227.04,
+  "end": 1227.36
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1229.76,
+  "end": 1229.76
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1230.04,
+  "end": 1238.92
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1239.16,
+  "end": 1246.2
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1246.4,
+  "end": 1257.48
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1257.6,
+  "end": 1264.2
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1264.32,
+  "end": 1265.36
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1266.04,
+  "end": 1267.44
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1268.08,
+  "end": 1269.24
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1270.04,
+  "end": 1270.04
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1270.24,
+  "end": 1273.44
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1277.48,
+  "end": 1277.68
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1277.8,
+  "end": 1281.24
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1281.36,
+  "end": 1281.56
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1282.72,
+  "end": 1282.72
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1282.92,
+  "end": 1285.0
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1285.12,
+  "end": 1287.4
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1287.56,
+  "end": 1287.72
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1287.8,
+  "end": 1294.6
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1295.6,
+  "end": 1311.48
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1311.56,
+  "end": 1319.88
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1321.84,
+  "end": 1322.4
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1322.68,
+  "end": 1325.56
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1325.92,
+  "end": 1330.84
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1331.04,
+  "end": 1332.8
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1332.88,
+  "end": 1341.96
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1342.36,
+  "end": 1347.44
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1347.56,
+  "end": 1349.28
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1349.52,
+  "end": 1355.6
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1356.12,
+  "end": 1356.12
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1356.28,
+  "end": 1357.04
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1357.2,
+  "end": 1361.04
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1361.96,
+  "end": 1361.96
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1362.2,
+  "end": 1364.36
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1366.36,
+  "end": 1371.6
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1373.16,
+  "end": 1376.92
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1377.0,
+  "end": 1380.12
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1380.24,
+  "end": 1388.2
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1388.32,
+  "end": 1388.4
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1389.08,
+  "end": 1398.16
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1398.28,
+  "end": 1403.28
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1403.4,
+  "end": 1406.76
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1407.0,
+  "end": 1413.04
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1413.44,
+  "end": 1419.48
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1419.88,
+  "end": 1423.96
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1424.8,
+  "end": 1424.8
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1425.08,
+  "end": 1429.2
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1429.28,
+  "end": 1431.12
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1432.68,
+  "end": 1432.68
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1434.0,
+  "end": 1440.24
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1440.36,
+  "end": 1448.56
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1449.64,
+  "end": 1463.24
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1463.48,
+  "end": 1468.08
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1468.48,
+  "end": 1468.6
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1468.8,
+  "end": 1476.16
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1476.32,
+  "end": 1486.4
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1495.12,
+  "end": 1497.24
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1498.96,
+  "end": 1499.92
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1501.04,
+  "end": 1509.04
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1509.2,
+  "end": 1517.0
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1517.12,
+  "end": 1518.72
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1519.68,
+  "end": 1524.24
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1525.8,
+  "end": 1539.52
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1542.8,
+  "end": 1543.44
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1543.52,
+  "end": 1547.44
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1547.56,
+  "end": 1549.84
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1549.96,
+  "end": 1559.08
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1559.52,
+  "end": 1559.52
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1560.48,
+  "end": 1564.44
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1564.68,
+  "end": 1565.68
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1565.8,
+  "end": 1571.84
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1571.96,
+  "end": 1575.32
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1575.84,
+  "end": 1575.84
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1576.32,
+  "end": 1580.64
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1580.8,
+  "end": 1581.28
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1581.96,
+  "end": 1582.16
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1582.28,
+  "end": 1599.28
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1602.08,
+  "end": 1603.76
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1604.6,
+  "end": 1610.92
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1611.52,
+  "end": 1629.88
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1631.2,
+  "end": 1641.56
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1641.96,
+  "end": 1642.48
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1643.2,
+  "end": 1643.36
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1643.48,
+  "end": 1645.56
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1646.68,
+  "end": 1647.24
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1650.04,
+  "end": 1650.04
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1650.2,
+  "end": 1658.52
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1658.68,
+  "end": 1659.52
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1677.56,
+  "end": 1692.48
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1692.68,
+  "end": 1694.2
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1694.28,
+  "end": 1696.52
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1698.24,
+  "end": 1703.6
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1703.72,
+  "end": 1706.72
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1707.2,
+  "end": 1711.88
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1718.12,
+  "end": 1725.12
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1726.64,
+  "end": 1727.44
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1727.92,
+  "end": 1729.2
+ },
+ {
+  "speaker": "YURI",
+  "start": 1731.12,
+  "end": 1733.8
+ },
+ {
+  "speaker": "YURI",
+  "start": 1735.4,
+  "end": 1738.48
+ },
+ {
+  "speaker": "YURI",
+  "start": 1739.24,
+  "end": 1739.24
+ },
+ {
+  "speaker": "YURI",
+  "start": 1739.44,
+  "end": 1741.16
+ },
+ {
+  "speaker": "YURI",
+  "start": 1742.96,
+  "end": 1744.28
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1744.88,
+  "end": 1755.72
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1758.04,
+  "end": 1761.76
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1762.6,
+  "end": 1764.52
+ },
+ {
+  "speaker": "ILYA",
+  "start": 1765.0,
+  "end": 1765.36
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1772.6,
+  "end": 1776.0
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1776.96,
+  "end": 1779.28
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1780.8,
+  "end": 1780.92
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1781.12,
+  "end": 1782.24
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1786.44,
+  "end": 1786.44
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1791.2,
+  "end": 1794.08
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1794.36,
+  "end": 1795.68
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1798.32,
+  "end": 1799.68
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1799.76,
+  "end": 1799.76
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1800.0,
+  "end": 1801.2
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1801.52,
+  "end": 1802.56
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1803.92,
+  "end": 1805.96
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1806.28,
+  "end": 1809.24
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1810.84,
+  "end": 1810.84
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1811.04,
+  "end": 1814.04
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1814.96,
+  "end": 1817.28
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1818.48,
+  "end": 1819.08
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1820.0,
+  "end": 1826.04
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1827.0,
+  "end": 1829.68
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1829.84,
+  "end": 1834.6
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1835.68,
+  "end": 1836.4
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1836.72,
+  "end": 1838.4
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1839.56,
+  "end": 1840.36
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1842.2,
+  "end": 1842.36
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1842.56,
+  "end": 1842.84
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1843.2,
+  "end": 1849.44
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1849.6,
+  "end": 1854.12
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1854.6,
+  "end": 1863.04
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1864.24,
+  "end": 1865.48
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1866.96,
+  "end": 1873.44
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1875.32,
+  "end": 1876.44
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1877.68,
+  "end": 1880.32
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1880.76,
+  "end": 1880.96
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1881.16,
+  "end": 1882.44
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1883.68,
+  "end": 1894.04
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1896.08,
+  "end": 1896.08
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1896.4,
+  "end": 1904.2
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1905.32,
+  "end": 1905.56
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1905.8,
+  "end": 1907.56
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1907.68,
+  "end": 1908.16
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1909.56,
+  "end": 1911.4
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1911.72,
+  "end": 1915.0
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1919.72,
+  "end": 1919.92
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1920.04,
+  "end": 1921.2
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1921.44,
+  "end": 1921.44
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1921.56,
+  "end": 1923.64
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1924.76,
+  "end": 1925.16
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1927.12,
+  "end": 1933.92
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1936.96,
+  "end": 1938.68
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1943.32,
+  "end": 1945.32
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1948.32,
+  "end": 1951.72
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1952.6,
+  "end": 1952.88
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1953.12,
+  "end": 1955.16
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1955.44,
+  "end": 1960.64
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1961.64,
+  "end": 1962.88
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1963.12,
+  "end": 1967.32
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1967.64,
+  "end": 1972.64
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1972.84,
+  "end": 1974.56
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1974.68,
+  "end": 1974.68
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1974.84,
+  "end": 1981.08
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1981.84,
+  "end": 1982.36
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1983.44,
+  "end": 1985.88
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1986.08,
+  "end": 1987.44
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1988.6,
+  "end": 1992.04
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1992.68,
+  "end": 1995.6
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1996.56,
+  "end": 1998.4
+ },
+ {
+  "speaker": "TONYA",
+  "start": 1999.88,
+  "end": 2002.6
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2003.2,
+  "end": 2008.28
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2008.72,
+  "end": 2008.72
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2010.12,
+  "end": 2014.0
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2014.2,
+  "end": 2016.16
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2016.32,
+  "end": 2021.12
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2022.52,
+  "end": 2026.36
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2027.96,
+  "end": 2028.68
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2029.88,
+  "end": 2030.52
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2032.04,
+  "end": 2036.44
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2036.72,
+  "end": 2037.88
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2038.16,
+  "end": 2042.96
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2044.2,
+  "end": 2047.12
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2048.44,
+  "end": 2049.52
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2049.84,
+  "end": 2053.12
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2053.84,
+  "end": 2058.4
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2059.0,
+  "end": 2059.0
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2059.24,
+  "end": 2060.88
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2061.92,
+  "end": 2063.68
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2064.32,
+  "end": 2064.64
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2065.08,
+  "end": 2068.48
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2068.88,
+  "end": 2071.64
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2073.36,
+  "end": 2076.64
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2078.6,
+  "end": 2080.24
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2082.16,
+  "end": 2090.56
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2091.48,
+  "end": 2096.52
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2097.96,
+  "end": 2099.92
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2100.16,
+  "end": 2102.28
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2103.2,
+  "end": 2110.4
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2110.84,
+  "end": 2111.0
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2111.08,
+  "end": 2119.04
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2120.0,
+  "end": 2121.36
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2121.44,
+  "end": 2127.76
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2128.56,
+  "end": 2134.2
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2135.32,
+  "end": 2136.24
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2136.4,
+  "end": 2139.88
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2140.32,
+  "end": 2142.28
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2144.4,
+  "end": 2145.88
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2147.0,
+  "end": 2147.0
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2147.16,
+  "end": 2147.28
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2261.08,
+  "end": 2266.4
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2266.48,
+  "end": 2267.84
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2268.84,
+  "end": 2269.6
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2269.92,
+  "end": 2272.04
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2272.16,
+  "end": 2273.12
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2274.04,
+  "end": 2291.8
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2292.2,
+  "end": 2294.4
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2294.76,
+  "end": 2301.24
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2302.36,
+  "end": 2303.12
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2306.92,
+  "end": 2307.28
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2307.72,
+  "end": 2311.36
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2311.44,
+  "end": 2313.92
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2314.0,
+  "end": 2315.72
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2315.88,
+  "end": 2324.04
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2325.16,
+  "end": 2327.48
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2328.56,
+  "end": 2329.4
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2330.16,
+  "end": 2330.16
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2330.36,
+  "end": 2331.0
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2387.16,
+  "end": 2389.28
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2389.56,
+  "end": 2393.48
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2395.48,
+  "end": 2399.12
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2400.12,
+  "end": 2404.96
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2405.12,
+  "end": 2409.32
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2411.24,
+  "end": 2422.72
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2423.24,
+  "end": 2426.56
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2427.56,
+  "end": 2433.52
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2433.92,
+  "end": 2436.56
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2436.72,
+  "end": 2437.44
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2437.92,
+  "end": 2440.8
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2440.96,
+  "end": 2441.6
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2441.92,
+  "end": 2447.0
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2447.32,
+  "end": 2450.52
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2450.6,
+  "end": 2451.28
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2452.4,
+  "end": 2452.4
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2452.64,
+  "end": 2455.36
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2455.76,
+  "end": 2466.64
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2466.8,
+  "end": 2469.56
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2470.48,
+  "end": 2475.24
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2477.0,
+  "end": 2480.6
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2481.36,
+  "end": 2482.68
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2482.84,
+  "end": 2485.76
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2485.88,
+  "end": 2488.72
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2489.72,
+  "end": 2490.92
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2491.44,
+  "end": 2499.84
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2504.92,
+  "end": 2506.64
+ },
+ {
+  "speaker": "TONYA",
+  "start": 2506.8,
+  "end": 2511.88
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2542.16,
+  "end": 2543.12
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2543.2,
+  "end": 2545.2
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2546.12,
+  "end": 2551.48
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2551.6,
+  "end": 2555.2
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2555.32,
+  "end": 2562.16
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2562.32,
+  "end": 2563.8
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2564.28,
+  "end": 2567.2
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2567.6,
+  "end": 2569.64
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2571.44,
+  "end": 2574.52
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2574.76,
+  "end": 2579.6
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2579.76,
+  "end": 2580.28
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2580.44,
+  "end": 2584.8
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2584.96,
+  "end": 2586.32
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2586.48,
+  "end": 2589.36
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2589.92,
+  "end": 2591.76
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2595.28,
+  "end": 2600.4
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2600.48,
+  "end": 2617.08
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2618.32,
+  "end": 2631.4
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2631.56,
+  "end": 2632.32
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2632.52,
+  "end": 2636.8
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2636.88,
+  "end": 2638.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2639.84,
+  "end": 2642.2
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2643.44,
+  "end": 2644.36
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2645.4,
+  "end": 2645.92
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2646.04,
+  "end": 2654.6
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2654.72,
+  "end": 2659.28
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2659.48,
+  "end": 2660.32
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2660.8,
+  "end": 2663.28
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2665.64,
+  "end": 2666.08
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2666.24,
+  "end": 2666.72
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2667.0,
+  "end": 2668.0
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2669.4,
+  "end": 2669.84
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2670.76,
+  "end": 2674.12
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2674.8,
+  "end": 2678.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2679.16,
+  "end": 2679.44
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2680.72,
+  "end": 2680.72
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2681.04,
+  "end": 2689.36
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2689.6,
+  "end": 2690.52
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2690.6,
+  "end": 2693.72
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2693.84,
+  "end": 2695.28
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2695.6,
+  "end": 2697.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2698.48,
+  "end": 2698.48
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2698.64,
+  "end": 2699.6
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2700.04,
+  "end": 2702.52
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2703.52,
+  "end": 2706.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2706.96,
+  "end": 2709.28
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2709.64,
+  "end": 2709.8
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2710.2,
+  "end": 2716.0
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2718.24,
+  "end": 2727.28
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2727.68,
+  "end": 2730.12
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2731.36,
+  "end": 2734.04
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2734.28,
+  "end": 2742.12
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2742.4,
+  "end": 2748.16
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2748.24,
+  "end": 2754.28
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2754.6,
+  "end": 2755.76
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2756.6,
+  "end": 2762.28
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2762.44,
+  "end": 2764.0
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2764.16,
+  "end": 2767.72
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2767.96,
+  "end": 2770.24
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2771.72,
+  "end": 2772.16
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2772.24,
+  "end": 2784.8
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2784.92,
+  "end": 2791.96
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2792.16,
+  "end": 2792.32
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2793.28,
+  "end": 2795.04
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2795.32,
+  "end": 2799.52
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2803.32,
+  "end": 2806.2
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2809.68,
+  "end": 2812.24
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2812.52,
+  "end": 2814.56
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2815.48,
+  "end": 2815.48
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2815.76,
+  "end": 2816.88
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2818.16,
+  "end": 2822.24
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2822.44,
+  "end": 2823.44
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2828.96,
+  "end": 2829.96
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2831.0,
+  "end": 2831.32
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2833.28,
+  "end": 2834.88
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2835.12,
+  "end": 2836.12
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2838.16,
+  "end": 2842.04
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2842.28,
+  "end": 2849.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2850.2,
+  "end": 2851.2
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2853.16,
+  "end": 2854.92
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2855.08,
+  "end": 2855.48
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2855.76,
+  "end": 2860.48
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2860.64,
+  "end": 2864.8
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2865.04,
+  "end": 2870.16
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2870.4,
+  "end": 2871.56
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2872.48,
+  "end": 2875.6
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2876.64,
+  "end": 2878.04
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2878.28,
+  "end": 2880.36
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2886.96,
+  "end": 2887.52
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2889.56,
+  "end": 2890.6
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2890.72,
+  "end": 2898.84
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2899.36,
+  "end": 2900.24
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2900.44,
+  "end": 2905.16
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2905.4,
+  "end": 2906.12
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2906.4,
+  "end": 2910.76
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2911.08,
+  "end": 2912.8
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2913.36,
+  "end": 2916.84
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2918.0,
+  "end": 2921.16
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2921.64,
+  "end": 2923.52
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2924.52,
+  "end": 2924.52
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2924.68,
+  "end": 2927.48
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2927.6,
+  "end": 2929.8
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2930.0,
+  "end": 2930.4
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2931.24,
+  "end": 2932.28
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2933.24,
+  "end": 2939.12
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2940.12,
+  "end": 2941.48
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2941.6,
+  "end": 2948.64
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2949.2,
+  "end": 2954.48
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2955.0,
+  "end": 2955.0
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2955.4,
+  "end": 2962.92
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2963.12,
+  "end": 2968.88
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2969.08,
+  "end": 2970.36
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2971.48,
+  "end": 2976.08
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2978.36,
+  "end": 2981.8
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2985.88,
+  "end": 2989.0
+ },
+ {
+  "speaker": "ALEX",
+  "start": 2989.16,
+  "end": 2990.08
+ },
+ {
+  "speaker": "IRA",
+  "start": 2990.68,
+  "end": 2994.92
+ },
+ {
+  "speaker": "IRA",
+  "start": 2995.0,
+  "end": 2998.36
+ },
+ {
+  "speaker": "IRA",
+  "start": 2998.44,
+  "end": 2998.84
+ },
+ {
+  "speaker": "IRA",
+  "start": 3000.24,
+  "end": 3005.6
+ },
+ {
+  "speaker": "IRA",
+  "start": 3006.88,
+  "end": 3013.44
+ },
+ {
+  "speaker": "IRA",
+  "start": 3014.0,
+  "end": 3020.0
+ },
+ {
+  "speaker": "IRA",
+  "start": 3020.08,
+  "end": 3021.6
+ },
+ {
+  "speaker": "IRA",
+  "start": 3021.84,
+  "end": 3025.16
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3026.4,
+  "end": 3029.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3029.92,
+  "end": 3030.04
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3030.48,
+  "end": 3030.88
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3030.96,
+  "end": 3032.48
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3033.36,
+  "end": 3034.76
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3070.32,
+  "end": 3070.48
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3070.6,
+  "end": 3075.36
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3075.52,
+  "end": 3075.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3075.8,
+  "end": 3079.44
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3080.44,
+  "end": 3082.52
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3082.64,
+  "end": 3084.8
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3087.36,
+  "end": 3088.2
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3088.52,
+  "end": 3088.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3089.76,
+  "end": 3093.0
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3093.56,
+  "end": 3097.84
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3098.52,
+  "end": 3105.48
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3105.56,
+  "end": 3110.08
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3110.36,
+  "end": 3110.52
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3110.84,
+  "end": 3112.52
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3115.28,
+  "end": 3116.72
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3118.76,
+  "end": 3122.88
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3123.04,
+  "end": 3123.04
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3123.88,
+  "end": 3129.0
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3129.16,
+  "end": 3130.4
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3130.48,
+  "end": 3131.2
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3131.4,
+  "end": 3137.92
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3138.92,
+  "end": 3140.24
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3141.72,
+  "end": 3147.4
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3147.68,
+  "end": 3150.2
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3150.44,
+  "end": 3150.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3150.92,
+  "end": 3151.4
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3153.2,
+  "end": 3156.32
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3157.52,
+  "end": 3160.56
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3160.76,
+  "end": 3162.04
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3162.76,
+  "end": 3162.76
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3163.0,
+  "end": 3164.2
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3166.64,
+  "end": 3167.4
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3167.6,
+  "end": 3177.28
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3177.4,
+  "end": 3178.24
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3178.4,
+  "end": 3182.24
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3182.44,
+  "end": 3183.04
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3183.28,
+  "end": 3183.8
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3196.84,
+  "end": 3198.0
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3198.2,
+  "end": 3199.2
+ },
+ {
+  "speaker": "IRA",
+  "start": 3200.32,
+  "end": 3210.44
+ },
+ {
+  "speaker": "IRA",
+  "start": 3211.08,
+  "end": 3211.08
+ },
+ {
+  "speaker": "IRA",
+  "start": 3212.28,
+  "end": 3214.08
+ },
+ {
+  "speaker": "IRA",
+  "start": 3214.16,
+  "end": 3216.44
+ },
+ {
+  "speaker": "IRA",
+  "start": 3216.56,
+  "end": 3218.6
+ },
+ {
+  "speaker": "IRA",
+  "start": 3219.08,
+  "end": 3219.08
+ },
+ {
+  "speaker": "IRA",
+  "start": 3219.32,
+  "end": 3221.52
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3222.68,
+  "end": 3222.92
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3223.08,
+  "end": 3226.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3226.88,
+  "end": 3227.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3227.8,
+  "end": 3228.72
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3365.12,
+  "end": 3365.32
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3365.44,
+  "end": 3369.4
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3369.92,
+  "end": 3379.88
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3466.64,
+  "end": 3473.0
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3473.16,
+  "end": 3475.24
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3477.52,
+  "end": 3481.52
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3481.92,
+  "end": 3485.0
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3486.4,
+  "end": 3488.24
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3490.16,
+  "end": 3491.48
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3493.04,
+  "end": 3493.76
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3494.0,
+  "end": 3502.48
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3503.2,
+  "end": 3505.28
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3505.8,
+  "end": 3522.44
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3523.24,
+  "end": 3529.6
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3530.52,
+  "end": 3534.08
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3536.56,
+  "end": 3537.36
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3538.32,
+  "end": 3541.92
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3542.72,
+  "end": 3542.72
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3542.96,
+  "end": 3544.64
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3545.8,
+  "end": 3547.88
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3548.84,
+  "end": 3550.44
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3558.88,
+  "end": 3566.12
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3566.24,
+  "end": 3566.48
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3566.72,
+  "end": 3568.88
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3570.12,
+  "end": 3575.32
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3583.04,
+  "end": 3586.12
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3586.6,
+  "end": 3587.12
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3587.24,
+  "end": 3591.52
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3593.76,
+  "end": 3598.72
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3599.4,
+  "end": 3599.64
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3600.12,
+  "end": 3602.52
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3603.04,
+  "end": 3608.64
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3610.72,
+  "end": 3611.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3611.96,
+  "end": 3613.2
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3613.36,
+  "end": 3614.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3614.96,
+  "end": 3616.76
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3617.92,
+  "end": 3619.36
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3619.88,
+  "end": 3627.72
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3628.12,
+  "end": 3629.0
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3629.12,
+  "end": 3633.44
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3634.48,
+  "end": 3635.12
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3640.52,
+  "end": 3641.0
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3641.16,
+  "end": 3641.32
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3641.56,
+  "end": 3644.12
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3644.24,
+  "end": 3646.92
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3647.12,
+  "end": 3651.96
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3653.96,
+  "end": 3655.8
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3656.12,
+  "end": 3657.92
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3658.08,
+  "end": 3658.32
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3658.48,
+  "end": 3660.56
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3662.24,
+  "end": 3664.44
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3665.44,
+  "end": 3666.52
+ },
+ {
+  "speaker": "TONYA",
+  "start": 3666.6,
+  "end": 3672.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3712.52,
+  "end": 3726.52
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3726.96,
+  "end": 3727.16
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3727.44,
+  "end": 3728.96
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3729.44,
+  "end": 3729.96
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3730.36,
+  "end": 3739.28
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3739.36,
+  "end": 3744.72
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3745.08,
+  "end": 3766.16
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3766.52,
+  "end": 3766.52
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3766.72,
+  "end": 3767.44
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3767.8,
+  "end": 3767.96
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3768.16,
+  "end": 3768.32
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3769.48,
+  "end": 3769.48
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3772.32,
+  "end": 3779.04
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3779.2,
+  "end": 3780.12
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3780.76,
+  "end": 3781.2
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3782.2,
+  "end": 3789.64
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3789.8,
+  "end": 3790.24
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3796.08,
+  "end": 3799.28
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3799.4,
+  "end": 3800.32
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3808.48,
+  "end": 3809.32
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3810.48,
+  "end": 3816.24
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3816.4,
+  "end": 3818.44
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3818.6,
+  "end": 3819.72
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3819.92,
+  "end": 3824.04
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3825.68,
+  "end": 3831.8
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3831.92,
+  "end": 3836.36
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3836.52,
+  "end": 3837.24
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3877.88,
+  "end": 3881.88
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3882.28,
+  "end": 3885.72
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3887.0,
+  "end": 3892.56
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3893.8,
+  "end": 3897.44
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3897.8,
+  "end": 3899.96
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3900.28,
+  "end": 3902.44
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3902.6,
+  "end": 3914.6
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3914.68,
+  "end": 3916.84
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3916.96,
+  "end": 3917.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3919.04,
+  "end": 3919.04
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3919.28,
+  "end": 3925.4
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3925.6,
+  "end": 3926.2
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3926.84,
+  "end": 3926.84
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3927.08,
+  "end": 3927.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3927.84,
+  "end": 3934.68
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3934.88,
+  "end": 3935.08
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3936.36,
+  "end": 3939.96
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3940.24,
+  "end": 3941.08
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3954.36,
+  "end": 3958.6
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3958.72,
+  "end": 3969.48
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3969.6,
+  "end": 3970.36
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3970.52,
+  "end": 3970.52
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3970.88,
+  "end": 3970.88
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3971.72,
+  "end": 3973.48
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3974.6,
+  "end": 3975.12
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3975.2,
+  "end": 3977.28
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3978.16,
+  "end": 3979.16
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3979.48,
+  "end": 3985.92
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3986.44,
+  "end": 3993.84
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3994.6,
+  "end": 3994.6
+ },
+ {
+  "speaker": "ALEX",
+  "start": 3994.8,
+  "end": 3995.72
+ },
+ {
+  "speaker": "IRA",
+  "start": 3999.48,
+  "end": 4001.76
+ },
+ {
+  "speaker": "IRA",
+  "start": 4001.92,
+  "end": 4008.96
+ },
+ {
+  "speaker": "IRA",
+  "start": 4009.08,
+  "end": 4010.48
+ },
+ {
+  "speaker": "IRA",
+  "start": 4010.68,
+  "end": 4011.8
+ },
+ {
+  "speaker": "IRA",
+  "start": 4012.32,
+  "end": 4012.32
+ },
+ {
+  "speaker": "IRA",
+  "start": 4012.88,
+  "end": 4017.68
+ },
+ {
+  "speaker": "IRA",
+  "start": 4018.28,
+  "end": 4019.24
+ },
+ {
+  "speaker": "IRA",
+  "start": 4019.76,
+  "end": 4019.76
+ },
+ {
+  "speaker": "IRA",
+  "start": 4020.08,
+  "end": 4022.6
+ },
+ {
+  "speaker": "IRA",
+  "start": 4022.8,
+  "end": 4024.28
+ },
+ {
+  "speaker": "IRA",
+  "start": 4024.48,
+  "end": 4026.96
+ },
+ {
+  "speaker": "IRA",
+  "start": 4054.24,
+  "end": 4056.2
+ },
+ {
+  "speaker": "IRA",
+  "start": 4057.36,
+  "end": 4059.8
+ },
+ {
+  "speaker": "IRA",
+  "start": 4060.48,
+  "end": 4060.48
+ },
+ {
+  "speaker": "IRA",
+  "start": 4061.16,
+  "end": 4061.84
+ }
+]
