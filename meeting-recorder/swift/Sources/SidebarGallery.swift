@@ -72,7 +72,7 @@ enum SidebarGallery {
         private func pane(_ scheme: ColorScheme) -> some View {
             VStack(alignment: .leading, spacing: Tokens.Space.s16) {
                 Text(scheme == .dark ? "Тёмная" : "Светлая")
-                    .typo(Tokens.Typography.Label.smMedium)
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(Tokens.Paint.Text.tertiary)
                 content()
             }

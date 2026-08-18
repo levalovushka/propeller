@@ -676,7 +676,7 @@ struct MainView: View {
             HStack(spacing: 14) {
                 if let status = topStatusText {
                     Text(status)
-                        .typo(Tokens.Typography.Label.smMedium)
+                        .typo(Tokens.Typography.Label.smRegular)
                         .foregroundStyle(Tokens.Ink.tertiary)
                         .lineLimit(1)
                         .frame(height: 32)

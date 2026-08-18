@@ -1434,8 +1434,10 @@ public enum Tokens {
                 size: 12, lineHeight: 16, weight: .regular,
                 weightTrim: Typography.railWeightTrim
             )
-            /// 13 / 16 medium — «Дальше», the only weighted label on the plate.
-            public static let action = cell.weight(.medium)
+            /// 13 / 16 — «Дальше». Same face as the row above it: the plate
+            /// says which line is the answer by putting it in a control, not by
+            /// weighting the words inside one.
+            public static let action = cell
             /// The line about the model under the button — the rail's 11 / 14,
             /// not a style of its own. Same job in both places: the smallest,
             /// quietest thing on a surface, and one face for the whole app.
@@ -1630,17 +1632,28 @@ public enum Tokens {
             public static let sm = Style(size: 22, lineHeight: 23, weight: .semibold)
         }
 
-        /// UI copy — mostly single-line. Regular or medium.
+        /// UI copy — mostly single-line. One weight: regular.
+        ///
+        /// Medium is gone from the scale on purpose. It was carried by four
+        /// steps and said nothing the colour ramp was not already saying: the
+        /// search palette weighted its field, its result titles, its dates and
+        /// its «Ничего не найдено» alike, which is a weight applied to a whole
+        /// screen rather than to anything within it. Hierarchy here is colour
+        /// and size; the one place that genuinely needs to out-read its
+        /// neighbour still has `Style.weight(_:)` at the call site.
         public enum Label {
             /// 14 / 18
             public static let mdRegular = Style(size: 14, lineHeight: 18, weight: .regular)
-            public static let mdMedium = Style(size: 14, lineHeight: 18, weight: .medium)
-            /// 12 / 14
-            public static let smRegular = Style(size: 12, lineHeight: 14, weight: .regular)
-            public static let smMedium = Style(size: 12, lineHeight: 14, weight: .medium)
+            /// 12 / 16 — one leading for the 12 pt step.
+            ///
+            /// Was 12 / 14 beside a 12 / 16 minted by `.lineHeight(16)` in three
+            /// places: the same size with two line boxes, chosen by whichever
+            /// token a call site happened to reach for. The difference is
+            /// invisible on one line and a wrap apart on two, so the taller box
+            /// wins — it is the one the wrapping call sites needed.
+            public static let smRegular = Style(size: 12, lineHeight: 16, weight: .regular)
             /// 10 / 12
             public static let xsRegular = Style(size: 10, lineHeight: 12, weight: .regular)
-            public static let xsMedium = Style(size: 10, lineHeight: 12, weight: .medium)
 
             /// Pill / CTA label — regular 14/18.
             public static let pill = mdRegular

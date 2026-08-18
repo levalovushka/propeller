@@ -61,12 +61,12 @@ struct SearchPalette: View {
                     .foregroundStyle(Tokens.Ink.quaternary)
                 TextField("Поиск встреч и транскриптов…", text: $query)
                     .textFieldStyle(.plain)
-                    .typo(Tokens.Typography.Label.mdMedium)
+                    .typo(Tokens.Typography.Label.mdRegular)
                     .foregroundStyle(Tokens.Ink.primary)
                     .focused($fieldFocused)
                     .onSubmit { activate(highlightedIndex) }
                 Text("esc")
-                    .typo(Tokens.Typography.Label.xsMedium)
+                    .typo(Tokens.Typography.Label.xsRegular)
                     .foregroundStyle(Tokens.Ink.tertiary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
@@ -84,7 +84,7 @@ struct SearchPalette: View {
                         highlightedIndex = 0
                     } label: {
                         Text("\(f.rawValue) \(count)")
-                            .typo(selected ? Tokens.Typography.Label.smMedium : Tokens.Typography.Label.smMedium)
+                            .typo(Tokens.Typography.Label.smRegular)
                             .foregroundStyle(selected ? Tokens.Ink.primary : Tokens.Ink.quaternary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
@@ -109,7 +109,7 @@ struct SearchPalette: View {
                         let sections = groupedItems
                         ForEach(sections, id: \.0) { title, sectionItems in
                             Text(title)
-                                .typo(Tokens.Typography.Label.xsMedium)
+                                .typo(Tokens.Typography.Label.xsRegular)
                                 .foregroundStyle(Tokens.Ink.tertiary)
                                 .textCase(.uppercase)
                                 .padding(.horizontal, 16)
@@ -138,7 +138,7 @@ struct SearchPalette: View {
 
                         if items.isEmpty {
                             Text("Ничего не найдено")
-                                .typo(Tokens.Typography.Label.mdMedium)
+                                .typo(Tokens.Typography.Label.mdRegular)
                                 .foregroundStyle(Tokens.Ink.tertiary)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 28)
@@ -162,7 +162,7 @@ struct SearchPalette: View {
                 hint("↵", "открыть")
                 Spacer()
                 Text(Self.resultCountLabel(items.count))
-                    .typo(Tokens.Typography.Label.xsMedium)
+                    .typo(Tokens.Typography.Label.xsRegular)
                     .foregroundStyle(Tokens.Ink.tertiary)
             }
             .padding(.horizontal, 16)
@@ -234,7 +234,7 @@ struct SearchPalette: View {
     private static func attributed(_ snippet: ArchiveSearch.Snippet) -> AttributedString {
         var result = AttributedString(snippet.prefix)
         var highlighted = AttributedString(snippet.match)
-        highlighted.font = Tokens.Typography.Label.smMedium.font
+        highlighted.font = Tokens.Typography.Label.smRegular.font
         highlighted.foregroundColor = Tokens.Ink.primary
         result += highlighted
         result += AttributedString(snippet.suffix)
@@ -292,12 +292,12 @@ struct SearchPalette: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(entry.title.isEmpty ? "Без названия" : entry.title)
-                            .typo(Tokens.Typography.Label.mdMedium)
+                            .typo(Tokens.Typography.Label.mdRegular)
                             .foregroundStyle(Tokens.Ink.primary)
                             .lineLimit(1)
                         if match.matchCount > 1 {
                             Text("\(match.matchCount) совп.")
-                                .typo(Tokens.Typography.Label.xsMedium)
+                                .typo(Tokens.Typography.Label.xsRegular)
                                 .foregroundStyle(Tokens.Ink.quaternary)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
@@ -308,7 +308,7 @@ struct SearchPalette: View {
                         Text(entry.dateFormatted)
                         if entry.duration > 0 { Text("·"); Text(entry.durationFormatted) }
                     }
-                    .typo(Tokens.Typography.Label.smMedium)
+                    .typo(Tokens.Typography.Label.smRegular)
                     .foregroundStyle(Tokens.Ink.quaternary)
                     if let snippet = match.snippet {
                         Text(Self.attributed(snippet))
@@ -323,7 +323,7 @@ struct SearchPalette: View {
                     .foregroundStyle(Color.red.opacity(0.9))
                     .frame(width: 20)
                 Text("Записать")
-                    .typo(Tokens.Typography.Label.mdMedium)
+                    .typo(Tokens.Typography.Label.mdRegular)
                     .foregroundStyle(Tokens.Ink.primary)
             }
             Spacer(minLength: 0)
@@ -345,13 +345,13 @@ struct SearchPalette: View {
     private func hint(_ key: String, _ label: String) -> some View {
         HStack(spacing: 4) {
             Text(key)
-                .typo(Tokens.Typography.Label.xsMedium)
+                .typo(Tokens.Typography.Label.xsRegular)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
                 .background(Tokens.Paint.Bg.surface, in: RoundedRectangle(cornerRadius: Tokens.Radius.xxxxs, style: .continuous))
                 .foregroundStyle(Tokens.Neutral.aw50)
             Text(label)
-                .typo(Tokens.Typography.Label.xsMedium)
+                .typo(Tokens.Typography.Label.xsRegular)
                 .foregroundStyle(Tokens.Ink.tertiary)
         }
     }
