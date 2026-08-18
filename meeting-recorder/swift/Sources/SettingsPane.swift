@@ -423,7 +423,7 @@ private struct StorageSettingsGroup: View {
     @AppStorage("meetingsPath") private var meetingsPath = ""
     @AppStorage("recordingsPath") private var recordingsPath = ""
     @AppStorage("peoplePagesPath") private var peoplePagesPath = ""
-    @AppStorage("audioRetentionMode") private var audioRetentionMode = AudioRetentionMode.afterDays.rawValue
+    @AppStorage("audioRetentionMode") private var audioRetentionMode = AudioRetentionMode.afterTranscript.rawValue
     @AppStorage("audioRetentionDays") private var audioRetentionDays = AudioRetention.defaultDays
     @State private var showingClearConfirm = false
 

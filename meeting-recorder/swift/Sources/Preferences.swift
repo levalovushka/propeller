@@ -135,14 +135,13 @@ class Preferences {
 
     /// Когда аудио уходит само (`AudioRetention`).
     ///
-    /// Дефолт — `afterDays` (решение владельца 2026-08-17). Прежнее опасение
-    /// «апдейт унесёт весь накопленный архив» проверено на живых данных и
-    /// оказалось беспредметным: аудио старше тридцати дней нет ни у кого,
-    /// приложение вышло 10 августа. Разбор — в доке `AudioRetention`.
+    /// Дефолт — `afterTranscript` (решение владельца 2026-08-17): слушать записи
+    /// приложение не даёт и не будет, значит звук, переживший расшифровку, никому
+    /// не нужен. Разбор и отвергнутые доводы — в доке `AudioRetention`.
     var audioRetentionMode: AudioRetentionMode {
         get {
             AudioRetentionMode(rawValue: defaults.string(forKey: "audioRetentionMode") ?? "")
-                ?? .afterDays
+                ?? .afterTranscript
         }
         set { defaults.set(newValue.rawValue, forKey: "audioRetentionMode") }
     }

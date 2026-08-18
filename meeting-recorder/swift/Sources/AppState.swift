@@ -19,7 +19,6 @@ class AppState: ObservableObject {
 
     // Recording
     @Published var recorder = AudioRecorder()
-    @Published var player = AudioPlayer()
     /// Что слышно прямо сейчас — живой транскрипт идущей встречи. Отдельный
     /// объект, а не поле: за него подписывается только экран записи, и текст,
     /// приходящий несколько раз в секунду, не должен перерисовывать рельс.
@@ -590,7 +589,6 @@ class AppState: ObservableObject {
 
         // Playback of an older meeting must not keep running under a new
         // recording — it also poisons the next auto-load (release-review rev-7).
-        player.stop()
         // Catch-up work yields to the meeting being recorded (D10).
         pausePipeline()
 
@@ -761,7 +759,6 @@ class AppState: ObservableObject {
         // Записи не будет вовсе — значит и её живого текста тоже.
         live.end()
         recordingLinkedToCall = false
-        player.stop()
         let id = recorder.recordingID
         do {
             _ = try await recorder.stop()
@@ -815,7 +812,6 @@ class AppState: ObservableObject {
         let wasLinkedToCall = recordingLinkedToCall
         recordingLinkedToCall = false
         NotificationManager.shared.clearRecordingNotification()
-        player.stop()
 
         do {
             let result = try await recorder.stop()
@@ -919,7 +915,6 @@ class AppState: ObservableObject {
     }
 
     func selectRecording(_ entry: RecordingEntry) {
-        player.stop()
         // Выбрать встречу — значит уйти из настроек. Отдельной кнопки «закрыть»
         // у них нет и не нужно: панель одна, и в ней всегда что-то одно.
         paneRoute = .meeting
@@ -1238,7 +1233,6 @@ class AppState: ObservableObject {
     // MARK: - Deletion
 
     func deleteAudioFile(_ entry: RecordingEntry) {
-        player.stop()
         recordingStore.deleteAudioFile(for: entry)
     }
 
@@ -1339,7 +1333,6 @@ class AppState: ObservableObject {
         if dissolvingMeetingID != nil {
             finishDissolvingDeletion()
         }
-        player.stop()
         let um = resolveUndoManager(undoManager)
         um?.removeAllActions(withTarget: self)
         commitPendingDeletion()
@@ -1421,7 +1414,6 @@ class AppState: ObservableObject {
     /// перечисление того, где имя ещё осталось, а не обещание.
     @discardableResult
     func erasePerson(named name: String) -> PersonErasureReport {
-        player.stop()
         let report = recordingStore.erasePerson(named: name)
         // Текст выбранной встречи в окне — копия из индекса, снятая при выборе.
         // После правки на диске она устарела, и без этого на экране осталось бы
@@ -1438,7 +1430,6 @@ class AppState: ObservableObject {
     /// отвечает `AudioReclaim`, а не эта функция.
     @discardableResult
     func deleteAllReclaimableAudio() -> Int {
-        player.stop()
         let cleared = recordingStore.deleteAllReclaimableAudio()
         refreshStorageUsage()
         return cleared
