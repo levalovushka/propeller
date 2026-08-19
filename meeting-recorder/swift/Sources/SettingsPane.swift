@@ -372,9 +372,42 @@ struct ClaudeSettingsGroup: View {
         // способ, а не имя, и клиентов в ней теперь двое.
         SettingsGroup("MCP") {
             ForEach(MCPClient.allCases, id: \.self) { client in
-                MCPClientRow(state: state, client: client)
+                if client.configLocation == nil {
+                    // Клиент без конфига — значит и без кнопки: его подключают
+                    // командой, и всё, что мы можем, — дать её скопировать.
+                    MCPCommandRow(client: client)
+                } else {
+                    MCPClientRow(state: state, client: client)
+                }
             }
         }
+    }
+}
+
+/// Строка клиента, которого подключают руками.
+///
+/// Состояния у неё нет и быть не может: в чужой конфиг мы не смотрим, а
+/// `claude mcp add` кладёт запись туда, куда сам решит — в проект, в профиль
+/// или в сессию. Единственная честная роль строки здесь — отдать команду.
+private struct MCPCommandRow: View {
+    let client: MCPClient
+
+    var body: some View {
+        SettingsCell(client.rowTitle, subtitle: nil) {
+            if let command = MCPConnector.claudeCodeCommand {
+                SettingsCommand(command) { copy(command) }
+            } else {
+                // Бинаря нет — команда вела бы в пустоту. Молчим: скопированная
+                // строка, которая не работает, хуже отсутствующей.
+                EmptyView()
+            }
+        }
+    }
+
+    private func copy(_ command: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(command, forType: .string)
+        Analytics.signal("Claude.commandCopied", parameters: ["client": client.rawValue])
     }
 }
 

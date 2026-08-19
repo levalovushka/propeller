@@ -24,6 +24,31 @@ final class MCPClientTests: XCTestCase {
         XCTAssertEqual(MCPClient.resolve(env: [:], clientName: "ChatGPT"), .chatGPT)
     }
 
+    /// Имя Claude Code содержит слово Claude, и порядок веток решает, чью
+    /// отметку он поставит. Наоборот — галочка встала бы у рабочего стола,
+    /// который человек, может быть, и не ставил.
+    func testClaudeCodeНеПутаетсяСРабочимСтолом() {
+        XCTAssertEqual(MCPClient.resolve(env: [:], clientName: "claude-code"), .claudeCode)
+        XCTAssertEqual(MCPClient.resolve(env: [:], clientName: "Claude Code"), .claudeCode)
+        XCTAssertEqual(MCPClient.resolve(env: [:], clientName: "claude-ai"), .claudeDesktop)
+    }
+
+    /// Кнопка ведёт только туда, где есть что записать. Claude Code подключают
+    /// командой, и предлагать его в рельсе нечем.
+    func testКнопкаЗнаетТолькоТехУКогоЕстьКонфиг() {
+        XCTAssertEqual(MCPClient.connectable, [.claudeDesktop, .chatGPT])
+        XCTAssertNil(MCPClient.claudeCode.configLocation)
+        XCTAssertNil(MCPClient.claudeCode.configFormat)
+    }
+
+    func testКомандаНесётИмяСервераИПутьКБинарю() {
+        let command = MCPClient.claudeCodeCommand(binaryPath: "/Applications/Propeller.app/x/PropellerMCP")
+        XCTAssertEqual(
+            command,
+            "claude mcp add Propeller -- /Applications/Propeller.app/x/PropellerMCP"
+        )
+    }
+
     /// Незнакомый клиент — не повод писать отметку наугад: она зажгла бы галочку
     /// не у того. «Никто не подключён» честнее и поправимо кнопкой.
     func testНезнакомыйКлиентНеОпознаётся() {

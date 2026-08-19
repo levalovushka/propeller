@@ -152,7 +152,7 @@ public enum UIStateCatalog {
     /// фреймы в Фигме, и переименовать их значило бы потерять соответствие, а не
     /// навести порядок.
     public static var settingsClaude: [Screen] {
-        MCPClient.allCases.flatMap { client in
+        MCPClient.connectable.flatMap { client in
             MCPCellState.allCases.map { state in
                 Screen(
                     id: "settings-\(client.rawValue)-\(state.slug)",
@@ -160,6 +160,14 @@ public enum UIStateCatalog {
                         + (state.subtitle(for: client) ?? state.actionTitle ?? state.rawValue)
                 )
             }
+        }
+        // Клиент без конфига — один кадр вместо шести: состояний у него нет,
+        // есть команда.
+        + MCPClient.allCases.filter { $0.configLocation == nil }.map { client in
+            Screen(
+                id: "settings-\(client.rawValue)-command",
+                label: "Настройки — MCP · \(client.rowTitle): команда"
+            )
         }
     }
 

@@ -28,13 +28,16 @@ enum MCPConnector {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
     }
 
-    static func configURL(for client: MCPClient) -> URL {
+    /// Где лежит конфиг клиента — или nil у того, чей конфиг мы не пишем.
+    static func configURL(for client: MCPClient) -> URL? {
         switch client.configLocation {
-        case let .applicationSupport(directory, file):
+        case .none:
+            return nil
+        case let .some(.applicationSupport(directory, file)):
             return applicationSupport
                 .appendingPathComponent(directory, isDirectory: true)
                 .appendingPathComponent(file)
-        case let .home(path):
+        case let .some(.home(path)):
             return URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(path)
         }
     }
@@ -86,7 +89,8 @@ enum MCPConnector {
     // MARK: - Что видно сейчас
 
     private static func configData(for client: MCPClient) -> Data? {
-        try? Data(contentsOf: configURL(for: client))
+        guard let url = configURL(for: client) else { return nil }
+        return try? Data(contentsOf: url)
     }
 
     private static func configText(for client: MCPClient) -> String? {
@@ -97,6 +101,9 @@ enum MCPConnector {
     /// Путь к бинарю, записанный в чужом конфиге, — или nil, если записи нет.
     private static func recordedCommand(for client: MCPClient) -> String? {
         switch client.configFormat {
+        // Конфиг не наш — и «записано ли» у него спрашивать не у чего.
+        case .none:
+            return nil
         case .json:
             return ClaudeConfigMerge.command(of: ClaudeMCP.serverName, in: configData(for: client))
         case .toml:
@@ -145,6 +152,8 @@ enum MCPConnector {
         case noBinary
         case writeDenied
         case unreadableText
+        /// Кнопки у этого клиента нет — подключается командой.
+        case noConfig
     }
 
     /// Готовое содержимое чужого конфига — или причина, по которой его нет.
@@ -163,6 +172,8 @@ enum MCPConnector {
     ) -> Prepared {
         let existing = configData(for: client)
         switch client.configFormat {
+        case .none:
+            return .refused(reason: Refusal.noConfig.rawValue)
         case .json:
             let entry = ClaudeConfigMerge.Entry(
                 name: ClaudeMCP.serverName,
@@ -223,6 +234,7 @@ enum MCPConnector {
         }
 
         guard let binary = serverBinaryURL else { return failed(Refusal.noBinary.rawValue) }
+        guard let url = configURL(for: client) else { return failed(Refusal.noConfig.rawValue) }
 
         let data: Data, existing: Data?, wasConfigured: Bool
         switch rewritten(for: client, binary: binary) {
@@ -232,7 +244,6 @@ enum MCPConnector {
             return failed(reason)
         }
 
-        let url = configURL(for: client)
         do {
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true
@@ -266,6 +277,14 @@ extension MCPConnector {
     /// про Клода. Ни одного нет — вопроса тоже нет, иначе подошва рельса стала
     /// бы рекламой чужого приложения.
     static var clientToOffer: MCPClient? {
-        MCPClient.allCases.first(where: isInstalled)
+        MCPClient.connectable.first(where: isInstalled)
+    }
+
+    /// Команда для Claude Code — с настоящим путём к бинарю в бандле.
+    ///
+    /// nil, когда бинаря нет: команда, которая ведёт в пустоту, хуже её
+    /// отсутствия — человек скопирует, вставит и получит непонятную ошибку.
+    static var claudeCodeCommand: String? {
+        serverBinaryURL.map { MCPClient.claudeCodeCommand(binaryPath: $0.path) }
     }
 }

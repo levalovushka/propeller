@@ -383,6 +383,76 @@ public struct SettingsField: View {
     }
 }
 
+/// Готовая команда: показать и дать скопировать.
+///
+/// Поле, а не строка текста, потому что содержимое чужое — его вставляют в
+/// терминал целиком, и оправа говорит «это не абзац, это значение». Читать его
+/// не обязательно: команда длиннее поля и обрезается, а целиком уезжает в буфер
+/// по кнопке. Обрезается **с хвоста** — начало (`claude mcp add`) отвечает на
+/// «что это», конец лишь повторяет путь, который человек и так знает.
+///
+/// Правки не принимает намеренно: менять в ней нечего, а курсор в поле обещал
+/// бы обратное.
+public struct SettingsCommand: View {
+    private let command: String
+    private let onCopy: () -> Void
+
+    /// Живёт полторы секунды после нажатия. Единственный ответ на «скопировалось
+    /// ли»: буфер обмена ничего не показывает сам, а без ответа человек жмёт
+    /// второй раз и не знает, стало ли лучше.
+    @State private var copied = false
+    @State private var hovering = false
+
+    public init(_ command: String, onCopy: @escaping () -> Void) {
+        self.command = command
+        self.onCopy = onCopy
+    }
+
+    public var body: some View {
+        HStack(spacing: Tokens.Settings.commandGlyphGap) {
+            Text(command)
+                .typo(Tokens.Settings.Typo.field)
+                .foregroundStyle(Tokens.Settings.title)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(action: copy) {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: Tokens.Settings.commandGlyphSize, weight: .regular))
+                    .foregroundStyle(
+                        copied ? Tokens.Settings.commandCopied : Tokens.Settings.buttonLabel
+                    )
+                    .frame(width: Tokens.Space.s16, height: Tokens.Space.s16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.press)
+            .accessibilityLabel("Скопировать команду")
+        }
+        .padding(.horizontal, Tokens.Settings.fieldHPadding)
+        .frame(width: Tokens.Settings.commandWidth, height: Tokens.Settings.fieldHeight)
+        .background(
+            Tokens.Settings.fieldFill,
+            in: RoundedRectangle(cornerRadius: Tokens.Settings.fieldRadius, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: Tokens.Settings.fieldRadius, style: .continuous)
+                .strokeBorder(
+                    hovering ? Tokens.Settings.buttonHoverFill : Tokens.Settings.fieldBorder,
+                    lineWidth: 0.5
+                )
+        }
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: copied)
+    }
+
+    private func copy() {
+        onCopy()
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+    }
+}
+
 /// Многострочное поле — промпт. Та же оправа, что у однострочного.
 public struct SettingsEditor: View {
     @Binding private var text: String

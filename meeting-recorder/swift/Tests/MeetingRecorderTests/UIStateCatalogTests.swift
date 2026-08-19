@@ -63,7 +63,7 @@ final class UIStateCatalogTests: XCTestCase {
     /// рельса и забыть кадр теперь нельзя: список — это и есть тип.
     func testEveryClaudeCellStateAndRailQuestionHasAFrame() {
         let ids = Set(UIStateCatalog.allScreenIDs)
-        for client in MCPClient.allCases {
+        for client in MCPClient.connectable {
             for state in MCPCellState.allCases {
                 XCTAssertTrue(
                     ids.contains("settings-\(client.rawValue)-\(state.slug)"),
@@ -74,9 +74,13 @@ final class UIStateCatalogTests: XCTestCase {
         for prompt in SetupPrompt.allCases {
             XCTAssertTrue(ids.contains("rail-prompt-\(prompt.rawValue)"), prompt.rawValue)
         }
+        for client in MCPClient.allCases where client.configLocation == nil {
+            XCTAssertTrue(ids.contains("settings-\(client.rawValue)-command"), client.rawValue)
+        }
         XCTAssertEqual(
             UIStateCatalog.settingsClaude.count,
-            MCPClient.allCases.count * MCPCellState.allCases.count
+            MCPClient.connectable.count * MCPCellState.allCases.count
+                + MCPClient.allCases.filter { $0.configLocation == nil }.count
         )
         XCTAssertEqual(UIStateCatalog.railPrompt.count, SetupPrompt.allCases.count)
     }

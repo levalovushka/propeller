@@ -1272,6 +1272,19 @@ public enum Tokens {
         /// равно скроллится внутри себя.
         public static let editorHeight: CGFloat = 400
 
+        // MARK: Command — поле с готовой командой
+
+        /// Ширина выведена, а не выбрана: столько же, сколько занимает самая
+        /// длинная кнопка группы плюс место под глиф. Команда всё равно длиннее
+        /// любого разумного поля, поэтому ширина отвечает не за читаемость, а за
+        /// то, чтобы правый край группы остался прямым.
+        public static let commandWidth: CGFloat = 220
+        public static let commandGlyphSize: CGFloat = 11
+        public static let commandGlyphGap = Space.s8
+        /// Галочка «скопировано» — тем же цветом, что и галочка «подключено»:
+        /// подтверждение в этой группе выглядит одинаково, чем бы ни было.
+        public static let commandCopied = Paint.Status.accent
+
         // MARK: Buttons — пилюля установочной плашки, та же самая
 
         public static let buttonHeight = Setup.controlHeight

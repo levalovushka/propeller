@@ -175,7 +175,7 @@ enum GalleryFixture {
         // Строки MCP: состояние навязывается, потому что настоящее читается из
         // конфига чужого приложения и отметки на диске, а пять кадров из шести —
         // состояния, в которых машина снимающего не находится.
-        for client in MCPClient.allCases {
+        for client in MCPClient.connectable {
             if let cell = MCPCellState.allCases.first(
                 where: { id == "settings-\(client.rawValue)-\($0.slug)" }
             ) {
