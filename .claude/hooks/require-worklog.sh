@@ -66,7 +66,9 @@ echo "Blocked: this commit changes files but adds no $log_file entry, and no \
 entry dated $today is committed yet. CLAUDE.md requires one entry per piece of work: \
 what changed and which files, why, how it was verified (exact command and real \
 output, or \"not verified\"), what is left undone. Append it at the top of \
-$root/$log_file, stage that file, and commit again. If this commit genuinely \
+$root/$log_file, stage that file, and commit again. If what is left undone is \
+someone's future work rather than a property of what shipped, add a line to \
+$root/TAILS.md as well — that is the list that gets re-read. If this commit genuinely \
 documents nothing new — a pure revert, or a fixup you would normally --amend — \
 say so and ask me, do not work around the guard." >&2
 exit 2
