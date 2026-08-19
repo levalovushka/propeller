@@ -96,7 +96,15 @@ enum AppWindowRegistry {
     /// watcher writes the same key on every drag so the next `showMain` has
     /// something to read.
     static func rememberFrame(on window: NSWindow) {
-        _ = window.setFrameAutosaveName(frameAutosaveName)
+        // Только если имя ещё не стоит: setFrameAutosaveName ПЕРЕЧИТЫВАЕТ
+        // сохранённый кадр и применяет его, а сюда мы попадаем из layout()
+        // ChromeHostView — то есть на каждом тике живого ресайза, раньше, чем
+        // наблюдатель didResize записал новую ширину. Каждый тик драга
+        // откатывался к сохранённым 797×760 — окно «не ресайзилось»
+        // (трасса 2026-08-19, /tmp/propeller-window-diag.txt).
+        if window.frameAutosaveName != frameAutosaveName {
+            _ = window.setFrameAutosaveName(frameAutosaveName)
+        }
         MainWindowFramePersistence.shared.watch(window)
     }
 
