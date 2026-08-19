@@ -407,7 +407,7 @@ private struct MCPCommandRow: View {
     private func copy(_ command: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(command, forType: .string)
-        Analytics.signal("Claude.commandCopied", parameters: ["client": client.rawValue])
+        Analytics.claudeSetup(step: "command_copied", client: client.rawValue)
     }
 }
 

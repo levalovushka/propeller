@@ -391,6 +391,12 @@ class AudioRecorder: ObservableObject {
     /// несколько десятков миллисекунд» — но период зависит от размера буфера
     /// Core Audio, который выбирает система, а не мы. Пишется раз в десять
     /// секунд, чтобы не быть шумом в логе.
+    ///
+    /// Только в лог. В телеметрию этот замер уходил сигналом `Capture.levelRate`
+    /// шесть раз в минуту записи — на встрече в полчаса это 180 сигналов против
+    /// семи на всю её обработку, то есть почти весь трафик приложения ради
+    /// вопроса, на который ответ уже получен. Понадобится снова — здесь стенд,
+    /// а не прод.
     private var levelTicks = 0
     private var levelWindowStart: Date?
     private static let levelReportWindow: TimeInterval = 10
@@ -410,7 +416,6 @@ class AudioRecorder: ObservableObject {
             format: "[AudioRecorder] уровень: %.1f отсчётов/с (%.0f мс между ними)",
             perSecond, 1000 / max(perSecond, 0.001)
         ))
-        Analytics.signal("Capture.levelRate", value: perSecond)
         levelWindowStart = now
         levelTicks = 0
     }

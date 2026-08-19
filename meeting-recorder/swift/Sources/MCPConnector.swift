@@ -226,9 +226,8 @@ enum MCPConnector {
     @discardableResult
     static func connect(_ client: MCPClient) -> Bool {
         func failed(_ reason: String) -> Bool {
-            Analytics.signal(
-                "Claude.connectFailed",
-                parameters: ["reason": reason, "client": client.rawValue]
+            Analytics.claudeSetup(
+                step: "connect", result: "fail", client: client.rawValue, reason: reason
             )
             return false
         }
@@ -261,9 +260,8 @@ enum MCPConnector {
         // Старый след стирается вместе с записью: галочка обязана означать
         // «этот клиент нас видел», а не «когда-то видел какой-то».
         clearMarker(client)
-        Analytics.signal(
-            "Claude.connected",
-            parameters: ["again": wasConfigured ? "1" : "0", "client": client.rawValue]
+        Analytics.claudeSetup(
+            step: "connect", result: "ok", client: client.rawValue, again: wasConfigured
         )
         return true
     }

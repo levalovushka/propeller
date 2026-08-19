@@ -364,9 +364,9 @@ stdio-сервер поднимается вместе с Claude Desktop — к�
 
 | Сигнал | На что отвечает |
 |---|---|
-| `Setup.claudeAsked` (`result`) | нажали в рельсе |
-| `Claude.connected` (`again`) | конфиг записан; переподключение отличимо |
-| `Claude.connectFailed` (`reason`) | почему не записали — разбираемся мы |
+| `Claude.setup{step=asked, result}` | нажали в рельсе |
+| `Claude.setup{step=connect, result=ok, again}` | конфиг записан; переподключение отличимо |
+| `Claude.setup{step=connect, result=fail, reason}` | почему не записали — разбираемся мы |
 | `Claude.used` (`tool`, `frequency`, `days`, значение — число вызовов) | **пользуются ли, чем именно и как часто** |
 
 Считать приходится вызовы, а они в чужом процессе. Устройство: **сервер
@@ -458,10 +458,11 @@ id не работает вовсе и ругается в stderr, то есть
   после нашей записи; тест держит это на сокращённой копии того же файла.
 - ~~Формат и место отметки~~ — `claude-mcp-seen` в Application Support, время
   словами внутри, читается дата изменения.
-- ~~Событие телеметрии на неудачную запись~~ — `Claude.connectFailed` с
-  `reason`: `unreadable`, `notAnObject`, `serversNotAnObject`, `notSerializable`,
-  `relativeCommand`, `noBinary`, `writeDenied`. Плюс появился `Claude.used` —
-  см. «Телеметрия».
+- ~~Событие телеметрии на неудачную запись~~ — `Claude.setup{step=connect,
+  result=fail}` с `reason`: `unreadable`, `notAnObject`, `serversNotAnObject`,
+  `notSerializable`, `relativeCommand`, `noBinary`, `writeDenied` (до чистки
+  2026-08-19 это был отдельный сигнал `Claude.connectFailed`). Плюс появился
+  `Claude.used` — см. «Телеметрия».
 - ~~Хватит ли описаний~~ — **живой ответ: хватило.** 2026-08-15 Клод сам сходил
   в `search_meetings`, `find_decisions`, `get_recap` и `get_transcript` в
   обычном разговоре. `instructions` при этом тоже доехал, вопреки ожиданию.

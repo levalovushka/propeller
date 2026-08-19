@@ -111,7 +111,35 @@ ad-hoc. Оба годятся только локально — раздават
 стабильная идентичность нужна, иначе каждый rebuild = заново микрофон и календарь.
 
 Телеметрия (TelemetryDeck): по умолчанию вкл, Настройки → Основное → выкл.
-Сигналы без содержания встреч: `App.opened`, `Recording.*`, `Transcription.*`,
-`Recap.*`, `Setup.*`, `Onboarding.completed`, `Search.opened`, `Notice.*`,
-`Pipeline.*`, `Invariant.*`, `Ollama.setup.*`. В дашборде — **Explore → Recent
-Signals**, режим **Live** (release-сборки всегда Live; DEBUG из Xcode — Test).
+Сигналы без содержания встреч — весь список, сверен с кодом 2026-08-19:
+
+| Сигнал | Параметры (кроме общих) |
+|---|---|
+| `App.opened` | `version`, `test_mode` |
+| `Analytics.enabled` | — |
+| `Onboarding.completed` | — |
+| `Setup.calendarAsked`, `Setup.nameGiven` | — |
+| `Recording.started` | `source` |
+| `Recording.finished` | `duration`, `audio` |
+| `Recording.cancelled` | `source`, `age`; секунды в `value` |
+| `Transcription.finished` | `result`, `reason` |
+| `Recap.finished` | `result`, `backend`, `skip` |
+| `Recap.generated` | `collapsed`, `author`; секунды в `value` |
+| `Summary.waited` | `awaited`, `meeting`; секунды в `value` |
+| `Notice.shown` | `kind`, `surface` (включая `silent`) |
+| `Search.opened` | — |
+| `Claude.setup` | `step`, `result`, `client`, `reason`, `again` |
+| `Claude.used` | `tool`, `frequency`, `days`; число вызовов в `value` |
+| `Model.fetch` | `reason` |
+| `Ollama.setup` | `result` |
+| `Diarize.fallback` | `stage` |
+| `Pipeline.checkpointLost`, `Pipeline.silentDiscarded`, `Pipeline.silentRested` | — |
+| `Pipeline.failed` | `phase`, `kind` |
+| `Invariant.broken` | `name` |
+
+Общие параметры (`Config.defaultParameters`) висят на каждом сигнале: `auto_record`,
+`recap_provider`, `markdown`, `calendar`, `onboarded`, `capture_path`.
+
+В дашборде — **Explore → Recent Signals**, режим **Live** (release-сборки всегда
+Live; DEBUG из Xcode — Test). Имена сигналов больше не собираются интерполяцией:
+вариант живёт в параметре, поэтому по одному имени есть и сумма, и разрез.

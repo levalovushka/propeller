@@ -211,42 +211,90 @@ enum Analytics {
         signal("Recap.finished", parameters: params)
     }
 
-    /// Как прошла локальная генерация конспекта — оси со стенда, чтобы прод и
-    /// стендовые таблицы читались одной головой (RELEASE-1.16.5.md, Г5): длина
-    /// ответа в токенах, был ли повтор и схлопнулся ли итог, сколько пунктов
-    /// уехало читателю, версия конструкции, когорта памяти. Длительность — в
-    /// `value`. Только числа и флаги, ни слова из встречи.
+    /// Как прошла локальная генерация конспекта: схлопнулся ли итог, кто его
+    /// написал и сколько это заняло (`value` — секунды). Ни слова из встречи.
     ///
-    /// Это же — линейка отката после релиза: доля `collapsed` и время генерации
-    /// в проде против стендовых. Облачные бэкенды сигнал не шлют: их
-    /// конструкция в 1.16.5 не менялась, и длину ответа они не сообщают.
+    /// Сигнал был линейкой отката 1.16.5 и нёс восемь параметров — длину ответа
+    /// в токенах, повтор, число пунктов, нарезку, версию конструкции, когорту
+    /// памяти. Релиз вышел, механика саммари заморожена, стендовые таблицы
+    /// сверены — эти оси больше ничего не решают и остались бы балластом на
+    /// каждой встрече. Понадобится сравнение с стендом снова — оси вернутся
+    /// вместе с причиной.
     ///
     /// `author` — кто написал документ переполняющей встречи: свод модели или
-    /// механическая сборка, отобравшая его гвардом (`RecapDigestGuard`). Только
-    /// у пути нарезки: на одиночном выбирать не из чего. Доля `assembly` — это и
-    /// есть частота срыва свода в проде, то самое число, ради которого страховку
-    /// оставили видимой.
+    /// механическая сборка, отобранная гвардом (`RecapDigestGuard`). Только у
+    /// пути нарезки: на одиночном выбирать не из чего. Доля `assembly` — частота
+    /// срыва свода в проде, то самое число, ради которого страховку оставили
+    /// видимой. Облачные бэкенды сигнал не шлют.
     static func recapGenerated(
-        replyTokens: Int?,
-        retried: Bool,
         collapsed: Bool,
         seconds: Double,
-        bullets: Int,
-        chunked: Bool,
-        version: Int,
         author: RecapDigestGuard.Author? = nil
     ) {
-        var params = [
-            "retried": retried ? "1" : "0",
-            "collapsed": collapsed ? "1" : "0",
-            "bullets": String(bullets),
-            "chunked": chunked ? "1" : "0",
-            "generator": String(version),
-            "ram": RecapGenerationPolicy.ramCohort(bytes: ProcessInfo.processInfo.physicalMemory),
-        ]
-        if let replyTokens { params["reply_tokens"] = String(replyTokens) }
+        var params = ["collapsed": collapsed ? "1" : "0"]
         if let author { params["author"] = author.rawValue }
         signal("Recap.generated", parameters: params, value: seconds)
+    }
+
+    // MARK: - Families
+
+    /// Имя сигнала — сюжет, а не строка, собранная из вариантов.
+    ///
+    /// Интерполяция в имени (`Notice.\(kind).\(surface)`) даёт на дашборде
+    /// декартово произведение: пять поводов на четыре поверхности — двадцать
+    /// разных имён, между которыми не сложить и не сравнить, а список сигналов
+    /// растёт от каждого нового варианта в перечислении. Варианты живут в
+    /// параметрах: одно имя, по которому есть и сумма, и разрез.
+    ///
+    /// Считаем и показанные поводы, и придушенные (`surface = silent`) —
+    /// правило, которого никто не считает, никто и не держит
+    /// (design/notifications.md §7).
+    static func noticeShown(kind: String, surface: String) {
+        signal("Notice.shown", parameters: ["kind": kind, "surface": surface])
+    }
+
+    /// Сломанный инвариант. Одно срабатывание — один настоящий баг, поэтому
+    /// сигнал нужен именно как счётчик по `name`, а не как отдельное имя.
+    static func invariantBroken(_ name: String) {
+        signal("Invariant.broken", parameters: ["name": name])
+    }
+
+    static func pipelineFailed(phase: String, kind: String) {
+        signal("Pipeline.failed", parameters: ["phase": phase, "kind": kind])
+    }
+
+    /// `reason` различает первую выдачу модели и починку. Путь в коде один и
+    /// тот же намеренно: отсутствующая модель — отсутствующая модель.
+    static func modelFetch(reason: String) {
+        signal("Model.fetch", parameters: ["reason": reason])
+    }
+
+    static func ollamaSetup(ok: Bool) {
+        signal("Ollama.setup", parameters: ["result": ok ? "ok" : "fail"])
+    }
+
+    /// Диаризация отступила: на какой ступени и почему нет кластеризации.
+    static func diarizeFallback(stage: String) {
+        signal("Diarize.fallback", parameters: ["stage": stage])
+    }
+
+    /// Один сюжет — подключение ассистента, — а не четыре сигнала на четыре
+    /// нажатия. `step`: `asked` (вопрос в рельсе), `connect` (кнопка в
+    /// настройках), `command_copied` (терминальному клиенту команду отдали
+    /// руками). Использование это не мерит — его мерит `Claude.used`.
+    static func claudeSetup(
+        step: String,
+        result: String? = nil,
+        client: String? = nil,
+        reason: String? = nil,
+        again: Bool? = nil
+    ) {
+        var params = ["step": step]
+        if let result { params["result"] = result }
+        if let client { params["client"] = client }
+        if let reason { params["reason"] = reason }
+        if let again { params["again"] = again ? "1" : "0" }
+        signal("Claude.setup", parameters: params)
     }
 
     // MARK: - Claude

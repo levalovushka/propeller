@@ -378,7 +378,7 @@ class AppState: ObservableObject {
         // необъяснимой.
         let ok = MCPConnector.clientToOffer.map { MCPConnector.connect($0) } ?? false
         refreshSetupPrompt()
-        Analytics.signal("Setup.claudeAsked", parameters: ["result": ok ? "ok" : "fail"])
+        Analytics.claudeSetup(step: "asked", result: ok ? "ok" : "fail")
     }
 
     // MARK: - Call auto-detect
@@ -483,7 +483,7 @@ class AppState: ObservableObject {
         }
         // Both halves are measured: a rule nobody counts is a rule nobody keeps
         // (design/notifications.md §7).
-        Analytics.signal("Notice.\(kind.rawValue).\(surface.signalName)")
+        Analytics.noticeShown(kind: kind.rawValue, surface: surface.signalName)
     }
 
     /// Put the main window in front. Only for a level-3 notice with nowhere else
@@ -667,8 +667,9 @@ class AppState: ObservableObject {
                 NotificationManager.shared.notifyRecordingStarted { [weak self] authorized in
                     Task { @MainActor in
                         guard let self, self.isRecording else { return }
-                        Analytics.signal(
-                            "Notice.recordingStarted.\(authorized ? "sound" : "window")"
+                        Analytics.noticeShown(
+                            kind: PushPolicy.Kind.recordingStarted.rawValue,
+                            surface: authorized ? "sound" : "window"
                         )
                         guard !authorized else { return }
                         self.surfaceMeetingUI(preferSummaryTab: false)
@@ -1783,8 +1784,8 @@ class AppState: ObservableObject {
         // Distinguishes «первая выдача» from «починка» in telemetry only — the code
         // path is deliberately the same one, because a missing model is a missing
         // model whatever the reason.
-        Analytics.signal(
-            Preferences.shared.localRecapModelRequested ? "Model.repair" : "Model.provision"
+        Analytics.modelFetch(
+            reason: Preferences.shared.localRecapModelRequested ? "repair" : "provision"
         )
         NSLog("[AppState] summary model missing — fetching it")
         startOllamaRuntimeDownload()
@@ -2319,13 +2320,8 @@ class AppState: ObservableObject {
                         recapGeneratorVersion: RecapGenerationPolicy.generatorVersion
                     )
                     Analytics.recapGenerated(
-                        replyTokens: stats.draft?.replyTokens,
-                        retried: stats.draft?.retried ?? false,
                         collapsed: stats.draft?.collapsed ?? false,
                         seconds: stats.seconds,
-                        bullets: RecapLint.shape(of: recap.body).bullets,
-                        chunked: stats.chunked,
-                        version: RecapGenerationPolicy.generatorVersion,
                         author: stats.author
                     )
                 }
@@ -2435,12 +2431,12 @@ class AppState: ObservableObject {
 
     /// Trips the debugger locally, and reports from release builds — an
     /// invariant only checked on the author's machine tells you nothing about
-    /// the five colleagues actually using the app.
+    /// the colleagues actually using the app.
     private func checkInvariant(_ name: String, _ holds: Bool) {
         guard !holds else { return }
         assertionFailure("invariant \(name) violated")
         NSLog("[AppState] INVARIANT \(name) violated")
-        Analytics.signal("Invariant.\(name)")
+        Analytics.invariantBroken(name)
     }
 
     /// A failure with nothing left to try. The log line comes from the reason, so
@@ -2520,7 +2516,7 @@ class AppState: ObservableObject {
     /// to mean «the user asked for this, so they get to see it fail»; a hand-made
     /// request that fails now waits on the same ladder as everything else.
     private func report(_ failure: PipelineFailure, for recordingID: String, force: Bool = false) {
-        Analytics.signal("Pipeline.failed.\(failure.phase).\(failure.kind.rawValue)")
+        Analytics.pipelineFailed(phase: failure.phase, kind: failure.kind.rawValue)
         NSLog("[AppState] \(failure.phase) failed on \(recordingID) "
               + "(attempt \(failure.attempt), \(failure.kind.rawValue)): \(failure.message)")
         if failure.kind == .ourFault {
@@ -2630,7 +2626,7 @@ class AppState: ObservableObject {
             ollamaSetupMessage = "Модель готова"
             ollamaSetupError = nil
             localRecapModelReady = true
-            Analytics.signal("Ollama.setup.ok")
+            Analytics.ollamaSetup(ok: true)
             // Setup is done and nothing needs the server yet. Without this a
             // launch-time resume check that finds the model already present
             // would leave `ollama serve` resident for the whole session
@@ -2648,7 +2644,7 @@ class AppState: ObservableObject {
             // запуске и на каждой остановке пайплайна из-за провайдера
             // (`ensureSummaryModel`), поэтому это состояние, а не событие.
             ollamaSetupError = error.localizedDescription
-            Analytics.signal("Ollama.setup.fail")
+            Analytics.ollamaSetup(ok: false)
             return false
         }
     }

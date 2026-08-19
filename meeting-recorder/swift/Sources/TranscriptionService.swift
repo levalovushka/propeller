@@ -113,7 +113,7 @@ class TranscriptionService {
         let configuration = MLModelConfiguration()
         configuration.computeUnits = .cpuAndNeuralEngine
         NSLog("[TranscriptionService] прошлая диаризация убила процесс — пробую .cpuAndNeuralEngine")
-        Analytics.signal("Diarize.retryAlternateEngine")
+        Analytics.diarizeFallback(stage: "retry_engine")
         return configuration
     }
 
@@ -350,7 +350,7 @@ class TranscriptionService {
                 _ = try await prepareDiarizer()
             } catch {
                 NSLog("[TranscriptionService] diarizer unavailable, splitting by stems: \(error)")
-                Analytics.signal("Diarize.unavailable")
+                Analytics.diarizeFallback(stage: "unavailable")
             }
         }
 
@@ -373,7 +373,7 @@ class TranscriptionService {
         var attempts = Self.readDiarizerAttempts()
         if diarizer != nil, !attempts.mayRun {
             NSLog("[TranscriptionService] диаризация убила процесс \(attempts.unfinished) раза подряд — спикеры по дорожкам")
-            Analytics.signal("Diarize.disabledAfterCrash")
+            Analytics.diarizeFallback(stage: "disabled_after_crash")
         } else if let diarizer = diarizer {
             attempts.starting()
             Self.writeDiarizerAttempts(attempts)
