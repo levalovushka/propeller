@@ -11,7 +11,7 @@ final class SetupPromptTests: XCTestCase {
         calendarGranted: Bool = false,
         calendarAsked: Bool = false,
         knownName: String = "",
-        claudeInstalled: Bool = false,
+        offeredClient: MCPClient? = nil,
         claudeAsked: Bool = false
     ) -> SetupPrompt? {
         SetupPromptMachine.step(
@@ -19,7 +19,7 @@ final class SetupPromptTests: XCTestCase {
             calendarGranted: calendarGranted,
             calendarAsked: calendarAsked,
             knownName: knownName,
-            claudeInstalled: claudeInstalled,
+            offeredClient: offeredClient,
             claudeAsked: claudeAsked
         )
     }
@@ -37,31 +37,31 @@ final class SetupPromptTests: XCTestCase {
     func testКогдаОтвеченоВсёБлокаНет() {
         XCTAssertNil(step(calendarAsked: true, knownName: "Лёва"))
         XCTAssertNil(step(calendarAsked: true, knownName: "Лёва",
-                          claudeInstalled: true, claudeAsked: true))
+                          offeredClient: .claudeDesktop, claudeAsked: true))
     }
 
     /// Клод идёт последним и только когда есть что предлагать: без Claude
     /// Desktop это была бы реклама чужого приложения в подошве рельса.
     func testПослеИмениСпрашиваетПроКлодаЕслиОнЕсть() {
-        XCTAssertEqual(step(calendarAsked: true, knownName: "Лёва", claudeInstalled: true), .claude)
+        XCTAssertEqual(step(calendarAsked: true, knownName: "Лёва", offeredClient: .claudeDesktop), .claude)
     }
 
     func testБезКлодаТретьегоВопросаНет() {
-        XCTAssertNil(step(calendarAsked: true, knownName: "Лёва", claudeInstalled: false))
+        XCTAssertNil(step(calendarAsked: true, knownName: "Лёва", offeredClient: nil))
     }
 
     /// Тот же уговор, что у календаря: шаг тратится нажатием. Не записался
     /// конфиг — про это скажет ячейка в настройках, а не вернувшийся вопрос.
     func testНажатиеПодключитьЗакрываетШагПроКлода() {
         XCTAssertNil(step(calendarAsked: true, knownName: "Лёва",
-                          claudeInstalled: true, claudeAsked: true))
+                          offeredClient: .claudeDesktop, claudeAsked: true))
     }
 
     /// Порядок держится лесенкой: пока имя не названо, про Клода не спрашивают,
     /// даже если он стоит.
     func testКлодНеПеребиваетПредыдущиеВопросы() {
-        XCTAssertEqual(step(claudeInstalled: true), .calendar)
-        XCTAssertEqual(step(calendarAsked: true, claudeInstalled: true), .name)
+        XCTAssertEqual(step(offeredClient: .claudeDesktop), .calendar)
+        XCTAssertEqual(step(calendarAsked: true, offeredClient: .claudeDesktop), .name)
     }
 
     /// Пока плашка настройки на экране, рельса не видно вовсе — но состояние не
@@ -118,7 +118,7 @@ final class SetupPromptTests: XCTestCase {
         // Одинокое «3/3» у того, кто ответил всё остальное, — принято как есть:
         // индекс закреплён, чтобы шаг не врал про длину блока.
         XCTAssertEqual(
-            step(calendarGranted: true, knownName: "Лёва", claudeInstalled: true)?.counter, "3/3"
+            step(calendarGranted: true, knownName: "Лёва", offeredClient: .claudeDesktop)?.counter, "3/3"
         )
     }
 

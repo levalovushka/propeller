@@ -116,6 +116,18 @@ enum Archive {
         return try? String(contentsOf: url, encoding: .utf8)
     }
 
+    /// Файл встречи на диске — чтобы у ответа была ссылка.
+    ///
+    /// Нужен ровно ChatGPT: сноску он делает только там, где `url` непустой.
+    /// Конспект предпочтительнее расшифровки — на него и ссылаются.
+    static func fileURL(for id: String, in files: [String]? = nil) -> URL? {
+        let names = files ?? meetingFiles()
+        let name = names.first(where: { RecapFile.isRecap($0, for: id) })
+            ?? names.first(where: { $0.hasPrefix(id) && $0.hasSuffix(".md") })
+        guard let name else { return nil }
+        return URL(fileURLWithPath: meetingsPath).appendingPathComponent(name)
+    }
+
     static func segments(of entry: Entry) -> [PersistedSegment] {
         let json = entry.mergedSegmentsJSON ?? entry.liveSegmentsJSON
         guard let json, let data = json.data(using: .utf8),

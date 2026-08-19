@@ -344,18 +344,18 @@ private struct ModelsSettingsGroup: View {
     }
 }
 
-// MARK: - Claude
+// MARK: - MCP
 
-/// Одна ячейка, одна кнопка, и ни одного диалога.
+/// Группа «MCP»: по строке на клиента, у каждой одна кнопка и ни одного диалога.
 ///
-/// Конфиг Клода можно отредактировать руками — сегодня это единственный способ,
+/// Чужой конфиг можно отредактировать руками — сегодня это единственный способ,
 /// и он не работает: путь надо знать. Здесь всё, что от человека требуется, —
-/// нажать; остальное (найти Claude Desktop, сделать копию его конфига, дописать
-/// в него запись) делает `ClaudeConnector`.
+/// нажать; остальное (найти приложение, сделать копию его конфига, дописать в
+/// него запись) делает `MCPConnector`.
 ///
-/// **Состояние выводится при каждом открытии, а не хранится.** Файл чужой: его
-/// может переписать сам Claude Desktop, и сохранённое «подключено» разошлось бы
-/// с правдой молча. Плюс перечитывание на возврате в приложение — человек уходит
+/// **Состояние выводится при каждом открытии, а не хранится.** Файлы чужие: их
+/// может переписать сам клиент, и сохранённое «подключено» разошлось бы с
+/// правдой молча. Плюс перечитывание на возврате в приложение — человек уходит
 /// перезапускать Клода при открытых настройках и возвращается к строке, которая
 /// обязана уже поменяться.
 ///
@@ -366,18 +366,35 @@ private struct ModelsSettingsGroup: View {
 /// копию, — иначе справочник показывал бы то, чего в приложении нет.
 struct ClaudeSettingsGroup: View {
     @ObservedObject var state: AppState
-    @State private var cell: ClaudeCellState = .offer
+
+    var body: some View {
+        // Группа — «MCP», а не имя клиента: подключение к модели через MCP это
+        // способ, а не имя, и клиентов в ней теперь двое.
+        SettingsGroup("MCP") {
+            ForEach(MCPClient.allCases, id: \.self) { client in
+                MCPClientRow(state: state, client: client)
+            }
+        }
+    }
+}
+
+/// Одна строка — один клиент.
+///
+/// Своё `@State` на строку, а не общее на группу: неудача записи в конфиг
+/// одного клиента ничего не говорит о другом, и «Попробовать снова» обязано
+/// стоять ровно там, где нажали.
+private struct MCPClientRow: View {
+    @ObservedObject var state: AppState
+    let client: MCPClient
+
+    @State private var cell: MCPCellState = .offer
     /// Живёт до следующего нажатия. Это ответ на действие, а не свойство
     /// системы, и переживать открытие настроек ему незачем.
     @State private var writeFailed = false
 
     var body: some View {
-        // Группа — «MCP», а не «Claude»: подключение к модели через MCP это
-        // способ, а не имя, и рядом с Клодом со временем встанут другие клиенты.
-        SettingsGroup("MCP") {
-            SettingsCell(ClaudeCellState.rowTitle, subtitle: cell.subtitle) {
-                control
-            }
+        SettingsCell(client.rowTitle, subtitle: cell.subtitle(for: client)) {
+            control
         }
         .onAppear(perform: refresh)
         .onReceive(NotificationCenter.default.publisher(
@@ -400,18 +417,18 @@ struct ClaudeSettingsGroup: View {
     }
 
     private func connect() {
-        writeFailed = !ClaudeConnector.connect()
+        writeFailed = !MCPConnector.connect(client)
         refresh()
     }
 
     private func refresh() {
 #if GALLERY
-        if let forced = state.galleryClaudeCellOverride {
-            cell = forced
+        if let forced = state.galleryMCPCellOverride, forced.client == client {
+            cell = forced.state
             return
         }
 #endif
-        cell = ClaudeConnector.cellState(lastWriteFailed: writeFailed)
+        cell = MCPConnector.cellState(for: client, lastWriteFailed: writeFailed)
     }
 }
 

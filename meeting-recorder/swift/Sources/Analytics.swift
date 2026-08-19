@@ -267,7 +267,7 @@ enum Analytics {
     /// В сигнале нет ни одной строки из архива: имя инструмента и число.
     static func reportClaudeUsage() {
         let manager = FileManager.default
-        let log = ClaudeConnector.usageLogURL
+        let log = MCPConnector.usageLogURL
         guard manager.fileExists(atPath: log.path) else { return }
         let taken = log.deletingLastPathComponent()
             .appendingPathComponent(ClaudeUsage.logFileName + ".taken")

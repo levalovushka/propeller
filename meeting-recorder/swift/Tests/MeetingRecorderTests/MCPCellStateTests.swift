@@ -3,16 +3,16 @@ import PropellerPure
 
 /// Ячейка «Claude» в настройках. Проверяется тем, что человек прочитает: у этой
 /// фичи нет никакого другого места, где он может узнать, работает она или нет.
-final class ClaudeCellStateTests: XCTestCase {
+final class MCPCellStateTests: XCTestCase {
 
     private func state(
         installed: Bool = true,
         configured: Bool = false,
         marked: Date? = nil,
         failed: Bool = false
-    ) -> ClaudeCellState {
-        ClaudeCellMachine.state(
-            claudeInstalled: installed,
+    ) -> MCPCellState {
+        MCPCellMachine.state(
+            installed: installed,
             configured: configured,
             markedAt: marked,
             lastWriteFailed: failed
@@ -61,43 +61,43 @@ final class ClaudeCellStateTests: XCTestCase {
     /// одно: у отказа записи сказать по делу нечего, а «не получилось» слово в
     /// слово повторило бы кнопку.
     func testEveryStateEitherSaysSomethingOfItsOwnOrSaysNothing() {
-        let said = ClaudeCellState.allCases.compactMap(\.subtitle)
+        let said = MCPCellState.allCases.compactMap { $0.subtitle(for: .claudeDesktop) }
         XCTAssertEqual(Set(said).count, said.count)
         XCTAssertTrue(said.allSatisfy { !$0.isEmpty })
-        XCTAssertEqual(ClaudeCellState.allCases.filter { $0.subtitle == nil }, [.writeFailed])
+        XCTAssertEqual(MCPCellState.allCases.filter { $0.subtitle(for: .claudeDesktop) == nil }, [.writeFailed])
     }
 
     /// Молчащее состояние обязано нести смысл кнопкой — иначе строка не
     /// отличается от предложения подключиться.
     func testTheSilentStateSaysItInTheButton() {
-        XCTAssertEqual(ClaudeCellState.writeFailed.actionTitle, "Попробовать снова")
+        XCTAssertEqual(MCPCellState.writeFailed.actionTitle, "Попробовать снова")
     }
 
     /// Просьба перезапустить — единственная строка, где имя приложения уместно:
     /// у неё есть адресат, а на экране в этот момент три приложения сразу.
     func testTheRestartLineNamesWhatToRestart() {
-        XCTAssertEqual(ClaudeCellState.restartNeeded.subtitle?.contains(ClaudeCellState.rowTitle), true)
+        XCTAssertEqual(MCPCellState.restartNeeded.subtitle(for: .claudeDesktop)?.contains(MCPClient.claudeDesktop.rowTitle), true)
     }
 
     /// Заголовок строки называет клиента и не зависит от состояния: группа
     /// называется «MCP», и рядом встанут другие строки — заголовок, меняющийся
     /// вместе со статусом, перестанет отвечать на «кто это».
     func testTheRowIsNamedAfterTheClientAndTheStateStaysInTheSecondLine() {
-        XCTAssertEqual(ClaudeCellState.rowTitle, "Claude Desktop")
+        XCTAssertEqual(MCPClient.claudeDesktop.rowTitle, "Claude Desktop")
         // Ни одна подпись не начинается с имени: оно уже стоит слева. Внутри
         // строки оно появляется там, где без адресата нельзя, — см.
         // `testTheRestartLineNamesWhatToRestart`.
-        for state in ClaudeCellState.allCases {
-            XCTAssertFalse(state.subtitle?.hasPrefix(ClaudeCellState.rowTitle) == true,
-                           "«\(state.subtitle ?? "")» начинается с заголовка строки")
+        for state in MCPCellState.allCases {
+            XCTAssertFalse(state.subtitle(for: .claudeDesktop)?.hasPrefix(MCPClient.claudeDesktop.rowTitle) == true,
+                           "«\(state.subtitle(for: .claudeDesktop) ?? "")» начинается с заголовка строки")
         }
     }
 
     /// Русская типографика в интерфейсных строках (`checks.yaml`):
     /// однобуквенный предлог не остаётся в конце строки.
     func testOneLetterPrepositionsAreTiedToTheirWord() {
-        for state in ClaudeCellState.allCases {
-            guard let subtitle = state.subtitle else { continue }
+        for state in MCPCellState.allCases {
+            guard let subtitle = state.subtitle(for: .claudeDesktop) else { continue }
             for preposition in [" с ", " о ", " в ", " к ", " и ", " у "] {
                 XCTAssertFalse(subtitle.contains(preposition),
                                "«\(subtitle)» рвётся на «\(preposition.trimmingCharacters(in: .whitespaces))»")
@@ -131,14 +131,14 @@ final class ClaudeCellStateTests: XCTestCase {
     }
 
     func testTheCheckmarkBelongsToConnectedAlone() {
-        XCTAssertEqual(ClaudeCellState.allCases.filter(\.showsCheckmark), [.connected])
+        XCTAssertEqual(MCPCellState.allCases.filter(\.showsCheckmark), [.connected])
     }
 
     /// Ни одно состояние не просит человека разбираться: причина отказа записи
     /// уезжает в телеметрию, а не в строку под заголовком.
     func testNoStateAsksThePersonToDebugAnything() {
-        for state in ClaudeCellState.allCases {
-            guard let subtitle = state.subtitle else { continue }
+        for state in MCPCellState.allCases {
+            guard let subtitle = state.subtitle(for: .claudeDesktop) else { continue }
             for word in ["Ошибка", "ажмите", "путь", "JSON"] {
                 XCTAssertFalse(subtitle.contains(word), "«\(subtitle)» содержит «\(word)»")
             }

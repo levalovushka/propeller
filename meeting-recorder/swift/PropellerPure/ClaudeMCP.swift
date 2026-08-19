@@ -124,6 +124,16 @@ public enum ClaudeMCP {
     public static let findOpenQuestions = "find_open_questions"
     public static let getTranscript = "get_transcript"
 
+    /// Два имени, которых требует ChatGPT.
+    ///
+    /// Для обычного разговора они не нужны — сервер без них подключается и
+    /// работает. Но пути deep research и company knowledge зовут только их, со
+    /// своей схемой: один строковый параметр, ответ с `id`, `title`, `url`.
+    /// Разбор своих встреч глубоким поиском — как раз то, ради чего всё
+    /// затевалось, поэтому мы их отдаём.
+    public static let searchDocuments = "search"
+    public static let fetchDocument = "fetch"
+
     /// Порядок — порядок глубины. Он же порядок, в котором их увидит модель.
     public static let tools: [Tool] = [
         Tool(
@@ -229,7 +239,50 @@ public enum ClaudeMCP {
         ),
     ]
 
-    public static func tool(named name: String) -> Tool? {
-        tools.first { $0.name == name }
+    /// То же самое в терминах ChatGPT: `search` и `fetch`.
+    ///
+    /// Отдельными инструментами, а не переименованием своих: у них чужой
+    /// контракт (единственный строковый параметр, ответ с `url` для сноски), и
+    /// натягивать его на `search_meetings` с датами и участниками значило бы
+    /// испортить оба.
+    public static let openAITools: [Tool] = [
+        Tool(
+            name: searchDocuments,
+            description: """
+                Найти встречи в архиве Propeller по словам. Отдаёт список                 встреч — id, заголовок и ссылку, — по одному id из которого                 берётся полный текст через fetch. Для разбора рабочих                 договорённостей, сроков и обсуждений начинать отсюда.
+                """,
+            inputSchema: Schema(
+                properties: [
+                    "query": Property(type: "string", description: "Слова, которые ищем во встречах."),
+                ],
+                required: ["query"]
+            )
+        ),
+        Tool(
+            name: fetchDocument,
+            description: """
+                Полный текст одной встречи по id из search: саммари с решениями,                 задачами и открытыми вопросами, а если саммари нет — расшифровка.
+                """,
+            inputSchema: Schema(
+                properties: [
+                    "id": Property(type: "string", description: "Идентификатор встречи из search."),
+                ],
+                required: ["id"]
+            )
+        ),
+    ]
+
+    /// Что показать этому клиенту.
+    ///
+    /// Список — чистая функция от того, кто нас запустил, и это единственная
+    /// причина, по которой мы вообще опознаём клиента. Клод остаётся при пяти
+    /// инструментах: два почти-дубля в его списке разбавили бы описания, на
+    /// которых всё держится, а deep research у него свой.
+    public static func tools(for client: MCPClient?) -> [Tool] {
+        client == .chatGPT ? tools + openAITools : tools
+    }
+
+    public static func tool(named name: String, for client: MCPClient? = nil) -> Tool? {
+        tools(for: client).first { $0.name == name }
     }
 }

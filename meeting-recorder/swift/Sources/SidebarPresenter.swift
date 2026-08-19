@@ -41,7 +41,7 @@ enum SidebarPresenter {
             // Пустым рельс при этом не выглядит — нав-блок («Новая запись»,
             // поиск, настройки) на месте, потому что он не часть списка.
             emptyMessage: nil,
-            prompt: prompt(state.setupPrompt)
+            prompt: prompt(state.setupPrompt, offering: MCPConnector.clientToOffer)
         )
     }
 
@@ -50,7 +50,9 @@ enum SidebarPresenter {
     /// Every word of it comes off `SetupPrompt`; this only chooses which of the
     /// two control shapes the step wears. Both are declared on the step, so a
     /// step with neither — or with both — cannot be built by accident.
-    private static func prompt(_ step: SetupPrompt?) -> SidebarPromptModel? {
+    private static func prompt(
+        _ step: SetupPrompt?, offering client: MCPClient?
+    ) -> SidebarPromptModel? {
         guard let step else { return nil }
         let action: SidebarPromptModel.Action
         if let title = step.actionTitle {
@@ -62,7 +64,10 @@ enum SidebarPresenter {
         }
         return SidebarPromptModel(
             id: step.rawValue,
-            title: step.title,
+            // Имя клиента в вопросе — того, кто стоит на машине. Спросить про
+            // Клода у человека, у которого только ChatGPT, значит предложить
+            // ему поставить чужое приложение вместо того, что уже есть.
+            title: step.title(offering: client ?? .claudeDesktop),
             subtitle: step.subtitle,
             counter: step.counter,
             action: action

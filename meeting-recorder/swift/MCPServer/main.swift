@@ -64,6 +64,11 @@ private func handle(_ message: [String: Any]) -> [String: Any]? {
     case "initialize":
         // Отметка ставится здесь: это первое, что говорит клиент, и
         // единственный момент, в который мы точно знаем, что нас запустил он.
+        // Сначала — кто именно: от этого зависит и файл отметки, и список
+        // инструментов.
+        Handshake.adopt(
+            clientName: (params["clientInfo"] as? [String: Any])?["name"] as? String
+        )
         Handshake.mark()
         guard let id else { return nil }
         return reply(id: id, result: [
@@ -88,7 +93,7 @@ private func handle(_ message: [String: Any]) -> [String: Any]? {
 
     case "tools/list":
         guard let id else { return nil }
-        guard let data = try? JSONEncoder().encode(ClaudeMCP.tools),
+        guard let data = try? JSONEncoder().encode(ClaudeMCP.tools(for: Handshake.client)),
               let tools = try? JSONSerialization.jsonObject(with: data) as? [Any] else {
             return reply(id: id, code: -32603, message: "Не удалось собрать список инструментов")
         }
@@ -98,10 +103,22 @@ private func handle(_ message: [String: Any]) -> [String: Any]? {
         guard let id else { return nil }
         let name = params["name"] as? String ?? ""
         let arguments = params["arguments"] as? [String: Any] ?? [:]
-        guard ClaudeMCP.tool(named: name) != nil else {
+        guard ClaudeMCP.tool(named: name, for: Handshake.client) != nil else {
             return reply(id: id, code: -32602, message: "Неизвестный инструмент: \(name)")
         }
         do {
+            // У `search` и `fetch` контракт ChatGPT: тот же ответ обязан
+            // приехать дважды — текстом в `content` и объектом в
+            // `structuredContent`. Одно без другого — половина контракта.
+            if OpenAITools.handles(name) {
+                let answer = try OpenAITools.call(name: name, arguments: arguments)
+                UsageLog.record(tool: name)
+                return reply(id: id, result: [
+                    "content": [["type": "text", "text": answer.text]],
+                    "structuredContent": answer.structured,
+                    "isError": false,
+                ])
+            }
             let text = try Tools.call(name: name, arguments: arguments)
             // Считается состоявшийся вызов, а не `initialize` и не `tools/list`:
             // и то и другое Клод делает сам на своём старте, и в вопросе
@@ -144,7 +161,9 @@ if CommandLine.arguments.contains("--paths") {
     print("meetings:   \(Archive.meetingsPath)")
     print("index:      \(Archive.indexURL.path)")
     print("встреч:     \(Archive.entries().count)")
-    print("отметка:    \(Handshake.markerURL.path)")
+    for client in MCPClient.allCases {
+        print("отметка \(client.rawValue): \(Handshake.markerURL(for: client).path)")
+    }
     exit(0)
 }
 

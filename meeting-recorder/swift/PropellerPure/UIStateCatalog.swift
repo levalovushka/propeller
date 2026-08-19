@@ -140,15 +140,26 @@ public enum UIStateCatalog {
         }
     }
 
-    /// Ячейка «Claude» в настройках — все её состояния.
+    /// Строки группы «MCP» в настройках — все состояния каждого клиента.
     ///
-    /// Тоже из типа (`ClaudeCellState`): четыре состояния таблицы плюс «нет
-    /// Claude Desktop» и «не записался конфиг». Ни одно из них не повторяет
-    /// другое ничем, кроме рамки, — они отличаются ровно строкой и тем, что
-    /// стоит справа, и в этом весь смысл кадров.
+    /// Тоже из типов (`MCPClient` × `MCPCellState`): четыре состояния таблицы
+    /// плюс «нет приложения» и «не записался конфиг», и так на каждого клиента.
+    /// Ни одно из них не повторяет другое ничем, кроме рамки, — они отличаются
+    /// ровно строкой и тем, что стоит справа, и в этом весь смысл кадров.
+    ///
+    /// Идентификатор кадра Клода не менялся с появлением второго клиента
+    /// (`MCPClient.claudeDesktop.rawValue == "claude"`): по этим именам названы
+    /// фреймы в Фигме, и переименовать их значило бы потерять соответствие, а не
+    /// навести порядок.
     public static var settingsClaude: [Screen] {
-        ClaudeCellState.allCases.map {
-            Screen(id: "settings-claude-\($0.slug)", label: "Настройки — MCP · Claude Desktop: \($0.subtitle ?? $0.actionTitle ?? $0.rawValue)")
+        MCPClient.allCases.flatMap { client in
+            MCPCellState.allCases.map { state in
+                Screen(
+                    id: "settings-\(client.rawValue)-\(state.slug)",
+                    label: "Настройки — MCP · \(client.rowTitle): "
+                        + (state.subtitle(for: client) ?? state.actionTitle ?? state.rawValue)
+                )
+            }
         }
     }
 

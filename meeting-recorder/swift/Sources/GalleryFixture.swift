@@ -172,12 +172,16 @@ enum GalleryFixture {
             poseRecording(id, state: state)
             return
         }
-        // Ячейка Claude: состояние навязывается, потому что настоящее читается
-        // из конфига чужого приложения и отметки на диске, а пять кадров из
-        // шести — состояния, в которых машина снимающего не находится.
-        if let cell = ClaudeCellState.allCases.first(where: { id == "settings-claude-\($0.slug)" }) {
-            state.galleryClaudeCellOverride = cell
-            return
+        // Строки MCP: состояние навязывается, потому что настоящее читается из
+        // конфига чужого приложения и отметки на диске, а пять кадров из шести —
+        // состояния, в которых машина снимающего не находится.
+        for client in MCPClient.allCases {
+            if let cell = MCPCellState.allCases.first(
+                where: { id == "settings-\(client.rawValue)-\($0.slug)" }
+            ) {
+                state.galleryMCPCellOverride = (client, cell)
+                return
+            }
         }
         if let prompt = SetupPrompt.allCases.first(where: { id == "rail-prompt-\($0.rawValue)" }) {
             state.galleryPoseSetupPrompt(prompt)

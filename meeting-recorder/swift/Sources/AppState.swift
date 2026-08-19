@@ -65,7 +65,7 @@ class AppState: ObservableObject {
     /// application's config file and a marker on disk — a screenshot run may
     /// touch neither, and six of the frames exist precisely to show states this
     /// machine is not in.
-    var galleryClaudeCellOverride: ClaudeCellState?
+    var galleryMCPCellOverride: (client: MCPClient, state: MCPCellState)?
 
     /// Opens the summary in its editor. Editing is entered by tapping the
     /// rendered recap, i.e. through private `@State` no poser can reach —
@@ -168,7 +168,7 @@ class AppState: ObservableObject {
         calendarGranted: Preferences.shared.calendarEnabled,
         calendarAsked: Preferences.shared.setupCalendarAsked,
         knownName: Preferences.shared.userName,
-        claudeInstalled: ClaudeConnector.isClaudeInstalled,
+        offeredClient: MCPConnector.clientToOffer,
         claudeAsked: Preferences.shared.setupClaudeAsked
     )
     private var didBootstrap = false
@@ -317,7 +317,7 @@ class AppState: ObservableObject {
             calendarGranted: Preferences.shared.calendarEnabled,
             calendarAsked: Preferences.shared.setupCalendarAsked,
             knownName: Preferences.shared.userName,
-            claudeInstalled: ClaudeConnector.isClaudeInstalled,
+            offeredClient: MCPConnector.clientToOffer,
             claudeAsked: Preferences.shared.setupClaudeAsked
         )
     }
@@ -373,7 +373,10 @@ class AppState: ObservableObject {
     /// бы превратить предложение в приставание.
     func connectClaudeFromRail() {
         Preferences.shared.setupClaudeAsked = true
-        let ok = ClaudeConnector.connect()
+        // Тот же клиент, чьё имя человек прочитал в вопросе. Спрашивать про
+        // одного и подключать другого — самый дешёвый способ сделать кнопку
+        // необъяснимой.
+        let ok = MCPConnector.clientToOffer.map { MCPConnector.connect($0) } ?? false
         refreshSetupPrompt()
         Analytics.signal("Setup.claudeAsked", parameters: ["result": ok ? "ok" : "fail"])
     }

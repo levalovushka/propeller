@@ -40,11 +40,20 @@ public enum SetupPrompt: String, Equatable, Sendable, CaseIterable {
 
     public var counter: String { "\(index)/\(Self.total)" }
 
-    public var title: String {
+    public var title: String { title(offering: .claudeDesktop) }
+
+    /// Заголовок шага — с именем того клиента, которому предлагаем.
+    ///
+    /// Рельс задаёт **один** вопрос за раз, и очередь из вендоров в подошве —
+    /// это не блок настройки, а витрина. Поэтому шаг один на всех клиентов и
+    /// называет того, кто стоит на машине; если стоят оба — Claude Desktop,
+    /// потому что порядок в `MCPClient.allCases` и есть порядок предпочтения.
+    /// Второго человек находит в настройках, где он и так уже побывал.
+    public func title(offering client: MCPClient) -> String {
         switch self {
         case .calendar: return "Подключите календарь"
         case .name:     return "Как вас зовут?"
-        case .claude:   return "Подключите Claude"
+        case .claude:   return "Подключите \(client.shortName)"
         }
     }
 
@@ -98,15 +107,15 @@ public enum SetupPromptMachine {
         calendarGranted: Bool,
         calendarAsked: Bool,
         knownName: String,
-        claudeInstalled: Bool,
+        offeredClient: MCPClient?,
         claudeAsked: Bool
     ) -> SetupPrompt? {
         guard setupCompleted else { return nil }
         if !calendarGranted, !calendarAsked { return .calendar }
         if knownName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .name }
-        // Последним и только когда есть что предлагать: без Claude Desktop это
-        // была бы реклама чужого приложения в подошве рельса.
-        if claudeInstalled, !claudeAsked { return .claude }
+        // Последним и только когда есть что предлагать: без единого клиента на
+        // машине это была бы реклама чужого приложения в подошве рельса.
+        if offeredClient != nil, !claudeAsked { return .claude }
         return nil
     }
 }

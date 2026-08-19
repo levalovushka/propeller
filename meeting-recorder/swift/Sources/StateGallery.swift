@@ -53,7 +53,7 @@ struct StateGallery: View {
                 section("Настройка", UIStateCatalog.onboarding.map { ($0.id, $0.label, $0.id) })
                 section("Рельс — вопросы настройки",
                         UIStateCatalog.railPrompt.map { ($0.id, $0.label, $0.id) })
-                section("Настройки — Claude",
+                section("Настройки — MCP",
                         UIStateCatalog.settingsClaude.map { ($0.id, $0.label, $0.id) })
                 section("Вкладки карточки", UIStateCatalog.detailTabs.map { ($0.id, $0.label, $0.id) })
                 section("Библиотека", UIStateCatalog.library.map { ($0.id, $0.label, $0.id) })
