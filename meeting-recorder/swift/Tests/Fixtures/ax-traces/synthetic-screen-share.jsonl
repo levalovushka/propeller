@@ -1,0 +1,9 @@
+{"meta":{"note":"synthetic — what a screen share plausibly looks like: no tiles at all, then a single floating thumbnail. Not captured from a live meeting (Н5 in plan-speaker-tags.md is still open); the assertion this fixture carries is only that the observer stays silent on it","interval":0.4}}
+{"t":0.0,"tiles":[]}
+{"t":0.4,"tiles":[]}
+{"t":0.8,"tiles":[]}
+{"t":1.2,"tiles":[]}
+{"t":1.6,"tiles":[{"role":"AXTabGroup","description":"Levon Lobanov, Звук компьютера включен, Video on","width":320,"height":180,"order":1,"window":"Zoom Meeting","process":"zoom.us"}]}
+{"t":2.0,"tiles":[{"role":"AXTabGroup","description":"Levon Lobanov, Звук компьютера включен, Video on","width":320,"height":180,"order":1,"window":"Zoom Meeting","process":"zoom.us"}]}
+{"t":2.4,"tiles":[]}
+{"t":2.8,"tiles":[]}
