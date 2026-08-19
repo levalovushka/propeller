@@ -102,6 +102,15 @@ let package = Package(
             dependencies: ["SpeakerMatchingCore"],
             path: "Checks/SpeakerMatchingCoreChecks"
         ),
+        /// Lab runner: an axprobe JSONL trace in, the CallWindowJournal spans
+        /// out, in the format `tools/diarize-lab/saer-journal.py` scores. Lives
+        /// here and not in the lab so the measured decision is the shipped
+        /// decision — the same reason Bench reuses PropellerPure.
+        .executableTarget(
+            name: "CallWindowJournalLab",
+            dependencies: ["PropellerPure"],
+            path: "Checks/CallWindowJournalLab"
+        ),
         .testTarget(
             name: "MeetingRecorderTests",
             dependencies: [
