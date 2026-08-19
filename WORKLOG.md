@@ -3,6 +3,29 @@
 Что сделано, зачем, как проверено, что осталось. Новейшее сверху.
 Формат — DOCS.md, слой «Рабочий лог».
 
+## 2026-08-19 · Запуск: окно показывается готовым, а не рамой
+
+- **Что:** окно держится на `alphaValue = 0`, пока `showMain` не выведет его с
+  содержимым (`SceneWindowChrome.swift`: конceal в `configure`, реестр
+  `AppWindowRegistry.revealed`, `layoutSubtreeIfNeeded`+`displayIfNeeded` перед
+  показом); `bootstrap()` ушёл из view-update-транзакции `onAppear` в `Task`
+  (`MeetingRecorderApp.swift`). Коммит 9b37559.
+- **Зачем:** AppKit восстанавливает окно раньше первого SwiftUI-коммита, и
+  прозрачное окно стояло ~0.4–0.5 с голой рамой, в которую «прогружалось»
+  приложение.
+- **Проверено:** покадровый замер (`CGWindowList` alpha + `screencapture -l`
+  каждые ~200 мс при перезапуске): фаза alpha=0 есть, первый видимый кадр —
+  полный архив; без `displayIfNeeded` первый кадр был пустой тёмной плитой.
+  Build `./build.sh` зелёный, `swift test` 922/922.
+- **Не сделано / известное:** «Publishing changes from within view updates»
+  (2 шт. на запуске) остаётся; источник НЕ `bootstrap`, НЕ
+  `MainView.onAppear` и НЕ `selectNewestIfNothingChosen` — каждый переносился
+  в `Task`, счётчик не менялся, правки откатаны. lldb-брейкпоинты на
+  `_os_log_fault_impl` / `_os_log_impl(type=fault)` не срабатывают на этой
+  macOS; ловить — Xcode runtime-issue breakpoint. Замеры запуска: индекс
+  7.4 МБ / 66 встреч декодируется за 11–18 мс — не горлышко; декод растёт
+  линейно с архивом (транскрипты внутри индекса, P6).
+
 ## 2026-08-19 · Чистка телеметрии: минус трафик, минус имена
 
 - **Что:** снят `Capture.levelRate` (`AudioRecorder.swift`, замер остался в
