@@ -156,8 +156,10 @@ public enum UIStateCatalog {
             MCPCellState.allCases.map { state in
                 Screen(
                     id: "settings-\(client.rawValue)-\(state.slug)",
+                    // Подписи и кнопки нет ровно у одного состояния — того, где
+                    // всё говорит галочка. Ей и называться.
                     label: "Настройки — MCP · \(client.rowTitle): "
-                        + (state.subtitle(for: client) ?? state.actionTitle ?? state.rawValue)
+                        + (state.subtitle(for: client) ?? state.actionTitle ?? "галочка")
                 )
             }
         }

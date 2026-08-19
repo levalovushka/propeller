@@ -57,20 +57,37 @@ final class MCPCellStateTests: XCTestCase {
 
     // MARK: - Слова
 
-    /// Каждое состояние либо говорит что-то своё, либо молчит — и молчит ровно
-    /// одно: у отказа записи сказать по делу нечего, а «не получилось» слово в
-    /// слово повторило бы кнопку.
+    /// Каждое состояние либо говорит что-то своё, либо молчит — и молчат ровно
+    /// два, оба потому, что за них говорит то, что стоит справа: у отказа
+    /// записи — кнопка «Попробовать снова», у подключённого — галочка.
     func testEveryStateEitherSaysSomethingOfItsOwnOrSaysNothing() {
         let said = MCPCellState.allCases.compactMap { $0.subtitle(for: .claudeDesktop) }
         XCTAssertEqual(Set(said).count, said.count)
         XCTAssertTrue(said.allSatisfy { !$0.isEmpty })
-        XCTAssertEqual(MCPCellState.allCases.filter { $0.subtitle(for: .claudeDesktop) == nil }, [.writeFailed])
+        XCTAssertEqual(
+            MCPCellState.allCases.filter { $0.subtitle(for: .claudeDesktop) == nil },
+            [.connected, .writeFailed]
+        )
     }
 
     /// Молчащее состояние обязано нести смысл кнопкой — иначе строка не
     /// отличается от предложения подключиться.
     func testTheSilentStateSaysItInTheButton() {
         XCTAssertEqual(MCPCellState.writeFailed.actionTitle, "Попробовать снова")
+    }
+
+    /// Строка не бывает пустой: если состояние молчит, за него обязано говорить
+    /// то, что стоит справа. Без этой проверки снятая подпись однажды оставит
+    /// заголовок в одиночестве, и человек прочитает строку как незаполненную.
+    func testМолчащаяСтрокаВсегдаЧтоТоПоказываетСправа() {
+        for client in MCPClient.connectable {
+            for state in MCPCellState.allCases where state.subtitle(for: client) == nil {
+                XCTAssertTrue(
+                    state.actionTitle != nil || state.showsCheckmark,
+                    "\(state.rawValue) молчит и справа пуст"
+                )
+            }
+        }
     }
 
     /// Просьба перезапустить — единственная строка, где имя приложения уместно:
