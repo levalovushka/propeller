@@ -34,6 +34,14 @@ enum AppWindowRegistry {
     /// invent a second source of truth without reading it.
     private static let swiftUIFrameKey = "NSWindow Frame main-AppWindow-1"
 
+    /// Окна, чьё содержимое уже показывали. До первого `showMain` окно держится
+    /// на `alphaValue = 0`: AppKit выводит раму при восстановлении состояния
+    /// раньше, чем SwiftUI коммитит первый кадр, а окно прозрачное
+    /// (`backgroundColor = .clear` ради стекла) — и запуск открывался пустой
+    /// рамой, в которую потом «прогружалось» приложение. Показ готового окна —
+    /// обязанность `showMain`; прячет `SceneWindowChrome.configure`.
+    fileprivate static var revealed = Set<ObjectIdentifier>()
+
     static func mainWindow() -> NSWindow? {
         let onboarding = OnboardingPanelController.shared.panel
         if let tagged = NSApp.windows.first(where: { $0.identifier?.rawValue == AppWindowRole.main.rawValue }) {
@@ -66,6 +74,13 @@ enum AppWindowRegistry {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
+        revealed.insert(ObjectIdentifier(window))
+        // Отложенный SwiftUI-апдейт исполняется и рисуется до показа: hosting
+        // view прогоняет свой апдейт в layout, поэтому окно выходит из alpha 0
+        // сразу с содержимым, а не тёмной плитой, в которую вливается контент
+        // (замерено покадрово 2026-08-19: без этого плита живёт до ~200 мс).
+        window.contentView?.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
         window.alphaValue = 1
         rememberFrame(on: window)
         if !applySavedFrame(to: window), centered {
@@ -210,6 +225,12 @@ struct SceneWindowChrome: NSViewRepresentable {
         if startHidden, window.isVisible || window.alphaValue > 0 {
             window.alphaValue = 0
             window.orderOut(nil)
+        } else if !startHidden, !AppWindowRegistry.revealed.contains(ObjectIdentifier(window)) {
+            // Ещё ни разу не показанное окно: невидимо, пока showMain не выведет
+            // его готовым. alpha, а не orderOut — спрятанному через orderOut окну
+            // SwiftUI не обязан рисовать кадры, и «покажем, когда закоммитится»
+            // никогда бы не наступило.
+            window.alphaValue = 0
         }
     }
 

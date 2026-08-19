@@ -225,8 +225,23 @@ private struct RootWindow: View {
             .background(SceneWindowChrome(role: .main, startHidden: state.showOnboarding))
             .onAppear {
                 AppStateRegistry.shared = state
-                state.bootstrap()
-                syncPresentation()
+                // На тик позже, а не в самом onAppear: bootstrap публикует
+                // (@Published) и читает диск, и обе вещи не принадлежат
+                // view-update-транзакции, внутри которой выполняется onAppear —
+                // дисковая часть к тому же растёт вместе с архивом. Первый кадр
+                // при этом не врёт: showOnboarding прочитан из Preferences ещё в
+                // init, а «пусто» от «ещё не знаем» вид отличает по
+                // recordingStore.didLoad. Замечание: «Publishing changes from
+                // within view updates» (2 шт. на запуске) издаёт НЕ bootstrap —
+                // проверено переносом, счётчик не сдвинулся; источник пока не
+                // пойман (см. WORKLOG 2026-08-19).
+                Task { @MainActor in
+                    state.bootstrap()
+                    // Показ — итерацией runloop позже: публикации bootstrap
+                    // коммитятся в этой, и окно выходит из alpha 0 уже с
+                    // данными, а не пустой рамой (AppWindowRegistry.revealed).
+                    DispatchQueue.main.async { syncPresentation() }
+                }
             }
             .onChange(of: state.showOnboarding) { _, _ in
                 syncPresentation()
