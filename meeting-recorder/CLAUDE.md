@@ -92,11 +92,41 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full table. Coordinator
 - `MenuBarPanelView` — record/stop, recent, quit
 - Настройки — не окно, а состояние панели (`AppState.paneRoute`): столбец групп шириной с колонку саммари. Вёрстка — `PropellerUI/SettingsKit.swift`, содержимое — `Sources/SettingsPane.swift`. Сцены `Settings` и `SettingsLink` в проекте больше нет; ⌘, и меню-бар идут через `SettingsOpener`
 
+### Assistant connections (MCP)
+
+A second executable ships in the bundle: `PropellerMCP` (target `MCPServer/`), a
+stdio MCP server that **only reads** `~/.meeting-recorder`. It does not need the app
+running, and it is the one process besides the app that Developer ID signs.
+
+- **What differs between clients is data, not code** — `PropellerPure/MCPClient.swift`
+  holds each client's config path, config format, marker filename and row title.
+  Adding a client is a case there, not a branch in the connector.
+- **The button writes into somebody else's config**, so both merges are pure and
+  tested: `ClaudeConfigMerge` (JSON, parse-and-rebuild) and `CodexConfigMerge`
+  (TOML, **append the section, never parse the file** — people hand-edit
+  `~/.codex/config.toml` and their comments live in it).
+- **The row's state is derived, never stored** (`MCPCellMachine`): the config is
+  someone else's file and can be rewritten without telling us. A stored "connected"
+  would go false silently, which is the one thing a checkmark must not do.
+- **Each client gets its own marker file.** The server learns who launched it from
+  a token we wrote into the `env` of our own config entry, falling back to
+  `clientInfo`. Matching client names on the substring "claude" alone made Claude
+  Code stamp Claude Desktop's marker — check `claude-code` first.
+- **The tool list is a function of the client**: ChatGPT additionally gets `search`
+  and `fetch` (OpenAI's contract, both a text and a `structuredContent` copy),
+  because its deep research path calls only those two names. Claude keeps five —
+  near-duplicates would dilute the descriptions the feature rests on.
+
+Plan and decisions: [`../plan-claude-mcp.md`](../plan-claude-mcp.md); component
+status: [`../STATE.md`](../STATE.md) §13.
+
 ### Data storage
 
 ```
 ~/.meeting-recorder/{recordings,meetings}   # people/ is legacy: no longer read/written
 ~/Library/Application Support/Meeting Recorder/{gigastt-models/,hotwords.txt,ollama/}
+# plus, from the MCP server: <client>-mcp-seen markers and the usage log. Those are
+# the only files that process writes — it never touches ~/.meeting-recorder.
 # ollama/ — the summary engine unpacked from the bundle (~97 MB) plus models/ (~3.4 GB,
 # fetched over the network). By far the largest thing the app puts on a person's disk.
 ```
