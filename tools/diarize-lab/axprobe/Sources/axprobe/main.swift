@@ -16,6 +16,10 @@
 //   axprobe find <строка>         # узлы, чей текст содержит строку (имя участника)
 //   axprobe watch [--seconds 30]  # что меняется раз в 0.5 с — так ищется подсветка
 //                                 # активного спикера
+//   axprobe trace [--seconds 60] [--interval 0.4] [--out путь]
+//                                 # JSONL-трасса: одна строка на опрос, вход для
+//                                 # решения CallWindowJournal (PropellerPure).
+//                                 # Из .app: open axprobe.app --args trace --seconds 120
 //
 // Разрешение выдаётся **вызывающему** процессу, а не Zoom. Из терминала это
 // значит: разрешение нужно тому приложению, из которого проба запущена.
@@ -347,6 +351,110 @@ func runSpeaking(seconds: Double, say: (String) -> Void) {
     }
 }
 
+// MARK: - Трасса
+
+/// One tile (or panel row) per poll, raw. Field names are the wire contract
+/// with `CallWindowJournal.Tile` (PropellerPure) — the decision decodes these
+/// exact keys, so renaming one here means renaming it there.
+///
+/// Sizes are written un-rounded on purpose: snapping to the 40 pt grid is the
+/// decision's job, where a test can reach it. The probe's own `tileGeometry`
+/// keeps rounding because its output is for human eyes.
+struct TraceTile: Codable {
+    let role: String
+    let description: String
+    let width: Double
+    let height: Double
+    let order: Int
+    let window: String
+    let process: String
+}
+
+struct TracePoll: Codable {
+    let t: Double
+    let tiles: [TraceTile]
+}
+
+/// Everything the decision needs from one pass over the tree.
+/// Order counts per role: panel rows interleaving with tiles must not shift
+/// the tiles' places.
+func traceSnapshot() -> [TraceTile] {
+    var out: [TraceTile] = []
+    for app in zoomApps() {
+        let process = app.localizedName ?? app.bundleIdentifier ?? "?"
+        for w in windows(of: app) {
+            let window = string(w, kAXTitleAttribute as String) ?? ""
+            var budget = 20000
+            var orders: [String: Int] = [:]
+            walkElements(w, depth: 0, maxDepth: 25, budget: &budget) { e, _ in
+                let role = string(e, kAXRoleAttribute as String) ?? ""
+                guard role == "AXRow" || role == "AXTabGroup" else { return }
+                guard let d = string(e, kAXDescriptionAttribute as String)
+                        ?? string(e, kAXValueAttribute as String) else { return }
+                let order = (orders[role] ?? 0) + 1
+                orders[role] = order
+                var size = CGSize.zero
+                if let v = copyAttr(e, kAXSizeAttribute as String) {
+                    _ = AXValueGetValue(v as! AXValue, .cgSize, &size)
+                }
+                out.append(TraceTile(role: role, description: d,
+                                     width: size.width, height: size.height,
+                                     order: order, window: window, process: process))
+            }
+        }
+    }
+    return out
+}
+
+/// Writes the JSONL trace: a meta line, then one poll per line, flushed as it
+/// goes — a killed run keeps everything up to the torn last line, and the
+/// decision's reader skips that line rather than dying on it.
+func runTrace() {
+    let trusted = askForTrust()
+    let seconds = Double(flag("seconds") ?? "60") ?? 60
+    let interval = Double(flag("interval") ?? "0.4") ?? 0.4
+    let stampFormat = DateFormatter()
+    stampFormat.dateFormat = "yyyyMMdd_HHmmss"
+    let path = flag("out") ?? NSHomeDirectory()
+        + "/diarize-lab-corpus/axprobe-trace-\(stampFormat.string(from: Date())).jsonl"
+    let url = URL(fileURLWithPath: path)
+    try? FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: url.path, contents: nil)
+    guard let handle = try? FileHandle(forWritingTo: url) else { die("не открывается \(path)") }
+
+    let meta = "{\"meta\":{\"started\":\"\(Date())\",\"interval\":\(interval)," +
+               "\"seconds\":\(seconds),\"trusted\":\(trusted)}}\n"
+    handle.write(Data(meta.utf8))
+
+    guard trusted else {
+        // The trap H12 fell into twice: no permission looks like "Zoom offers
+        // nothing". The meta line records the truth, the run does not pretend.
+        handle.closeFile()
+        print("РАЗРЕШЕНИЯ НЕТ — трасса не снимается, метазапись оставлена: \(path)")
+        exit(2)
+    }
+
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let start = Date()
+    let deadline = start.addingTimeInterval(seconds)
+    var polls = 0
+    print("пишу трассу \(Int(seconds)) с, шаг \(interval) с → \(path)")
+    while Date() < deadline {
+        let t = (Date().timeIntervalSince(start) * 100).rounded() / 100
+        let poll = TracePoll(t: t, tiles: traceSnapshot())
+        if let data = try? encoder.encode(poll) {
+            handle.write(data)
+            handle.write(Data("\n".utf8))
+        }
+        polls += 1
+        Thread.sleep(forTimeInterval: interval)
+    }
+    handle.closeFile()
+    print("опросов \(polls) → \(path)")
+}
+
 // MARK: - Команды
 
 func runTrust() {
@@ -494,6 +602,7 @@ case "trust": runTrust()
 case "tree": runTree()
 case "find": runFind()
 case "watch": runWatch()
+case "trace": runTrace()
 case "report": runReport()
-default: die("axprobe trust | tree [--depth N] | find <строка> | watch [--seconds N] | report")
+default: die("axprobe trust | tree [--depth N] | find <строка> | watch [--seconds N] | trace [--seconds N] [--interval S] [--out путь] | report")
 }
