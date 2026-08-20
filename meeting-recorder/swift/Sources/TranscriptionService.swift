@@ -409,6 +409,7 @@ class TranscriptionService {
             return assembleFromStems(
                 asrSegments: asrSegments,
                 diarization: diarizedSegments,
+                journal: Self.loadCallJournal(for: audioURL),
                 progressCallback: progressCallback
             )
         }
@@ -483,6 +484,7 @@ class TranscriptionService {
     private func assembleFromStems(
         asrSegments: [ASRSegment],
         diarization: [DiarizedSegment],
+        journal: [CallWindowJournal.Span] = [],
         progressCallback: ((String) -> Void)?
     ) -> MeetingTranscriptionResult {
         let ownerName = Preferences.shared.ownerName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -500,16 +502,32 @@ class TranscriptionService {
             asrSegments: asrSegments.filter { $0.stem == .system },
             diarization: diarization
         )
+        // Журнал окна звонилки — источник атрибуции выше диаризации, и только
+        // для чужих реплик: владельца атрибутирует микрофонный стем (факт
+        // сильнее), а Zoom-имя владельца в ленту не попадает — иначе он
+        // раздваивается. Молчание журнала закрывает диаризация, как и было.
+        let ownerZoom = CallWindowJournal.ownerZoomName(
+            spans: journal,
+            ownerTurns: owner.map { (start: $0.start, end: $0.end) }
+        )
+        var journalNamed = 0
         // Кластеризации не было (не загрузилась, выключена после падения) —
         // сколько людей на той стороне, узнать нечем, и они одно имя, а не
         // угаданное число (`design/no-dead-ends.md`, Э1).
-        let others = labelled.filter { !$0.text.isEmpty }.map { segment in
-            StemMerge.Line(
+        let others = labelled.filter { !$0.text.isEmpty }.map { segment -> StemMerge.Line in
+            let fallback = diarization.isEmpty
+                ? SourceAwareSpeaker.defaultRemoteName
+                : segment.speakerLabel
+            let named = CallWindowJournal.remoteLabel(
+                midpoint: Double(segment.startTime + segment.endTime) / 2,
+                spans: journal,
+                excludingOwner: ownerZoom
+            )
+            if named != nil { journalNamed += 1 }
+            return StemMerge.Line(
                 start: Double(segment.startTime),
                 end: Double(segment.endTime),
-                speaker: diarization.isEmpty
-                    ? SourceAwareSpeaker.defaultRemoteName
-                    : segment.speakerLabel,
+                speaker: named ?? fallback,
                 text: segment.text
             )
         }
@@ -525,14 +543,40 @@ class TranscriptionService {
             )
         }
         NSLog(
-            "[TranscriptionService] лента из дорожек: %d своих + %d чужих → %d строк",
-            owner.count, others.count, persisted.count
+            "[TranscriptionService] лента из дорожек: %d своих + %d чужих (журнал назвал %d) → %d строк",
+            owner.count, others.count, journalNamed, persisted.count
         )
+        // §8.4: доля встреч с журналом и доля названных чужих реплик.
+        if !journal.isEmpty {
+            Analytics.signal("CallJournal.applied", parameters: [
+                "named": String(journalNamed),
+                "far": String(others.count),
+            ])
+        }
+        let attribution: SpeakerAttribution
+        if journalNamed > 0 {
+            attribution = .callWindow
+        } else {
+            attribution = diarization.isEmpty ? .stems : .diarized
+        }
         return MeetingTranscriptionResult(
             transcript: TranscriptionService.formatTranscriptText(from: persisted),
             mergedSegments: persisted,
-            attribution: diarization.isEmpty ? .stems : .diarized
+            attribution: attribution
         )
+    }
+
+    /// Журнал «кто говорил» из трассы окна звонилки, если наблюдатель её писал.
+    ///
+    /// Времена трассы — секунды от старта записи (якорь ставит наблюдатель),
+    /// поэтому пролёты сразу на часах транскрипта, без подгонки сдвига. Нет
+    /// файла — нет журнала, и это законное состояние: запись шла без
+    /// разрешения, не в Zoom, или наблюдатель не застал плиток.
+    private static func loadCallJournal(for audioURL: URL) -> [CallWindowJournal.Span] {
+        let traceURL = audioURL.deletingPathExtension()
+            .appendingPathExtension("calltrace.jsonl")
+        guard let data = try? Data(contentsOf: traceURL) else { return [] }
+        return CallWindowJournal.spans(from: CallWindowJournal.polls(fromJSONL: data))
     }
 
     private static func hasUsableStems(for finalAudioURL: URL) -> Bool {
