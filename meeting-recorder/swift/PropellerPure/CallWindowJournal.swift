@@ -156,7 +156,34 @@ public enum CallWindowJournal {
 
     // MARK: - Decision
 
-    /// The candidate speaker of one poll, or nil for "don't know".
+    /// Why a poll yielded no name. Silence is a legal answer, but an
+    /// unexplained one is invisible to telemetry (§8.4 wants "how often did
+    /// the observer say it found no tiles") and to the lab — a dual-monitor
+    /// Zoom that never speaks must not look like an empty desk.
+    public enum Silence: String, Codable, CaseIterable, Sendable {
+        /// No named video tiles at all (screen share, no meeting).
+        case noTiles
+        /// One unlabelled tile — nothing to compare against (mini window
+        /// after minimizing, a floating thumbnail).
+        case loneTile
+        /// Named tiles in two windows at once (dual monitor, foreign window).
+        case twoWindows
+        /// Two tiles both carrying the speaker label.
+        case twoLabels
+        /// No label and the area spread below threshold (gallery view).
+        case flatAreas
+        /// The area signal fired but the top is shared.
+        case areaTie
+        /// The chosen candidate's tail matched a muted marker.
+        case muted
+    }
+
+    public enum Verdict: Equatable, Sendable {
+        case speaker(String)
+        case silent(Silence)
+    }
+
+    /// The verdict of one poll: a name, or a reasoned "don't know".
     ///
     /// Two signals, in measured order of trust:
     ///
@@ -173,38 +200,36 @@ public enum CallWindowJournal {
     /// the label in **0 of 626 polls** — it would have signed a whole meeting
     /// with the wrong names. Equal tiles without a label are silence.
     ///
-    /// Nil is also returned for: no tiles, a lone unlabelled tile (a mini
-    /// window after minimizing, a screen-share thumbnail), tiles from two
-    /// windows at once (plan §10.1: never attribute names from someone
-    /// else's window), or a chosen candidate whose tail says the microphone
-    /// is off.
-    static func candidate(in poll: Poll, tuning: Tuning) -> String? {
+    /// Silence is returned with its reason: no tiles, a lone unlabelled tile
+    /// (a mini window after minimizing, a screen-share thumbnail), tiles from
+    /// two windows at once (plan §10.1: never attribute names from someone
+    /// else's window), two labels, a flat or tied geometry, or a chosen
+    /// candidate whose tail says the microphone is off.
+    public static func verdict(in poll: Poll, tuning: Tuning = Tuning()) -> Verdict {
         let named: [(name: String, tile: Tile)] = poll.tiles.compactMap { tile in
             guard tile.role == "AXTabGroup",
                   let name = name(fromDescription: tile.description) else { return nil }
             return (name, tile)
         }
-        guard !named.isEmpty else { return nil }
+        guard !named.isEmpty else { return .silent(.noTiles) }
         guard Set(named.map { $0.tile.process + "\u{1}" + $0.tile.window }).count == 1 else {
-            return nil
+            return .silent(.twoWindows)
         }
 
-        func tail(_ tile: Tile) -> String {
-            statusTail(ofDescription: tile.description).lowercased()
-        }
         func tailContains(_ tile: Tile, anyOf markers: [String]) -> Bool {
-            markers.contains { !$0.isEmpty && tail(tile).contains($0.lowercased()) }
+            let tail = statusTail(ofDescription: tile.description).lowercased()
+            return markers.contains { !$0.isEmpty && tail.contains($0.lowercased()) }
         }
 
-        let chosen: (name: String, tile: Tile)?
+        let chosen: (name: String, tile: Tile)
         let labelled = named.filter { tailContains($0.tile, anyOf: tuning.speakerMarkers) }
         if labelled.count == 1 {
             chosen = labelled[0]
         } else if labelled.count > 1 {
-            chosen = nil
+            return .silent(.twoLabels)
         } else {
             // No label — the speaker-view path: geometry needs a comparison.
-            guard named.count >= 2 else { return nil }
+            guard named.count >= 2 else { return .silent(.loneTile) }
             func snappedArea(_ tile: Tile) -> Double {
                 let step = max(tuning.areaGridStep, 1)
                 let w = (tile.width / step).rounded(.down) * step
@@ -214,21 +239,19 @@ public enum CallWindowJournal {
             let areas = named.map { snappedArea($0.tile) }
             let maxArea = areas.max() ?? 0
             let minArea = areas.min() ?? 0
-            if minArea > 0, maxArea / minArea >= tuning.areaSpreadRatio {
-                let biggest = zip(named, areas).filter { $0.1 == maxArea }.map { $0.0 }
-                chosen = biggest.count == 1 ? biggest[0] : nil
-            } else {
-                chosen = nil
+            guard minArea > 0, maxArea / minArea >= tuning.areaSpreadRatio else {
+                return .silent(.flatAreas)
             }
+            let biggest = zip(named, areas).filter { $0.1 == maxArea }.map { $0.0 }
+            guard biggest.count == 1 else { return .silent(.areaTie) }
+            chosen = biggest[0]
         }
-        guard let chosen else { return nil }
 
         // The veto: a muted candidate yields silence, never a different name.
-        let tail = statusTail(ofDescription: chosen.tile.description).lowercased()
-        if tuning.mutedMarkers.contains(where: { !$0.isEmpty && tail.contains($0.lowercased()) }) {
-            return nil
+        if tailContains(chosen.tile, anyOf: tuning.mutedMarkers) {
+            return .silent(.muted)
         }
-        return chosen.name
+        return .speaker(chosen.name)
     }
 
     /// Trace → journal. A span is emitted only after the same name survives
@@ -236,37 +259,65 @@ public enum CallWindowJournal {
     /// animation produces and is dropped whole. Names key the runs, so a
     /// participant renaming mid-meeting starts a new span instead of gluing
     /// two people into one.
+    ///
+    /// A span's end is stretched past its last confirming poll by half the
+    /// gap to the poll that broke the run, capped at half a poll step: the
+    /// speech was observed *until the change*, not until the last look, and
+    /// closing at the last look shaved up to one step per span — enough to
+    /// read as coverage lost to the meeting when it was lost to the ruler.
+    /// The half is chosen, not measured; a run ended by the trace itself is
+    /// not stretched.
     public static func spans(from polls: [Poll], tuning: Tuning = Tuning()) -> [Span] {
+        let sorted = polls.sorted { $0.t < $1.t }
+        let deltas = zip(sorted.dropFirst(), sorted).map { $0.t - $1.t }.filter { $0 > 0 }.sorted()
+        let step = deltas.isEmpty ? 0 : deltas[deltas.count / 2]
+
         var out: [Span] = []
         var runName: String?
         var runStart = 0.0
         var runEnd = 0.0
         var runPolls = 0
 
-        func flush() {
+        func flush(breakAt: Double?) {
             if let name = runName, runPolls >= tuning.minRunPolls {
-                out.append(Span(start: runStart, end: runEnd, name: name))
+                var end = runEnd
+                if let breakAt { end += min(breakAt - runEnd, step) / 2 }
+                out.append(Span(start: runStart, end: end, name: name))
             }
             runName = nil
             runPolls = 0
         }
 
-        for poll in polls.sorted(by: { $0.t < $1.t }) {
-            let candidate = candidate(in: poll, tuning: tuning)
-            if let candidate, candidate == runName {
+        for poll in sorted {
+            var name: String?
+            if case .speaker(let n) = verdict(in: poll, tuning: tuning) { name = n }
+            if let name, name == runName {
                 runEnd = poll.t
                 runPolls += 1
             } else {
-                flush()
-                if let candidate {
-                    runName = candidate
+                flush(breakAt: poll.t)
+                if let name {
+                    runName = name
                     runStart = poll.t
                     runEnd = poll.t
                     runPolls = 1
                 }
             }
         }
-        flush()
+        flush(breakAt: nil)
+        return out
+    }
+
+    /// How often the observer stayed silent, by reason — the lab preview of
+    /// the §8.4 telemetry.
+    public static func silenceCounts(from polls: [Poll],
+                                     tuning: Tuning = Tuning()) -> [Silence: Int] {
+        var out: [Silence: Int] = [:]
+        for poll in polls {
+            if case .silent(let reason) = verdict(in: poll, tuning: tuning) {
+                out[reason, default: 0] += 1
+            }
+        }
         return out
     }
 }

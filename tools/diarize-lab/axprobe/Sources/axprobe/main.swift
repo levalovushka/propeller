@@ -423,7 +423,11 @@ func runTrace() {
     FileManager.default.createFile(atPath: url.path, contents: nil)
     guard let handle = try? FileHandle(forWritingTo: url) else { die("не открывается \(path)") }
 
-    let meta = "{\"meta\":{\"started\":\"\(Date())\",\"interval\":\(interval)," +
+    // startedUnix is the machine anchor: aligning a trace to a recording must
+    // be arithmetic over two clocks, not a parameter fitted to the very signal
+    // being scored (the first SAER had to calibrate the offset for want of it).
+    let meta = "{\"meta\":{\"started\":\"\(Date())\"," +
+               "\"startedUnix\":\(Date().timeIntervalSince1970),\"interval\":\(interval)," +
                "\"seconds\":\(seconds),\"trusted\":\(trusted)}}\n"
     handle.write(Data(meta.utf8))
 

@@ -35,9 +35,11 @@ final class CallWindowJournalTests: XCTestCase {
         // Speaker view, no labels: geometry decides. The one transition poll
         // with equal tiles is honest silence — order used to decide there and
         // was refuted on the live gallery trace (0 of 626 polls).
+        // Ends stretch half a step past the last look (the break poll at 2.4
+        // ended the first run); the trace's own end is not stretched.
         let spans = CallWindowJournal.spans(from: try trace("synthetic-two-speakers.jsonl"))
         XCTAssertEqual(spans, [
-            CallWindowJournal.Span(start: 0.0, end: 2.0, name: "Levon Lobanov"),
+            CallWindowJournal.Span(start: 0.0, end: 2.2, name: "Levon Lobanov"),
             CallWindowJournal.Span(start: 2.8, end: 4.8, name: "Лева Ловушка"),
         ])
     }
@@ -48,9 +50,9 @@ final class CallWindowJournalTests: XCTestCase {
         // third person is dropped by smoothing like any other outburst.
         let spans = CallWindowJournal.spans(from: try trace("synthetic-gallery-marker.jsonl"))
         XCTAssertEqual(spans, [
-            CallWindowJournal.Span(start: 0.0, end: 1.6, name: "Анна Пример"),
-            CallWindowJournal.Span(start: 2.0, end: 3.6, name: "Борис Пример"),
-            CallWindowJournal.Span(start: 4.4, end: 5.2, name: "Борис Пример"),
+            CallWindowJournal.Span(start: 0.0, end: 1.8, name: "Анна Пример"),
+            CallWindowJournal.Span(start: 2.0, end: 3.8, name: "Борис Пример"),
+            CallWindowJournal.Span(start: 4.4, end: 5.4, name: "Борис Пример"),
             CallWindowJournal.Span(start: 5.6, end: 7.2, name: "Вера Пример"),
         ])
     }
@@ -76,7 +78,7 @@ final class CallWindowJournalTests: XCTestCase {
         // without a label are silence — reorder them all you want.
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<5 {
-            polls.append(.init(t: Double(i) * 0.4, tiles: [
+            polls.append(.init(t: Double(i * 4) / 10, tiles: [
                 tile(levon, w: 720, h: 400, order: 1),
                 tile(leva, w: 720, h: 400, order: 2),
             ]))
@@ -86,7 +88,7 @@ final class CallWindowJournalTests: XCTestCase {
             tile(levon, w: 720, h: 400, order: 2),
         ]))
         for i in 6..<11 {
-            polls.append(.init(t: Double(i) * 0.4, tiles: [
+            polls.append(.init(t: Double(i * 4) / 10, tiles: [
                 tile(levon, w: 720, h: 400, order: 1),
                 tile(leva, w: 720, h: 400, order: 2),
             ]))
@@ -97,7 +99,7 @@ final class CallWindowJournalTests: XCTestCase {
     func testОдиночныйВыбросПлощадиНеСоздаётПролёт() {
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<5 {
-            polls.append(.init(t: Double(i) * 0.4, tiles: [
+            polls.append(.init(t: Double(i * 4) / 10, tiles: [
                 tile(levon, w: 1080, h: 600, order: 1),
                 tile(leva, w: 160, h: 80, order: 2),
             ]))
@@ -108,7 +110,7 @@ final class CallWindowJournalTests: XCTestCase {
             tile(levon, w: 160, h: 80, order: 2),
         ]))
         for i in 6..<11 {
-            polls.append(.init(t: Double(i) * 0.4, tiles: [
+            polls.append(.init(t: Double(i * 4) / 10, tiles: [
                 tile(levon, w: 1080, h: 600, order: 1),
                 tile(leva, w: 160, h: 80, order: 2),
             ]))
@@ -123,20 +125,22 @@ final class CallWindowJournalTests: XCTestCase {
         // starts another, it never merges two names into one person.
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
-            polls.append(.init(t: Double(i) * 0.4, tiles: [
+            polls.append(.init(t: Double(i * 4) / 10, tiles: [
                 tile(leva, w: 1080, h: 600, order: 1),
                 tile(levon, w: 160, h: 80, order: 2),
             ]))
         }
         for i in 6..<12 {
-            polls.append(.init(t: Double(i) * 0.4, tiles: [
+            polls.append(.init(t: Double(i * 4) / 10, tiles: [
                 tile("Лев Л., Звук компьютера включен, Video off", w: 1080, h: 600, order: 1),
                 tile(levon, w: 160, h: 80, order: 2),
             ]))
         }
         let spans = CallWindowJournal.spans(from: polls)
-        XCTAssertEqual(spans.map(\.name), ["Лева Ловушка", "Лев Л."])
-        XCTAssertFalse(spans.contains { $0.start < 2.0 && $0.end > 2.8 })
+        XCTAssertEqual(spans, [
+            CallWindowJournal.Span(start: 0.0, end: 2.2, name: "Лева Ловушка"),
+            CallWindowJournal.Span(start: 2.4, end: 4.4, name: "Лев Л."),
+        ])
     }
 
     func testИмяЭтоПрефиксДоПервойЗапятой() {
@@ -157,7 +161,7 @@ final class CallWindowJournalTests: XCTestCase {
         let tuning = CallWindowJournal.Tuning(mutedMarkers: ["звук выключен"])
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
-            polls.append(.init(t: Double(i) * 0.4, tiles: [
+            polls.append(.init(t: Double(i * 4) / 10, tiles: [
                 tile("Лева Ловушка, Звук выключен, Video off", w: 1080, h: 600, order: 1),
                 tile(levon, w: 160, h: 80, order: 2),
             ]))
@@ -170,7 +174,7 @@ final class CallWindowJournalTests: XCTestCase {
         // window. Two windows both showing tiles is an ambiguity, not a race.
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
-            polls.append(.init(t: Double(i) * 0.4, tiles: [
+            polls.append(.init(t: Double(i * 4) / 10, tiles: [
                 tile(levon, w: 1080, h: 600, order: 1),
                 tile(leva, w: 160, h: 80, order: 1, window: "Zoom Meeting 2"),
             ]))
@@ -182,7 +186,7 @@ final class CallWindowJournalTests: XCTestCase {
         // Two tiles both claiming Zoom's label is an ambiguity, not a race.
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
-            polls.append(.init(t: Double(i) * 0.4, tiles: [
+            polls.append(.init(t: Double(i * 4) / 10, tiles: [
                 tile(levon + ", active speaker", w: 520, h: 280, order: 1),
                 tile(leva + ", active speaker", w: 520, h: 280, order: 2),
             ]))
@@ -196,7 +200,7 @@ final class CallWindowJournalTests: XCTestCase {
         // (the minimized mini window carried no label).
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
-            polls.append(.init(t: Double(i) * 0.4, tiles: [
+            polls.append(.init(t: Double(i * 4) / 10, tiles: [
                 tile(levon + ", active speaker", w: 320, h: 180, order: 1),
             ]))
         }
@@ -208,7 +212,7 @@ final class CallWindowJournalTests: XCTestCase {
         // A stale big tile mid-transition must not outvote Zoom's own label.
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
-            polls.append(.init(t: Double(i) * 0.4, tiles: [
+            polls.append(.init(t: Double(i * 4) / 10, tiles: [
                 tile(levon, w: 1080, h: 600, order: 1),
                 tile(leva + ", active speaker", w: 160, h: 80, order: 2),
             ]))
@@ -222,7 +226,7 @@ final class CallWindowJournalTests: XCTestCase {
         let tuning = CallWindowJournal.Tuning(mutedMarkers: ["звук выключен"])
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
-            polls.append(.init(t: Double(i) * 0.4, tiles: [
+            polls.append(.init(t: Double(i * 4) / 10, tiles: [
                 tile("Лева Ловушка, Звук выключен, Video off, active speaker", w: 520, h: 280, order: 1),
                 tile(levon, w: 520, h: 280, order: 2),
             ]))
@@ -235,7 +239,7 @@ final class CallWindowJournalTests: XCTestCase {
         // fired but does not name a single person — silence, not a coin toss.
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
-            polls.append(.init(t: Double(i) * 0.4, tiles: [
+            polls.append(.init(t: Double(i * 4) / 10, tiles: [
                 tile(levon, w: 1080, h: 600, order: 1),
                 tile(leva, w: 1080, h: 600, order: 2),
                 tile("Гость, Звук компьютера включен, Video off", w: 160, h: 80, order: 3),
@@ -249,7 +253,7 @@ final class CallWindowJournalTests: XCTestCase {
         // its first row into the speaker.
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
-            polls.append(.init(t: Double(i) * 0.4, tiles: [
+            polls.append(.init(t: Double(i * 4) / 10, tiles: [
                 CallWindowJournal.Tile(role: "AXRow", description: "Лева Ловушка (Организатор, я)",
                                        width: 300, height: 40, order: 1,
                                        window: "Zoom Meeting", process: "zoom.us"),
@@ -259,6 +263,41 @@ final class CallWindowJournalTests: XCTestCase {
             ]))
         }
         XCTAssertEqual(CallWindowJournal.spans(from: polls), [])
+    }
+
+    func testМолчаниеНазываетПричину() {
+        // Telemetry must distinguish a dual-monitor Zoom from an empty desk.
+        func reason(_ tiles: [CallWindowJournal.Tile]) -> CallWindowJournal.Silence? {
+            if case .silent(let r) = CallWindowJournal.verdict(in: .init(t: 0, tiles: tiles)) {
+                return r
+            }
+            return nil
+        }
+        XCTAssertEqual(reason([]), .noTiles)
+        XCTAssertEqual(reason([tile(levon, w: 320, h: 180, order: 1)]), .loneTile)
+        XCTAssertEqual(reason([tile(levon, w: 520, h: 280, order: 1),
+                               tile(leva, w: 520, h: 280, order: 1, window: "Zoom Meeting 2")]),
+                       .twoWindows)
+        XCTAssertEqual(reason([tile(levon + ", active speaker", w: 520, h: 280, order: 1),
+                               tile(leva + ", active speaker", w: 520, h: 280, order: 2)]),
+                       .twoLabels)
+        XCTAssertEqual(reason([tile(levon, w: 720, h: 400, order: 1),
+                               tile(leva, w: 720, h: 400, order: 2)]),
+                       .flatAreas)
+        XCTAssertEqual(reason([tile(levon, w: 1080, h: 600, order: 1),
+                               tile(leva, w: 1080, h: 600, order: 2),
+                               tile("Гость, Звук", w: 160, h: 80, order: 3)]),
+                       .areaTie)
+        if case .silent(let r) = CallWindowJournal.verdict(
+            in: .init(t: 0, tiles: [
+                tile("Лева Ловушка, Звук выключен, active speaker", w: 520, h: 280, order: 1),
+                tile(levon, w: 520, h: 280, order: 2),
+            ]),
+            tuning: CallWindowJournal.Tuning(mutedMarkers: ["звук выключен"])) {
+            XCTAssertEqual(r, .muted)
+        } else {
+            XCTFail("заглушённый кандидат обязан дать причину muted")
+        }
     }
 
     func testРваныйХвостТрассыНеРоняетЧтение() {

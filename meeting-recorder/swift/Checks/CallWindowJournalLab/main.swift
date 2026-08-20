@@ -48,6 +48,7 @@ if let v = flag("muted") {
 
 let polls = CallWindowJournal.polls(fromJSONL: data)
 let spans = CallWindowJournal.spans(from: polls, tuning: tuning)
+let silences = CallWindowJournal.silenceCounts(from: polls, tuning: tuning)
 
 struct SaerSpan: Encodable {
     let speaker: String
@@ -57,6 +58,9 @@ struct SaerSpan: Encodable {
 
 struct Output: Encodable {
     let polls: Int
+    /// Polls that yielded no name, by reason — the lab preview of the §8.4
+    /// telemetry: a dual-monitor Zoom must not read as an empty desk.
+    let silences: [String: Int]
     let spans: [SaerSpan]
 }
 
@@ -64,6 +68,7 @@ let encoder = JSONEncoder()
 encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
 let output = Output(
     polls: polls.count,
+    silences: Dictionary(uniqueKeysWithValues: silences.map { ($0.key.rawValue, $0.value) }),
     spans: spans.map { SaerSpan(speaker: $0.name, start: $0.start, end: $0.end) }
 )
 print(String(decoding: try encoder.encode(output), as: UTF8.self))
