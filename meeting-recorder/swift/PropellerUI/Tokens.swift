@@ -1356,9 +1356,10 @@ public enum Tokens {
         /// numbers, and both are safe to move: nothing here is a breakpoint, and
         /// `OnboardingPanelController` takes its content size from them.
         public static let width: CGFloat = 500
-        /// Figma 130:2165. Adds up exactly: 58 + (20 mark + 16 + 78 headline) +
-        /// 28 + 168 rows + 28 + (36 button + 8 + 28 caption) + 58 = 526.
-        public static let height: CGFloat = 526
+        /// Figma 130:2165 plus one row (2026-08-20: «Доступ к приложениям»).
+        /// Adds up exactly: 58 + (20 mark + 16 + 78 headline) + 28 + 224 rows +
+        /// 28 + (36 button + 8 + 28 caption) + 58 = 582.
+        public static let height: CGFloat = 582
         /// The comps say 20; the plate takes the top step of the scale, which now
         /// sits at 14. The rule in this file is that an off-scale literal snaps
         /// rather than mints a step, and the whole scale tightening by 4 is a

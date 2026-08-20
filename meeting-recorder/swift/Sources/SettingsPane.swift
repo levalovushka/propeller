@@ -193,9 +193,43 @@ private struct CalendarAccessRow: View {
 /// называет механизм, которым это делается.
 private struct PrivacySettingsGroup: View {
     @AppStorage("analyticsEnabled") private var analyticsEnabled = true
+    /// Polled, not cached: the grant lands in System Settings, sometimes only
+    /// after a relaunch, and the tick must appear the moment it is true —
+    /// same contract as the onboarding plate's rows.
+    @State private var accessibilityGranted = AXIsProcessTrusted()
+    @State private var accessibilityPromptShown = false
+    private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         SettingsGroup("Приватность") {
+            // The door for everyone who onboarded before this row existed —
+            // the onboarding plate never shows again (plan-speaker-tags.md §6).
+            SettingsCell(
+                "Доступ к приложениям",
+                subtitle: accessibilityGranted
+                    ? "Имена спикеров читаются из окна Zoom"
+                    : "Чтобы узнавать спикеров"
+            ) {
+                if accessibilityGranted {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Разрешено")
+                } else {
+                    SettingsButton("Разрешить") {
+                        if accessibilityPromptShown {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        } else {
+                            accessibilityPromptShown = true
+                            let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as NSString
+                            _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+                        }
+                    }
+                }
+            }
+            .onReceive(poll) { _ in accessibilityGranted = AXIsProcessTrusted() }
             SettingsCell(
                 "Делиться аналитикой",
                 subtitle: "Только обезличенные данные"

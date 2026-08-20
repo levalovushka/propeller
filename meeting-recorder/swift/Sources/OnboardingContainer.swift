@@ -15,6 +15,11 @@ struct OnboardingContainer: View {
     @ObservedObject var state: AppState
 
     @State private var microphoneGranted = false
+    @State private var accessibilityGranted = false
+    /// AX has no `.notDetermined` to read: the first press shows the system
+    /// prompt, and every press after a refusal routes to System Settings —
+    /// the same door the microphone row opens after a refusal.
+    @State private var accessibilityPromptShown = false
     @State private var notificationsGranted = false
     @State private var launchAtLogin = false
     /// Прогрев захвата платится один раз за показ плиты. Опрос идёт раз в
@@ -26,6 +31,7 @@ struct OnboardingContainer: View {
     var body: some View {
         SetupView(
             microphoneGranted: microphoneGranted,
+            accessibilityGranted: accessibilityGranted,
             notificationsGranted: notificationsGranted,
             launchAtLogin: launchAtLogin,
             onGrantMicrophone: {
@@ -36,6 +42,20 @@ struct OnboardingContainer: View {
                     openSettings("Privacy_Microphone")
                 default:
                     break
+                }
+            },
+            onGrantAccessibility: {
+                // The dialogue, never the list: adding the app by hand failed
+                // twice on the machine this was measured on — only
+                // `AXIsProcessTrustedWithOptions` reliably seats the grant
+                // (plan-speaker-tags.md §6). The grant may land only after a
+                // relaunch; the polled tick simply appears when it is true.
+                if accessibilityPromptShown {
+                    openSettings("Privacy_Accessibility")
+                } else {
+                    accessibilityPromptShown = true
+                    let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as NSString
+                    _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
                 }
             },
             onGrantNotifications: {
@@ -99,6 +119,7 @@ struct OnboardingContainer: View {
 
     private func refreshGrants() {
         microphoneGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        accessibilityGranted = AXIsProcessTrusted()
         warmUpCaptureIfGranted()
 
         UNUserNotificationCenter.current().getNotificationSettings { settings in

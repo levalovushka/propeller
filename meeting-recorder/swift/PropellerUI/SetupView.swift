@@ -39,26 +39,32 @@ import SwiftUI
 /// a permission dialogue.
 public struct SetupView: View {
     var microphoneGranted: Bool
+    var accessibilityGranted: Bool
     var notificationsGranted: Bool
     var launchAtLogin: Bool
     var onGrantMicrophone: () -> Void
+    var onGrantAccessibility: () -> Void
     var onGrantNotifications: () -> Void
     var onSetLaunchAtLogin: (Bool) -> Void
     var onStart: () -> Void
 
     public init(
         microphoneGranted: Bool = false,
+        accessibilityGranted: Bool = false,
         notificationsGranted: Bool = false,
         launchAtLogin: Bool = false,
         onGrantMicrophone: @escaping () -> Void = {},
+        onGrantAccessibility: @escaping () -> Void = {},
         onGrantNotifications: @escaping () -> Void = {},
         onSetLaunchAtLogin: @escaping (Bool) -> Void = { _ in },
         onStart: @escaping () -> Void = {}
     ) {
         self.microphoneGranted = microphoneGranted
+        self.accessibilityGranted = accessibilityGranted
         self.notificationsGranted = notificationsGranted
         self.launchAtLogin = launchAtLogin
         self.onGrantMicrophone = onGrantMicrophone
+        self.onGrantAccessibility = onGrantAccessibility
         self.onGrantNotifications = onGrantNotifications
         self.onSetLaunchAtLogin = onSetLaunchAtLogin
         self.onStart = onStart
@@ -130,13 +136,19 @@ public struct SetupView: View {
             cell("Доступ к микрофону", "Без него запись не начнётся") {
                 grantControl(granted: microphoneGranted, action: onGrantMicrophone)
             }
-            // Not «скажем, если что-то сломается», which was the old line and was
-            // simply untrue: none of the five reasons the app notifies about is a
-            // breakage (`PushPolicy.Kind`). The one that matters is this — without
-            // the grant there is nowhere to press «Не записывать», so an
-            // auto-started recording pulls the window over whatever you are doing
-            // instead (`PushPolicy.surface`).
-            cell("Push-уведомления", "Отказаться, если запись началась") {
+            // Above the pushes by decision (2026-08-20): permissions grouped by
+            // weight, and this one earns names in the feed. Optional — the app
+            // works whole without it, and a wall is legal only where there is
+            // no product behind it (`design/no-dead-ends.md`); whether it stays
+            // optional is an open question the plan carries (§6).
+            cell("Доступ к приложениям", "Чтобы узнавать спикеров") {
+                grantControl(granted: accessibilityGranted, action: onGrantAccessibility)
+            }
+            // «Только важное» — owner's wording (2026-08-20). The old line
+            // explained the mechanism; this one states the promise, and the
+            // promise is held by `PushPolicy.Kind` being five reasons, none
+            // of them noise.
+            cell("Push-уведомления", "Только важное") {
                 grantControl(granted: notificationsGranted, action: onGrantNotifications)
             }
             // No second line, and the title is the one the settings pane already
