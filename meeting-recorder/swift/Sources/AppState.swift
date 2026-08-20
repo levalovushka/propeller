@@ -693,6 +693,20 @@ class AppState: ObservableObject {
             refreshStorageUsage()
             activeRecordingID = entry.id
             selectedRecordingID = entry.id
+            // Наблюдатель окна звонилки (plan-speaker-tags.md §5): трасса плиток
+            // с именами пишется рядом с записью, пока запись идёт — после встречи
+            // сигнал не снять, окно закрыто. Включается только когда детект видит
+            // встречу именно в Zoom («zoom» — строка таблицы MeetingPlatform.all):
+            // имена из чужого окна не читаются (§10.1). Без права «Универсального
+            // доступа» файла просто нет — наблюдатель молчит, не спрашивает.
+            // Звука он не касается.
+            if meetingDetector.activePlatformID == "zoom" {
+                CallWindowObserver.shared.start(
+                    recordingID: entry.id,
+                    anchor: Date(),
+                    directory: URL(fileURLWithPath: Preferences.shared.recordingsPath)
+                )
+            }
             // Началась встреча — панель показывает её, даже если в ней были
             // открыты настройки. «Новая запись» нажата из того же рельса, и
             // ничего не произошедшее на экране читается как несработавшая кнопка.
@@ -805,6 +819,8 @@ class AppState: ObservableObject {
 
         stopDisplayTimer()
         NotchController.shared.stopRecording()
+        // До удаления файлов: пишущий наблюдатель воскресил бы стёртую трассу.
+        CallWindowObserver.shared.stop()
         recorder.setMeteringDesired(false)
         isRecording = false
         activeRecordingID = nil
@@ -854,6 +870,7 @@ class AppState: ObservableObject {
 
         stopDisplayTimer()
         NotchController.shared.stopRecording()
+        CallWindowObserver.shared.stop()
         recorder.setMeteringDesired(false)
         isRecording = false
         activeRecordingID = nil
