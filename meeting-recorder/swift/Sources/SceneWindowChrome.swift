@@ -149,19 +149,23 @@ enum AppWindowRegistry {
     /// honoured — including one that happens to be an old factory size. That is
     /// the deliberate direction of the trade: returning somebody's window at the
     /// wrong size is worse than opening at a size we no longer ship.
+    /// **Which key, measured rather than assumed.** A trace of one resize on
+    /// 2026-08-20 showed the SwiftUI key following the drag (797 → 884 → 879 pt)
+    /// while our own key never moved: `persistFrame` is not reaching it. So
+    /// "ours first" meant restoring a frame from whenever our key was last
+    /// written and throwing away the size the person had just set. When the two
+    /// disagree, the one AppKit keeps current wins
+    /// (`WindowFrameProvenance.preferredFrame`).
     private static func applySavedFrame(to window: NSWindow) -> Bool {
         let ownKey = "NSWindow Frame \(frameAutosaveName)"
-        if let own = UserDefaults.standard.string(forKey: ownKey), !isStaleOwnPlacement(own) {
-            window.setFrame(from: own)
-            return true
-        }
-        if let swiftUI = UserDefaults.standard.string(forKey: swiftUIFrameKey),
-           !isStaleOwnPlacement(swiftUI) {
-            window.setFrame(from: swiftUI)
-            persistFrame(window)
-            return true
-        }
-        return false
+        let chosen = WindowFrameProvenance.preferredFrame(
+            own: UserDefaults.standard.string(forKey: ownKey),
+            swiftUI: UserDefaults.standard.string(forKey: swiftUIFrameKey)
+        )
+        guard let chosen, !isStaleOwnPlacement(chosen) else { return false }
+        window.setFrame(from: chosen)
+        persistFrame(window)
+        return true
     }
 
     private static let placedByUsKey = "PropellerMainFramePlacedByUs"

@@ -27,6 +27,39 @@ public enum WindowFrameProvenance {
         return CGSize(width: width, height: height)
     }
 
+    /// Which of the two saved frames should the window open at?
+    ///
+    /// There are two keys for one window: ours (`NSWindow Frame PropellerMain`)
+    /// and the one SwiftUI made (`main-AppWindow-1`). Ours was read first, on
+    /// the assumption that it is the maintained one. **Measured 2026-08-20, it
+    /// is not:** across one resize the SwiftUI key tracked the drag live
+    /// (797 → 884 → 879 pt) while ours never moved off the frame it was last
+    /// written with. So preferring ours meant opening at a size nobody had
+    /// chosen since the day that key was last written, which is exactly the
+    /// complaint — «растянул, вышел, открылось дефолтным».
+    ///
+    /// The rule therefore is *freshness by disagreement*: if the two keys
+    /// disagree, the one AppKit keeps current wins. They agree in the ordinary
+    /// case, and then it does not matter which is returned.
+    ///
+    /// This does not make the write side correct — our key still needs to be
+    /// maintained, or the fallback is load-bearing forever. It makes the read
+    /// side stop discarding a size the person set.
+    public static func preferredFrame(own: String?, swiftUI: String?) -> String? {
+        switch (own, swiftUI) {
+        case (nil, nil): return nil
+        case (let own?, nil): return own
+        case (nil, let swiftUI?): return swiftUI
+        case (let own?, let swiftUI?):
+            guard let ownSize = size(of: own), let swiftUISize = size(of: swiftUI) else {
+                return size(of: own) == nil ? swiftUI : own
+            }
+            let sameSize = abs(ownSize.width - swiftUISize.width) < 1
+                && abs(ownSize.height - swiftUISize.height) < 1
+            return sameSize ? own : swiftUI
+        }
+    }
+
     /// May this saved frame be replaced by the current opening size?
     ///
     /// Only when both hold: it is character-for-character the frame we placed

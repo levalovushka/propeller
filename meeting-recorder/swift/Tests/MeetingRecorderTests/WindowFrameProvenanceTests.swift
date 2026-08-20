@@ -73,6 +73,40 @@ final class WindowFrameProvenanceTests: XCTestCase {
         )
     }
 
+    // MARK: - Which of the two keys
+
+    /// The measurement this rule comes from: across one resize the SwiftUI key
+    /// followed the drag while ours stood still. Preferring ours is how a size
+    /// somebody had just set got thrown away on reopen.
+    func testWhenTheKeysDisagreeTheLiveOneWins() {
+        let stale = "1833 -10 797 760 1512 -60 1920 1050"
+        let live = "204 33 879 760 0 0 1512 949"
+        XCTAssertEqual(WindowFrameProvenance.preferredFrame(own: stale, swiftUI: live), live)
+    }
+
+    /// Same size, different origin — the window moved, not resized. Nothing to
+    /// choose between, so our own key is kept and the origin question is left
+    /// to AppKit.
+    func testTheSameSizeIsNotADisagreement() {
+        let own = "1833 -10 797 760 1512 -60 1920 1050"
+        let moved = "204 33 797 760 0 0 1512 949"
+        XCTAssertEqual(WindowFrameProvenance.preferredFrame(own: own, swiftUI: moved), own)
+    }
+
+    func testOneKeyMissingIsNoChoiceAtAll() {
+        let frame = "0 0 920 760 0 0 1440 900"
+        XCTAssertEqual(WindowFrameProvenance.preferredFrame(own: frame, swiftUI: nil), frame)
+        XCTAssertEqual(WindowFrameProvenance.preferredFrame(own: nil, swiftUI: frame), frame)
+        XCTAssertNil(WindowFrameProvenance.preferredFrame(own: nil, swiftUI: nil))
+    }
+
+    /// An unreadable key must not win by being unreadable.
+    func testUnreadableLosesToReadable() {
+        let good = "0 0 920 760 0 0 1440 900"
+        XCTAssertEqual(WindowFrameProvenance.preferredFrame(own: "junk", swiftUI: good), good)
+        XCTAssertEqual(WindowFrameProvenance.preferredFrame(own: good, swiftUI: "junk"), good)
+    }
+
     // MARK: - Parsing
 
     func testAFrameStringYieldsItsSize() {
