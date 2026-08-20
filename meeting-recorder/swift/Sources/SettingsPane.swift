@@ -581,7 +581,6 @@ private struct StorageSettingsGroup: View {
     @AppStorage("recordingsPath") private var recordingsPath = ""
     @AppStorage("peoplePagesPath") private var peoplePagesPath = ""
     @AppStorage("audioRetentionMode") private var audioRetentionMode = AudioRetentionMode.afterTranscript.rawValue
-    @AppStorage("audioRetentionDays") private var audioRetentionDays = AudioRetention.defaultDays
     @State private var showingClearConfirm = false
 
     /// Сколько заберёт «Очистить» — не то же, что «Аудио на диске»: у идущей
@@ -632,35 +631,23 @@ private struct StorageSettingsGroup: View {
                 }
             }
 
-            SettingsCell("Хранить аудио", subtitle: retentionHelp) {
-                HStack(spacing: Tokens.Space.s8) {
-                    Picker("", selection: $audioRetentionMode) {
-                        ForEach(AudioRetentionMode.allCases) { mode in
-                            Text(mode.displayName).tag(mode.rawValue)
-                        }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                    if audioRetentionMode == AudioRetentionMode.afterDays.rawValue {
-                        Stepper(
-                            "\(audioRetentionDays) дн.",
-                            value: $audioRetentionDays,
-                            in: AudioRetention.dayRange
-                        )
-                        .fixedSize()
+            // Подписи под строкой нет намеренно: два пункта по два слова
+            // объясняют себя сами, а абзац под ними объяснял бы выбор, которого
+            // больше не осталось.
+            SettingsCell("Хранить аудио") {
+                Picker("", selection: $audioRetentionMode) {
+                    ForEach(AudioRetentionMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode.rawValue)
                     }
                 }
-            }
-            .onChange(of: audioRetentionDays) { _, val in
-                // Через `Preferences`, а не только `@AppStorage`: там живёт
-                // приведение к допустимому диапазону, и записанное руками в
-                // defaults число обязано проходить через него.
-                Preferences.shared.audioRetentionDays = val
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .fixedSize()
             }
             .onChange(of: audioRetentionMode) { _, val in
-                // Тоже через `Preferences`: там выбранное «Столько дней»
-                // получает своё число, по которому выбор человека потом
-                // отличают от дефолта (`AudioRetention.storedMode`).
+                // Через `Preferences`, а не только `@AppStorage`: там живёт
+                // разбор записанного (`AudioRetention.storedMode`), и выбор
+                // обязан проходить через то же место, что и чтение.
                 Preferences.shared.audioRetentionMode =
                     AudioRetentionMode(rawValue: val) ?? .afterTranscript
             }
@@ -697,17 +684,6 @@ private struct StorageSettingsGroup: View {
         markdownOutputFormat == MarkdownOutputFormat.obsidian.rawValue
             ? "YAML frontmatter + [[wikilinks]] для vault Obsidian."
             : "Читаемый markdown: заголовок, участники, расшифровка. По умолчанию для обмена."
-    }
-
-    private var retentionHelp: String {
-        switch AudioRetentionMode(rawValue: audioRetentionMode) ?? .keep {
-        case .keep:
-            return "Аудио не удаляется само. Освободить место можно кнопкой выше."
-        case .afterTranscript:
-            return "Звук уходит, как только расшифровка и спикеры готовы. Слушать встречу потом будет нечем."
-        case .afterDays:
-            return "Через \(audioRetentionDays) дн. звук уходит у встреч, которым он больше не нужен. Расшифровки и конспекты остаются."
-        }
     }
 
     private func pathCell(

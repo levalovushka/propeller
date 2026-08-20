@@ -433,7 +433,6 @@ class RecordingStore: ObservableObject {
     @discardableResult
     func applyAudioRetention(now: Date = Date()) -> Int {
         let mode = Preferences.shared.audioRetentionMode
-        guard mode != .keep else { return 0 }
         let candidates = recordings.map {
             AudioRetention.Candidate(
                 id: $0.id,
@@ -443,12 +442,7 @@ class RecordingStore: ObservableObject {
                 hasAudio: $0.audioFileExists
             )
         }
-        let expired = Set(AudioRetention.expired(
-            candidates,
-            mode: mode,
-            days: Preferences.shared.audioRetentionDays,
-            now: now
-        ))
+        let expired = Set(AudioRetention.expired(candidates, mode: mode, now: now))
         guard !expired.isEmpty else { return 0 }
         let fm = FileManager.default
         for entry in recordings where expired.contains(entry.id) {

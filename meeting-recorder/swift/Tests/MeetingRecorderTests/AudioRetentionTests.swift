@@ -24,37 +24,36 @@ final class AudioRetentionTests: XCTestCase {
         )
     }
 
-    // MARK: - Дефолт
+    // MARK: - Выбор из двух
 
-    func testПоУмолчаниюОбновлениеНеУноситНиОдногоФайла() {
-        // Единственный дефолт, который можно поставить, не спросив человека: у
-        // апдейта нет способа спросить, а retention с любым N в первый же запуск
-        // прошёл бы по всему уже лежащему архиву.
-        let archive = (0 ..< 50).map { done("m\($0)", daysAgo: $0 * 10) }
-        XCTAssertEqual(AudioRetention.expired(archive, mode: .keep, now: now), [])
+    func testВыбораКромеДвухРежимовНет() {
+        // Третий пункт («хранить всегда») удалён решением 2026-08-20: настройка,
+        // которой никто не пользуется, — это ещё один способ получить архив,
+        // ведущий себя иначе, чем думает владелец.
+        XCTAssertEqual(AudioRetentionMode.allCases, [.afterTranscript, .afterDays])
     }
 
-    func testРазумныйДефолтСрокаНазванЧисломАНеПодразумевается() {
-        XCTAssertEqual(AudioRetention.defaultDays, 30)
-        XCTAssertTrue(AudioRetention.dayRange.contains(AudioRetention.defaultDays))
+    func testСрокНазванЧисломАНеПодразумевается() {
+        XCTAssertEqual(AudioRetention.days, 30)
     }
 
-    // MARK: - Через N дней
+    func testСегментедНеПревращаетсяВКолбасу() {
+        // Что человек увидел бы: два пункта разной длины растягивают сегментед и
+        // ломают ряд настроек. Мера грубая, но она ловит именно это.
+        for mode in AudioRetentionMode.allCases {
+            XCTAssertLessThanOrEqual(mode.displayName.count, 14, mode.rawValue)
+            XCTAssertFalse(mode.displayName.isEmpty)
+        }
+    }
 
-    func testСрокИстекаетВДеньКогдаПрошлоРовноN() {
+    // MARK: - Через тридцать дней
+
+    func testСрокИстекаетВДеньКогдаПрошлоРовноТридцать() {
         let candidates = [done("свежая", daysAgo: 29), done("истёкшая", daysAgo: 30)]
         XCTAssertEqual(
-            AudioRetention.expired(candidates, mode: .afterDays, days: 30, now: now),
+            AudioRetention.expired(candidates, mode: .afterDays, now: now),
             ["истёкшая"]
         )
-    }
-
-    func testНастройкаНеУмеетВыставитьНольДней() {
-        // Ноль означал бы `afterTranscript`, сказанный другим способом. Двух
-        // путей к одному поведению не бывает: человек выключит один и удивится.
-        XCTAssertEqual(AudioRetention.clampedDays(0), 1)
-        XCTAssertEqual(AudioRetention.clampedDays(-5), 1)
-        XCTAssertEqual(AudioRetention.clampedDays(10_000), 365)
     }
 
     // MARK: - Сразу после расшифровки
@@ -73,6 +72,58 @@ final class AudioRetentionTests: XCTestCase {
         )
     }
 
+    // MARK: - Записанное в прежние дни
+
+    func testПервыйЗапускЗабываетОтветНаВопросКоторогоБольшеНет() {
+        // Что человек видел: настройки показывали «Столько дней · 30», хотя
+        // продукт живёт по `afterTranscript`. Дефолт применяется только там, где
+        // ключа нет, — записанному 17 августа значению смена дефолта иначе не
+        // сказала бы ничего.
+        XCTAssertEqual(
+            AudioRetention.storedMode(raw: "afterDays", resetDone: false),
+            .reset(.afterTranscript)
+        )
+        XCTAssertEqual(
+            AudioRetention.storedMode(raw: "keep", resetDone: false),
+            .reset(.afterTranscript)
+        )
+    }
+
+    func testСбросПроисходитОдинРазИНеСъедаетВыборЧеловека() {
+        // Иначе выбранные тридцать дней возвращались бы к дефолту каждый запуск,
+        // и настройка вела бы себя как испорченная.
+        XCTAssertEqual(
+            AudioRetention.storedMode(raw: "afterDays", resetDone: true),
+            .use(.afterDays)
+        )
+        XCTAssertEqual(
+            AudioRetention.storedMode(raw: "afterTranscript", resetDone: true),
+            .use(.afterTranscript)
+        )
+    }
+
+    func testПустыеНастройкиНеПревращаютДефолтВВыбор() {
+        // Ничего не записано — ничего и не записываем: запись на чтении сделала
+        // бы нынешний дефолт выбором человека, и следующая его смена так же
+        // молча прошла бы мимо.
+        XCTAssertEqual(AudioRetention.storedMode(raw: nil, resetDone: true), .use(.afterTranscript))
+        XCTAssertEqual(AudioRetention.storedMode(raw: "", resetDone: true), .use(.afterTranscript))
+    }
+
+    func testУдалённыйРежимНеОставляетСегментедПустым() {
+        // «Всегда» удалён, но в defaults он ещё может лежать — своей рукой или с
+        // машины, где сброс уже прошёл. Сегментед держит строку из defaults
+        // напрямую, и незнакомое значение не выбрало бы ни один из двух пунктов.
+        XCTAssertEqual(
+            AudioRetention.storedMode(raw: "keep", resetDone: true),
+            .reset(.afterTranscript)
+        )
+        XCTAssertEqual(
+            AudioRetention.storedMode(raw: "afterMonths", resetDone: true),
+            .reset(.afterTranscript)
+        )
+    }
+
     // MARK: - Кого нельзя трогать ни при каком сроке
 
     func testНиОднаСтадияНуждающаясяВЗвукеНеТеряетЕгоНиПриКакомСроке() {
@@ -87,10 +138,8 @@ final class AudioRetentionTests: XCTestCase {
                     date: now.addingTimeInterval(-10 * 365 * 86_400),
                     stage: stage, hasTranscript: hasTranscript, hasAudio: true
                 )
-                for mode in [AudioRetentionMode.afterTranscript, .afterDays] {
-                    let expired = AudioRetention.expired(
-                        [candidate], mode: mode, days: 1, now: now
-                    )
+                for mode in AudioRetentionMode.allCases {
+                    let expired = AudioRetention.expired([candidate], mode: mode, now: now)
                     guard !expired.isEmpty else { continue }
                     XCTAssertTrue(
                         AudioReclaim.isExpendable(stage: stage, hasTranscript: hasTranscript),
@@ -108,7 +157,7 @@ final class AudioRetentionTests: XCTestCase {
             id: "пишется", date: now.addingTimeInterval(-100 * 86_400),
             stage: .recording, hasTranscript: true, hasAudio: true
         )
-        XCTAssertEqual(AudioRetention.expired([live], mode: .afterDays, days: 1, now: now), [])
+        XCTAssertEqual(AudioRetention.expired([live], mode: .afterDays, now: now), [])
         XCTAssertEqual(AudioRetention.expired([live], mode: .afterTranscript, now: now), [])
     }
 
@@ -116,6 +165,6 @@ final class AudioRetentionTests: XCTestCase {
         // Иначе счётчик «освободили у N встреч» врёт каждый раз: у половины
         // архива забирать уже нечего.
         let already = done("аудио-уже-нет", daysAgo: 100, hasAudio: false)
-        XCTAssertEqual(AudioRetention.expired([already], mode: .afterDays, days: 30, now: now), [])
+        XCTAssertEqual(AudioRetention.expired([already], mode: .afterDays, now: now), [])
     }
 }

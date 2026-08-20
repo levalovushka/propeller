@@ -137,23 +137,29 @@ class Preferences {
     ///
     /// Дефолт — `afterTranscript` (решение владельца 2026-08-17): слушать записи
     /// приложение не даёт и не будет, значит звук, переживший расшифровку, никому
-    /// не нужен. Разбор и отвергнутые доводы — в доке `AudioRetention`.
+    /// не нужен. Второй и последний режим — тридцать дней. Разбор и отвергнутые
+    /// доводы — в доке `AudioRetention`.
     var audioRetentionMode: AudioRetentionMode {
         get {
-            AudioRetentionMode(rawValue: defaults.string(forKey: "audioRetentionMode") ?? "")
-                ?? .afterTranscript
+            // Записанному значению верят не всегда: за 17–18 августа режим
+            // сменился трижды, а `keep` и выбор числа дней потом удалили совсем.
+            // Правило и разбор — в `AudioRetention.storedMode`.
+            switch AudioRetention.storedMode(
+                raw: defaults.string(forKey: "audioRetentionMode"),
+                resetDone: defaults.bool(forKey: "audioRetentionReset")
+            ) {
+            case .use(let mode):
+                return mode
+            case .reset(let mode):
+                defaults.removeObject(forKey: "audioRetentionMode")
+                // Число дней — больше не настройка, и ключ от неё не должен
+                // лежать в defaults как обещание вернуться.
+                defaults.removeObject(forKey: "audioRetentionDays")
+                defaults.set(true, forKey: "audioRetentionReset")
+                return mode
+            }
         }
         set { defaults.set(newValue.rawValue, forKey: "audioRetentionMode") }
-    }
-
-    /// Через сколько дней. Живёт независимо от режима, чтобы выключение и
-    /// включение обратно не сбрасывало выбранное число.
-    var audioRetentionDays: Int {
-        get {
-            let stored = defaults.integer(forKey: "audioRetentionDays")
-            return stored == 0 ? AudioRetention.defaultDays : AudioRetention.clampedDays(stored)
-        }
-        set { defaults.set(AudioRetention.clampedDays(newValue), forKey: "audioRetentionDays") }
     }
 
     // MARK: - Recap (LLM)
