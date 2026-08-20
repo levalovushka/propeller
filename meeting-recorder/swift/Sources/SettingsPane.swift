@@ -58,6 +58,7 @@ private struct GeneralSettingsGroup: View {
     @State private var launchAtLoginError: String?
     @AppStorage("autoRecordMode") private var autoRecordMode = AutoRecordMode.auto.rawValue
     @AppStorage("menuBarIconVisible") private var menuBarIconVisible = true
+    @AppStorage("notchIndicator") private var notchIndicator = true
     @AppStorage("userName") private var userName = ""
 
     var body: some View {
@@ -112,6 +113,24 @@ private struct GeneralSettingsGroup: View {
             // «Скрыть». Сцена читает тот же ключ (`MenuBarExtra(isInserted:)`).
             SettingsCell("Показывать Propeller в меню баре") {
                 SettingsSwitch(isOn: $menuBarIconVisible)
+            }
+
+            // Единственная поверхность, которую приложение рисует поверх чужих
+            // окон, — единственная, у которой есть выключатель. Подпись меняется
+            // вместе с железом: на маке без выреза выключать нечего, и честнее
+            // сказать это, чем прятать строку и оставить человека гадать, куда
+            // делась настройка, про которую он читал.
+            SettingsCell(
+                "Показывать запись в\u{00A0}чёлке",
+                subtitle: NotchController.hardwareHasNotch
+                    ? "Пока идёт запись, вырез показывает лопасть и\u{00A0}принимает заметку по\u{00A0}⌃⌥N"
+                    : "На этом маке нет выреза — заметки живут в\u{00A0}окне встречи"
+            ) {
+                SettingsSwitch(isOn: $notchIndicator)
+                    .disabled(!NotchController.hardwareHasNotch)
+            }
+            .onChange(of: notchIndicator) { _, _ in
+                NotchController.shared.preferenceChanged()
             }
         }
         .onAppear {

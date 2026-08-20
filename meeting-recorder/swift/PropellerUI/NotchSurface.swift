@@ -53,67 +53,176 @@ public struct NotchShape: Shape {
 
 /// Лопасть, которую крутит записываемый звук.
 ///
-/// Уровень приходит замыканием, а не значением: он меняется двадцать раз в
+/// Уровень приходит замыканием, а не значением: он меняется десятки раз в
 /// секунду, и пробрасывать это через `@Published` значило бы перерисовывать
-/// поверх всех окон ради числа, которое читает один кадр анимации.
-public struct NotchBlade: View {
+/// поверх всех окон ради числа, которое читает один шаг привода.
+///
+/// **Крутит лопасть слой, а не главный поток.** Так было не сразу: первая
+/// версия считала угол покадрово в `TimelineView` и на громком разговоре
+/// заметно дёргалась. Причина не в приводе — во время громкого разговора
+/// главный поток занят живой расшифровкой, кадры приходят рвано, и хотя угол
+/// считался по времени, а не по числу кадров, каждый пропущенный кадр давал
+/// скачок картинки. Теперь поворот живёт в `CABasicAnimation`, то есть в
+/// рендер-сервере: главный поток может встать на треть секунды, лопасть этого
+/// не заметит. Он же трогает путь один раз, а не пересобирает шесть лепестков
+/// на каждый кадр.
+public struct NotchBlade: NSViewRepresentable {
     private let size: CGFloat
     private let level: () -> Float
     private let paused: Bool
+    private let opacity: Double
+    /// Сообщает, что тик привода опоздал: главный поток был занят настолько,
+    /// что это стоило бы видеть в логе. Замер, а не догадка.
+    private let onStall: ((Double) -> Void)?
 
-    public init(size: CGFloat, paused: Bool, level: @escaping () -> Float) {
+    public init(
+        size: CGFloat,
+        paused: Bool,
+        opacity: Double,
+        onStall: ((Double) -> Void)? = nil,
+        level: @escaping () -> Float
+    ) {
         self.size = size
         self.paused = paused
+        self.opacity = opacity
+        self.onStall = onStall
         self.level = level
     }
 
-    /// Состояние лопасти держится в ссылке, а не в `@State`-значении: кадр
-    /// обязан его менять, но не обязан из-за этого перерисовывать вьюху.
-    private final class Motion {
-        var angle: Double = 0
-        var speed: Double = BladeDrive.idleSpeed
-        /// Огибающая уровня: из захвата приходит пик за буфер, и приводу его
-        /// показывать нельзя — см. `BladeDrive.envelope`.
-        var envelope: Float = 0
-        var last: Date?
+    public func makeNSView(context: Context) -> BladeView {
+        BladeView(size: size, level: level, onStall: onStall)
     }
 
-    @State private var motion = Motion()
-    /// Лопасть встала — кадры больше не нужны. Отдельный флаг, потому что до
-    /// нуля она едет ещё почти секунду после нажатия паузы.
-    @State private var still = false
+    public func updateNSView(_ view: BladeView, context: Context) {
+        view.level = level
+        view.onStall = onStall
+        view.apply(size: size, paused: paused, opacity: opacity)
+    }
+}
 
-    public var body: some View {
-        // 60, а не 30: на полной мощности лопасть проходит 7° за кадр, и на
-        // тридцати это уже видно ступенями.
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: still)) { context in
-            PropellerMark(size: size)
-                .rotationEffect(.degrees(advance(to: context.date)))
+/// Слой с лопастью и привод к нему.
+public final class BladeView: NSView {
+    private let shape = CAShapeLayer()
+    private var size: CGFloat
+    private var paused = false
+    private var envelope: Float = 0
+    private var speed = BladeDrive.idleSpeed
+    /// Скорость, под которую собрана текущая анимация. Пересобирать её на
+    /// каждый тик незачем: между пересборками слой крутится сам.
+    private var appliedSpeed = Double.nan
+    private var tick: Timer?
+    private var lastTick: Date?
+
+    var level: () -> Float
+    var onStall: ((Double) -> Void)?
+
+    /// Как часто пересчитывается привод. Не кадры: 25 Гц хватает огибающей с
+    /// постоянными в десятые доли секунды, а сам поворот от этого не зависит.
+    private static let tickInterval: TimeInterval = 0.04
+
+    /// Насколько скорость должна отойти от заложенной в анимацию, чтобы её
+    /// стоило пересобрать. 1,5 % диапазона — граница видимого.
+    private static var speedEpsilon: Double {
+        abs(BladeDrive.topSpeed - BladeDrive.idleSpeed) * 0.015
+    }
+
+    /// Один оборот — столько по времени, что переставлять анимацию приходится
+    /// только когда меняется скорость, а не когда кончается цикл.
+    private static let spinSpan: Double = 600
+
+    init(size: CGFloat, level: @escaping () -> Float, onStall: ((Double) -> Void)?) {
+        self.size = size
+        self.level = level
+        self.onStall = onStall
+        super.init(frame: NSRect(x: 0, y: 0, width: size, height: size))
+        wantsLayer = true
+        layer?.addSublayer(shape)
+        shape.fillRule = .nonZero
+        shape.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
+        layoutShape()
+        startTicking()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    deinit {
+        tick?.invalidate()
+    }
+
+    func apply(size: CGFloat, paused: Bool, opacity: Double) {
+        self.paused = paused
+        shape.opacity = Float(opacity)
+        guard size != self.size else { return }
+        self.size = size
+        needsLayout = true
+        layoutShape()
+    }
+
+    public override func layout() {
+        super.layout()
+        layoutShape()
+    }
+
+    private func layoutShape() {
+        // Размер знака задан снаружи и к размеру вьюхи отношения не имеет: она
+        // шириной с ухо, а знак в ней — маленький и по центру.
+        //
+        // Через `bounds` + `position`, а не через `frame`: слой вращается вокруг
+        // своей `anchorPoint`, и она обязана остаться серединой знака. Frame,
+        // выставленный до того, как вьюха получила настоящий размер, однажды уже
+        // уронил знак в левый нижний угол уха.
+        let box = CGRect(x: 0, y: 0, width: size, height: size)
+        shape.bounds = box
+        shape.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        shape.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        shape.path = PropellerMark.cgPath(in: box)
+        shape.fillColor = NSColor.white.cgColor
+    }
+
+    private func startTicking() {
+        let timer = Timer(timeInterval: Self.tickInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.step() }
         }
-        .frame(width: size, height: size)
-        .task(id: paused) {
-            guard paused else {
-                still = false
-                return
-            }
-            // Выбег плюс запас: раньше этого лопасть ещё едет, позже —
-            // тридцать кадров в секунду тратятся на неподвижную картинку.
-            try? await Task.sleep(for: .seconds(BladeDrive.pauseRelease * 2 + 0.3))
-            guard !Task.isCancelled else { return }
-            still = true
+        timer.tolerance = Self.tickInterval * 0.5
+        RunLoop.main.add(timer, forMode: .common)
+        tick = timer
+    }
+
+    private func step() {
+        let now = Date()
+        defer { lastTick = now }
+        guard let last = lastTick else { return }
+        let dt = now.timeIntervalSince(last)
+        // Тик опоздал вдвое — значит главный поток стоял, и это ровно тот
+        // случай, ради которого поворот отдан слою.
+        if dt > Self.tickInterval * 2 { onStall?(dt) }
+
+        envelope = BladeDrive.envelope(envelope, level: level(), dt: dt)
+        speed = BladeDrive.advance(speed: speed, level: envelope, paused: paused, dt: dt)
+        if appliedSpeed.isNaN || abs(speed - appliedSpeed) > Self.speedEpsilon || speed == 0 {
+            applySpeed(speed)
         }
     }
 
-    private func advance(to date: Date) -> Double {
-        defer { motion.last = date }
-        guard let last = motion.last else { return motion.angle }
-        let dt = date.timeIntervalSince(last)
-        motion.envelope = BladeDrive.envelope(motion.envelope, level: level(), dt: dt)
-        motion.speed = BladeDrive.advance(
-            speed: motion.speed, level: motion.envelope, paused: paused, dt: dt
-        )
-        motion.angle += motion.speed * dt
-        return motion.angle
+    /// Переложить вращение под новую скорость, не сбив текущий угол.
+    private func applySpeed(_ degreesPerSecond: Double) {
+        let current = (shape.presentation() ?? shape)
+            .value(forKeyPath: "transform.rotation.z") as? Double ?? 0
+        shape.removeAnimation(forKey: "spin")
+        shape.setValue(current, forKeyPath: "transform.rotation.z")
+        appliedSpeed = degreesPerSecond
+        // Ноль — это пауза, и она обязана быть полной неподвижностью.
+        guard abs(degreesPerSecond) > 0.01 else { return }
+
+        let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+        spin.fromValue = current
+        spin.toValue = current + degreesPerSecond * .pi / 180 * Self.spinSpan
+        spin.duration = Self.spinSpan
+        spin.timingFunction = CAMediaTimingFunction(name: .linear)
+        spin.isRemovedOnCompletion = false
+        spin.fillMode = .forwards
+        shape.add(spin, forKey: "spin")
     }
 }
 
@@ -130,6 +239,7 @@ public struct NotchFace: View {
     private let stage: NotchGeometry.Stage
     private let paused: Bool
     private let level: () -> Float
+    private let onStall: ((Double) -> Void)?
     private let onNote: () -> Void
     private let onCommit: (String) -> Void
     private let onCancel: () -> Void
@@ -142,6 +252,7 @@ public struct NotchFace: View {
         paused: Bool,
         noteDraft: String = "",
         level: @escaping () -> Float,
+        onStall: ((Double) -> Void)? = nil,
         onNote: @escaping () -> Void,
         onCommit: @escaping (String) -> Void,
         onCancel: @escaping () -> Void
@@ -150,6 +261,7 @@ public struct NotchFace: View {
         self.stage = stage
         self.paused = paused
         self.level = level
+        self.onStall = onStall
         self.onNote = onNote
         self.onCommit = onCommit
         self.onCancel = onCancel
@@ -231,9 +343,10 @@ public struct NotchFace: View {
     public var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                NotchBlade(size: glyphSize, paused: paused, level: level)
+                NotchBlade(size: glyphSize, paused: paused,
+                           opacity: paused ? 0.45 : 0.85,
+                           onStall: onStall, level: level)
                     .frame(width: frame.earWidth, height: frame.notchHeight)
-                    .foregroundStyle(.white.opacity(paused ? 0.45 : 0.85))
                     // Знак ничего не обещает и ничего не принимает: клик по нему
                     // уходит в меню-бар под плитой, как если бы её не было.
                     .allowsHitTesting(false)

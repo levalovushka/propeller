@@ -344,3 +344,15 @@ private struct PropellerMarkShape: Shape {
         return all
     }()
 }
+
+extension PropellerMark {
+    /// Тот же силуэт, но как `CGPath` — для слоя, который крутится сам.
+    ///
+    /// SwiftUI-путь пересобирается и растеризуется на каждый кадр главным
+    /// потоком; слою он отдаётся один раз, а поворот дальше считает
+    /// рендер-сервер. Для лопасти, которая обязана идти ровно как раз тогда,
+    /// когда главный поток занят расшифровкой, это и есть вся разница.
+    public static func cgPath(in rect: CGRect) -> CGPath {
+        PropellerMarkShape().path(in: rect).cgPath
+    }
+}

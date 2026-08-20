@@ -50,10 +50,27 @@ final class NotchController {
 
     // MARK: - Жизнь панели
 
+    /// Есть ли на этой машине вырез, с которым можно работать. Настройкам
+    /// нужно знать это, чтобы не предлагать выключить то, чего нет.
+    static var hardwareHasNotch: Bool { notchScreen() != nil }
+
+    /// Человек выключил или включил чёлку в настройках посреди записи.
+    func preferenceChanged() {
+        guard state?.isRecording == true else { return }
+        if Preferences.shared.notchIndicator {
+            observeScreens()
+            show()
+        } else {
+            stopObservingScreens()
+            hide()
+        }
+    }
+
     /// Запись пошла: если на этой машине есть вырез — плита вырастает из него.
     func startRecording() {
         dismissTask?.cancel()
         dismissTask = nil
+        guard Preferences.shared.notchIndicator else { return }
         observeScreens()
         show()
     }
@@ -150,7 +167,7 @@ final class NotchController {
     }
 
     private func screensChanged() {
-        guard state?.isRecording == true else { return }
+        guard state?.isRecording == true, Preferences.shared.notchIndicator else { return }
         guard let screen = Self.notchScreen() else {
             // Крышку закрыли или встроенный экран ушёл: чёлки нет, а значит нет
             // и фичи — вместе с горячей клавишей, которой больше некуда открыть
@@ -247,6 +264,33 @@ final class NotchController {
         return nil
     }
 
+    /// Сколько раз привод лопасти опоздал и насколько. Пишется раз в десять
+    /// секунд: цифра нужна, чтобы знать, стоял ли главный поток, — сам поворот
+    /// от этого уже не зависит, он живёт в слое.
+    private static var stalls = 0
+    private static var worstStall: Double = 0
+    private static var stallWindow: Date?
+
+    private static func noteStall(_ seconds: Double) {
+        let now = Date()
+        stalls += 1
+        worstStall = max(worstStall, seconds)
+        guard let started = stallWindow else {
+            stallWindow = now
+            return
+        }
+        let elapsed = now.timeIntervalSince(started)
+        guard elapsed >= 10 else { return }
+        debugLog(String(
+            format: "[Notch] привод опоздал %d раз за %.0f с, худший — %.0f мс",
+            stalls, elapsed, worstStall * 1000
+        ))
+        Analytics.signal("Notch.bladeStall", value: worstStall * 1000)
+        stalls = 0
+        worstStall = 0
+        stallWindow = now
+    }
+
     private static func geometry(on screen: NotchGeometry.Screen, stage: NotchGeometry.Stage) -> NSRect {
         let frame = NotchGeometry.frame(on: screen, stage: stage)
         return NSRect(x: frame.originX, y: frame.originY,
@@ -274,6 +318,7 @@ final class NotchController {
                 return max(recorder.micLevelHistory.last ?? 0,
                            recorder.systemLevelHistory.last ?? 0)
             },
+            onStall: { seconds in Self.noteStall(seconds) },
             onNote: { [weak self] in self?.toggleNote() },
             onCommit: { [weak self] text in self?.commitNote(text) },
             onCancel: { [weak self] in self?.cancelNote() }
