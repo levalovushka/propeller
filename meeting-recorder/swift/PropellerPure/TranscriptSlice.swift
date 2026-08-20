@@ -135,12 +135,7 @@ public enum TranscriptSlice {
     // MARK: - В текст
 
     public static func stamp(_ seconds: Double) -> String {
-        let total = Int(max(0, seconds))
-        let hours = total / 3600
-        let minutes = (total % 3600) / 60
-        let secs = total % 60
-        if hours > 0 { return String(format: "%d:%02d:%02d", hours, minutes, secs) }
-        return String(format: "%02d:%02d", minutes, secs)
+        Timecode.text(seconds)
     }
 
     /// Фрагменты словами. Пропуск между ними назван, а не проглочен: иначе две

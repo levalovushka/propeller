@@ -167,7 +167,7 @@ struct MarkdownWriter {
             let lines = trimmed.components(separatedBy: "\n")
             guard let first = lines.first else { continue }
 
-            let pattern = #"^\[(.+?)\]\s*\[(\d+:\d+(?::\d+)?)\]$"#
+            let pattern = Timecode.transcriptHeadPattern
             if let regex = try? NSRegularExpression(pattern: pattern),
                let match = regex.firstMatch(in: first, range: NSRange(first.startIndex..., in: first)),
                let nameR = Range(match.range(at: 1), in: first),

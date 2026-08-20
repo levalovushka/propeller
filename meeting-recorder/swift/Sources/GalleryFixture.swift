@@ -504,7 +504,7 @@ enum GalleryFixture {
         .joined(separator: "\n\n")
 
     private static func stamp(_ seconds: Double) -> String {
-        String(format: "%02d:%02d", Int(seconds) / 60, Int(seconds) % 60)
+        Timecode.minutesSeconds(seconds)
     }
 
     private static let recapMarkdown = """

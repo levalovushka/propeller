@@ -84,13 +84,7 @@ public enum MeetingNotes {
     /// Elapsed time as the app has always written it: `12:34`, and `1:02:03`
     /// once an hour is past.
     public static func timecode(_ seconds: Double) -> String {
-        let total = Int(max(0, seconds))
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        return h > 0
-            ? String(format: "%d:%02d:%02d", h, m, s)
-            : String(format: "%02d:%02d", m, s)
+        Timecode.text(seconds)
     }
 
     /// Where a note belongs on the timeline, and what it says once the stamp is

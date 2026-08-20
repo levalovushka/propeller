@@ -133,21 +133,13 @@ public enum TranscriptPresentation {
     // MARK: - Timestamps
 
     public static func formatTimestamp(_ seconds: Double) -> String {
-        let total = Int(seconds)
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
-        return String(format: "%02d:%02d", m, s)
+        Timecode.text(seconds)
     }
 
+    /// Nothing is not a time, and this caller would rather have a number than a
+    /// decision: an unparseable head keeps its words at second zero.
     public static func parseTimestamp(_ text: String) -> Double {
-        let parts = text.split(separator: ":").compactMap { Double($0) }
-        switch parts.count {
-        case 2: return parts[0] * 60 + parts[1]
-        case 3: return parts[0] * 3600 + parts[1] * 60 + parts[2]
-        default: return 0
-        }
+        Timecode.seconds(text) ?? 0
     }
 
     // MARK: - Merging
@@ -199,7 +191,7 @@ public enum TranscriptPresentation {
                 continue
             }
 
-            if let match = capture(#"^\[(.+?)\]\s*\[(\d+:\d+)\]$"#, in: head) {
+            if let match = capture(Timecode.transcriptHeadPattern, in: head) {
                 let text = lines.dropFirst().joined(separator: "\n")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { continue }

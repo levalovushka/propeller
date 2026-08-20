@@ -612,9 +612,9 @@ class TranscriptionService {
         let merged = collapseConsecutiveSameSpeaker(segments)
         return merged.compactMap { seg in
             guard !seg.text.isEmpty else { return nil }
-            let m = Int(seg.startTime) / 60
-            let s = Int(seg.startTime) % 60
-            return "[\(seg.speaker)] [\(String(format: "%02d:%02d", m, s))]\n\(seg.text)"
+            // `minutesSeconds`, not `text`: this is the shape every transcript
+            // already on disk carries, and the reason is written down there.
+            return "[\(seg.speaker)] [\(Timecode.minutesSeconds(Double(seg.startTime)))]\n\(seg.text)"
         }.joined(separator: "\n\n")
     }
 
