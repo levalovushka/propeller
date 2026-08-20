@@ -3,6 +3,40 @@
 Что сделано, зачем, как проверено, что осталось. Новейшее сверху.
 Формат — DOCS.md, слой «Рабочий лог».
 
+## 2026-08-20 · OpenRouter четвёртым провайдером саммари
+
+- **Что:** `RecapProviderKind.openrouter` + ключ в Keychain
+  (`openrouter_api_key`) и имя модели (`recapOpenRouterModel`, дефолт
+  `anthropic/claude-sonnet-4.5`). Своей функции вызова нет: OpenRouter говорит
+  на протоколе OpenAI, поэтому `callOpenAI` получил параметр `baseURL` и два
+  заголовка атрибуции (`X-Title`, `HTTP-Referer`) на openrouter-адресе.
+  Тронуто: `RecapService.swift` (enum, `resolveBackend` + 4 диспатча,
+  `RecapPreferences`), `Preferences.swift`, `SettingsPane.swift` (пара строк
+  «ключ + модель» у выбранного провайдера, `modelRow` получил `subtitle`),
+  `AppState.needsLocalRecapModel`, `ModelProvisioning.usesLocalModel`,
+  `NoDeadEndsTests`, `docs/SPEC.md`, `docs/ARCHITECTURE.md`, `CLAUDE.md`.
+- **Зачем:** запрос от коллеги — саммари не только Клодом и OpenAI. Отдельным
+  вариантом enum, а не скрытым полем «свой base URL» у OpenAI: провайдер это
+  ось телеметрии (`recap_provider`), заголовок настроек и ответ на вопрос «куда
+  уехала эта встреча» — спрятанный адрес сделал бы все три ответа неправдой.
+- **Ловушка:** `ModelProvisioning.usesLocalModel` для незнакомой строки
+  возвращает `true` (`ModelProvisioning.swift:74`) — без правки этой строки
+  каждый пользователь OpenRouter качал бы 3,4 ГБ qwen впустую.
+- **Решение владельца:** нарезки длинной встречи у облачного пути нет и не
+  будет (`TranscriptChunking.needed(backend:)` — только `ollama`). У OpenRouter
+  имя модели свободный текст, значит модель с окном 8k упадёт на длинной
+  встрече в HTTP 400. «Опенроутер для пауэр-юзеров, они несут ответственность
+  сами» — записано в `docs/SPEC.md` и в комментарии у `openRouterChatURL`.
+- **Проверено:** `swift test` — **997 тестов, 0 падений, 5 пропущено**.
+  `./build.sh` → `/Applications/Propeller.app`, подпись валидна. Формат провода
+  проверен без ключа: `POST openrouter.ai/api/v1/chat/completions` с фейковым
+  ключом правильной формы → `401 {"error":{"message":"User not found."}}`, то
+  есть адрес, путь, заголовок и тело приняты.
+- **Осталось:** живой запрос с настоящим ключом не делал — ключа нет.
+  Настройки глазами не видел: `osascript` не имеет прав Accessibility в этой
+  сессии, открыть «Нейросети» и снять окно нечем. Пара строк собрана из тех же
+  `keyRow`/`modelRow`, что у OpenAI и Claude, но это довод, а не скриншот.
+
 ## 2026-08-20 · Базлайн бенчей переснят: гейт снова говорит правду
 
 - **Что:** `benchmarks/baseline.json` ← `latest.json` на `d52ebb7`. Перед этим

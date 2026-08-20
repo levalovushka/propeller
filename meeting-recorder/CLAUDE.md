@@ -4,7 +4,7 @@ Guidance for agents working in this repository (Propeller fork of meeting-record
 
 ## Project Overview
 
-**Propeller** is a native macOS menu bar + window app (SwiftUI, macOS 14.4+, arm64) that records meetings (mic + system audio), transcribes Russian speech locally via **GigaAM-v3 / gigastt**, diarizes with **FluidAudio** into consistent `Speaker N` (no voice library — the mic-dominant speaker is labeled with the owner's name), saves markdown (Simple default / Obsidian optional), and optionally generates an LLM summary (Ollama / OpenAI / Claude) with auto title/topics/tags.
+**Propeller** is a native macOS menu bar + window app (SwiftUI, macOS 14.4+, arm64) that records meetings (mic + system audio), transcribes Russian speech locally via **GigaAM-v3 / gigastt**, diarizes with **FluidAudio** into consistent `Speaker N` (no voice library — the mic-dominant speaker is labeled with the owner's name), saves markdown (Simple default / Obsidian optional), and optionally generates an LLM summary (Ollama / OpenAI / Claude / OpenRouter) with auto title/topics/tags.
 
 Canonical architecture decisions: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Product behaviour: [docs/SPEC.md](docs/SPEC.md). **Living status / defects:** [`../../STATE.md`](../STATE.md). Active plan + decisions: [`../../plan-v2.md`](../archive/plan-v2.md). Engineering optimization: [`../../plan-optimization.md`](../archive/plan-optimization.md). UI: [`../../design/propeller-ui.md`](../design/propeller-ui.md). Historical (phases, brief): [`../../archive/`](../archive/).
 

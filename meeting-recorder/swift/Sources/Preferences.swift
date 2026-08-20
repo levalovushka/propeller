@@ -250,6 +250,18 @@ class Preferences {
         set { defaults.set(newValue, forKey: "recapClaudeModel") }
     }
 
+    /// Имя модели у OpenRouter — с префиксом вендора (`anthropic/…`,
+    /// `google/…`), потому что маршрутизатору надо знать не только модель, но и
+    /// чью. Дефолт не выдуман: это самый дешёвый способ проверить, что ключ
+    /// живой, а свой выбор пауэр-юзер впишет сам.
+    var recapOpenRouterModel: String {
+        get {
+            let v = defaults.string(forKey: "recapOpenRouterModel") ?? ""
+            return v.isEmpty ? "anthropic/claude-sonnet-4.5" : v
+        }
+        set { defaults.set(newValue, forKey: "recapOpenRouterModel") }
+    }
+
     var openAIAPIKey: String? {
         get { KeychainHelper.get(account: "openai_api_key") }
         set {
@@ -268,6 +280,17 @@ class Preferences {
                 KeychainHelper.set(newValue, account: "claude_api_key")
             } else {
                 KeychainHelper.delete(account: "claude_api_key")
+            }
+        }
+    }
+
+    var openRouterAPIKey: String? {
+        get { KeychainHelper.get(account: "openrouter_api_key") }
+        set {
+            if let newValue, !newValue.isEmpty {
+                KeychainHelper.set(newValue, account: "openrouter_api_key")
+            } else {
+                KeychainHelper.delete(account: "openrouter_api_key")
             }
         }
     }

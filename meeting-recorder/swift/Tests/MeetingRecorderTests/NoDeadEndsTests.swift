@@ -145,7 +145,7 @@ final class ModelProvisioningTests: XCTestCase {
     }
 
     func testСОблачнымКлючомТриСПоловинойГигабайтаНеТянем() {
-        for provider in ["openai", "claude", "off"] {
+        for provider in ["openai", "claude", "openrouter", "off"] {
             XCTAssertFalse(ModelProvisioning.usesLocalModel(providerRawValue: provider), provider)
             XCTAssertEqual(
                 ModelProvisioning.decide(context(usesLocalModel: false)), .notOurs, provider

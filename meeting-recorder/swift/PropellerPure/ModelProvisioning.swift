@@ -69,7 +69,7 @@ public enum ModelProvisioning {
     public static func usesLocalModel(providerRawValue: String) -> Bool {
         switch providerRawValue {
         case "ollama", "auto": return true
-        case "openai", "claude", "off": return false
+        case "openai", "claude", "openrouter", "off": return false
         // Незнакомое значение — из сборки новее этой. Качать «на всякий случай»
         // дешевле, чем оставить человека без саммари.
         default: return true

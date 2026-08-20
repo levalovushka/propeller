@@ -19,10 +19,23 @@ import PropellerPure
 ///
 /// Сохранённые `"off"` и `"auto"` переписываются на `.ollama` при чтении —
 /// `Preferences.recapProvider`.
+///
+/// OpenRouter (2026-08-20) — четвёртый и единственный, про кого нельзя сказать
+/// заранее, чей сервер увидит транскрипт: маршрутизатор на то и маршрутизатор.
+/// Тем же аргументом убрали «Авто», и разница здесь не в аргументе, а в том,
+/// кто его выбирает: «Авто» было настройкой по умолчанию у всех, а OpenRouter
+/// человек включает руками, вписывая имя модели с префиксом вендора. Дефолт
+/// остаётся локальным, и цена выбора — на том, кто выбрал.
+///
+/// Отдельным вариантом, а не полем «свой адрес» у OpenAI: провайдер — это ось
+/// телеметрии (`Analytics.environment`), заголовок настроек и ответ на вопрос
+/// «куда уехала эта встреча». Спрятанный base URL сделал бы все три ответа
+/// неправдой при том же значении в префах.
 enum RecapProviderKind: String, CaseIterable, Identifiable {
     case ollama
     case openai
     case claude
+    case openrouter
 
     var id: String { rawValue }
 
@@ -31,6 +44,7 @@ enum RecapProviderKind: String, CaseIterable, Identifiable {
         case .ollama: return "Ollama"
         case .openai: return "OpenAI"
         case .claude: return "Claude"
+        case .openrouter: return "OpenRouter"
         }
     }
 }
@@ -215,7 +229,8 @@ actor RecapService {
         kind: RecapProviderKind,
         ollamaModel: String,
         openAIKey: String?,
-        claudeKey: String?
+        claudeKey: String?,
+        openRouterKey: String?
     ) async -> Result<String, RecapSkipReason> {
         switch kind {
         case .ollama:
@@ -224,6 +239,8 @@ actor RecapService {
             return (openAIKey?.isEmpty == false) ? .success("openai") : .failure(.noProvider)
         case .claude:
             return (claudeKey?.isEmpty == false) ? .success("claude") : .failure(.noProvider)
+        case .openrouter:
+            return (openRouterKey?.isEmpty == false) ? .success("openrouter") : .failure(.noProvider)
         }
     }
 
@@ -247,7 +264,8 @@ actor RecapService {
             kind: prefs.provider,
             ollamaModel: prefs.ollamaModel,
             openAIKey: prefs.openAIKey,
-            claudeKey: prefs.claudeKey
+            claudeKey: prefs.claudeKey,
+            openRouterKey: prefs.openRouterKey
         ) {
         case .success: return true
         case .failure: return false
@@ -269,7 +287,8 @@ actor RecapService {
 
             let backend: String
             switch await resolveBackend(kind: prefs.provider, ollamaModel: prefs.ollamaModel,
-                                    openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey) {
+                                    openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey,
+                                    openRouterKey: prefs.openRouterKey) {
             case .failure(let reason):
                 return .failure(reason)
             case .success(let name):
@@ -596,6 +615,10 @@ actor RecapService {
         case "claude":
             return try await callClaude(apiKey: prefs.claudeKey ?? "", model: prefs.claudeModel,
                                         system: system, user: user)
+        case "openrouter":
+            return try await callOpenAI(baseURL: Self.openRouterChatURL,
+                                        apiKey: prefs.openRouterKey ?? "", model: prefs.openRouterModel,
+                                        system: system, user: user)
         default:
             throw RecapSkipReason.noProvider
         }
@@ -625,7 +648,8 @@ actor RecapService {
 
         let backend: String
         switch await resolveBackend(kind: prefs.provider, ollamaModel: prefs.ollamaModel,
-                                    openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey) {
+                                    openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey,
+                                    openRouterKey: prefs.openRouterKey) {
         case .failure(let reason): throw reason
         case .success(let name):   backend = name
         }
@@ -662,6 +686,10 @@ actor RecapService {
         case "claude":
             raw = try await callClaude(apiKey: prefs.claudeKey ?? "", model: prefs.claudeModel,
                                        system: system, user: user)
+        case "openrouter":
+            raw = try await callOpenAI(baseURL: Self.openRouterChatURL,
+                                       apiKey: prefs.openRouterKey ?? "", model: prefs.openRouterModel,
+                                       system: system, user: user)
         default:
             throw RecapSkipReason.noProvider
         }
@@ -697,7 +725,8 @@ actor RecapService {
 
         let backend: String
         switch await resolveBackend(kind: prefs.provider, ollamaModel: prefs.ollamaModel,
-                                    openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey) {
+                                    openAIKey: prefs.openAIKey, claudeKey: prefs.claudeKey,
+                                    openRouterKey: prefs.openRouterKey) {
         case .failure: return nil
         case .success(let name): backend = name
         }
@@ -711,6 +740,7 @@ actor RecapService {
             case "ollama": raw = try await callOllama(model: prefs.ollamaModel, system: system, user: user, jsonMode: true)
             case "openai": raw = try await callOpenAI(apiKey: prefs.openAIKey ?? "", model: prefs.openAIModel, system: system, user: user)
             case "claude": raw = try await callClaude(apiKey: prefs.claudeKey ?? "", model: prefs.claudeModel, system: system, user: user)
+            case "openrouter": raw = try await callOpenAI(baseURL: Self.openRouterChatURL, apiKey: prefs.openRouterKey ?? "", model: prefs.openRouterModel, system: system, user: user)
             default: return nil
             }
         } catch {
@@ -969,12 +999,40 @@ actor RecapService {
         return data
     }
 
-    private func callOpenAI(apiKey: String, model: String, system: String, user: String) async throws -> String {
-        let url = URL(string: "https://api.openai.com/v1/chat/completions")!
+    /// Адрес чата OpenAI. Вынесен рядом с OpenRouter, чтобы было видно: это
+    /// один и тот же протокол с двумя адресами, а не два бэкенда.
+    static let openAIChatURL = URL(string: "https://api.openai.com/v1/chat/completions")!
+
+    /// OpenRouter говорит на диалекте OpenAI — тот же путь, тот же `Bearer`,
+    /// та же форма ответа. Поэтому у него нет своей функции: другой адрес и
+    /// заголовок атрибуции, всё остальное — `callOpenAI`.
+    ///
+    /// Чего у него нет и не будет в этой версии: нарезки длинной встречи.
+    /// Облачный путь отдаёт транскрипт одним вызовом при любой длине
+    /// (`TranscriptChunking.needed(backend:)`), и у OpenRouter имя модели —
+    /// свободный текст: человек вправе выбрать модель с окном 8k и получить
+    /// HTTP 400 на двухчасовой встрече. Это выбор того, кто пришёл за выбором,
+    /// а не дефолт: дефолт здесь локальный и нарезку умеет.
+    static let openRouterChatURL = URL(string: "https://openrouter.ai/api/v1/chat/completions")!
+
+    private func callOpenAI(
+        baseURL: URL? = nil,
+        apiKey: String,
+        model: String,
+        system: String,
+        user: String
+    ) async throws -> String {
+        let url = baseURL ?? Self.openAIChatURL
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        if url == Self.openRouterChatURL {
+            // Атрибуция в дашборде OpenRouter: без неё в списке приложений
+            // человек видит безымянный ключ и не знает, что его тратит.
+            req.setValue("Propeller", forHTTPHeaderField: "X-Title")
+            req.setValue("https://propeller.pragmatica.design", forHTTPHeaderField: "HTTP-Referer")
+        }
         let payload: [String: Any] = [
             "model": model,
             "temperature": 0.2,
@@ -1043,8 +1101,10 @@ struct RecapPreferences {
     var ollamaModel: String
     var openAIModel: String
     var claudeModel: String
+    var openRouterModel: String
     var openAIKey: String?
     var claudeKey: String?
+    var openRouterKey: String?
     var outputFormat: MarkdownOutputFormat
 
     static func fromShared() -> RecapPreferences {
@@ -1055,8 +1115,10 @@ struct RecapPreferences {
             ollamaModel: p.recapOllamaModel,
             openAIModel: p.recapOpenAIModel,
             claudeModel: p.recapClaudeModel,
+            openRouterModel: p.recapOpenRouterModel,
             openAIKey: p.openAIAPIKey,
             claudeKey: p.claudeAPIKey,
+            openRouterKey: p.openRouterAPIKey,
             outputFormat: p.markdownOutputFormat
         )
     }

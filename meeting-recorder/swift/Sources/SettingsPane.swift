@@ -261,6 +261,7 @@ private struct ModelsSettingsGroup: View {
     @AppStorage("recapProvider") private var recapProvider = RecapProviderKind.ollama.rawValue
     @AppStorage("recapOpenAIModel") private var recapOpenAIModel = "gpt-4o-mini"
     @AppStorage("recapClaudeModel") private var recapClaudeModel = "claude-sonnet-4-5"
+    @AppStorage("recapOpenRouterModel") private var recapOpenRouterModel = "anthropic/claude-sonnet-4.5"
     @State private var recapPrompt: String = Preferences.shared.recapPrompt
     // Пустые, а заполняются в `onAppear`. Инициализатор свойства выполняется на
     // *каждой* пересборке структуры, даже когда `@State` его результат уже
@@ -268,6 +269,7 @@ private struct ModelsSettingsGroup: View {
     // записи он случался бы каждую секунду вместе с тиком таймера.
     @State private var openAIKey: String = ""
     @State private var claudeKey: String = ""
+    @State private var openRouterKey: String = ""
     @State private var ollamaReachable: Bool? = nil
     @State private var restartStatus: String?
     @State private var pendingRestart: DispatchWorkItem?
@@ -321,6 +323,25 @@ private struct ModelsSettingsGroup: View {
                     Preferences.shared.recapClaudeModel = val
                 }
             }
+            // OpenRouter — та же пара строк, что у остальных облачных, и
+            // намеренно без списка моделей: их там тысячи, они меняются каждую
+            // неделю, и любой встроенный список устареет к следующему релизу.
+            // Кто пришёл за OpenRouter, знает имя модели и приносит его с
+            // собой; подсказка формата стоит в подписи, потому что префикс
+            // вендора — единственное, чем это поле отличается от соседних.
+            if provider == .openrouter {
+                keyRow("Ключ OpenRouter", placeholder: "sk-or-…", text: $openRouterKey) { val in
+                    Preferences.shared.openRouterAPIKey = val
+                }
+                modelRow(
+                    "Модель OpenRouter",
+                    placeholder: "anthropic/claude-sonnet-4.5",
+                    subtitle: "Имя как в каталоге OpenRouter, с префиксом вендора",
+                    text: $recapOpenRouterModel
+                ) { val in
+                    Preferences.shared.recapOpenRouterModel = val
+                }
+            }
 
             // «Сбросить промпт» здесь больше нет, и замены ей не нужно: пустое
             // поле **и есть** сброс — `Preferences.recapPrompt` отдаёт дефолт,
@@ -370,8 +391,10 @@ private struct ModelsSettingsGroup: View {
             recapPrompt = Preferences.shared.recapPrompt
             openAIKey = Preferences.shared.openAIAPIKey ?? ""
             claudeKey = Preferences.shared.claudeAPIKey ?? ""
+            openRouterKey = Preferences.shared.openRouterAPIKey ?? ""
             recapOpenAIModel = Preferences.shared.recapOpenAIModel
             recapClaudeModel = Preferences.shared.recapClaudeModel
+            recapOpenRouterModel = Preferences.shared.recapOpenRouterModel
             Task { ollamaReachable = await RecapService.shared.probeOllama() }
         }
     }
@@ -402,10 +425,11 @@ private struct ModelsSettingsGroup: View {
     private func modelRow(
         _ title: String,
         placeholder: String,
+        subtitle: String? = nil,
         text: Binding<String>,
         onCommit: @escaping (String) -> Void
     ) -> some View {
-        SettingsStack(title) {
+        SettingsStack(title, subtitle: subtitle) {
             SettingsField(placeholder, text: text)
         }
         .onChange(of: text.wrappedValue) { _, val in onCommit(val) }

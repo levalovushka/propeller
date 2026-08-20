@@ -1202,7 +1202,7 @@ class AppState: ObservableObject {
 #endif
         guard localRecapModelReady == false else { return false }
         switch Preferences.shared.recapProvider {
-        case .openai, .claude:
+        case .openai, .claude, .openrouter:
             return false          // cloud: the local model is irrelevant
         case .ollama:
             return true
