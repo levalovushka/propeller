@@ -84,28 +84,29 @@ enum AppWindowRegistry {
         window.alphaValue = 1
         rememberFrame(on: window)
         if !applySavedFrame(to: window), centered {
+            debugLog("[frame] no saved frame taken — centring at \(mainSize)")
             placeCentered(window, contentSize: mainSize)
-            persistFrame(window)
-            markFrameAsPlacedByUs()
+            persistFrame(window, reason: "first open")
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// Install autosave and a resize/move watcher. AppKit's autosave alone is
-    /// flaky under SwiftUI `WindowGroup` (race on close / `orderOut`); the
-    /// watcher writes the same key on every drag so the next `showMain` has
-    /// something to read.
+    /// Watch resize/move so a frame we can still read is written somewhere.
+    ///
+    /// **`setFrameAutosaveName` is deliberately not called any more.** Measured
+    /// 2026-08-21: it returns `true`, is invoked twice per open because something
+    /// resets the name, and every call re-reads the saved frame and applies it —
+    /// which is the snap-back the older comment here described. And it buys
+    /// nothing: with the name set, twenty-five `saveFrame(usingName:)` calls
+    /// across one drag left `NSWindow Frame PropellerMain` untouched while
+    /// SwiftUI's own key followed the drag to 1014 pt. The window's persistence
+    /// belongs to `WindowGroup`; we read it instead of competing with it.
+    ///
+    /// The watcher stays: one call on an event that already fires, and the only
+    /// thing that would keep our own key alive on a system where that write
+    /// works.
     static func rememberFrame(on window: NSWindow) {
-        // Только если имя ещё не стоит: setFrameAutosaveName ПЕРЕЧИТЫВАЕТ
-        // сохранённый кадр и применяет его, а сюда мы попадаем из layout()
-        // ChromeHostView — то есть на каждом тике живого ресайза, раньше, чем
-        // наблюдатель didResize записал новую ширину. Каждый тик драга
-        // откатывался к сохранённым 797×760 — окно «не ресайзилось»
-        // (трасса 2026-08-19, /tmp/propeller-window-diag.txt).
-        if window.frameAutosaveName != frameAutosaveName {
-            _ = window.setFrameAutosaveName(frameAutosaveName)
-        }
         MainWindowFramePersistence.shared.watch(window)
     }
 
@@ -124,73 +125,33 @@ enum AppWindowRegistry {
         window.setFrame(frame, display: true, animate: false)
     }
 
-    static func persistFrame(_ window: NSWindow) {
+    /// Writes our own key. **Measured 2026-08-21: on this macOS it has no
+    /// effect** — twenty-five calls across one drag left the key untouched,
+    /// because `WindowGroup` owns the window's persistence. Kept because it is
+    /// one call on an event that already fires and it is the fallback on a
+    /// system where the write does land; never relied upon.
+    static func persistFrame(_ window: NSWindow, reason: String = "?") {
+        _ = reason
         window.saveFrame(usingName: frameAutosaveName)
     }
 
-    /// Our key first, then SwiftUI's — so a frame saved before we owned the
-    /// name still opens where the user left it.
+    /// Open at the frame the system actually keeps.
     ///
-    /// **A size the person chose always comes back.** This used to be decided by
-    /// width: two numbers we had once shipped as the opening size were
-    /// blacklisted, so anyone who dragged the window to exactly 1100 or 1020 pt
-    /// lost that on every reopen, forever, with nothing on screen to explain it.
-    /// A width cannot say who wrote it.
-    ///
-    /// Provenance can. `placeCentered` is the only thing in the app that writes
-    /// a frame nobody asked for, and it now records what it wrote
-    /// (`placedByUsKey`). A saved frame is ours only while it is still
-    /// character-for-character that string; the first drag or zoom makes it the
-    /// person's, and then it is honoured whatever it measures. So a frame we
-    /// placed ourselves can be superseded when the opening size changes, and a
-    /// frame somebody set cannot.
-    ///
-    /// An install that predates the marker has no provenance, so its frame is
-    /// honoured — including one that happens to be an old factory size. That is
-    /// the deliberate direction of the trade: returning somebody's window at the
-    /// wrong size is worse than opening at a size we no longer ship.
-    /// **Which key, measured rather than assumed.** A trace of one resize on
-    /// 2026-08-20 showed the SwiftUI key following the drag (797 → 884 → 879 pt)
-    /// while our own key never moved: `persistFrame` is not reaching it. So
-    /// "ours first" meant restoring a frame from whenever our key was last
-    /// written and throwing away the size the person had just set. When the two
-    /// disagree, the one AppKit keeps current wins
-    /// (`WindowFrameProvenance.preferredFrame`).
+    /// SwiftUI's key first, ours only as a legacy fallback — the reasoning and
+    /// the measurement behind it are in `WindowFrameProvenance`. Ours is still
+    /// written by the watcher on every resize, so an install where that write
+    /// works keeps a usable fallback; on this macOS it does not, and preferring
+    /// it is what threw away the size a person had just set.
     private static func applySavedFrame(to window: NSWindow) -> Bool {
         let ownKey = "NSWindow Frame \(frameAutosaveName)"
-        let chosen = WindowFrameProvenance.preferredFrame(
-            own: UserDefaults.standard.string(forKey: ownKey),
-            swiftUI: UserDefaults.standard.string(forKey: swiftUIFrameKey)
-        )
-        guard let chosen, !isStaleOwnPlacement(chosen) else { return false }
+        let maintained = UserDefaults.standard.string(forKey: swiftUIFrameKey)
+        let legacy = UserDefaults.standard.string(forKey: ownKey)
+        let chosen = WindowFrameProvenance.preferredFrame(maintained: maintained, legacy: legacy)
+        debugLog("[frame] apply maintained=\(maintained ?? "nil") legacy=\(legacy ?? "nil") chosen=\(chosen ?? "nil")")
+        guard let chosen else { return false }
         window.setFrame(from: chosen)
-        persistFrame(window)
+        debugLog("[frame] applied, window is now \(window.frame.size)")
         return true
-    }
-
-    private static let placedByUsKey = "PropellerMainFramePlacedByUs"
-
-    /// Remember the frame `placeCentered` just wrote, so a later launch can tell
-    /// it from one a person set.
-    private static func markFrameAsPlacedByUs() {
-        let ownKey = "NSWindow Frame \(frameAutosaveName)"
-        guard let written = UserDefaults.standard.string(forKey: ownKey) else { return }
-        UserDefaults.standard.set(written, forKey: placedByUsKey)
-    }
-
-    /// Is this saved frame one we placed ourselves, at an opening size we no
-    /// longer ship? Only then may it be replaced. The rule itself is
-    /// `WindowFrameProvenance` — string parsing and two comparisons belong
-    /// where a test can reach them; what needs the window is only turning the
-    /// opening content size into a frame.
-    private static func isStaleOwnPlacement(_ descriptor: String) -> Bool {
-        let opening = NSRect(origin: .zero, size: mainSize)
-        let expected = mainWindow()?.frameRect(forContentRect: opening) ?? opening
-        return WindowFrameProvenance.isStalePlacement(
-            saved: descriptor,
-            placedByUs: UserDefaults.standard.string(forKey: placedByUsKey),
-            expected: expected.size
-        )
     }
 }
 
@@ -221,7 +182,7 @@ private final class MainWindowFramePersistence {
                           let noted = note.object as? NSWindow,
                           ObjectIdentifier(noted) == self.watched
                     else { return }
-                    AppWindowRegistry.persistFrame(noted)
+                    AppWindowRegistry.persistFrame(noted, reason: "watcher/\(name.rawValue)")
                 }
             })
         }
