@@ -589,8 +589,28 @@ class AudioRecorder: ObservableObject {
         )
         debugLog("[AudioRecorder] mixing mic=\(micN) sys=\(sysN) frames, system stem placed at \(sysStart) frames (\(Int(systemStemOffset * 1000)) ms)")
 
-        // Sum with soft clamp. System audio can arrive quieter than the mic,
-        // so apply a bounded automatic gain before clamping.
+        // Sum, and clamp **hard** at ±1. The comment here used to promise a soft
+        // clamp, which is not what the loop below does, and the difference is
+        // worth writing down rather than quietly fixing in either direction.
+        //
+        // Measured 2026-08-20 on both committed fixtures, replicating `MixGain`
+        // and this loop sample for sample: `ru-short-2spk` peaks at 0.787 and
+        // clips **0** samples; `ru-pauses-2spk` peaks at 1.117 and clips **7 of
+        // 869 000** — 0.0008 %, four tenths of a millisecond of distortion in
+        // 54 seconds. On this evidence the hard clamp costs nothing and a softer
+        // curve would buy nothing, so the loop stays and the comment is the
+        // thing that changes.
+        //
+        // The evidence is thin on purpose, and its limit is known: both fixtures
+        // carry the far side *below* the owner and both score `sysGain == 1`,
+        // while a real meeting on speakers has it 4–6 dB *above*. The archive
+        // cannot settle it either — retention defaults to `afterTranscript`, so
+        // stems do not outlive the transcript, and on 2026-08-20 not one mic/sys
+        // pair remained on disk to measure. Answering it for real means one
+        // meeting recorded on speakers with retention set to «Всегда».
+        //
+        // System audio can arrive quieter than the mic, so a bounded automatic
+        // gain is applied before the clamp (`MixGain`).
         guard n > 0, let mixed = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: n) else {
             throw RecorderError.failedToMix
         }
