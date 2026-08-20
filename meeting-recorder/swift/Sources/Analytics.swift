@@ -197,7 +197,19 @@ enum Analytics {
         signal("Transcription.finished", parameters: params)
     }
 
-    static func recapFinished(ok: Bool, backend: String? = nil, skip: String? = nil) {
+    /// `first` — первый ли это конспект для встречи.
+    ///
+    /// Без него доля встреч, дошедших до саммари, не считается вовсе: сигнал
+    /// уходит на **каждой** попытке (встреча без провайдера паркуется и лестница
+    /// возвращается к ней снова), а после правки расшифровки конспект
+    /// перегенерируется — и `eventCount` считает выдачи, а не встречи. За 30 дней
+    /// это дало 395 `ok` на 395 записей при 19 людях, не получивших конспект ни
+    /// разу: равенство было совпадением. Теперь встречи считаются как
+    /// `Recap.finished{result=ok, first=1}`. Идентификатора встречи в сигнале
+    /// по-прежнему нет и не будет — флага хватает.
+    static func recapFinished(
+        ok: Bool, backend: String? = nil, skip: String? = nil, first: Bool? = nil
+    ) {
         var params: [String: String]
         if ok {
             params = ["result": "ok"]
@@ -208,6 +220,7 @@ enum Analytics {
         }
         if let backend { params["backend"] = backend }
         if let skip { params["skip"] = skip }
+        if let first { params["first"] = first ? "1" : "0" }
         signal("Recap.finished", parameters: params)
     }
 
@@ -269,8 +282,14 @@ enum Analytics {
         signal("Model.fetch", parameters: ["reason": reason])
     }
 
-    static func ollamaSetup(ok: Bool) {
-        signal("Ollama.setup", parameters: ["result": ok ? "ok" : "fail"])
+    /// `reason` — грубая корзина отказа (`disk`, `binary`, `unpack`, `download`,
+    /// `health`, `pull`, `other`), потому что «не встал» без причины ничего не
+    /// решает: у 18 человек из 41 движок не поднялся, и по одному `fail` было не
+    /// понять, что чинить (STATE.md §12, первая продуктовая аналитика 2026-08-19).
+    static func ollamaSetup(ok: Bool, reason: String? = nil) {
+        var params = ["result": ok ? "ok" : "fail"]
+        if let reason { params["reason"] = reason }
+        signal("Ollama.setup", parameters: params)
     }
 
     /// Диаризация отступила: на какой ступени и почему нет кластеризации.

@@ -2258,8 +2258,11 @@ class AppState: ObservableObject {
         // edit is not, and neither is catch-up on the archive: twenty backlog
         // summaries used to mean twenty notifications and twenty attempts to grab
         // focus, which is precisely how a user finds out the app has a backfill.
-        let isNews = (recordingStore.recording(for: recordingID)
-            .map { !hasRecap(for: $0) } ?? true) && isAwaited(recordingID)
+        // Половина этого условия нужна и телеметрии: «первый конспект для этой
+        // встречи» — единственный способ отличить встречу от повторной выдачи.
+        let isFirstRecap = recordingStore.recording(for: recordingID)
+            .map { !hasRecap(for: $0) } ?? true
+        let isNews = isFirstRecap && isAwaited(recordingID)
         do {
             let result = try await recapBackend.generateRecap(
                 title: title,
@@ -2310,7 +2313,7 @@ class AppState: ObservableObject {
                     surfaceMeetingUI(preferSummaryTab: false)
                 }
             case .success(let recap):
-                Analytics.recapFinished(ok: true, backend: recap.provider)
+                Analytics.recapFinished(ok: true, backend: recap.provider, first: isFirstRecap)
                 // Версия конструкции и телеметрия генерации — только у локального
                 // пути: облачная конструкция в 1.16.5 не менялась и остаётся
                 // без версии, как весь архив до неё.
@@ -2601,6 +2604,11 @@ class AppState: ObservableObject {
             // нехватке места на диске отношения не имеет, а сделать с этим
             // человек может только одно — освободить место, когда захочет.
             ollamaSetupError = "Недостаточно места для модели саммари (~3,4\u{00A0}ГБ)."
+            // Этот отказ до сих пор не считался вовсе: он не бросает ошибку, а
+            // возвращает `false` — и в телеметрии выглядел как «настройку не
+            // начинали». Из всех причин она единственная, которую человек может
+            // устранить сам, так что видеть её нужно первой.
+            Analytics.ollamaSetup(ok: false, reason: "disk")
             return false
         }
         pipelineError = nil
@@ -2644,7 +2652,10 @@ class AppState: ObservableObject {
             // запуске и на каждой остановке пайплайна из-за провайдера
             // (`ensureSummaryModel`), поэтому это состояние, а не событие.
             ollamaSetupError = error.localizedDescription
-            Analytics.ollamaSetup(ok: false)
+            Analytics.ollamaSetup(
+                ok: false,
+                reason: (error as? OllamaSidecar.SidecarError)?.signalReason ?? "other"
+            )
             return false
         }
     }

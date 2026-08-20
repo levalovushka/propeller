@@ -730,6 +730,22 @@ final class OllamaSidecar: @unchecked Sendable {
         case healthTimeout
         case pullFailed(String)
 
+        /// Грубая корзина для телеметрии: почему движок не встал.
+        ///
+        /// Причина живёт рядом с ошибкой, а не в фасаде аналитики: фасад умеет
+        /// только отправлять, а знает про виды отказов тот, кто их бросает.
+        /// Корзины, а не `localizedDescription`: наружу не должно уехать ни
+        /// байта детали — там пути, HTTP-тела и вывод `tar`.
+        var signalReason: String {
+            switch self {
+            case .binaryNotFound:          return "binary"
+            case .binaryMissingAfterExtract, .extractFailed: return "unpack"
+            case .downloadFailed:          return "download"
+            case .healthTimeout:           return "health"
+            case .pullFailed:              return "pull"
+            }
+        }
+
         var errorDescription: String? {
             switch self {
             case .binaryNotFound:
