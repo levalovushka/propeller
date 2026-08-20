@@ -86,6 +86,7 @@ enum AppWindowRegistry {
         if !applySavedFrame(to: window), centered {
             placeCentered(window, contentSize: mainSize)
             persistFrame(window)
+            markFrameAsPlacedByUs()
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -128,18 +129,34 @@ enum AppWindowRegistry {
     }
 
     /// Our key first, then SwiftUI's — so a frame saved before we owned the
-    /// name still opens where the user left it. Factory widths from earlier
-    /// defaults are ignored: they were written by `placeCentered`, not by a
-    /// person, and would hide every new opening size.
+    /// name still opens where the user left it.
+    ///
+    /// **A size the person chose always comes back.** This used to be decided by
+    /// width: two numbers we had once shipped as the opening size were
+    /// blacklisted, so anyone who dragged the window to exactly 1100 or 1020 pt
+    /// lost that on every reopen, forever, with nothing on screen to explain it.
+    /// A width cannot say who wrote it.
+    ///
+    /// Provenance can. `placeCentered` is the only thing in the app that writes
+    /// a frame nobody asked for, and it now records what it wrote
+    /// (`placedByUsKey`). A saved frame is ours only while it is still
+    /// character-for-character that string; the first drag or zoom makes it the
+    /// person's, and then it is honoured whatever it measures. So a frame we
+    /// placed ourselves can be superseded when the opening size changes, and a
+    /// frame somebody set cannot.
+    ///
+    /// An install that predates the marker has no provenance, so its frame is
+    /// honoured — including one that happens to be an old factory size. That is
+    /// the deliberate direction of the trade: returning somebody's window at the
+    /// wrong size is worse than opening at a size we no longer ship.
     private static func applySavedFrame(to window: NSWindow) -> Bool {
         let ownKey = "NSWindow Frame \(frameAutosaveName)"
-        if let own = UserDefaults.standard.string(forKey: ownKey),
-           !isSupersededFactoryFrame(own) {
+        if let own = UserDefaults.standard.string(forKey: ownKey), !isStaleOwnPlacement(own) {
             window.setFrame(from: own)
             return true
         }
         if let swiftUI = UserDefaults.standard.string(forKey: swiftUIFrameKey),
-           !isSupersededFactoryFrame(swiftUI) {
+           !isStaleOwnPlacement(swiftUI) {
             window.setFrame(from: swiftUI)
             persistFrame(window)
             return true
@@ -147,17 +164,29 @@ enum AppWindowRegistry {
         return false
     }
 
-    /// Content widths we once forced on every launch (`300+800`, then `300+720`).
-    private static let supersededFactoryWidths: Set<Int> = [
-        Int(Tokens.Sidebar.width + 800),
-        Int(Tokens.Sidebar.width + 720),
-    ]
+    private static let placedByUsKey = "PropellerMainFramePlacedByUs"
 
-    private static func isSupersededFactoryFrame(_ descriptor: String) -> Bool {
-        // `NSWindow` frame strings are "x y w h …".
-        let parts = descriptor.split(separator: " ")
-        guard parts.count >= 4, let width = Double(parts[2]) else { return false }
-        return supersededFactoryWidths.contains(Int(width.rounded()))
+    /// Remember the frame `placeCentered` just wrote, so a later launch can tell
+    /// it from one a person set.
+    private static func markFrameAsPlacedByUs() {
+        let ownKey = "NSWindow Frame \(frameAutosaveName)"
+        guard let written = UserDefaults.standard.string(forKey: ownKey) else { return }
+        UserDefaults.standard.set(written, forKey: placedByUsKey)
+    }
+
+    /// Is this saved frame one we placed ourselves, at an opening size we no
+    /// longer ship? Only then may it be replaced. The rule itself is
+    /// `WindowFrameProvenance` — string parsing and two comparisons belong
+    /// where a test can reach them; what needs the window is only turning the
+    /// opening content size into a frame.
+    private static func isStaleOwnPlacement(_ descriptor: String) -> Bool {
+        let opening = NSRect(origin: .zero, size: mainSize)
+        let expected = mainWindow()?.frameRect(forContentRect: opening) ?? opening
+        return WindowFrameProvenance.isStalePlacement(
+            saved: descriptor,
+            placedByUs: UserDefaults.standard.string(forKey: placedByUsKey),
+            expected: expected.size
+        )
     }
 }
 

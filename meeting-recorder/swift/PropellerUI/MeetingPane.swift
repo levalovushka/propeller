@@ -836,7 +836,16 @@ public struct MeetingPaneBody: View {
                 )
             }
         case .transcript:
-            MeetingTranscriptColumn(turns: turns, disclosure: transcriptDisclosure)
+            // Те же заметки, что и в ветке-заменителе выше. Раньше их тут не
+            // было, и написанное человеком на встрече исчезало от переключения
+            // колонки — а также в тот момент, когда саммари доезжало и
+            // заменитель уходил. Заметка стоит на своей секунде в ленте
+            // (`NotePlacement`), то есть именно здесь ей и место; в разделе
+            // саммари она есть тоже, и это дубль по решению, а не недосмотр:
+            // пропустить написанное хуже, чем показать дважды.
+            MeetingTranscriptColumn(
+                turns: turns, notes: transcriptNotes, disclosure: transcriptDisclosure
+            )
         }
     }
 }
