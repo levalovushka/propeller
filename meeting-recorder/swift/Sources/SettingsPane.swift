@@ -376,7 +376,7 @@ private struct ModelsSettingsGroup: View {
                 modelRow(
                     "Модель OpenRouter",
                     placeholder: "anthropic/claude-sonnet-4.5",
-                    subtitle: "С префиксом вендора, как в каталоге OpenRouter",
+                    subtitle: "С префиксом вендора, как в\u{00A0}каталоге OpenRouter",
                     text: $recapOpenRouterModel
                 ) { val in
                     Preferences.shared.recapOpenRouterModel = val
@@ -454,7 +454,7 @@ private struct ModelsSettingsGroup: View {
         text: Binding<String>,
         onCommit: @escaping (String) -> Void
     ) -> some View {
-        SettingsStack(title, subtitle: "Хранится в Keychain") {
+        SettingsStack(title, subtitle: "Хранится в\u{00A0}Keychain") {
             SettingsField(placeholder, text: text, secure: true)
         }
         .onChange(of: text.wrappedValue) { _, val in
@@ -486,9 +486,9 @@ private struct ModelsSettingsGroup: View {
     /// транскрипт. Это же и есть цена выбора.
     private var providerStatus: (text: String?, tone: SettingsSubtitleTone) {
         switch provider {
-        case .openai:     return ("Транскрипт уходит в OpenAI", .help)
-        case .claude:     return ("Транскрипт уходит в Anthropic", .help)
-        case .openrouter: return ("Транскрипт уходит в OpenRouter, дальше — вендору модели", .help)
+        case .openai:     return ("Транскрипт уходит в\u{00A0}OpenAI", .help)
+        case .claude:     return ("Транскрипт уходит в\u{00A0}Anthropic", .help)
+        case .openrouter: return ("Транскрипт уходит в\u{00A0}OpenRouter, дальше — вендору модели", .help)
         case .ollama:
             // Пока модель едет — процент. Полосы загрузки под этой строкой
             // больше нет, и это единственное место, где про загрузку сказано.
