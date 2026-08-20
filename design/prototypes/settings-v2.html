@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Настройки Propeller — прототип v2</title>
+<style>
+:root{
+  /* Токены сняты из PropellerUI/Tokens.swift (тёмная сторона пары) */
+  --page:#0a0a0a;
+  --plate:rgba(255,255,255,.03);   /* Sidebar.rowHover */
+  --line:rgba(255,255,255,.07);    /* Sidebar.border */
+  --surface:rgba(255,255,255,.07); /* Paint.Bg.surface */
+  --selected:rgba(255,255,255,.12);
+  --title:rgba(255,255,255,.95);   /* Sidebar.meetingTitle */
+  --sub:rgba(255,255,255,.50);     /* Setup.cellSubtitle */
+  --value:rgba(255,255,255,.55);   /* Sidebar.meetingMeta */
+  --header:rgba(255,255,255,.30);  /* Sidebar.sectionHeader */
+  --quiet:rgba(255,255,255,.30);
+  --accent:#0a84ff;
+  --warn:#ff9f0a;
+  --fail:#ff453a;
+  --r-md:12px; --r-xxs:6px; --r-xxxs:4px;
+  --col:640px; --colpad:40px; --platepad:14px;
+  font-synthesis:none;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:#141414;color:var(--title);
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
+  -webkit-font-smoothing:antialiased;
+  padding:28px 28px 80px;
+}
+/* ── служебная панель прототипа (в приложении её нет) ───────────────── */
+.bar{display:flex;gap:8px;align-items:center;max-width:1180px;margin:0 auto 16px}
+.bar h1{font-size:13px;font-weight:590;letter-spacing:.01em;color:rgba(255,255,255,.8);margin-right:auto}
+.bar h1 span{color:rgba(255,255,255,.35);font-weight:400}
+.tab{font:inherit;font-size:12px;color:rgba(255,255,255,.6);background:rgba(255,255,255,.06);
+  border:0;border-radius:var(--r-xxs);padding:6px 12px;cursor:pointer}
+.tab[aria-selected="true"]{background:rgba(255,255,255,.14);color:#fff}
+
+/* ── окно ──────────────────────────────────────────────────────────── */
+.win{max-width:1180px;height:760px;margin:0 auto;display:flex;background:var(--page);
+  border:1px solid rgba(255,255,255,.08);border-radius:14px;overflow:hidden;position:relative}
+.rail{width:264px;flex:none;border-right:1px solid var(--line);padding:0 12px 12px;
+  background:rgba(255,255,255,.012)}
+.rail .rh{height:48px;display:flex;align-items:center;gap:8px;padding:0 8px}
+.dots{display:flex;gap:6px}.dots i{width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.14)}
+.rail .sec{font-size:11px;line-height:14px;color:var(--header);padding:14px 12px 6px;letter-spacing:.02em}
+.rail .row{font-size:14px;line-height:18px;color:rgba(255,255,255,.8);padding:9px 12px;border-radius:var(--r-md)}
+.rail .row.on{background:var(--selected);color:#fff}
+.rail .row.dim{color:rgba(255,255,255,.45)}
+
+.pane{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+.ph{height:48px;display:flex;align-items:center;padding:0 var(--colpad);gap:12px;flex:none}
+.ph .t{font-size:15px;font-weight:590;letter-spacing:.01em}
+.kbd{margin-left:auto;font-size:11px;color:var(--quiet);border:1px solid var(--line);
+  border-radius:var(--r-xxxs);padding:3px 7px;cursor:pointer;background:none;font-family:inherit}
+.kbd:hover{color:var(--value);border-color:rgba(255,255,255,.16)}
+
+.scroll{flex:1;overflow-y:auto;scrollbar-width:none}
+.scroll::-webkit-scrollbar{display:none}
+.col{max-width:calc(var(--col) + var(--colpad)*2);margin:0 auto;padding:24px var(--colpad) 56px}
+
+/* ── группа ────────────────────────────────────────────────────────── */
+.group{margin-bottom:24px}
+.group>h2{font-size:11px;line-height:14px;font-weight:400;color:var(--header);
+  padding-left:12px;margin-bottom:8px;letter-spacing:.02em}
+.plate{background:var(--plate);border-radius:var(--r-md);padding:0 var(--platepad)}
+.cell{display:flex;align-items:center;gap:16px;padding:12px 0;min-height:56px}
+.cell+.cell,.cell+.stack,.stack+.cell{border-top:.5px solid var(--line)}
+.head{flex:1;min-width:0}
+.t2{font-size:14px;line-height:18px;color:var(--title)}
+.s{font-size:13px;line-height:16px;color:var(--sub);margin-top:2px}
+.s.proc{color:var(--value);display:flex;align-items:center;gap:6px}
+.s.proc::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--value);
+  animation:pulse 1.1s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.25}50%{opacity:1}}
+.s.warn{color:var(--warn)}
+.s.fail{color:var(--fail)}
+.ctl{display:flex;align-items:center;gap:8px;flex:none}
+
+/* ── контролы ──────────────────────────────────────────────────────── */
+.sw{width:38px;height:22px;border-radius:11px;background:rgba(255,255,255,.14);border:0;
+  position:relative;cursor:pointer;transition:background .15s;flex:none}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;
+  background:#fff;transition:transform .15s}
+.sw[aria-checked="true"]{background:var(--accent)}
+.sw[aria-checked="true"]::after{transform:translateX(16px)}
+.seg{display:flex;background:var(--surface);border-radius:var(--r-xxs);padding:2px}
+.seg button{font:inherit;font-size:13px;color:var(--value);background:none;border:0;border-radius:var(--r-xxxs);
+  padding:5px 10px;cursor:pointer;white-space:nowrap}
+.seg button[aria-pressed="true"]{background:rgba(255,255,255,.14);color:#fff}
+select.menu{font:inherit;font-size:14px;color:#fff;background:var(--surface);border:0;
+  border-radius:var(--r-xxs);padding:6px 8px;height:32px;cursor:pointer}
+.btn{font:inherit;font-size:13px;color:var(--title);background:var(--surface);border:0;
+  border-radius:var(--r-xxs);height:32px;padding:0 12px;cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--selected)}
+.btn.accent{background:var(--accent);color:#fff}
+.btn.accent:hover{background:#3b9bff}
+.done{font-size:14px;color:var(--quiet);width:32px;text-align:center}
+.val{font-size:14px;color:var(--value);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+input.field{font:inherit;font-size:14px;color:#fff;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--r-xxs);height:32px;padding:0 10px;width:220px}
+input.field::placeholder{color:rgba(255,255,255,.3)}
+.stack{padding:12px 0}
+.stack .body{margin-top:8px}
+input.field.wide{width:100%}
+input.field.narrow{width:150px}
+textarea{font:inherit;font-size:13px;line-height:19px;color:#fff;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--r-xxs);width:100%;height:80px;padding:10px;resize:none}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+
+.hidden{display:none!important}
+
+/* ── спецификация ──────────────────────────────────────────────────── */
+.spec{max-width:1180px;margin:24px auto 0;color:rgba(255,255,255,.82);font-size:13px;line-height:20px}
+.spec h2{font-size:15px;font-weight:590;margin:28px 0 10px;color:#fff}
+.spec h3{font-size:13px;font-weight:590;margin:18px 0 6px;color:rgba(255,255,255,.9)}
+.spec p{margin:0 0 8px;max-width:78ch}
+.spec ul{margin:0 0 10px 18px}
+.spec li{margin-bottom:4px}
+.spec table{border-collapse:collapse;margin:8px 0 14px;font-size:12.5px;width:100%;max-width:960px}
+.spec th,.spec td{border:1px solid rgba(255,255,255,.1);padding:6px 9px;text-align:left;vertical-align:top}
+.spec th{color:rgba(255,255,255,.6);font-weight:400;background:rgba(255,255,255,.03)}
+.spec .demo{background:var(--page);border:1px solid var(--line);border-radius:var(--r-md);
+  padding:0 var(--platepad);max-width:640px;margin:8px 0 16px}
+.spec code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#fff}
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <h1>Настройки Propeller <span>— прототип v2, не сборка</span></h1>
+  <button class="tab" id="tab-proto" aria-selected="true">Прототип</button>
+  <button class="tab" id="tab-spec" aria-selected="false">Спецификация</button>
+</div>
+
+<!-- ═════════════════ ПРОТОТИП ═════════════════ -->
+<div class="win" id="proto">
+
+  <!-- рельс: контекст, а не предмет прототипа -->
+  <aside class="rail">
+    <div class="rh"><div class="dots"><i></i><i></i><i></i></div></div>
+    <div class="sec">СЕГОДНЯ</div>
+    <div class="row dim">Планёрка продукта</div>
+    <div class="row dim">1:1 с Асей</div>
+    <div class="sec">20 АВГУСТА</div>
+    <div class="row dim">Разбор ретро</div>
+    <div class="row dim">Созвон с подрядчиком</div>
+    <div class="sec" style="padding-top:26px">ПРИЛОЖЕНИЕ</div>
+    <div class="row dim">Поиск&nbsp;&nbsp;⌘K</div>
+    <div class="row on">Настройки</div>
+  </aside>
+
+  <section class="pane">
+    <div class="ph">
+      <div class="t" id="pane-title">Настройки</div>
+    </div>
+
+    <div class="scroll">
+      <!-- ─────────── главный экран ─────────── -->
+      <div class="col" id="screen-main">
+
+        <!-- 0. Состояние мира, а не решения человека. Первым — потому что от
+             него зависит, работает ли остальное. Акцент на несделанном. -->
+        <div class="group">
+          <h2>ДОСТУП</h2>
+          <div class="plate">
+            <div class="cell">
+              <div class="head">
+                <div class="t2">Имена спикеров из&nbsp;Zoom</div>
+                <div class="s">Без доступа — «Участник&nbsp;1» и «Участник&nbsp;2»</div>
+              </div>
+              <div class="ctl"><button class="btn accent">Разрешить</button></div>
+            </div>
+            <div class="cell">
+              <div class="head">
+                <div class="t2">Названия встреч из&nbsp;Календаря</div>
+                <div class="s">Только заголовок события</div>
+              </div>
+              <div class="ctl"><span class="done" title="Разрешено">✓</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 1. Когда приложение оживает само -->
+        <div class="group">
+          <h2>ЗАПИСЬ</h2>
+          <div class="plate">
+            <div class="cell">
+              <div class="head">
+                <div class="t2">Автоматическая запись</div>
+                <div class="s">Вместе со звонком в&nbsp;Zoom</div>
+              </div>
+              <div class="ctl"><button class="sw" role="switch" aria-checked="true" data-default="true" data-name="Автоматическая запись"></button></div>
+            </div>
+            <div class="cell">
+              <div class="head"><div class="t2">Запуск Propeller при&nbsp;входе</div></div>
+              <div class="ctl"><button class="sw" role="switch" aria-checked="false" data-default="false" data-name="Запуск Propeller при входе"></button></div>
+            </div>
+            <div class="cell">
+              <div class="head"><div class="t2">Иконка в&nbsp;меню баре</div></div>
+              <div class="ctl"><button class="sw" role="switch" aria-checked="true" data-default="true" data-name="Иконка в меню баре"></button></div>
+            </div>
+            <div class="cell">
+              <div class="head">
+                <div class="t2">Индикация записи в&nbsp;чёлке</div>
+                <div class="s">Заметка по&nbsp;⌃⌥N</div>
+              </div>
+              <div class="ctl"><button class="sw" role="switch" aria-checked="true" data-default="true" data-name="Запись в чёлке"></button></div>
+            </div>
+            <div class="cell">
+              <div class="head"><div class="t2">Ваше имя</div></div>
+              <div class="ctl"><input class="field narrow" placeholder="Левон Лобанов"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. Во что превращается записанный звук. Два «документа» —
+             в подэкранах, но со значением на родительской строке. -->
+        <div class="group">
+          <h2>РАСШИФРОВКА И САММАРИ</h2>
+          <div class="plate">
+            <div class="cell">
+              <div class="head">
+                <div class="t2">Кто пишет саммари</div>
+                <div class="s" id="prov-sub">Отвечает локально</div>
+              </div>
+              <div class="ctl">
+                <select class="menu" id="prov" data-default="ollama" data-name="Кто пишет саммари">
+                  <option value="ollama" selected>Ollama</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="claude">Claude</option>
+                  <option value="openrouter">OpenRouter</option>
+                </select>
+              </div>
+            </div>
+            <!-- контекстные строки облака: появляются только у выбранного провайдера -->
+            <div class="cell hidden" id="key-row">
+              <div class="head">
+                <div class="t2" id="key-title">Ключ OpenAI</div>
+                <div class="s">Хранится в Keychain</div>
+              </div>
+              <div class="ctl"><input class="field" id="key-field" placeholder="sk-…" type="password"></div>
+            </div>
+            <div class="cell hidden" id="model-row">
+              <div class="head">
+                <div class="t2" id="model-title">Модель OpenAI</div>
+                <div class="s hidden" id="model-sub"></div>
+              </div>
+              <div class="ctl"><input class="field" id="model-field" placeholder="gpt-4o-mini"></div>
+            </div>
+            <div class="stack">
+              <div class="head">
+                <div class="t2">Личный словарь</div>
+                <div class="s">Имена, компании и сленг</div>
+              </div>
+              <div class="body"><input class="field wide" placeholder="напр. Газпромнефть, Аэрофлот"
+                value="Газпромнефть, Аэрофлот, Propeller, Толк, онбординг, ретро"></div>
+            </div>
+            <!-- Подэкрана у промпта нет (решение владельца 2026-08-20). Он снова
+                 в списке и снова выдавливает то, что под ним, — цена названа в
+                 «Спецификации», раздел «Промпт и словарь — открытая вилка». -->
+            <div class="stack">
+              <div class="head">
+                <div class="t2">Промпт</div>
+                <div class="s">Пусто — встроенный; старые саммари не меняются</div>
+              </div>
+              <div class="body">
+<textarea>Ты пишешь конспект рабочей встречи по расшифровке.
+
+Формат:
+1. О чём договорились — списком, каждое решение отдельной строкой, с автором.
+2. Задачи — кто и к какому сроку.
+3. Открытые вопросы — то, что осталось без ответа.
+
+Правила: не выдумывай того, чего нет в расшифровке; дубль лучше пропуска;
+имена участников — как они звучат в расшифровке.</textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. Где лежат файлы. Путь не набирают руками. -->
+        <div class="group">
+          <h2>ХРАНИЛИЩЕ</h2>
+          <div class="plate">
+            <div class="cell">
+              <div class="head">
+                <div class="t2">Формат заметок</div>
+                <div class="s" id="fmt-sub">Читаемый markdown для обмена</div>
+              </div>
+              <div class="ctl">
+                <div class="seg" id="fmt" data-default="Простой" data-name="Формат заметок">
+                  <button aria-pressed="true">Простой</button>
+                  <button aria-pressed="false">Obsidian</button>
+                </div>
+              </div>
+            </div>
+            <div class="cell">
+              <div class="head">
+                <div class="t2">Папка заметок</div>
+                <div class="s mono">~/.meeting-recorder/meetings</div>
+              </div>
+              <div class="ctl"><button class="btn">Изменить…</button></div>
+            </div>
+            <div class="cell">
+              <div class="head">
+                <div class="t2">Папка записей</div>
+                <div class="s mono">/Volumes/Archive/propeller/recordings</div>
+              </div>
+              <div class="ctl"><button class="btn">Изменить…</button></div>
+            </div>
+            <div class="cell hidden" id="people-row">
+              <div class="head">
+                <div class="t2">Страницы людей</div>
+                <div class="s">Имена спикеров станут [[wikilinks]]</div>
+              </div>
+              <div class="ctl"><button class="btn">Выбрать…</button></div>
+            </div>
+            <div class="cell">
+              <div class="head">
+                <div class="t2">Хранить аудио</div>
+                <div class="s">Текст остаётся всегда</div>
+              </div>
+              <div class="ctl">
+                <div class="seg" data-default="До расшифровки">
+                  <button aria-pressed="true">До расшифровки</button>
+                  <button aria-pressed="false">Месяц</button>
+                </div>
+              </div>
+            </div>
+            <div class="cell">
+              <div class="head"><div class="t2">Аудио на диске</div></div>
+              <div class="ctl"><span class="val">1,64&nbsp;ГБ</span><button class="btn">Очистить…</button></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. Клиенты, которым открыт архив. -->
+        <div class="group">
+          <h2>MCP</h2>
+          <div class="plate">
+            <div class="cell">
+              <div class="head">
+                <div class="t2">Claude Desktop</div>
+                <div class="s">Читает весь архив</div>
+              </div>
+              <div class="ctl"><span class="done" title="Подключено">✓</span></div>
+            </div>
+            <div class="cell">
+              <div class="head">
+                <div class="t2">ChatGPT</div>
+                <div class="s">Доступ не выдан</div>
+              </div>
+              <div class="ctl"><button class="btn accent">Подключить</button></div>
+            </div>
+            <div class="cell">
+              <div class="head">
+                <div class="t2">Claude Code</div>
+                <div class="s">Командой в терминале</div>
+              </div>
+              <div class="ctl"><button class="btn">Скопировать команду</button></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="group">
+          <h2>О ПРОГРАММЕ</h2>
+          <div class="plate">
+            <div class="cell">
+              <div class="head">
+                <div class="t2">Отправлять аналитику</div>
+                <div class="s">Только события приложения, без личных данных</div>
+              </div>
+              <div class="ctl"><button class="sw" role="switch" aria-checked="true"></button></div>
+            </div>
+            <div class="cell">
+              <div class="head"><div class="t2">Версия</div></div>
+              <div class="ctl"><span class="val">1.16.6 (20260820)</span></div>
+            </div>
+            <div class="cell">
+              <div class="head"><div class="t2">Обновления</div></div>
+              <div class="ctl"><button class="btn">Проверить…</button></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ═════════════════ СПЕЦИФИКАЦИЯ ═════════════════ -->
+<section class="spec hidden" id="spec">
+
+<h2>Что здесь решается</h2>
+<p>Экран — не «список настроек покрасивее», а два изменения по существу: разведены жанры строк
+и переписаны заголовки строк (имена групп «MCP» и «Хранилище» владелец оставил как были). Три предложения разбора владелец отверг — они внизу,
+в «Отвергнуто», чтобы не вернулись «на всякий случай». Одно место осталось нерешённым: промпт и
+словарь снова стоят в списке, и чем их заменить — открытая вилка, раздел сразу за таблицей.</p>
+
+<h3>Строк и групп</h3>
+<table>
+<tr><th>Группа</th><th>Строк</th><th>Отвечает на вопрос</th></tr>
+<tr><td>Доступ</td><td>2</td><td>работает ли то, за что отвечает система</td></tr>
+<tr><td>Запись</td><td>5</td><td>когда приложение оживает само</td></tr>
+<tr><td>Расшифровка и саммари</td><td>3 (+2 у облака)</td><td>во что превратится записанный звук</td></tr>
+<tr><td>Хранилище</td><td>5 (+1 у Obsidian)</td><td>где лежат файлы и сколько занимают</td></tr>
+<tr><td>MCP</td><td>3</td><td>кто ещё видит архив</td></tr>
+<tr><td>О программе</td><td>3</td><td>приложение о себе; сюда же уехала аналитика</td></tr>
+<tr><td><b>Итого</b></td><td><b>21 · 6 групп</b></td><td>потолок: 24 строки и 6 групп</td></tr>
+</table>
+<p>Перевалило за потолок — не таб и не поиск внутри настроек (оба отвергнуты), а решение за
+человека. Удаляют настройки в семь раз медленнее, чем добавляют, поэтому потолок нужен числом,
+а не на словах.</p>
+
+<h3>Промпт и словарь — открытая вилка</h3>
+<p>Подэкраны отвергнуты, чем их заменить — не решено. Пока оба стоят в списке, но поле промпта
+сжато с 260 pt до <b>80 pt</b> (решение владельца): колонка 710 pt высотой скроллится на 1729 pt
+вместо 1909, и «Файлы и место» встаёт сразу за группой, а не за краем экрана. Само поле показывает
+три строки и половину четвёртой — половинка тут работает, она и есть знак, что текст продолжается;
+ровный срез дают 77 pt. Внутри поле скроллится: содержимое 229 pt.</p>
+<p>Число 80 продолжает ту же логику, которой в приложении выведено 260:
+<code>Tokens.Settings.editorHeight</code> уже уменьшали с 400 «потому что строка под ним переставала
+быть видна вместе с ним». Кандидаты, из которых надо выбрать:</p>
+<table>
+<tr><th>Вариант</th><th>Что даёт</th><th>Чем платим</th></tr>
+<tr><td><b>Как в прототипе</b> — редактор в списке, 80 pt</td>
+<td>ничего не прячется, одна поверхность, соседние группы видны</td>
+<td>промпт читают через щель в три строки; правка длинного промпта — внутри скролла</td></tr>
+<tr><td><b>Раскрытие на месте</b> — строка разворачивается в редактор по клику</td>
+<td>список остаётся списком, значение видно на строке</td>
+<td>ещё одно состояние строки и анимация; свёрнутый промпт всё равно надо чем-то подписать</td></tr>
+<tr><td><b>Отдельное окно</b> по кнопке «Открыть…»</td><td>промпт можно держать рядом с саммари
+и править, глядя на результат</td><td>второе окно у приложения, которое всю жизнь жило в одном</td></tr>
+<tr><td><b>Убрать из настроек</b>: промпт — к саммари встречи, словарь — туда, где ломаются имена</td>
+<td>настройка стоит там, где виден её результат; экран настроек снова короткий</td>
+<td>две новые поверхности в панели встречи; промпт перестаёт быть «настройкой» и становится частью
+редактора саммари</td></tr>
+</table>
+<p>Моя ставка — последний вариант для промпта (его правят, глядя на конспект, а не на список
+настроек) и раскрытие на месте для словаря (одна строка ввода, разворачивать почти нечего).
+Решение за владельцем.</p>
+
+<h2>1. Три вида второй строки</h2>
+<p>Сейчас пояснение, процесс и отказ рисуются одним цветом
+(<code>Tokens.Settings.subtitle</code>), поэтому «Не запущен» читается как справка.</p>
+<div class="demo">
+  <div class="cell"><div class="head"><div class="t2">Пояснение</div>
+    <div class="s">Вместе со звонком в Zoom</div></div>
+    <div class="ctl"><button class="sw" role="switch" aria-checked="true"></button></div></div>
+  <div class="cell"><div class="head"><div class="t2">Процесс</div>
+    <div class="s proc">Скачиваем модель… 46%</div></div>
+    <div class="ctl"><span class="val">Ollama</span></div></div>
+  <div class="cell"><div class="head"><div class="t2">Отказ, который можно пережить</div>
+    <div class="s warn">Ollama не запущена — саммари подождёт до её старта</div></div>
+    <div class="ctl"><button class="btn">Запустить</button></div></div>
+  <div class="cell"><div class="head"><div class="t2">Отказ системы</div>
+    <div class="s fail">macOS не дала зарегистрировать объект входа</div></div>
+    <div class="ctl"><button class="sw" role="switch" aria-checked="false"></button></div></div>
+</div>
+
+<h2>2. Инверсия акцента статуса</h2>
+<p>Сейчас галочка «уже сделано» красится акцентом
+(<code>SettingsCheck</code> → <code>Tokens.Paint.Status.accent</code>), а кнопка действия — нет:
+подсвечено то, что трогать не надо. В прототипе наоборот — акцент только на несделанном,
+галочка тихая (30% белого).</p>
+
+<h2>3. Что стало с текущими строками</h2>
+<table>
+<tr><th>Было</th><th>Стало</th><th>Почему</th></tr>
+<tr><td>Группа «Основное» (6 строк)</td><td>«Запись» (5) + «Доступ» (Календарь)</td><td>жанр: решение против состояния мира</td></tr>
+<tr><td>«Приватность»: доступ к приложениям + аналитика</td><td>доступ → «Доступ», аналитика → «О программе», строка → «Отправлять аналитику»</td><td>разрешение macOS и телеметрия отвечают на разные вопросы; аналитика — про само приложение</td></tr>
+<tr><td>«Нейросети»</td><td>«Расшифровка и саммари»</td><td>заголовок называл механизм</td></tr>
+<tr><td>«Модель для саммари»</td><td>«Кто пишет саммари»</td><td>вопрос человека, а не имя поля</td></tr>
+<tr><td>Поля путей с текстовым вводом</td><td>имя папки + «Изменить…», путь второй строкой</td><td>ввод пути руками — поверхность опечатки, а не выбор</td></tr>
+<tr><td>Промпт и словарь в списке</td><td>там же — вилка открыта</td><td>подэкраны отвергнуты владельцем</td></tr>
+<tr><td>«Доступ к приложениям»</td><td>«Имена спикеров из Zoom»</td><td>заголовок = выгода, вторая строка = цена</td></tr>
+<tr><td>Порядок групп «по частоте»</td><td>по моменту жизни продукта</td><td>частота здесь одна: «один раз»</td></tr>
+</table>
+
+<h2>4. Чего в прототипе нет намеренно</h2>
+<ul>
+<li><b>Табов и поиска внутри настроек</b> — бюджет держится.</li>
+<li><b>Приборов без действия</b> — статус провайдера остался только потому, что он отвечает
+на «поедет ли саммари вообще»; «Аудио на диске» — потому что рядом «Очистить».</li>
+<li><b>Быстрых настроек</b> — вилка не закрыта: единственный правдоподобный кандидат
+«пауза автозаписи до вечера» в поповере меню-бара. Либо он, либо вслух записать, что быстрых
+настроек не будет.</li>
+<li><b>Диагностики «почему нет саммари»</b> — ей место на строке встречи, а не здесь.</li>
+</ul>
+
+<h2>5. Что проверить руками в прототипе</h2>
+<ul>
+<li>Переключить «Кто пишет саммари» на OpenAI — появятся ключ и модель, вторая строка скажет, куда уходит транскрипт.</li>
+<li>Переключить формат на Obsidian — появится «Страницы людей».</li>
+<li>Переключить провайдера на OpenRouter — у строки модели появится подпись про префикс вендора; у OpenAI её нет.</li>
+</ul>
+
+<h2>Отвергнуто владельцем · 2026-08-20</h2>
+<p>Все три были в прототипе и убраны по решению владельца. Записаны, чтобы не вернуться
+«на всякий случай» — тем же приёмом, что §10 дока.</p>
+<table>
+<tr><th>Что предлагалось</th><th>Довод за</th><th>Решение</th></tr>
+<tr><td><b>Метка «изменено»</b> на строке не по умолчанию + счётчик и «Вернуть как было» в подвале</td>
+<td>Поле 2024: свои же выданные разрешения люди вспоминают верно в 49 % случаев, отклонённые — в 34 %</td>
+<td>Не берём. Экран остаётся без памяти о правках; цена принята осознанно</td></tr>
+<tr><td><b>Поиск по настройкам</b> — строки настроек в ⌘K с синонимами и симптомами, вход с места симптома</td>
+<td>Проблема словаря: два человека называют одну вещь одним словом реже чем в 20 % случаев</td>
+<td>Не берём. Значит, находимость держат только заголовки групп и порядок — и потолок 24 строки
+становится жёстче, чем был: без поиска расти некуда</td></tr>
+<tr><td><b>Переименование групп</b>: «MCP» → «Кто ещё читает архив», «Хранилище» → «Файлы и место»</td>
+<td>Проблема словаря: три буквы протокола и слово «хранилище» называют механизм, а не вопрос человека</td>
+<td>Не берём, имена групп остаются. Правило «вопрос, а не механизм» действует на уровне строк
+(«Кто пишет саммари», «Имена спикеров из Zoom»), но не на именах этих двух групп</td></tr>
+<tr><td><b>Подэкраны</b> для промпта и словаря — со значением на родительской строке</td>
+<td>Документ, а не значение: редактор в списке выдавливает три группы за второй экран</td>
+<td>Не берём. Чем заменить — открытая вилка, кандидаты выше</td></tr>
+</table>
+</section>
+
+<script>
+// ── вкладки прототип / спецификация ────────────────────────────────
+const tp=document.getElementById('tab-proto'), ts=document.getElementById('tab-spec');
+const proto=document.getElementById('proto'), spec=document.getElementById('spec');
+function tab(which){
+  const p=which==='proto';
+  tp.setAttribute('aria-selected',p); ts.setAttribute('aria-selected',!p);
+  proto.classList.toggle('hidden',!p); spec.classList.toggle('hidden',p);
+}
+tp.onclick=()=>tab('proto'); ts.onclick=()=>tab('spec');
+
+// ── тумблеры ───────────────────────────────────────────────────────
+document.querySelectorAll('.sw').forEach(sw=>sw.addEventListener('click',()=>{
+  sw.setAttribute('aria-checked', sw.getAttribute('aria-checked')!=='true');
+}));
+
+// ── сегментед ──────────────────────────────────────────────────────
+document.querySelectorAll('.seg').forEach(seg=>{
+  seg.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+    seg.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b));
+    if(seg.id==='fmt') obsidian(b.textContent.trim()==='Obsidian');
+  }));
+});
+function obsidian(on){
+  document.getElementById('people-row').classList.toggle('hidden',!on);
+  document.getElementById('fmt-sub').textContent = on
+    ? 'YAML и [[wikilinks]]; старые файлы не меняются'
+    : 'Читаемый markdown для обмена';
+}
+
+// ── провайдер: контекстные строки ──────────────────────────────────
+const PROV={
+  ollama:{sub:'Отвечает локально'},
+  openai:{name:'OpenAI',ph:'sk-…',model:'gpt-4o-mini',sub:'Транскрипт уходит в OpenAI'},
+  claude:{name:'Claude',ph:'sk-ant-…',model:'claude-sonnet-4-5',sub:'Транскрипт уходит в Anthropic'},
+  openrouter:{name:'OpenRouter',ph:'sk-or-…',model:'anthropic/claude-sonnet-4.5',
+    sub:'Транскрипт уходит в OpenRouter, дальше — вендору модели',
+    hint:'С префиксом вендора, как в каталоге OpenRouter'}
+};
+const prov=document.getElementById('prov');
+prov.addEventListener('change',()=>{
+  const k=prov.value, p=PROV[k], cloud=k!=='ollama';
+  document.getElementById('prov-sub').textContent=p.sub;
+  document.getElementById('key-row').classList.toggle('hidden',!cloud);
+  document.getElementById('model-row').classList.toggle('hidden',!cloud);
+  if(cloud){
+    document.getElementById('key-title').textContent='Ключ '+p.name;
+    document.getElementById('key-field').placeholder=p.ph;
+    document.getElementById('model-title').textContent='Модель '+p.name;
+    document.getElementById('model-field').placeholder=p.model;
+    const ms=document.getElementById('model-sub');
+    ms.textContent=p.hint||''; ms.classList.toggle('hidden',!p.hint);
+  }
+});
+
+</script>
+</body>
+</html>
