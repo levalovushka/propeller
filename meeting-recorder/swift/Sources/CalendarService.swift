@@ -34,6 +34,10 @@ final class CalendarService: ObservableObject {
     /// matched to one. Nothing draws this.
     @Published var events: [CalendarEvent] = []
     @Published var accessGranted = false
+    /// Что ответила система — с разницей между «ещё не спрашивали» и «отказано».
+    /// Читает её строка настроек: у первого случая есть окно, у второго только
+    /// System Settings (`CalendarAccess`).
+    @Published var access: CalendarAccess = .notDetermined
 
     /// Prompt for calendar access (if needed) and load nearby events.
     func enableAndLoad() async {
@@ -46,19 +50,43 @@ final class CalendarService: ObservableObject {
             }
         }
         accessGranted = granted
+        // Не `granted ? .granted : .denied`: отказ бывает «окно закрыли, статус
+        // остался notDetermined», и обещать тогда System Settings рано.
+        access = Self.currentAccess()
         if granted { load() }
+    }
+
+    /// Перечитать ответ системы, ничего у неё не спрашивая.
+    ///
+    /// Нужно строке настроек: человек уходит выдавать доступ руками и обязан
+    /// вернуться к изменившейся строке. Запрос здесь был бы окном на открытие
+    /// настроек.
+    func refreshAccess() {
+        access = Self.currentAccess()
+        accessGranted = access == .granted
+    }
+
+    static func currentAccess() -> CalendarAccess {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        switch status {
+        case .notDetermined:
+            return .notDetermined
+        case .fullAccess:
+            return .granted
+        case .authorized:
+            // До macOS 14 полный доступ назывался так.
+            return .granted
+        default:
+            // `.denied`, `.restricted` и `.writeOnly`. Право дописывать события
+            // ничего не говорит о праве их читать, а читаем мы.
+            return .denied
+        }
     }
 
     /// Refresh the event window. Safe to call repeatedly; no-op without access.
     func load() {
-        let status = EKEventStore.authorizationStatus(for: .event)
-        let ok: Bool
-        if #available(macOS 14.0, *) {
-            ok = status == .fullAccess
-        } else {
-            ok = status == .authorized
-        }
-        guard ok else { accessGranted = false; return }
+        access = Self.currentAccess()
+        guard access == .granted else { accessGranted = false; return }
         accessGranted = true
 
         let now = Date()

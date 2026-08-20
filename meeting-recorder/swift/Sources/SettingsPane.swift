@@ -58,6 +58,7 @@ private struct GeneralSettingsGroup: View {
     @State private var launchAtLoginError: String?
     @AppStorage("autoRecordMode") private var autoRecordMode = AutoRecordMode.auto.rawValue
     @AppStorage("menuBarIconVisible") private var menuBarIconVisible = true
+    @AppStorage("userName") private var userName = ""
 
     var body: some View {
         SettingsGroup("Основное") {
@@ -94,6 +95,18 @@ private struct GeneralSettingsGroup: View {
                 state.applyAutoRecordMode()
             }
 
+            CalendarAccessRow(state: state)
+
+            // Плейсхолдер — то самое системное имя, которым подпишет фолбэк
+            // (`Preferences.ownerName`). Пустое поле поэтому не врёт: оно
+            // показывает, как встреча будет подписана, если ничего не вводить.
+            SettingsCell("Ваше имя в расшифровках") {
+                SettingsField(NSFullUserName(), text: $userName)
+            }
+            .onChange(of: userName) { _, val in
+                state.setOwnerNameFromSettings(val)
+            }
+
             // Выключатель живёт здесь, потому что вернуть иконку можно только
             // отсюда: в поповере, которого без неё не будет, доступно лишь
             // «Скрыть». Сцена читает тот же ключ (`MenuBarExtra(isInserted:)`).
@@ -117,6 +130,59 @@ private struct GeneralSettingsGroup: View {
             get: { (AutoRecordMode(rawValue: autoRecordMode) ?? .auto) == .auto },
             set: { autoRecordMode = ($0 ? AutoRecordMode.auto : .off).rawValue }
         )
+    }
+}
+
+/// Строка календаря: единственное место, где приложение признаётся, что
+/// названий из календаря не будет.
+///
+/// Решение состояния — в `PropellerPure/CalendarAccess.swift`; здесь только
+/// чтение системы и нажатие. Перечитывает ответ системы на открытии настроек и
+/// на возврате в приложение — тот же приём, что у `MCPClientRow`: человек уходит
+/// выдавать доступ руками и обязан вернуться к изменившейся строке.
+private struct CalendarAccessRow: View {
+    @ObservedObject var state: AppState
+    @ObservedObject private var calendar = CalendarService.shared
+    @AppStorage("calendarEnabled") private var calendarEnabled = false
+
+    private var row: CalendarSettingsRow {
+        .state(enabled: calendarEnabled, access: calendar.access)
+    }
+
+    var body: some View {
+        SettingsCell("Календарь", subtitle: row.subtitle) {
+            control
+        }
+        .onAppear { calendar.refreshAccess() }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification
+        )) { _ in calendar.refreshAccess() }
+    }
+
+    @ViewBuilder
+    private var control: some View {
+        if let title = row.actionTitle {
+            SettingsButton(title) { press() }
+        } else if row.showsCheckmark {
+            SettingsCheck()
+        } else {
+            EmptyView()
+        }
+    }
+
+    private func press() {
+        // После отказа системы просить снова нечего: окна не будет, и кнопка
+        // «Попробовать снова» читалась бы как сломанное приложение. Единственный
+        // работающий путь — System Settings.
+        if row.opensSystemSettings {
+            if let url = URL(
+                string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars"
+            ) {
+                NSWorkspace.shared.open(url)
+            }
+            return
+        }
+        state.enableCalendarFromSettings()
     }
 }
 
@@ -549,6 +615,13 @@ private struct StorageSettingsGroup: View {
                 // приведение к допустимому диапазону, и записанное руками в
                 // defaults число обязано проходить через него.
                 Preferences.shared.audioRetentionDays = val
+            }
+            .onChange(of: audioRetentionMode) { _, val in
+                // Тоже через `Preferences`: там выбранное «Столько дней»
+                // получает своё число, по которому выбор человека потом
+                // отличают от дефолта (`AudioRetention.storedMode`).
+                Preferences.shared.audioRetentionMode =
+                    AudioRetentionMode(rawValue: val) ?? .afterTranscript
             }
 
             // «Стереть человека» двери не получает намеренно (решение владельца

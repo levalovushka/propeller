@@ -319,6 +319,21 @@ class Preferences {
         return given.isEmpty ? NSFullUserName() : given
     }
 
+    /// Имя уже спрашивали — в рельсе или в настройках.
+    ///
+    /// Отдельно от `userName`, потому что «ответил» и «сейчас пусто» — разные
+    /// вещи. Пока имя было только в рельсе, непустая строка и была признаком
+    /// ответа; с полем в настройках человек может имя **стереть**, и вывод из
+    /// пустоты вернул бы ему в подошву «Как вас зовут?» — то есть приложение,
+    /// не помнящее разговора. Пустое поле значит «подписывай системным именем»,
+    /// а не «спроси меня снова».
+    ///
+    /// Одноразовый и односторонний, как `setupCalendarAsked`.
+    var setupNameAsked: Bool {
+        get { defaults.bool(forKey: "setupNameAsked") }
+        set { defaults.set(newValue, forKey: "setupNameAsked") }
+    }
+
     /// The rail asked about the calendar and the user pressed «Подключить».
     ///
     /// One-way, and separate from `calendarEnabled` on purpose: whether the

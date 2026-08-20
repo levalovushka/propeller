@@ -93,7 +93,9 @@ public enum SetupPromptMachine {
     /// Вопрос считается закрытым не только ответом на него. Календарь закрыт,
     /// если человек уже нажал «Подключить» — что бы ни ответила система: это
     /// предложение, а не ворота, и второй раз спрашивать его не за что. Имя
-    /// закрыто, если оно уже известно, и это единственное, что отличает
+    /// закрыто, если оно уже известно **или** его уже спрашивали (`nameAsked` —
+    /// человек мог назвать имя и потом стереть его в настройках), и это
+    /// единственное, что отличает
     /// установку с нуля от обновления с 1.14, где имя спрашивали на своём экране.
     /// Спросить его снова было бы не мягким предложением, а приложением, которое
     /// не помнит разговора.
@@ -107,12 +109,18 @@ public enum SetupPromptMachine {
         calendarGranted: Bool,
         calendarAsked: Bool,
         knownName: String,
+        nameAsked: Bool = false,
         offeredClient: MCPClient?,
         claudeAsked: Bool
     ) -> SetupPrompt? {
         guard setupCompleted else { return nil }
         if !calendarGranted, !calendarAsked { return .calendar }
-        if knownName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .name }
+        // Имя закрыто не только названным именем: с полем в настройках его можно
+        // стереть, и вернувшийся вопрос читался бы как «я тебя забыл». Тот же
+        // уговор, что у календаря, — шаг тратится ответом, а не его результатом.
+        if !nameAsked, knownName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return .name
+        }
         // Последним и только когда есть что предлагать: без единого клиента на
         // машине это была бы реклама чужого приложения в подошве рельса.
         if offeredClient != nil, !claudeAsked { return .claude }

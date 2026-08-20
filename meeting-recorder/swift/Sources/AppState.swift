@@ -168,6 +168,7 @@ class AppState: ObservableObject {
         calendarGranted: Preferences.shared.calendarEnabled,
         calendarAsked: Preferences.shared.setupCalendarAsked,
         knownName: Preferences.shared.userName,
+        nameAsked: Preferences.shared.setupNameAsked,
         offeredClient: MCPConnector.clientToOffer,
         claudeAsked: Preferences.shared.setupClaudeAsked
     )
@@ -317,6 +318,7 @@ class AppState: ObservableObject {
             calendarGranted: Preferences.shared.calendarEnabled,
             calendarAsked: Preferences.shared.setupCalendarAsked,
             knownName: Preferences.shared.userName,
+            nameAsked: Preferences.shared.setupNameAsked,
             offeredClient: MCPConnector.clientToOffer,
             claudeAsked: Preferences.shared.setupClaudeAsked
         )
@@ -333,6 +335,13 @@ class AppState: ObservableObject {
            !Preferences.shared.setupCalendarAsked,
            !Preferences.shared.userName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             Preferences.shared.setupCalendarAsked = true
+        }
+        // То же и про имя: у прошедшего онбординг оно записано, значит вопрос
+        // задавали. Без этой строки первый, кто сотрёт имя в настройках, получит
+        // «Как вас зовут?» в подошве — приложение, забывшее свой же разговор.
+        if !Preferences.shared.setupNameAsked,
+           !Preferences.shared.userName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Preferences.shared.setupNameAsked = true
         }
         refreshSetupPrompt()
     }
@@ -351,6 +360,39 @@ class AppState: ObservableObject {
         Task { await CalendarService.shared.enableAndLoad() }
     }
 
+    /// «Подключить» / «Разрешить» в строке календаря в настройках.
+    ///
+    /// Делает то же, что рельс, и **закрывает его вопрос**: спрашивать в подошве
+    /// про то, что человек только что сделал в настройках, — это приложение,
+    /// которое не смотрит на свои же экраны. Сигнала здесь нет намеренно:
+    /// `Setup.calendarAsked` — про шаг рельса, и слать его отсюда значило бы
+    /// испортить счёт по онбордингу.
+    func enableCalendarFromSettings() {
+        Preferences.shared.setupCalendarAsked = true
+        Preferences.shared.calendarEnabled = true
+        refreshSetupPrompt()
+        Task { await CalendarService.shared.enableAndLoad() }
+    }
+
+    /// Имя, набранное в настройках.
+    ///
+    /// В отличие от рельса пустая строка здесь — ответ: «подписывай системным
+    /// именем». Поэтому она пишется, а вопрос всё равно считается заданным —
+    /// иначе стирание имени возвращало бы блок в подошву.
+    ///
+    /// Прошлых встреч это не касается и касаться не должно: имя запекается в
+    /// текст в момент, когда текст ложится на диск — `persistLiveTranscript` на
+    /// остановке и `TranscriptionService` на расшифровке. Всё, что уже лежит —
+    /// markdown и сегменты, — переименование не читает.
+    func setOwnerNameFromSettings(_ name: String) {
+        // Без подрезки: поле пишется на каждый набранный символ, и подрезанная
+        // строка, вернувшаяся в него, съедала бы пробел посреди «Лёва Лобанов».
+        // Пробелы снимают на чтении — `Preferences.ownerName` и `SetupPrompt`.
+        Preferences.shared.userName = name
+        Preferences.shared.setupNameAsked = true
+        refreshSetupPrompt()
+    }
+
     /// The name typed into the rail's field.
     ///
     /// Empty is not an answer — the field's own ⏎ is disabled on empty, and this
@@ -361,6 +403,7 @@ class AppState: ObservableObject {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         Preferences.shared.userName = trimmed
+        Preferences.shared.setupNameAsked = true
         refreshSetupPrompt()
         Analytics.signal("Setup.nameGiven")
     }

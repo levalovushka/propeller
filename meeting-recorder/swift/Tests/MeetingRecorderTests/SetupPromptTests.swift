@@ -11,6 +11,7 @@ final class SetupPromptTests: XCTestCase {
         calendarGranted: Bool = false,
         calendarAsked: Bool = false,
         knownName: String = "",
+        nameAsked: Bool = false,
         offeredClient: MCPClient? = nil,
         claudeAsked: Bool = false
     ) -> SetupPrompt? {
@@ -19,6 +20,7 @@ final class SetupPromptTests: XCTestCase {
             calendarGranted: calendarGranted,
             calendarAsked: calendarAsked,
             knownName: knownName,
+            nameAsked: nameAsked,
             offeredClient: offeredClient,
             claudeAsked: claudeAsked
         )
@@ -139,5 +141,28 @@ final class SetupPromptTests: XCTestCase {
             XCTAssertFalse(prompt.title.isEmpty)
             XCTAssertFalse(prompt.subtitle.isEmpty)
         }
+    }
+
+    // MARK: - Имя, стёртое в настройках
+
+    /// Поле в настройках позволяет имя убрать — это ответ «подписывай системным
+    /// именем», а не «спроси меня снова». Вернувшийся вопрос читался бы как
+    /// приложение, забывшее собственный разговор.
+    func testСтёртоеВНастройкахИмяНеВозвращаетВопрос() {
+        XCTAssertNil(step(calendarAsked: true, knownName: "", nameAsked: true))
+    }
+
+    /// Обратная сторона: пока имя не спрашивали, пустота — это вопрос.
+    func testБезФлагаПустоеИмяВсёЕщёСпрашивают() {
+        XCTAssertEqual(step(calendarAsked: true, knownName: "", nameAsked: false), .name)
+    }
+
+    /// Порядок не ломается: закрытое имя пропускает шаг вперёд, к Клоду.
+    func testСтёртоеИмяПропускаетКСледующемуВопросу() {
+        XCTAssertEqual(
+            step(calendarAsked: true, knownName: "", nameAsked: true,
+                 offeredClient: .claudeDesktop),
+            .claude
+        )
     }
 }
