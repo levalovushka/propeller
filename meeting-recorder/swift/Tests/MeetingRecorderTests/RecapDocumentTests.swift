@@ -110,6 +110,38 @@ final class RecapDocumentTests: XCTestCase {
                        ["Левон", "Arina Soldatenkova"])
     }
 
+    /// Расшифровка, которую читает саммари, лежит на диске в другом виде, чем
+    /// та, что ходит по пайплайну. Формат берётся у самого writer'а, а не
+    /// переписывается сюда руками — иначе тест разойдётся с ним молча, как это
+    /// и случилось до 2026-08-20: состав был пуст на каждой живой встрече.
+    func testСоставЧитаетсяИзТогоВидаЧтоЛежитНаДиске() {
+        let inMemory = """
+        [Левон] [00:00]
+        Здоровско.
+
+        [Aleksandra Nikandrova] [08:27]
+        Привет.
+
+        [Speaker S3] [08:28]
+        Привет.
+
+        [Я] [09:00]
+        Без имени в настройках.
+        """
+        let onDisk = MeetingMarkdown.transcriptBody(inMemory)
+        XCTAssertTrue(onDisk.contains("**Левон** · 00:00"), "формат writer'а сменился — правь оба места")
+        XCTAssertEqual(RecapDocument.participants(fromTranscript: onDisk),
+                       ["Левон", "Aleksandra Nikandrova"])
+        XCTAssertEqual(RecapDocument.participants(fromTranscript: inMemory),
+                       RecapDocument.participants(fromTranscript: onDisk))
+    }
+
+    /// Длинная встреча: минуты не капаются, `83:12` — законная метка.
+    func testДлиннаяВстречаНеТеряетУчастников() {
+        let onDisk = "**Вячеслав Киржаев** · 83:12\nВот и всё."
+        XCTAssertEqual(RecapDocument.participants(fromTranscript: onDisk), ["Вячеслав Киржаев"])
+    }
+
     func testСоставПопадаетВПромптОднойСтрокой() {
         let msg = RecapDocument.userMessage(
             title: "Синк", transcriptMarkdown: "[Левон] [00:01]\nПривет.",

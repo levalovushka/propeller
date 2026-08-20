@@ -47,6 +47,16 @@ public enum RecapDocument {
 
     /// Who was in the meeting, read off the transcript's own speaker labels.
     ///
+    /// **Two shapes, and both are load-bearing.** The pipeline passes blocks
+    /// around as `[Кто] [12:34]`, but what lands on disk — and what the recap
+    /// actually reads (`AppState.runRecap` reads the file) — is
+    /// `**Кто** · 12:34`, written by `MeetingMarkdown.transcriptBody`. Until
+    /// 2026-08-20 this function knew only the first shape, so on every real
+    /// meeting the roster came back empty: the «Участники» line never reached
+    /// the prompt, `RecapLint.assigneesOutsideRoster` returned early on an empty
+    /// roster, and `PersonCanon` had nothing to canonicalise. Every test passed,
+    /// because every fixture was written in the in-memory shape.
+    ///
     /// Placeholder labels are not people, and the question of which labels those
     /// are is asked in exactly one place — `SourceAwareSpeaker.isPlaceholder`,
     /// next to the code that emits them. A meeting the journal never named
@@ -57,14 +67,20 @@ public enum RecapDocument {
     /// the review of 2026-08-20: a meeting without clustering handed the prompt
     /// a participant called «Я», against which the model then checked names.
     public static func participants(fromTranscript transcript: String) -> [String] {
-        let pattern = #"(?m)^\[([^\]\n]{1,60})\] \[\d{1,3}:\d{2}\]"#
+        // Первая ветка — вид в памяти (`Timecode.transcriptHeadPattern`), вторая —
+        // вид на диске (`MeetingMarkdown.transcriptBody`, строка 129). Менять
+        // здесь можно только вместе с ними: тест кормит эту функцию выводом
+        // самого writer'а, чтобы формат не разошёлся молча.
+        let pattern = #"(?m)^(?:\[([^\]\n]{1,60})\] \[\d{1,3}:\d{2}(?::\d{2})?\]|\*\*([^*\n]{1,60})\*\*\s*·\s*\d{1,3}:\d{2}(?::\d{2})?)\s*$"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
         let range = NSRange(transcript.startIndex..., in: transcript)
         var seen = Set<String>()
         var out: [String] = []
         regex.enumerateMatches(in: transcript, range: range) { match, _, _ in
-            guard let match, match.numberOfRanges > 1,
-                  let labelRange = Range(match.range(at: 1), in: transcript) else { return }
+            guard let match, match.numberOfRanges > 2 else { return }
+            let labelRange = Range(match.range(at: 1), in: transcript)
+                ?? Range(match.range(at: 2), in: transcript)
+            guard let labelRange else { return }
             let label = transcript[labelRange].trimmingCharacters(in: .whitespaces)
             guard !SourceAwareSpeaker.isPlaceholder(label), !seen.contains(label) else { return }
             seen.insert(label)
