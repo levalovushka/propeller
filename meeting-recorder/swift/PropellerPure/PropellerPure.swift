@@ -286,6 +286,30 @@ public enum SourceAwareSpeaker {
     public static let defaultRemoteName = "Собеседник"
     /// When the owner never entered a name in onboarding.
     public static let defaultOwnerName = "Я"
+
+    /// Is this label a stand-in rather than somebody's name?
+    ///
+    /// Four kinds of stand-in exist and they come from two different places:
+    /// `Speaker N` and bare `Speaker` from `DiarizationMerge.speakerLabel` when
+    /// clustering ran but named nothing, and «Собеседник» / «Я» from
+    /// `stemsOnly` when it never ran at all. Anything that presents a roster to
+    /// a person has to ask this, and until 2026-08-20 three places asked it
+    /// separately with three different answers — the markdown writer knew only
+    /// about `Speaker …`, so «Собеседник» and «Я» were written into the file a
+    /// person keeps, under **Participants**, as if they were attendees.
+    ///
+    /// Case-insensitive on purpose: the journal writes what a person typed into
+    /// Zoom, and «собеседник» in lower case is the same non-name.
+    public static func isPlaceholder(_ label: String) -> Bool {
+        let trimmed = label.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return true }
+        if trimmed.compare(defaultRemoteName, options: .caseInsensitive) == .orderedSame { return true }
+        if trimmed.compare(defaultOwnerName, options: .caseInsensitive) == .orderedSame { return true }
+        return trimmed.range(
+            of: #"^(?:Speaker|Спикер)(?:\s*S?\d+)?$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
 }
 
 /// How the speaker names in a transcript were arrived at.

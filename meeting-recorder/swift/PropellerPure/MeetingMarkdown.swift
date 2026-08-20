@@ -209,20 +209,30 @@ public enum MeetingMarkdown {
 
     /// Slug for matching speaker names to people-page filenames: lowercase,
     /// spaces to dashes, everything else dropped.
+    ///
+    /// The alphabet is `\w`, not `a-z0-9`. With the ASCII class this function
+    /// returned the empty string for every Cyrillic name — `speakerSlug("Левон")`
+    /// → `""` — so in the archive this app is actually built for, linking a
+    /// speaker to their page in an Obsidian vault could never match once. Latin
+    /// names slug identically under both rules, so nothing that worked changes.
     public static func speakerSlug(_ name: String) -> String {
         name
             .folding(options: .diacriticInsensitive, locale: .current)
             .lowercased()
-            .replacingOccurrences(of: #"[^a-z0-9\s-]"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"[^\w\s-]"#, with: "", options: .regularExpression)
             .replacingOccurrences(of: #"[\s]+"#, with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     }
 
     /// Who spoke, read back out of the transcript's own block heads.
     ///
-    /// `Speaker N` is not a name — it is the diarizer saying it does not know
-    /// one, and putting it in **Participants** would present a placeholder as a
-    /// person.
+    /// A stand-in is not a name, and putting one in **Participants** would
+    /// present it to a person as an attendee — in a file they keep, and in an
+    /// Obsidian vault's frontmatter. Which labels are stand-ins is
+    /// `SourceAwareSpeaker.isPlaceholder`, because the type that emits them is
+    /// the one that should say so: this function used to know only about
+    /// `Speaker …` and let «Собеседник» and «Я» — the labels of the path where
+    /// diarization never ran at all — through.
     public static func extractSpeakers(from transcript: String) -> [String] {
         guard let regex = try? NSRegularExpression(
             pattern: Timecode.transcriptHeadPattern,
@@ -233,7 +243,7 @@ public enum MeetingMarkdown {
         regex.enumerateMatches(in: transcript, range: range) { match, _, _ in
             if let nameRange = match.flatMap({ Range($0.range(at: 1), in: transcript) }) {
                 let name = String(transcript[nameRange])
-                if !name.hasPrefix("Speaker ") && name != "Speaker" {
+                if !SourceAwareSpeaker.isPlaceholder(name) {
                     names.insert(name)
                 }
             }

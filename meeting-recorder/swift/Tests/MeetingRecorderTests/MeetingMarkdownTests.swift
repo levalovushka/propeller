@@ -108,6 +108,21 @@ final class MeetingMarkdownTests: XCTestCase {
         XCTAssertEqual(MeetingMarkdown.extractSpeakers(from: transcript), ["Левон", "Мария"])
     }
 
+    /// The stems path — diarization never ran — labels every remark «Собеседник»
+    /// or «Я». Those are the same admission as `Speaker N`, and they are the
+    /// ones that used to get through: into the file a person keeps, and into an
+    /// Obsidian vault's frontmatter, as if they were attendees.
+    func testTheStandInsOfTheStemsPathAreNotParticipantsEither() {
+        let stems = "[Собеседник] [00:01]\nПривет.\n\n[Я] [00:05]\nПривет!"
+        XCTAssertEqual(MeetingMarkdown.extractSpeakers(from: stems), [])
+    }
+
+    /// Dropping stand-ins must not mean dropping everybody.
+    func testARealNameSurvivesBesideAStandIn() {
+        let mixed = "[Собеседник] [00:01]\nа\n\n[Арина] [00:05]\nб"
+        XCTAssertEqual(MeetingMarkdown.extractSpeakers(from: mixed), ["Арина"])
+    }
+
     func testEachNameIsCountedOnce() {
         let repeated = "[Левон] [00:01]\nраз\n\n[Левон] [00:09]\nдва"
         XCTAssertEqual(MeetingMarkdown.extractSpeakers(from: repeated), ["Левон"])
@@ -167,5 +182,13 @@ final class MeetingMarkdownTests: XCTestCase {
     func testASpeakerSlugMatchesAPageName() {
         XCTAssertEqual(MeetingMarkdown.speakerSlug("Ivan Petrov"), "ivan-petrov")
         XCTAssertEqual(MeetingMarkdown.speakerSlug("Ünal O'Neil"), "unal-oneil")
+    }
+
+    /// This archive is Russian. Under the old ASCII alphabet every Cyrillic name
+    /// slugged to the empty string, so linking a speaker to their page in a
+    /// vault could not fire once — the feature was dead for its own audience.
+    func testACyrillicNameSlugsToSomething() {
+        XCTAssertEqual(MeetingMarkdown.speakerSlug("Левон"), "левон")
+        XCTAssertEqual(MeetingMarkdown.speakerSlug("Арина Солдатенкова"), "арина-солдатенкова")
     }
 }
