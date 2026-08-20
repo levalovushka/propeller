@@ -51,9 +51,16 @@ def main() -> None:
     ap.add_argument("--utts", required=True)
     ap.add_argument("--fallback", help="out/<id>.base.json — диаризация для промолчанных секунд")
     ap.add_argument("--offset", type=float, default=0.0,
-                    help="секунды: время встречи = время трассы + offset. Трасса стартует "
-                         "позже записи; сдвиг калибруется по репликам владельца "
-                         "(микрофонный стем против пролётов журнала), не по часам")
+                    help="секунды: время встречи = время трассы + offset. Считать из "
+                         "startedUnix метазаписи трассы и машинного времени начала записи; "
+                         "калибровка по сигналу — запасной путь для трасс без якоря")
+    ap.add_argument("--names",
+                    help="объявленное сопоставление «имя журнала=метка эталона» через "
+                         "запятую (например «Иван Иванов=IVAN,Анна=ANNA»). Жадное "
+                         "сопоставление перестановочно-инвариантно и не проверяет, что "
+                         "имя ВЕРНОЕ — систематическая подмена двух имён даёт те же 0 %%. "
+                         "С --names ось «имя = человек» проверяется в лоб; имя журнала "
+                         "вне списка всегда неправо")
     args = ap.parse_args()
 
     journal = [
@@ -89,11 +96,20 @@ def main() -> None:
     print(f"  честность: промолчал {100 - covered / total * 100:.1f} % ({total - covered:.0f} с)")
 
     if named:
-        mapping = best_mapping(named)
+        if args.names:
+            mapping = dict(pair.split("=", 1) for pair in args.names.split(","))
+            unknown = sorted({n for n, _, _ in named if n not in mapping})
+            if unknown:
+                print(f"  имена журнала вне объявленного списка (всегда неправы): {unknown}")
+            kind = "объявленное"
+        else:
+            mapping = best_mapping(named)
+            kind = "жадное (ось «имя верное» НЕ проверена — задай --names)"
         wrong = sum(s for n, p, s in named if mapping.get(n) != p)
-        print(f"  сопоставление: " + " ".join(f"{k}→{v}" for k, v in sorted(mapping.items())))
+        print(f"  сопоставление ({kind}): " + " ".join(f"{k}→{v}" for k, v in sorted(mapping.items())))
         print(f"  SAER по названным секундам {wrong / covered * 100:.1f} % ({wrong:.0f} с из {covered:.0f})")
     else:
+        mapping = {}
         print("  журнал не назвал ни секунды — SAER по названным не определён")
 
     if fallback is not None:
@@ -106,7 +122,22 @@ def main() -> None:
             if person is None or covering_label(mid, journal) is not None:
                 continue
             fb_scored.append((label_for(mid, fallback) or "—", person, u["end"] - u["start"]))
-        fb_mapping = best_mapping(fb_scored)
+        if args.names:
+            # Объявленные имена журнала — как объявлены; кластеры диаризации —
+            # жадно по оставшимся людям.
+            fb_mapping = dict(mapping)
+            taken = set(fb_mapping.values())
+            weights: dict[tuple[str, str], float] = {}
+            for c, p, s in fb_scored:
+                if c not in fb_mapping:
+                    weights[(c, p)] = weights.get((c, p), 0.0) + s
+            for (c, p), _ in sorted(weights.items(), key=lambda kv: -kv[1]):
+                if c in fb_mapping or p in taken:
+                    continue
+                fb_mapping[c] = p
+                taken.add(p)
+        else:
+            fb_mapping = best_mapping(fb_scored)
         fb_wrong = sum(s for c, p, s in fb_scored if fb_mapping.get(c) != p)
         print(f"  СКВОЗНОЙ SAER (журнал + диаризация на промолчанном) "
               f"{fb_wrong / total * 100:.1f} % ({fb_wrong:.0f} с из {total:.0f}) — "
