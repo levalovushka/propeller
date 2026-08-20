@@ -516,9 +516,11 @@ coverage 0.976: слова не теряются, прибавляются че�
 
 ### 5. Хранилище и экспорт
 
-**Файлы:** `RecordingStore.swift` · `Models.swift` · `MarkdownWriter.swift` · `Preferences.swift` · `KeychainHelper.swift` · `PropellerPure/MeetingErasure.swift` · `PropellerPure/ArchiveEraser.swift` · `PropellerPure/PersonErasure.swift` · `PropellerPure/ArchivePersonEraser.swift` · `PropellerPure/AudioRetention.swift`
+**Файлы:** `RecordingStore.swift` · `Models.swift` · `MarkdownWriter.swift` · `PropellerPure/MeetingMarkdown.swift` · `Preferences.swift` · `KeychainHelper.swift` · `PropellerPure/MeetingErasure.swift` · `PropellerPure/ArchiveEraser.swift` · `PropellerPure/PersonErasure.swift` · `PropellerPure/ArchivePersonEraser.swift` · `PropellerPure/AudioRetention.swift`
 
 **Здорово:** ✅ битый индекс карантинится, не затирается (C5); поэлементное восстановление + `.bak`; финальный микс пересобирается из стемов после жёсткого выхода (C3); `-recap.md` больше не удаляется при пересохранении (C7); `prettyPrinted` убран (P6); ключи в Keychain.
+
+**Рендер файла стал проверяемым — 2026-08-20.** 253 строки из `MarkdownWriter` (оба формата, тело транскрипта, извлечение спикеров, слаги) переехали в `PropellerPure/MeetingMarkdown.swift`; в `Sources` осталась оболочка мира — путь, `Date()`, обход папки людей — 345 → 151 строка. Артефакт, ради которого существует приложение, до этого дня рендерился кодом, которому тесты недоступны: покрытия у него было ноль. Теперь 15 тестов, и переезд сверен байт-в-байт на **трёх настоящих встречах** из живого архива (разовый тест на `~/.meeting-recorder`, в репозиторий не попал — это чужие встречи, а не фикстура). Даты и список людей с страницами теперь приходят аргументами, потому что иначе рендер зависит от часов и чужой папки.
 
 **Стирание сделано целиком — 2026-08-17, цель D роадмапа.** Карта следов одной встречи: `recordings/<id>.wav` + `.mic.wav` + `.sys.wav`; `meetings/<id>-<slug>.md` и `<id>-<slug>-recap.md`; строка в `recordings.json` (в ней же транскрипт, заметки и `noteItems`, чекпоинт ASR `rawSegmentsJSON`, сегменты со спикерами, черновик живого текста, темы, теги, `calendarMeta`, `lastFailure`); **та же строка во всех копиях индекса** — `.bak`, карантинные `corrupt-*`, снятые руками; надгробие в `deleted.json`. Отдельных файлов чекпоинта, кэшей, эмбеддингов и per-meeting записей в UserDefaults нет — временные каталоги ASR самоубираются `defer`, MCP-сервер архив только читает.
 

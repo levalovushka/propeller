@@ -1131,7 +1131,7 @@ struct MainView: View {
     }
 
     private func markdownURL(for entry: RecordingEntry) -> URL? {
-        let slug = MarkdownWriter.slugify(entry.title.isEmpty ? entry.id : entry.title)
+        let slug = MeetingMarkdown.slugify(entry.title.isEmpty ? entry.id : entry.title)
         let filename = "\(entry.id)-\(slug).md"
         let url = URL(fileURLWithPath: Preferences.shared.meetingsPath)
             .appendingPathComponent(filename)

@@ -2,20 +2,9 @@ import Foundation
 import PropellerMetrics
 import PropellerPure
 
-enum MarkdownOutputFormat: String, CaseIterable, Identifiable {
-    case simple
-    case obsidian
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .simple: return "Простой"
-        case .obsidian: return "Obsidian"
-        }
-    }
-}
-
+/// The world around `MeetingMarkdown`: where the file goes, what today is, and
+/// which people have a page in somebody's vault. The rendering itself lives in
+/// `PropellerPure/MeetingMarkdown.swift`, where a test can reach it.
 struct MarkdownWriter {
 
     static func save(
@@ -33,7 +22,7 @@ struct MarkdownWriter {
         let fm = FileManager.default
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
 
-        let slug = slugify(title.isEmpty ? recordingID : title)
+        let slug = MeetingMarkdown.slugify(title.isEmpty ? recordingID : title)
         let filename = "\(recordingID)-\(slug).md"
         let filepath = dir.appendingPathComponent(filename)
 
@@ -73,27 +62,20 @@ struct MarkdownWriter {
         format: MarkdownOutputFormat = Preferences.shared.markdownOutputFormat
     ) -> String {
         PipelineMetrics.interval(PipelineMetrics.pipeline, PipelineMetrics.markdown) {
-            switch format {
-            case .simple:
-                return renderSimple(
-                    title: title,
-                    transcript: transcript,
-                    duration: duration,
-                    speakers: speakers,
-                    notes: notes,
-                    calendarMeta: calendarMeta
-                )
-            case .obsidian:
-                return renderObsidian(
-                    title: title,
-                    transcript: transcript,
-                    recordingID: recordingID,
-                    duration: duration,
-                    speakers: speakers,
-                    notes: notes,
-                    calendarMeta: calendarMeta
-                )
-            }
+            MeetingMarkdown.render(
+                title: title,
+                transcript: transcript,
+                recordingID: recordingID,
+                duration: duration,
+                speakers: speakers,
+                notes: notes,
+                calendarMeta: calendarMeta,
+                format: format,
+                today: todayISO(),
+                // Only the Obsidian format links people, and only it pays for
+                // walking somebody's vault.
+                linkedSpeakers: format == .obsidian ? resolveLinkedSpeakers(speakers) : []
+            )
         }
     }
 
@@ -105,152 +87,17 @@ struct MarkdownWriter {
         speakers: [String] = [],
         notes: String? = nil
     ) -> String {
-        renderSimple(
+        MeetingMarkdown.simple(
             title: title,
             transcript: transcript,
             duration: duration,
-            speakers: speakers.isEmpty ? extractSpeakers(from: transcript) : speakers,
-            notes: notes
+            speakers: speakers.isEmpty ? MeetingMarkdown.extractSpeakers(from: transcript) : speakers,
+            notes: notes,
+            today: todayISO()
         )
     }
 
-    // MARK: - Simple
-
-    private static func renderSimple(
-        title: String,
-        transcript: String,
-        duration: TimeInterval,
-        speakers: [String],
-        notes: String?,
-        calendarMeta: CalendarMeta? = nil
-    ) -> String {
-        let heading = title.isEmpty ? "Meeting" : title
-        let durationStr = duration > 0 ? "\(Int(duration / 60)) min" : ""
-
-        var lines: [String] = []
-        lines.append("# \(heading)")
-        lines.append("")
-        lines.append("**Date:** \(todayISO())")
-        if !durationStr.isEmpty {
-            lines.append("**Duration:** \(durationStr)")
-        }
-        if !speakers.isEmpty {
-            lines.append("**Participants:** \(speakers.joined(separator: ", "))")
-        }
-        if let calendarMeta, !calendarMeta.isEmpty {
-            lines.append(contentsOf: calendarMeta.plainHeaderLines)
-        }
-        lines.append("")
-
-        if let notes = notes, !notes.isEmpty {
-            lines.append("## Notes")
-            lines.append("")
-            lines.append(notes)
-            lines.append("")
-        }
-
-        lines.append("## Transcript")
-        lines.append("")
-        lines.append(formatTranscriptBodySimple(transcript))
-        lines.append("")
-        return lines.joined(separator: "\n")
-    }
-
-    /// Convert `[Speaker] [MM:SS]\nText` blocks into readable markdown.
-    private static func formatTranscriptBodySimple(_ transcript: String) -> String {
-        let blocks = transcript.components(separatedBy: "\n\n")
-        var out: [String] = []
-
-        for block in blocks {
-            let trimmed = block.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            let lines = trimmed.components(separatedBy: "\n")
-            guard let first = lines.first else { continue }
-
-            let pattern = Timecode.transcriptHeadPattern
-            if let regex = try? NSRegularExpression(pattern: pattern),
-               let match = regex.firstMatch(in: first, range: NSRange(first.startIndex..., in: first)),
-               let nameR = Range(match.range(at: 1), in: first),
-               let tsR = Range(match.range(at: 2), in: first) {
-                let speaker = String(first[nameR])
-                let ts = String(first[tsR])
-                let text = lines.dropFirst().joined(separator: "\n")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                out.append("**\(speaker)** · \(ts)")
-                if !text.isEmpty {
-                    out.append(text)
-                }
-                out.append("")
-            } else {
-                out.append(trimmed)
-                out.append("")
-            }
-        }
-
-        return out.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    // MARK: - Obsidian
-
-    private static func renderObsidian(
-        title: String,
-        transcript: String,
-        recordingID: String,
-        duration: TimeInterval,
-        speakers: [String],
-        notes: String?,
-        calendarMeta: CalendarMeta? = nil
-    ) -> String {
-        let linkedSpeakers = resolveLinkedSpeakers(speakers)
-
-        var linkedTranscript = transcript
-        for (name, slugName) in linkedSpeakers {
-            linkedTranscript = linkedTranscript.replacingOccurrences(
-                of: "[\(name)]",
-                with: "[[\(slugName)|\(name)]]"
-            )
-        }
-
-        let durationStr = duration > 0 ? "\(Int(duration / 60)) min" : ""
-        let audioFile = recordingID.isEmpty ? "" : "\(recordingID).wav"
-        let safeTitle = title.replacingOccurrences(of: "\"", with: "'")
-
-        let speakerEntries: [String] = speakers.map { name in
-            if let (_, slugName) = linkedSpeakers.first(where: { $0.0 == name }) {
-                return "\"[[\(slugName)|\(name)]]\""
-            }
-            return "\"\(name)\""
-        }
-
-        var lines: [String] = []
-        lines.append("---")
-        lines.append("date: \(todayISO())")
-        lines.append("title: \"\(safeTitle)\"")
-        lines.append("duration: \"\(durationStr)\"")
-        if !speakerEntries.isEmpty {
-            lines.append("speakers: [\(speakerEntries.joined(separator: ", "))]")
-        }
-        lines.append("audio_file: \"\(audioFile)\"")
-        if let calendarMeta, !calendarMeta.isEmpty {
-            lines.append(contentsOf: calendarMeta.yamlFrontmatterLines)
-        }
-        lines.append("tags: [meeting]")
-        lines.append("---")
-        lines.append("")
-
-        if let notes = notes, !notes.isEmpty {
-            lines.append("## Notes")
-            lines.append("")
-            lines.append(notes)
-            lines.append("")
-        }
-
-        lines.append("## Transcript")
-        lines.append("")
-        lines.append(linkedTranscript)
-        lines.append("")
-        return lines.joined(separator: "\n")
-    }
+    // MARK: - Somebody else's folder
 
     /// For each speaker name, check if a people page exists under peoplePagesPath.
     /// Returns array of (originalName, slug) for speakers that have a matching page.
@@ -266,7 +113,7 @@ struct MarkdownWriter {
 
         var result: [(String, String)] = []
         for name in speakers {
-            let slug = speakerSlug(name)
+            let slug = MeetingMarkdown.speakerSlug(name)
             if knownSlugs.contains(slug) {
                 result.append((name, slug))
             }
@@ -292,39 +139,7 @@ struct MarkdownWriter {
         return slugs
     }
 
-    /// Slug for matching speaker names to people page filenames:
-    /// lowercase, spaces to dashes, strip non-alphanumeric except dashes.
-    static func speakerSlug(_ name: String) -> String {
-        name
-            .folding(options: .diacriticInsensitive, locale: .current)
-            .lowercased()
-            .replacingOccurrences(of: #"[^a-z0-9\s-]"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"[\s]+"#, with: "-", options: .regularExpression)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-    }
-
-    /// Extract unique speaker names from transcript text
-    static func extractSpeakers(from transcript: String) -> [String] {
-        // Transcript format: [Speaker Name] [MM:SS]
-        let pattern = #"^\[(.+?)\] \[\d+:\d+\]"#
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: .anchorsMatchLines) else {
-            return []
-        }
-        let range = NSRange(transcript.startIndex..., in: transcript)
-        var names = Set<String>()
-        regex.enumerateMatches(in: transcript, range: range) { match, _, _ in
-            if let nameRange = match.flatMap({ Range($0.range(at: 1), in: transcript) }) {
-                let name = String(transcript[nameRange])
-                // Skip generic speaker labels
-                if !name.hasPrefix("Speaker ") && name != "Speaker" {
-                    names.insert(name)
-                }
-            }
-        }
-        return names.sorted()
-    }
-
-    // MARK: - Helpers
+    // MARK: - The clock
 
     private static func todayISO() -> String {
         let f = DateFormatter()
@@ -332,14 +147,5 @@ struct MarkdownWriter {
         f.calendar = Calendar(identifier: .gregorian)
         f.dateFormat = "yyyy-MM-dd"
         return f.string(from: Date())
-    }
-
-    static func slugify(_ text: String) -> String {
-        text
-            .folding(options: .diacriticInsensitive, locale: .current)
-            .lowercased()
-            .replacingOccurrences(of: #"[^\w\s-]"#, with: "", options: .regularExpression)
-            .replacingOccurrences(of: #"[-\s]+"#, with: "-", options: .regularExpression)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
     }
 }

@@ -843,7 +843,7 @@ actor RecapService {
     ) throws -> String {
         let transcriptURL = URL(fileURLWithPath: nextToTranscriptPath)
         let dir = transcriptURL.deletingLastPathComponent()
-        let slug = MarkdownWriter.slugify(title.isEmpty ? recordingID : title)
+        let slug = MeetingMarkdown.slugify(title.isEmpty ? recordingID : title)
         let filename = "\(recordingID)-\(slug)-recap.md"
         let filepath = dir.appendingPathComponent(filename)
 

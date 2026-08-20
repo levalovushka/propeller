@@ -931,7 +931,7 @@ class AppState: ObservableObject {
     }
 
     static func recapURL(for entry: RecordingEntry) -> URL? {
-        let slug = MarkdownWriter.slugify(entry.title.isEmpty ? entry.id : entry.title)
+        let slug = MeetingMarkdown.slugify(entry.title.isEmpty ? entry.id : entry.title)
         let filename = "\(entry.id)-\(slug)-recap.md"
         return URL(fileURLWithPath: Preferences.shared.meetingsPath)
             .appendingPathComponent(filename)
@@ -1013,8 +1013,8 @@ class AppState: ObservableObject {
             return
         }
         pipelineError = nil
-        let speakers = MarkdownWriter.extractSpeakers(from: transcript)
-        let slug = MarkdownWriter.slugify(rec.title.isEmpty ? rec.id : rec.title)
+        let speakers = MeetingMarkdown.extractSpeakers(from: transcript)
+        let slug = MeetingMarkdown.slugify(rec.title.isEmpty ? rec.id : rec.title)
         let transcriptPath = URL(fileURLWithPath: Preferences.shared.meetingsPath)
             .appendingPathComponent("\(rec.id)-\(slug).md").path
         let duration = rec.duration > 0 ? rec.duration : recordingDuration
@@ -1213,7 +1213,7 @@ class AppState: ObservableObject {
     /// filename may be stale after a rename), or nil if it hasn't been saved yet.
     private func transcriptMarkdownURL(for entry: RecordingEntry) -> URL? {
         let dir = URL(fileURLWithPath: Preferences.shared.meetingsPath)
-        let slug = MarkdownWriter.slugify(entry.title.isEmpty ? entry.id : entry.title)
+        let slug = MeetingMarkdown.slugify(entry.title.isEmpty ? entry.id : entry.title)
         let expected = dir.appendingPathComponent("\(entry.id)-\(slug).md")
         if FileManager.default.fileExists(atPath: expected.path) { return expected }
         guard let files = try? FileManager.default.contentsOfDirectory(
@@ -1849,7 +1849,7 @@ class AppState: ObservableObject {
         return await runRecap(
             title: rec.title,
             transcriptPath: mdURL.path,
-            speakers: MarkdownWriter.extractSpeakers(from: rec.transcript ?? ""),
+            speakers: MeetingMarkdown.extractSpeakers(from: rec.transcript ?? ""),
             notes: rec.notes,
             recordingID: recordingID,
             duration: rec.duration
@@ -2177,7 +2177,7 @@ class AppState: ObservableObject {
         }
 
         do {
-            let speakers = MarkdownWriter.extractSpeakers(from: transcriptText)
+            let speakers = MeetingMarkdown.extractSpeakers(from: transcriptText)
             _ = try MarkdownWriter.save(
                 title: rec.title,
                 transcript: transcriptText,
@@ -2772,7 +2772,7 @@ class AppState: ObservableObject {
             transcript: text,
             recordingID: id,
             duration: rec.duration,
-            speakers: MarkdownWriter.extractSpeakers(from: text),
+            speakers: MeetingMarkdown.extractSpeakers(from: text),
             notes: rec.notes,
             calendarMeta: rec.calendarMeta
         )
