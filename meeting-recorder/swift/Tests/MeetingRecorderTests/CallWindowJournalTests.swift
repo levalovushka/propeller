@@ -32,10 +32,26 @@ final class CallWindowJournalTests: XCTestCase {
     // MARK: - The three §11.1 traces
 
     func testДвоеПоОчередиДаютДваПролётаСИменами() throws {
+        // Speaker view, no labels: geometry decides. The one transition poll
+        // with equal tiles is honest silence — order used to decide there and
+        // was refuted on the live gallery trace (0 of 626 polls).
         let spans = CallWindowJournal.spans(from: try trace("synthetic-two-speakers.jsonl"))
         XCTAssertEqual(spans, [
             CallWindowJournal.Span(start: 0.0, end: 2.0, name: "Levon Lobanov"),
-            CallWindowJournal.Span(start: 2.4, end: 4.8, name: "Лева Ловушка"),
+            CallWindowJournal.Span(start: 2.8, end: 4.8, name: "Лева Ловушка"),
+        ])
+    }
+
+    func testМеткаActiveSpeakerВедётЖурналВГалерее() throws {
+        // The live 2026-08-20 trace: three equal tiles, exactly one per poll
+        // labelled by Zoom itself. The label leads; a one-poll flicker to a
+        // third person is dropped by smoothing like any other outburst.
+        let spans = CallWindowJournal.spans(from: try trace("synthetic-gallery-marker.jsonl"))
+        XCTAssertEqual(spans, [
+            CallWindowJournal.Span(start: 0.0, end: 1.6, name: "Анна Пример"),
+            CallWindowJournal.Span(start: 2.0, end: 3.6, name: "Борис Пример"),
+            CallWindowJournal.Span(start: 4.4, end: 5.2, name: "Борис Пример"),
+            CallWindowJournal.Span(start: 5.6, end: 7.2, name: "Вера Пример"),
         ])
     }
 
@@ -54,10 +70,10 @@ final class CallWindowJournalTests: XCTestCase {
 
     // MARK: - Smoothing
 
-    func testПерестановкаПлитокБезРечиНеСоздаётРеплику() {
-        // Measured on the live run: tiles reorder at equal sizes even before
-        // the view switches. One poll of a swapped order is layout animation,
-        // not a remark.
+    func testПерестановкаРавныхПлитокБезМеткиЖурналМолчит() {
+        // Refuted rule, kept as a tombstone: on the live gallery trace the
+        // first tile matched Zoom's own label in 0 of 626 polls. Equal tiles
+        // without a label are silence — reorder them all you want.
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<5 {
             polls.append(.init(t: Double(i) * 0.4, tiles: [
@@ -75,9 +91,7 @@ final class CallWindowJournalTests: XCTestCase {
                 tile(leva, w: 720, h: 400, order: 2),
             ]))
         }
-        let spans = CallWindowJournal.spans(from: polls)
-        XCTAssertFalse(spans.contains { $0.name == "Лева Ловушка" })
-        XCTAssertEqual(Set(spans.map(\.name)), ["Levon Lobanov"])
+        XCTAssertEqual(CallWindowJournal.spans(from: polls), [])
     }
 
     func testОдиночныйВыбросПлощадиНеСоздаётПролёт() {
@@ -164,15 +178,56 @@ final class CallWindowJournalTests: XCTestCase {
         XCTAssertEqual(CallWindowJournal.spans(from: polls), [])
     }
 
-    func testДвеРавныеПлиткиНаПервомМестеЖурналМолчит() {
+    func testДвеМеткиСразуЖурналМолчит() {
+        // Two tiles both claiming Zoom's label is an ambiguity, not a race.
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
             polls.append(.init(t: Double(i) * 0.4, tiles: [
-                tile(levon, w: 720, h: 400, order: 1),
-                tile(leva, w: 720, h: 400, order: 1),
+                tile(levon + ", active speaker", w: 520, h: 280, order: 1),
+                tile(leva + ", active speaker", w: 520, h: 280, order: 2),
             ]))
         }
         XCTAssertEqual(CallWindowJournal.spans(from: polls), [])
+    }
+
+    func testОдинокаяПлиткаСМеткойДаётПролёт() {
+        // The label is the app speaking, not us comparing — it stands alone.
+        // Chosen, not measured: a lone labelled tile has not been seen live
+        // (the minimized mini window carried no label).
+        var polls: [CallWindowJournal.Poll] = []
+        for i in 0..<6 {
+            polls.append(.init(t: Double(i) * 0.4, tiles: [
+                tile(levon + ", active speaker", w: 320, h: 180, order: 1),
+            ]))
+        }
+        XCTAssertEqual(CallWindowJournal.spans(from: polls),
+                       [CallWindowJournal.Span(start: 0.0, end: 2.0, name: "Levon Lobanov")])
+    }
+
+    func testМеткаБьётПлощадь() {
+        // A stale big tile mid-transition must not outvote Zoom's own label.
+        var polls: [CallWindowJournal.Poll] = []
+        for i in 0..<6 {
+            polls.append(.init(t: Double(i) * 0.4, tiles: [
+                tile(levon, w: 1080, h: 600, order: 1),
+                tile(leva + ", active speaker", w: 160, h: 80, order: 2),
+            ]))
+        }
+        XCTAssertEqual(CallWindowJournal.spans(from: polls),
+                       [CallWindowJournal.Span(start: 0.0, end: 2.0, name: "Лева Ловушка")])
+    }
+
+    func testМеткаНаЗаглушённомЖурналМолчит() {
+        // The muted veto outranks even the label — «как нет, никогда как да».
+        let tuning = CallWindowJournal.Tuning(mutedMarkers: ["звук выключен"])
+        var polls: [CallWindowJournal.Poll] = []
+        for i in 0..<6 {
+            polls.append(.init(t: Double(i) * 0.4, tiles: [
+                tile("Лева Ловушка, Звук выключен, Video off, active speaker", w: 520, h: 280, order: 1),
+                tile(levon, w: 520, h: 280, order: 2),
+            ]))
+        }
+        XCTAssertEqual(CallWindowJournal.spans(from: polls, tuning: tuning), [])
     }
 
     func testСпорнаяВершинаПлощадиЖурналМолчит() {

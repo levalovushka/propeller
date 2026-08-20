@@ -10,9 +10,10 @@ import Foundation
 /// this function, and every rule below is reachable from a test with a JSONL
 /// fixture (`Tests/Fixtures/ax-traces/`).
 ///
-/// Silence is a legal answer. When the tiles are gone (screen share), the
-/// areas don't separate, or two windows both claim tiles, no span is emitted:
-/// a gap is better than an invented name, the same rule as plan-people.md §5.
+/// Silence is a legal answer. When the tiles are gone (screen share), no tile
+/// carries Zoom's `active speaker` label and the areas don't separate, or two
+/// windows both claim tiles, no span is emitted: a gap is better than an
+/// invented name, the same rule as plan-people.md §5.
 public enum CallWindowJournal {
 
     // MARK: - Input: one trace of tree polls
@@ -101,15 +102,24 @@ public enum CallWindowJournal {
         /// default: no live muted string has been measured yet, and guessing
         /// one risks vetoing a speaker over a localization coincidence.
         public var mutedMarkers: [String]
+        /// Substrings of the status tail that mean "this tile is the active
+        /// speaker" — Zoom's own explicit label, the strongest signal there
+        /// is. **Measured 2026-08-20** on a live three-person gallery-view
+        /// meeting (Zoom 7.x, Russian interface): exactly one tile per poll
+        /// ended with `…, active speaker`, in English despite the RU locale.
+        /// One Zoom version measured; the suffix may not survive others.
+        public var speakerMarkers: [String]
 
         public init(areaGridStep: Double = 40,
                     areaSpreadRatio: Double = 2.0,
                     minRunPolls: Int = 2,
-                    mutedMarkers: [String] = []) {
+                    mutedMarkers: [String] = [],
+                    speakerMarkers: [String] = ["active speaker"]) {
             self.areaGridStep = areaGridStep
             self.areaSpreadRatio = areaSpreadRatio
             self.minRunPolls = minRunPolls
             self.mutedMarkers = mutedMarkers
+            self.speakerMarkers = speakerMarkers
         }
     }
 
@@ -148,42 +158,68 @@ public enum CallWindowJournal {
 
     /// The candidate speaker of one poll, or nil for "don't know".
     ///
-    /// Nil is returned for every ambiguity: no tiles, a single tile (nothing
-    /// to compare against — what a screen-share thumbnail strip looks like),
-    /// tiles from two different windows at once (plan §10.1: never attribute
-    /// names from someone else's window), a tie at the top by area, a tie at
-    /// the first place by order, or a chosen candidate whose status tail says
-    /// the microphone is off.
+    /// Two signals, in measured order of trust:
+    ///
+    /// 1. **Zoom's own label.** A tile whose status tail says `active speaker`
+    ///    (measured live 2026-08-20, gallery view: exactly one per poll).
+    ///    Exactly one labelled tile wins outright — even alone in its window,
+    ///    because the label is the app speaking, not us comparing. Two labels
+    ///    at once is an ambiguity, not a race: silence.
+    /// 2. **Geometry** (measured 2026-08-19, speaker view): the biggest tile,
+    ///    when the area spread clears the threshold and the top is unique.
+    ///
+    /// There is deliberately no third rule. "First tile speaks" was in the
+    /// plan and is refuted: on the live gallery trace the first tile matched
+    /// the label in **0 of 626 polls** — it would have signed a whole meeting
+    /// with the wrong names. Equal tiles without a label are silence.
+    ///
+    /// Nil is also returned for: no tiles, a lone unlabelled tile (a mini
+    /// window after minimizing, a screen-share thumbnail), tiles from two
+    /// windows at once (plan §10.1: never attribute names from someone
+    /// else's window), or a chosen candidate whose tail says the microphone
+    /// is off.
     static func candidate(in poll: Poll, tuning: Tuning) -> String? {
         let named: [(name: String, tile: Tile)] = poll.tiles.compactMap { tile in
             guard tile.role == "AXTabGroup",
                   let name = name(fromDescription: tile.description) else { return nil }
             return (name, tile)
         }
-        guard named.count >= 2 else { return nil }
+        guard !named.isEmpty else { return nil }
         guard Set(named.map { $0.tile.process + "\u{1}" + $0.tile.window }).count == 1 else {
             return nil
         }
 
-        func snappedArea(_ tile: Tile) -> Double {
-            let step = max(tuning.areaGridStep, 1)
-            let w = (tile.width / step).rounded(.down) * step
-            let h = (tile.height / step).rounded(.down) * step
-            return w * h
+        func tail(_ tile: Tile) -> String {
+            statusTail(ofDescription: tile.description).lowercased()
+        }
+        func tailContains(_ tile: Tile, anyOf markers: [String]) -> Bool {
+            markers.contains { !$0.isEmpty && tail(tile).contains($0.lowercased()) }
         }
 
-        let areas = named.map { snappedArea($0.tile) }
-        let maxArea = areas.max() ?? 0
-        let minArea = areas.min() ?? 0
-
         let chosen: (name: String, tile: Tile)?
-        if minArea > 0, maxArea / minArea >= tuning.areaSpreadRatio {
-            let biggest = zip(named, areas).filter { $0.1 == maxArea }.map { $0.0 }
-            chosen = biggest.count == 1 ? biggest[0] : nil
+        let labelled = named.filter { tailContains($0.tile, anyOf: tuning.speakerMarkers) }
+        if labelled.count == 1 {
+            chosen = labelled[0]
+        } else if labelled.count > 1 {
+            chosen = nil
         } else {
-            let firstOrder = named.map { $0.tile.order }.min() ?? 0
-            let first = named.filter { $0.tile.order == firstOrder }
-            chosen = first.count == 1 ? first[0] : nil
+            // No label — the speaker-view path: geometry needs a comparison.
+            guard named.count >= 2 else { return nil }
+            func snappedArea(_ tile: Tile) -> Double {
+                let step = max(tuning.areaGridStep, 1)
+                let w = (tile.width / step).rounded(.down) * step
+                let h = (tile.height / step).rounded(.down) * step
+                return w * h
+            }
+            let areas = named.map { snappedArea($0.tile) }
+            let maxArea = areas.max() ?? 0
+            let minArea = areas.min() ?? 0
+            if minArea > 0, maxArea / minArea >= tuning.areaSpreadRatio {
+                let biggest = zip(named, areas).filter { $0.1 == maxArea }.map { $0.0 }
+                chosen = biggest.count == 1 ? biggest[0] : nil
+            } else {
+                chosen = nil
+            }
         }
         guard let chosen else { return nil }
 
