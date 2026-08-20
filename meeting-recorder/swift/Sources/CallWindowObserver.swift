@@ -33,6 +33,9 @@ final class CallWindowObserver {
     private var stopped = true
     private var paused = false
     private var anchor = Date()
+    /// The same machine the offline pass uses — fed by the poll loop, asked by
+    /// the live transcript. One smoothing, one owner rule, one answer.
+    private var machine = CallWindowJournal.LiveSpeaker()
 
     /// Poll cadence measured by the probe (H12): 0.4 s sees every hand-off.
     private static let interval: TimeInterval = 0.4
@@ -45,6 +48,7 @@ final class CallWindowObserver {
         stopped = false
         paused = false
         self.anchor = anchor
+        machine = CallWindowJournal.LiveSpeaker()
         lock.unlock()
         let thread = Thread { [weak self] in self?.run(traceURL: url) }
         thread.name = "CallWindowObserver"
@@ -71,6 +75,22 @@ final class CallWindowObserver {
         paused = false
         anchor = Date().addingTimeInterval(-elapsed)
         lock.unlock()
+    }
+
+    // MARK: - The live transcript's questions
+
+    /// Who was speaking around second `t`, for a live line being shown right
+    /// now. Nil until the owner's tile is locked, and always for the owner —
+    /// the line then keeps today's label (`Собеседник`).
+    func liveName(at t: Double) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return machine.name(at: t)
+    }
+
+    /// A finalized owner line — the correlation evidence the owner lock needs.
+    func noteOwnerTurn(start: Double, end: Double) {
+        lock.lock(); defer { lock.unlock() }
+        machine.noteOwnerTurn(start: start, end: end)
     }
 
     // MARK: - The polling loop
@@ -107,6 +127,9 @@ final class CallWindowObserver {
                     try? handle.write(contentsOf: data)
                     try? handle.write(contentsOf: Data("\n".utf8))
                 }
+                lock.lock()
+                machine.take(poll)
+                lock.unlock()
             }
             Thread.sleep(forTimeInterval: Self.interval)
         }

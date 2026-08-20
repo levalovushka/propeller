@@ -183,7 +183,7 @@ public struct LiveTranscriptColumn: View {
         VStack(alignment: .leading, spacing: Tokens.Pane.transcriptLineGap) {
             HStack(spacing: Tokens.Pane.transcriptMetaGap) {
                 if namesSpeakers {
-                    Text(name(of: turn.channel))
+                    Text(name(of: turn))
                         .typoBlock(Tokens.Pane.Typo.transcriptMeta)
                         .lineLimit(1)
                 }
@@ -201,8 +201,11 @@ public struct LiveTranscriptColumn: View {
         .transition(.opacity)
     }
 
-    private func name(of channel: LiveTranscript.Channel) -> String {
-        switch channel {
+    /// Имя из журнала окна звонилки старше дорожечной заглушки: чужая реплика
+    /// с опознанным говорящим подписывается им, остальные — как раньше.
+    private func name(of turn: LiveTranscript.Turn) -> String {
+        if let name = turn.name { return name }
+        switch turn.channel {
         case .owner:  return ownerName.isEmpty ? SourceAwareSpeaker.defaultOwnerName : ownerName
         case .remote: return remoteName
         }

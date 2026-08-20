@@ -29,6 +29,9 @@ public struct LiveTranscript: Equatable, Sendable {
     /// Кусок речи на общей шкале записи.
     public struct Segment: Equatable, Sendable {
         public let channel: Channel
+        /// Имя говорящего из журнала окна звонилки, если машинка была уверена
+        /// в момент прихода куска. Дальняя сторона только; nil — как сегодня.
+        public let name: String?
         /// Секунды от начала записи (не от начала сессии — сессия может быть
         /// не первой, если запись ставили на паузу).
         public let start: Double
@@ -43,6 +46,10 @@ public struct LiveTranscript: Equatable, Sendable {
     public struct Turn: Identifiable, Equatable, Sendable {
         public let id: String
         public let channel: Channel
+        /// Имя из журнала окна, данное **первому** куску реплики и никогда не
+        /// пересматриваемое: показанная подпись — часть показанного текста, и
+        /// промис «не переписываем» распространяется на неё.
+        public let name: String?
         public let startSeconds: Double
         public let timestamp: String
         /// Только растёт — печатная машинка допечатывает хвост.
@@ -65,7 +72,8 @@ public struct LiveTranscript: Equatable, Sendable {
 
     /// Решение движка. Ложится в список навсегда.
     public mutating func absorb(
-        channel: Channel, start: Double, end: Double, text: String
+        channel: Channel, start: Double, end: Double, text: String,
+        name: String? = nil
     ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -73,7 +81,7 @@ public struct LiveTranscript: Equatable, Sendable {
         let safeStart = start.isFinite && start >= 0 ? start : 0
         let safeEnd = end.isFinite ? max(end, safeStart) : safeStart
         segments.append(
-            Segment(channel: channel, start: safeStart, end: safeEnd,
+            Segment(channel: channel, name: name, start: safeStart, end: safeEnd,
                     text: trimmed, arrival: arrivals)
         )
     }
@@ -111,6 +119,9 @@ public struct LiveTranscript: Equatable, Sendable {
                 turns[index] = Turn(
                     id: previous.id,
                     channel: previous.channel,
+                    // Имя дано первому куску; продолжение его не пересматривает,
+                    // даже если журнал передумал.
+                    name: previous.name,
                     startSeconds: previous.startSeconds,
                     timestamp: previous.timestamp,
                     text: Self.join(previous.text, segment.text)
@@ -125,6 +136,7 @@ public struct LiveTranscript: Equatable, Sendable {
                         // чтобы проявлять всё заново.
                         id: "\(segment.channel.rawValue)-\(segment.arrival)",
                         channel: segment.channel,
+                        name: segment.name,
                         startSeconds: segment.start,
                         timestamp: TranscriptPresentation.formatTimestamp(segment.start),
                         text: segment.text
@@ -171,7 +183,9 @@ public struct LiveTranscript: Equatable, Sendable {
                 startTime: turn.startSeconds,
                 endTime: turn.startSeconds,
                 text: turn.text,
-                speaker: SourceAwareSpeaker.stemsOnly(
+                // Имя из журнала окна старше дорожечной заглушки — та же
+                // лестница, что у финального прохода.
+                speaker: turn.name ?? SourceAwareSpeaker.stemsOnly(
                     source: turn.channel == .owner ? .microphone : .system,
                     ownerName: ownerName
                 )

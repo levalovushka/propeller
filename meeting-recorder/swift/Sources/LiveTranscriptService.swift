@@ -163,7 +163,14 @@ final class LiveTranscriptService: ObservableObject {
             // что дальняя сторона уже сказала, владелец сказать не мог.
             switch channel {
             case .remote:
-                transcript.absorb(channel: .remote, start: start, end: end, text: text)
+                // Имя из журнала окна — один раз, при рождении строки: промис
+                // «показанное не переписывается» распространяется на подпись.
+                // Пока плитка владельца не опознана (первые минуты), машинка
+                // отвечает nil, и строка выходит как сегодня — «Собеседник».
+                transcript.absorb(
+                    channel: .remote, start: start, end: end, text: text,
+                    name: CallWindowObserver.shared.liveName(at: (start + end) / 2)
+                )
                 debugLog(
                     "[Live] remote +\(text.count) знаков на \(Int(start)) с, реплик \(transcript.turns.count)"
                 )
@@ -183,6 +190,11 @@ final class LiveTranscriptService: ObservableObject {
                         + (dedup.waitingCount > 0 ? "ждут дальнюю сторону" : "— эхо, не показываю")
                     )
                     scheduleDedupTick()
+                } else {
+                    // Признанная владельческая реплика — улика для опознания
+                    // его плитки в журнале окна. Отсеянное эхо уликой не
+                    // считается: это речь дальней стороны в его микрофоне.
+                    CallWindowObserver.shared.noteOwnerTurn(start: start, end: end)
                 }
                 show(admitted)
             }

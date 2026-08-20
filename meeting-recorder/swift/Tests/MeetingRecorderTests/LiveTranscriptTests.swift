@@ -120,4 +120,33 @@ final class LiveTranscriptTests: XCTestCase {
         XCTAssertEqual(live.turns.map(\.startSeconds), [0, 0])
         XCTAssertEqual(live.turns.map(\.timestamp), ["00:00", "00:00"])
     }
+
+    // MARK: - Имена из журнала окна (2026-08-20)
+
+    func testИмяДаётсяПриРожденииИНеПересматривается() {
+        var t = LiveTranscript()
+        t.absorb(channel: .remote, start: 10, end: 12, text: "Начало реплики,", name: "Kate")
+        // Продолжение приходит уже с другим мнением журнала — подпись на
+        // экране не переписывается.
+        t.absorb(channel: .remote, start: 12.5, end: 14, text: "и её хвост.", name: nil)
+        let turns = t.turns
+        XCTAssertEqual(turns.count, 1)
+        XCTAssertEqual(turns[0].name, "Kate")
+        XCTAssertTrue(turns[0].text.contains("хвост"))
+    }
+
+    func testБезымяннаяРепликаОстаётсяКакСегодня() {
+        var t = LiveTranscript()
+        t.absorb(channel: .remote, start: 10, end: 12, text: "Реплика без журнала.")
+        XCTAssertNil(t.turns[0].name)
+    }
+
+    func testЧерновикНаДискНесётИмяИзЖурнала() {
+        var t = LiveTranscript()
+        t.absorb(channel: .remote, start: 10, end: 12, text: "Именованная.", name: "Kate")
+        t.absorb(channel: .remote, start: 40, end: 42, text: "Безымянная.")
+        let persisted = t.persistedSegments(ownerName: "Левон")
+        XCTAssertEqual(persisted[0].speaker, "Kate")
+        XCTAssertEqual(persisted[1].speaker, SourceAwareSpeaker.defaultRemoteName)
+    }
 }
