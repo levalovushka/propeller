@@ -148,12 +148,7 @@ enum Analytics {
     // MARK: - Funnel helpers (no content)
 
     static func durationBucket(_ seconds: TimeInterval) -> String {
-        switch seconds {
-        case ..<60: return "<1m"
-        case ..<900: return "1-15m"
-        case ..<3600: return "15-60m"
-        default: return "60m+"
-        }
+        TelemetryBuckets.duration(seconds)
     }
 
     static func recordingStarted(source: String) {
@@ -171,12 +166,7 @@ enum Analytics {
     /// bucket is the one that matters: an auto-started recording killed inside
     /// ten seconds is a wrong call detection, not a change of mind.
     static func ageBucket(_ seconds: TimeInterval) -> String {
-        switch seconds {
-        case ..<10: return "<10s"
-        case ..<60: return "10-60s"
-        case ..<300: return "1-5m"
-        default: return "5m+"
-        }
+        TelemetryBuckets.age(seconds)
     }
 
     /// «Не записывать». `source` is how the recording began (`auto` / `manual`),

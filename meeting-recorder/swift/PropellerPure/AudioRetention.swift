@@ -38,6 +38,16 @@ public enum AudioRetentionMode: String, Codable, CaseIterable, Identifiable, Sen
     case afterDays
 
     public var id: String { rawValue }
+
+    /// What the picker says. Next to the cases, so a new case cannot ship
+    /// without a word for it.
+    public var displayName: String {
+        switch self {
+        case .keep:            return "Всегда"
+        case .afterTranscript: return "До расшифровки"
+        case .afterDays:       return "Столько дней"
+        }
+    }
 }
 
 public enum AudioRetention {

@@ -127,7 +127,7 @@ class RecordingStore: ObservableObject {
         var changed = false
         for i in recordings.indices {
             guard recordings[i].titleManuallySet == true else { continue }
-            guard recordings[i].title.hasPrefix("Запись ") || recordings[i].title.hasPrefix("Recording ") else { continue }
+            guard MeetingTitle.isPlaceholder(recordings[i].title) else { continue }
             recordings[i].titleManuallySet = false
             changed = true
         }

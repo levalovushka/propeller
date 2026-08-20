@@ -529,7 +529,7 @@ private struct StorageSettingsGroup: View {
                 HStack(spacing: Tokens.Space.s8) {
                     Picker("", selection: $audioRetentionMode) {
                         ForEach(AudioRetentionMode.allCases) { mode in
-                            Text(Self.retentionTitle(mode)).tag(mode.rawValue)
+                            Text(mode.displayName).tag(mode.rawValue)
                         }
                     }
                     .labelsHidden()
@@ -593,14 +593,6 @@ private struct StorageSettingsGroup: View {
             return "Звук уходит, как только расшифровка и спикеры готовы. Слушать встречу потом будет нечем."
         case .afterDays:
             return "Через \(audioRetentionDays) дн. звук уходит у встреч, которым он больше не нужен. Расшифровки и конспекты остаются."
-        }
-    }
-
-    private static func retentionTitle(_ mode: AudioRetentionMode) -> String {
-        switch mode {
-        case .keep:            return "Всегда"
-        case .afterTranscript: return "До расшифровки"
-        case .afterDays:       return "Столько дней"
         }
     }
 

@@ -259,8 +259,6 @@ actor RecapService {
         transcriptMarkdown: String,
         transcriptPath: String,
         notes: String?,
-        speakers: [String],
-        duration: TimeInterval,
         recordingID: String,
         prefs: RecapPreferences,
         progress: (@Sendable (String) -> Void)? = nil
@@ -282,11 +280,9 @@ actor RecapService {
                 ? Self.defaultPrompt
                 : prefs.prompt) + Self.languageLock
 
-            let userContent = buildUserMessage(
+            let userContent = RecapDocument.userMessage(
                 title: title,
                 transcriptMarkdown: trimmed,
-                speakers: speakers,
-                duration: duration,
                 notes: notes
             )
 
@@ -360,12 +356,10 @@ actor RecapService {
             let cleaned = TermCanon.normalize(grounded.recap)
             guard !cleaned.isEmpty else { throw RecapError.emptyResponse }
 
-            let body = wrapRecapDocument(
+            let body = RecapDocument.wrapped(
                 title: title,
                 recapBody: cleaned,
                 notes: notes,
-                speakers: speakers,
-                duration: duration,
                 format: prefs.outputFormat
             )
 
@@ -769,70 +763,6 @@ actor RecapService {
         - tags: 0..N значений СТРОГО из списка: [\(vocab)]. Значения вне списка запрещены. Если ничего не подходит — пустой массив [].
         - Верни только JSON, никакого текста вокруг. Все строковые значения — на русском.
         """
-    }
-
-    // MARK: - Prompt assembly
-
-    private func buildUserMessage(
-        title: String,
-        transcriptMarkdown: String,
-        speakers: [String],
-        duration: TimeInterval,
-        notes: String?
-    ) -> String {
-        _ = speakers
-        _ = duration
-        var parts: [String] = []
-        parts.append("Встреча: \(title.isEmpty ? "без названия" : title)")
-        let trimmedNotes = notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !trimmedNotes.isEmpty {
-            parts.append("")
-            parts.append("Заметки пользователя (якоря — приоритетнее болтовни в транскрипте):")
-            parts.append(trimmedNotes)
-        }
-        parts.append("")
-        parts.append("Транскрипт:")
-        parts.append(transcriptMarkdown)
-        parts.append("")
-        parts.append("Ответь строго на русском языке.")
-        return parts.joined(separator: "\n")
-    }
-
-    private func wrapRecapDocument(
-        title: String,
-        recapBody: String,
-        notes: String?,
-        speakers: [String],
-        duration: TimeInterval,
-        format: MarkdownOutputFormat
-    ) -> String {
-        _ = speakers
-        _ = duration
-        let heading = title.isEmpty ? "Meeting recap" : "\(title) — рекап"
-
-        // Заметки — не хвост файла, а раздел под «Итогом»: место решает
-        // `RecapNotes`, и оно же не даёт им удвоиться, если модель выдала свой
-        // такой раздел. Текст остаётся дословным — модель его не переписывает.
-        let body = RecapNotes.placed(notes, into: recapBody)
-
-        var lines: [String] = []
-        switch format {
-        case .simple:
-            lines.append("# \(heading)")
-            lines.append("")
-            lines.append(body)
-        case .obsidian:
-            let safeTitle = heading.replacingOccurrences(of: "\"", with: "'")
-            lines.append("---")
-            lines.append("title: \"\(safeTitle)\"")
-            lines.append("tags: [meeting, recap]")
-            lines.append("---")
-            lines.append("")
-            lines.append(body)
-        }
-
-        lines.append("")
-        return lines.joined(separator: "\n")
     }
 
     private func writeRecapFile(

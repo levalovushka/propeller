@@ -51,8 +51,6 @@ protocol RecapBackend: Sendable {
         transcriptMarkdown: String,
         transcriptPath: String,
         notes: String?,
-        speakers: [String],
-        duration: TimeInterval,
         recordingID: String,
         prefs: RecapPreferences,
         progress: (@Sendable (String) -> Void)?
