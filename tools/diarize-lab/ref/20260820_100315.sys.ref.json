@@ -1,0 +1,117 @@
+[
+ {
+  "speaker": "LIZA",
+  "start": 35.76,
+  "end": 47.6
+ },
+ {
+  "speaker": "LIZA",
+  "start": 54.88,
+  "end": 65.12
+ },
+ {
+  "speaker": "LIZA",
+  "start": 65.4,
+  "end": 66.48
+ },
+ {
+  "speaker": "LIZA",
+  "start": 68.32,
+  "end": 69.44
+ },
+ {
+  "speaker": "LIZA",
+  "start": 71.04,
+  "end": 79.16
+ },
+ {
+  "speaker": "LIZA",
+  "start": 83.72,
+  "end": 91.8
+ },
+ {
+  "speaker": "LIZA",
+  "start": 92.52,
+  "end": 93.4
+ },
+ {
+  "speaker": "LIZA",
+  "start": 93.76,
+  "end": 96.08
+ },
+ {
+  "speaker": "LIZA",
+  "start": 99.28,
+  "end": 104.2
+ },
+ {
+  "speaker": "LIZA",
+  "start": 110.36,
+  "end": 112.4
+ },
+ {
+  "speaker": "LIZA",
+  "start": 120.96,
+  "end": 130.4
+ },
+ {
+  "speaker": "ARINA",
+  "start": 132.48,
+  "end": 136.6
+ },
+ {
+  "speaker": "ARINA",
+  "start": 136.8,
+  "end": 141.56
+ },
+ {
+  "speaker": "ARINA",
+  "start": 143.48,
+  "end": 149.32
+ },
+ {
+  "speaker": "ARINA",
+  "start": 159.64,
+  "end": 162.72
+ },
+ {
+  "speaker": "ARINA",
+  "start": 172.92,
+  "end": 175
+ },
+ {
+  "speaker": "ARINA",
+  "start": 175.16,
+  "end": 179.04
+ },
+ {
+  "speaker": "ARINA",
+  "start": 183.92,
+  "end": 189.72
+ },
+ {
+  "speaker": "LIZA",
+  "start": 226.8,
+  "end": 234.4
+ },
+ {
+  "speaker": "ARINA",
+  "start": 237.04,
+  "end": 242.6
+ },
+ {
+  "speaker": "ARINA",
+  "start": 243.88,
+  "end": 255.8
+ },
+ {
+  "speaker": "ARINA",
+  "start": 257.32,
+  "end": 271.36
+ },
+ {
+  "speaker": "ARINA",
+  "start": 318.08,
+  "end": 325.76
+ }
+]
