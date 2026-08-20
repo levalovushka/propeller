@@ -409,7 +409,7 @@ class TranscriptionService {
             return assembleFromStems(
                 asrSegments: asrSegments,
                 diarization: diarizedSegments,
-                journal: Self.loadCallJournal(for: audioURL),
+                callPolls: Self.loadCallPolls(for: audioURL),
                 progressCallback: progressCallback
             )
         }
@@ -484,7 +484,7 @@ class TranscriptionService {
     private func assembleFromStems(
         asrSegments: [ASRSegment],
         diarization: [DiarizedSegment],
-        journal: [CallWindowJournal.Span] = [],
+        callPolls: [CallWindowJournal.Poll] = [],
         progressCallback: ((String) -> Void)?
     ) -> MeetingTranscriptionResult {
         let ownerName = Preferences.shared.ownerName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -506,10 +506,11 @@ class TranscriptionService {
         // для чужих реплик: владельца атрибутирует микрофонный стем (факт
         // сильнее), а Zoom-имя владельца в ленту не попадает — иначе он
         // раздваивается. Молчание журнала закрывает диаризация, как и было.
-        let ownerZoom = CallWindowJournal.ownerZoomName(
-            spans: journal,
-            ownerTurns: owner.map { (start: $0.start, end: $0.end) }
-        )
+        // Та же машинка, что у живого пути: одно сглаживание, одно правило
+        // владельца, один ответ на вопрос «кто говорил в секунду t».
+        var machine = CallWindowJournal.LiveSpeaker()
+        for poll in callPolls.sorted(by: { $0.t < $1.t }) { machine.take(poll) }
+        for line in owner { machine.noteOwnerTurn(start: line.start, end: line.end) }
         var journalNamed = 0
         // Кластеризации не было (не загрузилась, выключена после падения) —
         // сколько людей на той стороне, узнать нечем, и они одно имя, а не
@@ -518,10 +519,8 @@ class TranscriptionService {
             let fallback = diarization.isEmpty
                 ? SourceAwareSpeaker.defaultRemoteName
                 : segment.speakerLabel
-            let named = CallWindowJournal.remoteLabel(
-                midpoint: Double(segment.startTime + segment.endTime) / 2,
-                spans: journal,
-                excludingOwner: ownerZoom
+            let named = machine.name(
+                at: Double(segment.startTime + segment.endTime) / 2
             )
             if named != nil { journalNamed += 1 }
             return StemMerge.Line(
@@ -547,7 +546,7 @@ class TranscriptionService {
             owner.count, others.count, journalNamed, persisted.count
         )
         // §8.4: доля встреч с журналом и доля названных чужих реплик.
-        if !journal.isEmpty {
+        if !callPolls.isEmpty {
             Analytics.signal("CallJournal.applied", parameters: [
                 "named": String(journalNamed),
                 "far": String(others.count),
@@ -566,17 +565,17 @@ class TranscriptionService {
         )
     }
 
-    /// Журнал «кто говорил» из трассы окна звонилки, если наблюдатель её писал.
+    /// Трасса окна звонилки, если наблюдатель её писал.
     ///
     /// Времена трассы — секунды от старта записи (якорь ставит наблюдатель),
-    /// поэтому пролёты сразу на часах транскрипта, без подгонки сдвига. Нет
-    /// файла — нет журнала, и это законное состояние: запись шла без
-    /// разрешения, не в Zoom, или наблюдатель не застал плиток.
-    private static func loadCallJournal(for audioURL: URL) -> [CallWindowJournal.Span] {
+    /// поэтому машинка отвечает сразу на часах транскрипта, без подгонки
+    /// сдвига. Нет файла — нет журнала, и это законное состояние: запись шла
+    /// без разрешения, не в Zoom, или наблюдатель не застал плиток.
+    private static func loadCallPolls(for audioURL: URL) -> [CallWindowJournal.Poll] {
         let traceURL = audioURL.deletingPathExtension()
             .appendingPathExtension("calltrace.jsonl")
         guard let data = try? Data(contentsOf: traceURL) else { return [] }
-        return CallWindowJournal.spans(from: CallWindowJournal.polls(fromJSONL: data))
+        return CallWindowJournal.polls(fromJSONL: data)
     }
 
     private static func hasUsableStems(for finalAudioURL: URL) -> Bool {

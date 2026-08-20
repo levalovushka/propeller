@@ -82,14 +82,11 @@ final class CallWindowObserver {
             for window in windows(of: app) {
                 let title = string(window, kAXTitleAttribute as String) ?? ""
                 var budget = 20000
-                var orders: [String: Int] = [:]
                 walk(window, depth: 0, maxDepth: 25, budget: &budget) { element in
                     let role = string(element, kAXRoleAttribute as String) ?? ""
                     guard role == "AXRow" || role == "AXTabGroup" else { return }
                     guard let description = string(element, kAXDescriptionAttribute as String)
                             ?? string(element, kAXValueAttribute as String) else { return }
-                    let order = (orders[role] ?? 0) + 1
-                    orders[role] = order
                     var size = CGSize.zero
                     if let value = copyAttribute(element, kAXSizeAttribute as String) {
                         _ = AXValueGetValue(value as! AXValue, .cgSize, &size)
@@ -97,7 +94,7 @@ final class CallWindowObserver {
                     out.append(CallWindowJournal.Tile(
                         role: role, description: description,
                         width: size.width, height: size.height,
-                        order: order, window: title, process: process
+                        window: title, process: process
                     ))
                 }
             }

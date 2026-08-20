@@ -433,9 +433,13 @@ public enum RecapLint {
     }
 
     /// Текст одного раздела `## <имя>` — до следующего `##` или конца.
+    /// Заголовок бывает жирным: `## **Задачи**` — модель шлёт так на типичном
+    /// входе (замер `RecapDigest` по 106 живым саммари; дефект нашла ревизия
+    /// 2026-08-20 — строгий якорь выключал стража ровно на этом входе).
     private static func section(_ name: String, of recap: String) -> String? {
         matches(
-            #"(?ms)^##\s*"# + NSRegularExpression.escapedPattern(for: name) + #"\s*$(.*?)(?=^##\s|\z)"#,
+            #"(?ms)^##\s*\**"# + NSRegularExpression.escapedPattern(for: name)
+                + #"\**\s*$(.*?)(?=^##\s|\z)"#,
             in: recap, group: 1
         ).first
     }

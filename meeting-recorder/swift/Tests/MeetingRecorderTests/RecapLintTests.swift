@@ -328,4 +328,18 @@ final class RecapLintTests: XCTestCase {
         XCTAssertTrue(RecapLint.findings(recap: recap, transcript: "", participants: ["Левон"])
             .filter { $0.kind == .assigneeOutsideRoster }.isEmpty)
     }
+
+    func testЖирныйЗаголовокЗадачНеВыключаетСтража() {
+        // Замер ревизии 2026-08-20: модель шлёт «## **Задачи**», и строгий
+        // якорь раздела возвращал пусто — страж от выдуманного исполнителя
+        // был выключен ровно на типичном входе.
+        let recap = """
+        ## **Задачи**
+        - **Оля Петрова** — собрать макеты
+        """
+        let found = RecapLint.findings(recap: recap, transcript: "",
+                                       participants: ["Левон", "Kate"])
+        XCTAssertEqual(found.filter { $0.kind == .assigneeOutsideRoster }.map(\.text),
+                       ["Оля Петрова"])
+    }
 }

@@ -18,11 +18,11 @@ final class CallWindowJournalTests: XCTestCase {
         return CallWindowJournal.polls(fromJSONL: try Data(contentsOf: url))
     }
 
-    private func tile(_ description: String, w: Double, h: Double, order: Int,
+    private func tile(_ description: String, w: Double, h: Double,
                       window: String = "Zoom Meeting",
                       process: String = "zoom.us") -> CallWindowJournal.Tile {
         CallWindowJournal.Tile(role: "AXTabGroup", description: description,
-                               width: w, height: h, order: order,
+                               width: w, height: h,
                                window: window, process: process)
     }
 
@@ -34,12 +34,12 @@ final class CallWindowJournalTests: XCTestCase {
     func testДвоеПоОчередиДаютДваПролётаСИменами() throws {
         // Speaker view, no labels: geometry decides. The one transition poll
         // with equal tiles is honest silence — order used to decide there and
-        // was refuted on the live gallery trace (0 of 626 polls).
-        // Ends stretch half a step past the last look (the break poll at 2.4
-        // ended the first run); the trace's own end is not stretched.
+        // was refuted on the live gallery trace (0 of 626 polls). Ends are the
+        // last confirming sample: boundary coverage is the nearest-sample
+        // rule's job now, not stretched ends.
         let spans = CallWindowJournal.spans(from: try trace("synthetic-two-speakers.jsonl"))
         XCTAssertEqual(spans, [
-            CallWindowJournal.Span(start: 0.0, end: 2.2, name: "Levon Lobanov"),
+            CallWindowJournal.Span(start: 0.0, end: 2.0, name: "Levon Lobanov"),
             CallWindowJournal.Span(start: 2.8, end: 4.8, name: "Лева Ловушка"),
         ])
     }
@@ -47,12 +47,13 @@ final class CallWindowJournalTests: XCTestCase {
     func testМеткаActiveSpeakerВедётЖурналВГалерее() throws {
         // The live 2026-08-20 trace: three equal tiles, exactly one per poll
         // labelled by Zoom itself. The label leads; a one-poll flicker to a
-        // third person is dropped by smoothing like any other outburst.
+        // third person is dropped by smoothing — and no longer splits the
+        // continuous turn around it: same-name samples a short gap apart fold
+        // into one span (the ledger's gain over the old run-per-break rule).
         let spans = CallWindowJournal.spans(from: try trace("synthetic-gallery-marker.jsonl"))
         XCTAssertEqual(spans, [
-            CallWindowJournal.Span(start: 0.0, end: 1.8, name: "Анна Пример"),
-            CallWindowJournal.Span(start: 2.0, end: 3.8, name: "Борис Пример"),
-            CallWindowJournal.Span(start: 4.4, end: 5.4, name: "Борис Пример"),
+            CallWindowJournal.Span(start: 0.0, end: 1.6, name: "Анна Пример"),
+            CallWindowJournal.Span(start: 2.0, end: 5.2, name: "Борис Пример"),
             CallWindowJournal.Span(start: 5.6, end: 7.2, name: "Вера Пример"),
         ])
     }
@@ -79,18 +80,18 @@ final class CallWindowJournalTests: XCTestCase {
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<5 {
             polls.append(.init(t: Double(i * 4) / 10, tiles: [
-                tile(levon, w: 720, h: 400, order: 1),
-                tile(leva, w: 720, h: 400, order: 2),
+                tile(levon, w: 720, h: 400),
+                tile(leva, w: 720, h: 400),
             ]))
         }
         polls.append(.init(t: 2.0, tiles: [
-            tile(leva, w: 720, h: 400, order: 1),
-            tile(levon, w: 720, h: 400, order: 2),
+            tile(leva, w: 720, h: 400),
+            tile(levon, w: 720, h: 400),
         ]))
         for i in 6..<11 {
             polls.append(.init(t: Double(i * 4) / 10, tiles: [
-                tile(levon, w: 720, h: 400, order: 1),
-                tile(leva, w: 720, h: 400, order: 2),
+                tile(levon, w: 720, h: 400),
+                tile(leva, w: 720, h: 400),
             ]))
         }
         XCTAssertEqual(CallWindowJournal.spans(from: polls), [])
@@ -100,19 +101,19 @@ final class CallWindowJournalTests: XCTestCase {
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<5 {
             polls.append(.init(t: Double(i * 4) / 10, tiles: [
-                tile(levon, w: 1080, h: 600, order: 1),
-                tile(leva, w: 160, h: 80, order: 2),
+                tile(levon, w: 1080, h: 600),
+                tile(leva, w: 160, h: 80),
             ]))
         }
         // One poll mid-animation where the sizes have already crossed over.
         polls.append(.init(t: 2.0, tiles: [
-            tile(leva, w: 1080, h: 600, order: 1),
-            tile(levon, w: 160, h: 80, order: 2),
+            tile(leva, w: 1080, h: 600),
+            tile(levon, w: 160, h: 80),
         ]))
         for i in 6..<11 {
             polls.append(.init(t: Double(i * 4) / 10, tiles: [
-                tile(levon, w: 1080, h: 600, order: 1),
-                tile(leva, w: 160, h: 80, order: 2),
+                tile(levon, w: 1080, h: 600),
+                tile(leva, w: 160, h: 80),
             ]))
         }
         XCTAssertFalse(CallWindowJournal.spans(from: polls).contains { $0.name == "Лева Ловушка" })
@@ -126,19 +127,19 @@ final class CallWindowJournalTests: XCTestCase {
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
             polls.append(.init(t: Double(i * 4) / 10, tiles: [
-                tile(leva, w: 1080, h: 600, order: 1),
-                tile(levon, w: 160, h: 80, order: 2),
+                tile(leva, w: 1080, h: 600),
+                tile(levon, w: 160, h: 80),
             ]))
         }
         for i in 6..<12 {
             polls.append(.init(t: Double(i * 4) / 10, tiles: [
-                tile("Лев Л., Звук компьютера включен, Video off", w: 1080, h: 600, order: 1),
-                tile(levon, w: 160, h: 80, order: 2),
+                tile("Лев Л., Звук компьютера включен, Video off", w: 1080, h: 600),
+                tile(levon, w: 160, h: 80),
             ]))
         }
         let spans = CallWindowJournal.spans(from: polls)
         XCTAssertEqual(spans, [
-            CallWindowJournal.Span(start: 0.0, end: 2.2, name: "Лева Ловушка"),
+            CallWindowJournal.Span(start: 0.0, end: 2.0, name: "Лева Ловушка"),
             CallWindowJournal.Span(start: 2.4, end: 4.4, name: "Лев Л."),
         ])
     }
@@ -162,8 +163,8 @@ final class CallWindowJournalTests: XCTestCase {
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
             polls.append(.init(t: Double(i * 4) / 10, tiles: [
-                tile("Лева Ловушка, Звук компьютера выключен, Video off", w: 1080, h: 600, order: 1),
-                tile(levon, w: 160, h: 80, order: 2),
+                tile("Лева Ловушка, Звук компьютера выключен, Video off", w: 1080, h: 600),
+                tile(levon, w: 160, h: 80),
             ]))
         }
         XCTAssertEqual(CallWindowJournal.spans(from: polls), [])
@@ -176,8 +177,8 @@ final class CallWindowJournalTests: XCTestCase {
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
             polls.append(.init(t: Double(i * 4) / 10, tiles: [
-                tile("Лева Ловушка, Звук выключен, Video off", w: 1080, h: 600, order: 1),
-                tile(levon, w: 160, h: 80, order: 2),
+                tile("Лева Ловушка, Звук выключен, Video off", w: 1080, h: 600),
+                tile(levon, w: 160, h: 80),
             ]))
         }
         XCTAssertEqual(CallWindowJournal.spans(from: polls, tuning: tuning), [])
@@ -189,8 +190,8 @@ final class CallWindowJournalTests: XCTestCase {
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
             polls.append(.init(t: Double(i * 4) / 10, tiles: [
-                tile(levon, w: 1080, h: 600, order: 1),
-                tile(leva, w: 160, h: 80, order: 1, window: "Zoom Meeting 2"),
+                tile(levon, w: 1080, h: 600),
+                tile(leva, w: 160, h: 80, window: "Zoom Meeting 2"),
             ]))
         }
         XCTAssertEqual(CallWindowJournal.spans(from: polls), [])
@@ -201,8 +202,8 @@ final class CallWindowJournalTests: XCTestCase {
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
             polls.append(.init(t: Double(i * 4) / 10, tiles: [
-                tile(levon + ", active speaker", w: 520, h: 280, order: 1),
-                tile(leva + ", active speaker", w: 520, h: 280, order: 2),
+                tile(levon + ", active speaker", w: 520, h: 280),
+                tile(leva + ", active speaker", w: 520, h: 280),
             ]))
         }
         XCTAssertEqual(CallWindowJournal.spans(from: polls), [])
@@ -215,7 +216,7 @@ final class CallWindowJournalTests: XCTestCase {
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
             polls.append(.init(t: Double(i * 4) / 10, tiles: [
-                tile(levon + ", active speaker", w: 320, h: 180, order: 1),
+                tile(levon + ", active speaker", w: 320, h: 180),
             ]))
         }
         XCTAssertEqual(CallWindowJournal.spans(from: polls),
@@ -227,8 +228,8 @@ final class CallWindowJournalTests: XCTestCase {
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
             polls.append(.init(t: Double(i * 4) / 10, tiles: [
-                tile(levon, w: 1080, h: 600, order: 1),
-                tile(leva + ", active speaker", w: 160, h: 80, order: 2),
+                tile(levon, w: 1080, h: 600),
+                tile(leva + ", active speaker", w: 160, h: 80),
             ]))
         }
         XCTAssertEqual(CallWindowJournal.spans(from: polls),
@@ -241,8 +242,8 @@ final class CallWindowJournalTests: XCTestCase {
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
             polls.append(.init(t: Double(i * 4) / 10, tiles: [
-                tile("Лева Ловушка, Звук выключен, Video off, active speaker", w: 520, h: 280, order: 1),
-                tile(levon, w: 520, h: 280, order: 2),
+                tile("Лева Ловушка, Звук выключен, Video off, active speaker", w: 520, h: 280),
+                tile(levon, w: 520, h: 280),
             ]))
         }
         XCTAssertEqual(CallWindowJournal.spans(from: polls, tuning: tuning), [])
@@ -254,9 +255,9 @@ final class CallWindowJournalTests: XCTestCase {
         var polls: [CallWindowJournal.Poll] = []
         for i in 0..<6 {
             polls.append(.init(t: Double(i * 4) / 10, tiles: [
-                tile(levon, w: 1080, h: 600, order: 1),
-                tile(leva, w: 1080, h: 600, order: 2),
-                tile("Гость, Звук компьютера включен, Video off", w: 160, h: 80, order: 3),
+                tile(levon, w: 1080, h: 600),
+                tile(leva, w: 1080, h: 600),
+                tile("Гость, Звук компьютера включен, Video off", w: 160, h: 80),
             ]))
         }
         XCTAssertEqual(CallWindowJournal.spans(from: polls), [])
@@ -269,10 +270,10 @@ final class CallWindowJournalTests: XCTestCase {
         for i in 0..<6 {
             polls.append(.init(t: Double(i * 4) / 10, tiles: [
                 CallWindowJournal.Tile(role: "AXRow", description: "Лева Ловушка (Организатор, я)",
-                                       width: 300, height: 40, order: 1,
+                                       width: 300, height: 40,
                                        window: "Zoom Meeting", process: "zoom.us"),
                 CallWindowJournal.Tile(role: "AXRow", description: "Levon Lobanov",
-                                       width: 300, height: 40, order: 2,
+                                       width: 300, height: 40,
                                        window: "Zoom Meeting", process: "zoom.us"),
             ]))
         }
@@ -288,24 +289,24 @@ final class CallWindowJournalTests: XCTestCase {
             return nil
         }
         XCTAssertEqual(reason([]), .noTiles)
-        XCTAssertEqual(reason([tile(levon, w: 320, h: 180, order: 1)]), .loneTile)
-        XCTAssertEqual(reason([tile(levon, w: 520, h: 280, order: 1),
-                               tile(leva, w: 520, h: 280, order: 1, window: "Zoom Meeting 2")]),
+        XCTAssertEqual(reason([tile(levon, w: 320, h: 180)]), .noLabel)
+        XCTAssertEqual(reason([tile(levon, w: 520, h: 280),
+                               tile(leva, w: 520, h: 280, window: "Zoom Meeting 2")]),
                        .twoWindows)
-        XCTAssertEqual(reason([tile(levon + ", active speaker", w: 520, h: 280, order: 1),
-                               tile(leva + ", active speaker", w: 520, h: 280, order: 2)]),
+        XCTAssertEqual(reason([tile(levon + ", active speaker", w: 520, h: 280),
+                               tile(leva + ", active speaker", w: 520, h: 280)]),
                        .twoLabels)
-        XCTAssertEqual(reason([tile(levon, w: 720, h: 400, order: 1),
-                               tile(leva, w: 720, h: 400, order: 2)]),
-                       .flatAreas)
-        XCTAssertEqual(reason([tile(levon, w: 1080, h: 600, order: 1),
-                               tile(leva, w: 1080, h: 600, order: 2),
-                               tile("Гость, Звук", w: 160, h: 80, order: 3)]),
-                       .areaTie)
+        XCTAssertEqual(reason([tile(levon, w: 720, h: 400),
+                               tile(leva, w: 720, h: 400)]),
+                       .noLabel)
+        XCTAssertEqual(reason([tile(levon, w: 1080, h: 600),
+                               tile(leva, w: 1080, h: 600),
+                               tile("Гость, Звук", w: 160, h: 80)]),
+                       .noLabel)
         if case .silent(let r) = CallWindowJournal.verdict(
             in: .init(t: 0, tiles: [
-                tile("Лева Ловушка, Звук выключен, active speaker", w: 520, h: 280, order: 1),
-                tile(levon, w: 520, h: 280, order: 2),
+                tile("Лева Ловушка, Звук выключен, active speaker", w: 520, h: 280),
+                tile(levon, w: 520, h: 280),
             ]),
             tuning: CallWindowJournal.Tuning(mutedMarkers: ["звук выключен"])) {
             XCTAssertEqual(r, .muted)
@@ -314,72 +315,108 @@ final class CallWindowJournalTests: XCTestCase {
         }
     }
 
+    // MARK: - The live machine
+
+    /// A meeting in miniature: the owner speaks first (locks his tile), then
+    /// the far side takes over.
+    private func warmedMachine() -> CallWindowJournal.LiveSpeaker {
+        var live = CallWindowJournal.LiveSpeaker()
+        for i in 0..<40 {
+            live.take(.init(t: Double(i * 4) / 10, tiles: [
+                tile(levon + ", active speaker", w: 520, h: 280),
+                tile(leva, w: 520, h: 280),
+            ]))
+        }
+        live.noteOwnerTurn(start: 0.0, end: 16.0)
+        return live
+    }
+
+    func testЖивоеИмяПоявляетсяТолькоПослеОпознанияВладельца() {
+        var live = CallWindowJournal.LiveSpeaker()
+        // Far side speaks from the first second — but nobody has co-spoken
+        // with the mic yet, so the line stays unnamed rather than risk the
+        // owner's own tile.
+        for i in 0..<10 {
+            live.take(.init(t: Double(i * 4) / 10, tiles: [
+                tile(leva + ", active speaker", w: 520, h: 280),
+                tile(levon, w: 520, h: 280),
+            ]))
+        }
+        XCTAssertNil(live.name(at: 2.0))
+    }
+
+    func testПослеОпознанияЧужаяСтрокаПолучаетИмяАВладелецНикогда() {
+        var live = warmedMachine()
+        for i in 40..<60 {
+            live.take(.init(t: Double(i * 4) / 10, tiles: [
+                tile(leva + ", active speaker", w: 520, h: 280),
+                tile(levon, w: 520, h: 280),
+            ]))
+        }
+        // A far line finalized around second 20 gets the far name...
+        XCTAssertEqual(live.name(at: 20.0), "Лева Ловушка")
+        // ...and the owner's own tile never reaches a line, even at a second
+        // where it held the label.
+        XCTAssertNil(live.name(at: 8.0))
+    }
+
+    func testЖивойВыбросНаОдинОпросИмениНеМеняет() {
+        var live = warmedMachine()
+        for i in 40..<50 {
+            live.take(.init(t: Double(i * 4) / 10, tiles: [
+                tile(leva + ", active speaker", w: 520, h: 280),
+                tile(levon, w: 520, h: 280),
+            ]))
+        }
+        // One glitch poll flips the label; smoothing must not let it through.
+        live.take(.init(t: 20.4, tiles: [
+            tile("Гость, Звук, active speaker", w: 520, h: 280),
+            tile(leva, w: 520, h: 280),
+        ]))
+        for i in 52..<56 {
+            live.take(.init(t: Double(i * 4) / 10, tiles: [
+                tile(leva + ", active speaker", w: 520, h: 280),
+                tile(levon, w: 520, h: 280),
+            ]))
+        }
+        XCTAssertEqual(live.name(at: 20.4), "Лева Ловушка")
+    }
+
+    func testВдалиОтПоследнегоОпросаМашинкаМолчит() {
+        let live = warmedMachine()
+        // The buffer knows nothing about second 500 — no guessing.
+        XCTAssertNil(live.name(at: 500.0))
+    }
+
     // MARK: - Applying the journal to a transcript
 
-    func testИмяВладельцаНаходитсяПоПерекрытиюСМикрофоном() {
-        let spans = [
-            CallWindowJournal.Span(start: 0, end: 10, name: "Levon Lobanov"),
-            CallWindowJournal.Span(start: 10, end: 20, name: "Лева Ловушка"),
-            CallWindowJournal.Span(start: 20, end: 30, name: "Levon Lobanov"),
-        ]
-        let ownerTurns = [(start: 1.0, end: 9.0), (start: 21.0, end: 29.0)]
-        XCTAssertEqual(CallWindowJournal.ownerZoomName(spans: spans, ownerTurns: ownerTurns),
-                       "Levon Lobanov")
-        // Nobody co-speaks with the mic enough — no name is claimed.
-        XCTAssertNil(CallWindowJournal.ownerZoomName(spans: spans, ownerTurns: [(start: 40.0, end: 50.0)]))
-        XCTAssertNil(CallWindowJournal.ownerZoomName(spans: [], ownerTurns: ownerTurns))
-    }
-
-    func testЧужаяРепликаНеПолучаетИмяВладельца() {
-        let spans = [
-            CallWindowJournal.Span(start: 0, end: 10, name: "Levon Lobanov"),
-            CallWindowJournal.Span(start: 10, end: 20, name: "Лева Ловушка"),
-        ]
-        XCTAssertEqual(CallWindowJournal.remoteLabel(midpoint: 15, spans: spans,
-                                                     excludingOwner: "Levon Lobanov"),
-                       "Лева Ловушка")
-        // The journal says "the owner" about a far-side remark: overlap or
-        // echo, and Speaker N is honest where a wrong name would not be.
-        XCTAssertNil(CallWindowJournal.remoteLabel(midpoint: 5, spans: spans,
-                                                   excludingOwner: "Levon Lobanov"))
-        XCTAssertNil(CallWindowJournal.remoteLabel(midpoint: 25, spans: spans,
-                                                   excludingOwner: nil))
-    }
-
-    /// Владелец, промолчавший всю встречу, — это норма, а не поломка: он
-    /// слушал. Замер 2026-08-20 по архиву нашёл восемь таких встреч из семидесяти
-    /// (`benchmarks/report-owner-loss.md`), и владелец подтвердил, что молчал.
-    ///
-    /// Микрофонных реплик тогда нет, `ownerZoomName` отвечать нечем — и вместе с
-    /// этим отключается исключение владельца в `remoteLabel`. Тест держит
-    /// границу того, что за этим следует: если его плитка при этом **говорила**
-    /// (два опроса подряд — кашель одним опросом отсеивает `minRunPolls`), её
-    /// имя достанется чужой реплике, попавшей в этот спан.
-    ///
-    /// Поведение зафиксировано как есть, а не исправлено: без микрофонных реплик
-    /// сказать, какая плитка владельца, нечем, а выключать журнал на всей
-    /// встрече значит отнять имена ровно там, где человек слушает четверых.
-    /// Цена промаха — реплика под именем, а не «Speaker N»; цена перестраховки —
-    /// ни одного имени. Понадобится решать иначе — здесь стоит замер, с которого
-    /// начинать.
-    func testМолчавшийВладелецНеОпознаётсяИЖурналЭтогоНеЗнает() {
-        let spans = [
-            CallWindowJournal.Span(start: 0, end: 4, name: "Levon Lobanov"),
-            CallWindowJournal.Span(start: 4, end: 20, name: "Лева Ловушка"),
-        ]
-        // Реплик владельца нет вовсе — корреляции не с чем считать.
-        XCTAssertNil(CallWindowJournal.ownerZoomName(spans: spans, ownerTurns: []))
-        // Чужая реплика внутри спана владельца берёт его имя, потому что
-        // исключать его больше нечем. Это и есть та граница.
-        XCTAssertEqual(
-            CallWindowJournal.remoteLabel(midpoint: 2, spans: spans, excludingOwner: nil),
-            "Levon Lobanov"
-        )
-        // Всё остальное журнал называет правильно и в этом случае.
-        XCTAssertEqual(
-            CallWindowJournal.remoteLabel(midpoint: 10, spans: spans, excludingOwner: nil),
-            "Лева Ловушка"
-        )
+    func testКороткоеПерекрытиеГостяНеДелаетЕгоВладельцем() {
+        // The measured trap (simplification review 2026-08-20): on a 70 s
+        // prefix of a live meeting, share alone (0.625 on 7 s of overlap)
+        // crowned a guest as the owner and erased her name from the feed.
+        // The evidence floor is what stands between that and us.
+        var live = CallWindowJournal.LiveSpeaker()
+        // A guest's tile briefly co-occurs with the owner's mic (echo).
+        for i in 0..<10 {
+            live.take(.init(t: Double(i * 4) / 10, tiles: [
+                tile(leva + ", active speaker", w: 520, h: 280),
+                tile(levon, w: 520, h: 280),
+            ]))
+        }
+        live.noteOwnerTurn(start: 0.0, end: 4.0)
+        // High share, thin evidence: nobody is crowned.
+        XCTAssertNil(live.ownerZoomName)
+        XCTAssertNil(live.name(at: 2.0))
+        // The owner then actually speaks long enough — his own tile takes the
+        // label, evidence accumulates, and the lock lands on him.
+        for i in 10..<50 {
+            live.take(.init(t: Double(i * 4) / 10, tiles: [
+                tile(levon + ", active speaker", w: 520, h: 280),
+                tile(leva, w: 520, h: 280),
+            ]))
+        }
+        live.noteOwnerTurn(start: 4.0, end: 20.0)
+        XCTAssertEqual(live.ownerZoomName, "Levon Lobanov")
     }
 
     func testНовыйСлучайАтрибуцииПризнаётсяПроИсточник() throws {
