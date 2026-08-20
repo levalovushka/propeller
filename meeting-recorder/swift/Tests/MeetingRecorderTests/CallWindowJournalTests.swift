@@ -346,6 +346,42 @@ final class CallWindowJournalTests: XCTestCase {
                                                    excludingOwner: nil))
     }
 
+    /// Владелец, промолчавший всю встречу, — это норма, а не поломка: он
+    /// слушал. Замер 2026-08-20 по архиву нашёл восемь таких встреч из семидесяти
+    /// (`benchmarks/report-owner-loss.md`), и владелец подтвердил, что молчал.
+    ///
+    /// Микрофонных реплик тогда нет, `ownerZoomName` отвечать нечем — и вместе с
+    /// этим отключается исключение владельца в `remoteLabel`. Тест держит
+    /// границу того, что за этим следует: если его плитка при этом **говорила**
+    /// (два опроса подряд — кашель одним опросом отсеивает `minRunPolls`), её
+    /// имя достанется чужой реплике, попавшей в этот спан.
+    ///
+    /// Поведение зафиксировано как есть, а не исправлено: без микрофонных реплик
+    /// сказать, какая плитка владельца, нечем, а выключать журнал на всей
+    /// встрече значит отнять имена ровно там, где человек слушает четверых.
+    /// Цена промаха — реплика под именем, а не «Speaker N»; цена перестраховки —
+    /// ни одного имени. Понадобится решать иначе — здесь стоит замер, с которого
+    /// начинать.
+    func testМолчавшийВладелецНеОпознаётсяИЖурналЭтогоНеЗнает() {
+        let spans = [
+            CallWindowJournal.Span(start: 0, end: 4, name: "Levon Lobanov"),
+            CallWindowJournal.Span(start: 4, end: 20, name: "Лева Ловушка"),
+        ]
+        // Реплик владельца нет вовсе — корреляции не с чем считать.
+        XCTAssertNil(CallWindowJournal.ownerZoomName(spans: spans, ownerTurns: []))
+        // Чужая реплика внутри спана владельца берёт его имя, потому что
+        // исключать его больше нечем. Это и есть та граница.
+        XCTAssertEqual(
+            CallWindowJournal.remoteLabel(midpoint: 2, spans: spans, excludingOwner: nil),
+            "Levon Lobanov"
+        )
+        // Всё остальное журнал называет правильно и в этом случае.
+        XCTAssertEqual(
+            CallWindowJournal.remoteLabel(midpoint: 10, spans: spans, excludingOwner: nil),
+            "Лева Ловушка"
+        )
+    }
+
     func testНовыйСлучайАтрибуцииПризнаётсяПроИсточник() throws {
         XCTAssertEqual(SpeakerAttribution.callWindow.rawValue, "callWindow")
         XCTAssertNotNil(SpeakerAttribution.callWindow.disclosure)
