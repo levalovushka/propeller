@@ -388,6 +388,58 @@ final class CallWindowJournalTests: XCTestCase {
         XCTAssertNil(live.name(at: 500.0))
     }
 
+    // MARK: - The 1×1 shortcut (sole companion)
+
+    private func pairPolls(_ owner: String, _ other: String, count: Int,
+                           from start: Int = 0) -> [CallWindowJournal.Poll] {
+        (start..<(start + count)).map { i in
+            .init(t: Double(i * 4) / 10, tiles: [
+                tile(owner + ", Звук компьютера включен, Video on", w: 608, h: 342),
+                tile(other + ", Звук компьютера включен, Video off", w: 608, h: 342),
+            ])
+        }
+    }
+
+    func testНаОдинОдинВтораяПлиткаНазываетСобеседника() {
+        // The measured class (20260820_213214): two equal tiles, zero labels
+        // for the whole meeting — the roster answers where no speaking signal
+        // exists. Mini-window polls don't vote either way.
+        var polls = pairPolls("Levon Lobanov", "Лева Ловушка", count: 40)
+        polls.append(.init(t: 16.0, tiles: [tile(levon, w: 320, h: 180)]))
+        XCTAssertEqual(
+            CallWindowJournal.soleCompanion(polls: polls, ownerZoomName: "Levon Lobanov"),
+            "Лева Ловушка"
+        )
+    }
+
+    func testТретийУчастникВыключаетСоставнуюПодпись() {
+        var polls = pairPolls("Levon Lobanov", "Лева Ловушка", count: 40)
+        polls.append(.init(t: 16.0, tiles: [
+            tile(levon, w: 608, h: 342),
+            tile(leva, w: 608, h: 342),
+            tile("Гость, Звук компьютера включен, Video off", w: 608, h: 342),
+        ]))
+        XCTAssertNil(CallWindowJournal.soleCompanion(polls: polls, ownerZoomName: "Levon Lobanov"))
+    }
+
+    func testПереименованиеСобеседникаВыключаетСоставнуюПодпись() {
+        var polls = pairPolls("Levon Lobanov", "Лева Ловушка", count: 40)
+        polls += pairPolls("Levon Lobanov", "Лев Л.", count: 10, from: 40)
+        XCTAssertNil(CallWindowJournal.soleCompanion(polls: polls, ownerZoomName: "Levon Lobanov"))
+    }
+
+    func testБезЯкоряВладельцаСоставнаяПодписьМолчит() {
+        let polls = pairPolls("Levon Lobanov", "Лева Ловушка", count: 40)
+        XCTAssertNil(CallWindowJournal.soleCompanion(polls: polls, ownerZoomName: nil))
+        // Пара без владельца — чужая встреча рядом, не наша.
+        XCTAssertNil(CallWindowJournal.soleCompanion(polls: polls, ownerZoomName: "Кто-То Ещё"))
+    }
+
+    func testМалоУликСоставнаяПодписьМолчит() {
+        let polls = pairPolls("Levon Lobanov", "Лева Ловушка", count: 10)
+        XCTAssertNil(CallWindowJournal.soleCompanion(polls: polls, ownerZoomName: "Levon Lobanov"))
+    }
+
     // MARK: - Applying the journal to a transcript
 
     func testКороткоеПерекрытиеГостяНеДелаетЕгоВладельцем() {

@@ -511,6 +511,20 @@ class TranscriptionService {
         var machine = CallWindowJournal.LiveSpeaker()
         for poll in callPolls.sorted(by: { $0.t < $1.t }) { machine.take(poll) }
         for line in owner { machine.noteOwnerTurn(start: line.start, end: line.end) }
+        // Zoom-имя владельца выучивается на встречах с меткой и живёт в префах:
+        // на встрече 1×1 метки нет вовсе (замер 2026-08-20), замок молчит, и
+        // без запомненного якоря вторая плитка не превращается в имя.
+        if let locked = machine.ownerZoomName, Preferences.shared.ownerZoomName != locked {
+            Preferences.shared.ownerZoomName = locked
+        }
+        // Состав-подпись для 1×1: ровно две плитки всю встречу, одна —
+        // владельца, значит все чужие реплики принадлежат второй. Не «кто
+        // говорит сейчас», а «кто вообще есть» — сигнал говорения здесь не
+        // нужен и его в этом классе встреч и не бывает.
+        let companion = CallWindowJournal.soleCompanion(
+            polls: callPolls,
+            ownerZoomName: machine.ownerZoomName ?? Preferences.shared.ownerZoomName
+        )
         var journalNamed = 0
         // Кластеризации не было (не загрузилась, выключена после падения) —
         // сколько людей на той стороне, узнать нечем, и они одно имя, а не
@@ -521,7 +535,7 @@ class TranscriptionService {
                 : segment.speakerLabel
             let named = machine.name(
                 at: Double(segment.startTime + segment.endTime) / 2
-            )
+            ) ?? companion
             if named != nil { journalNamed += 1 }
             return StemMerge.Line(
                 start: Double(segment.startTime),

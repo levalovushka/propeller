@@ -44,7 +44,14 @@ final class CallWindowObserver {
     private static let interval: TimeInterval = 0.4
 
     func start(recordingID: String, anchor: Date, directory: URL) {
-        guard AXIsProcessTrusted() else { return }
+        guard AXIsProcessTrusted() else {
+            // «Права нет» и «имён нет» различались только наличием файла
+            // трассы (найдено соседней сессией 2026-08-20) — теперь отказ
+            // виден в логе и в телеметрии, по строке на запись.
+            NSLog("[CallWindowObserver] «Универсального доступа» нет — трасса не пишется, имена пойдут по диаризации")
+            Analytics.signal("CallJournal.noPermission")
+            return
+        }
         lock.lock()
         if !stopped, activeRecordingID == recordingID {
             // Already watching this recording — a second call within one

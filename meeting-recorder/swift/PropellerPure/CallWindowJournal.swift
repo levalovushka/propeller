@@ -385,6 +385,46 @@ public enum CallWindowJournal {
         return machine.spans()
     }
 
+    /// The 1×1 shortcut: when the whole trace shows exactly two named tiles —
+    /// the owner's and one other, constant — the far side is one person, and
+    /// every far-side remark carries that name **without any speaking signal**.
+    ///
+    /// Measured need (2026-08-20, `20260820_213214`): a two-tile gallery
+    /// carries zero `active speaker` labels across the whole meeting and both
+    /// tiles are equal — the per-second journal is silent by construction
+    /// there, yet the roster answer is certain. This is the most common
+    /// meeting class in the archive.
+    ///
+    /// Strict by design, silence on any doubt: a third named tile in any
+    /// poll, a companion that changes name mid-meeting (rename — an honest
+    /// no), a pair that does not contain the owner, or fewer than `minPolls`
+    /// qualifying polls (~13 s of evidence, chosen) — all return nil.
+    /// Polls with fewer than two named tiles (mini window, screen share
+    /// collapse) don't vote either way.
+    public static func soleCompanion(
+        polls: [Poll],
+        ownerZoomName: String?,
+        minPolls: Int = 30
+    ) -> String? {
+        guard let ownerZoomName else { return nil }
+        var companion: String?
+        var qualifying = 0
+        for poll in polls {
+            let names = Set(poll.tiles.compactMap { tile -> String? in
+                guard tile.role == "AXTabGroup" else { return nil }
+                return name(fromDescription: tile.description)
+            })
+            guard names.count >= 2 else { continue }
+            guard names.count == 2, names.contains(ownerZoomName),
+                  let other = names.first(where: { $0 != ownerZoomName })
+            else { return nil }
+            if let companion, companion != other { return nil }
+            companion = other
+            qualifying += 1
+        }
+        return qualifying >= minPolls ? companion : nil
+    }
+
     /// How often the observer stayed silent, by reason — the lab preview of
     /// the §8.4 telemetry.
     public static func silenceCounts(from polls: [Poll],
