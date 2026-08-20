@@ -98,9 +98,12 @@ public enum CallWindowJournal {
         public var minRunPolls: Int
         /// Substrings of the status tail that mean "microphone muted",
         /// lowercase. Applied only as a veto on the chosen candidate — never
-        /// to promote anyone else (§4: «как нет, никогда как да»). Empty by
-        /// default: no live muted string has been measured yet, and guessing
-        /// one risks vetoing a speaker over a localization coincidence.
+        /// to promote anyone else (§4: «как нет, никогда как да»). The default
+        /// is **measured** (2026-08-20, live meeting, RU locale): a muted tile
+        /// reads `«Имя, Звук компьютера выключен, Video off»`, and the same
+        /// trace showed Zoom never puts its speaker label on a muted tile —
+        /// so this veto is a second lock on a door the app already keeps
+        /// shut. Other locales are unmeasured (Н8 narrowed, not closed).
         public var mutedMarkers: [String]
         /// Substrings of the status tail that mean "this tile is the active
         /// speaker" — Zoom's own explicit label, the strongest signal there
@@ -113,7 +116,7 @@ public enum CallWindowJournal {
         public init(areaGridStep: Double = 40,
                     areaSpreadRatio: Double = 2.0,
                     minRunPolls: Int = 2,
-                    mutedMarkers: [String] = [],
+                    mutedMarkers: [String] = ["звук компьютера выключен"],
                     speakerMarkers: [String] = ["active speaker"]) {
             self.areaGridStep = areaGridStep
             self.areaSpreadRatio = areaSpreadRatio

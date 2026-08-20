@@ -155,6 +155,20 @@ final class CallWindowJournalTests: XCTestCase {
 
     // MARK: - "Don't know" is a legal answer
 
+    func testЗамереннаяСтрокаМьютаЛовитсяПоУмолчанию() {
+        // The default marker is the measured live string (2026-08-20, RU
+        // locale) — and «выключен» must not match «включен», which every
+        // other test on the default tuning proves from the other side.
+        var polls: [CallWindowJournal.Poll] = []
+        for i in 0..<6 {
+            polls.append(.init(t: Double(i * 4) / 10, tiles: [
+                tile("Лева Ловушка, Звук компьютера выключен, Video off", w: 1080, h: 600, order: 1),
+                tile(levon, w: 160, h: 80, order: 2),
+            ]))
+        }
+        XCTAssertEqual(CallWindowJournal.spans(from: polls), [])
+    }
+
     func testЗаглушённыйГоворящимНеСтановится() {
         // The muted veto silences the chosen candidate; it never promotes the
         // other tile — «как нет, никогда как да» (plan-speaker-tags.md §4).
