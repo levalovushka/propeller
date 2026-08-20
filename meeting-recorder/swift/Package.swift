@@ -74,15 +74,6 @@ let package = Package(
             dependencies: ["PropellerPure"],
             path: "MCPServer"
         ),
-        .executableTarget(
-            name: "Experiments",
-            dependencies: [
-                "SpeakerMatchingCore",
-                "PropellerMetrics",
-                .product(name: "FluidAudio", package: "FluidAudio"),
-            ],
-            path: "Experiments"
-        ),
         /// Batch pipeline harness — emits benchmarks/latest.json (plan-testing-metrics M2).
         /// `--live` measures the live layer instead; it reuses the product's own
         /// transcript assembly and stem-dominance rule from PropellerPure, so the
@@ -96,11 +87,6 @@ let package = Package(
                 .product(name: "FluidAudio", package: "FluidAudio"),
             ],
             path: "Bench"
-        ),
-        .executableTarget(
-            name: "SpeakerMatchingCoreChecks",
-            dependencies: ["SpeakerMatchingCore"],
-            path: "Checks/SpeakerMatchingCoreChecks"
         ),
         /// Lab runner: an axprobe JSONL trace in, the CallWindowJournal spans
         /// out, in the format `tools/diarize-lab/saer-journal.py` scores. Lives

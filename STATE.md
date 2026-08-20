@@ -478,6 +478,7 @@ coverage 0.976: слова не теряются, прибавляются че�
 | R5-хвост | Класс без изоляции (`class TranscriptionService`, не actor/@MainActor) | 🔵 | ✅ |
 | ~~ollama-ram~~ | **Закрыто рефакторингом пайплайна, сверено 2026-08-06:** фазы больше не вызывают друг друга, `releaseHeavyResources()` стоит в конце фазы ASR перед `kickPipeline()` — саммари стартует отдельной работой, когда GigaAM уже выгружен | — | ✅ |
 | ~~H2~~ | **Закрыто:** `mergeConsecutiveSameSpeaker` / `formatTranscript(_:speakerNames:)` удалены; в коде их нет (сверено 2026-08-06) | — | ✅ |
+| ~~smc-voicelib~~ | **Закрыто удалением 2026-08-20.** `SourceAwareScoring` + `SourceAwareScoringConfig` (50 строк) правили косинусную близость под библиотеку голосов, которой в продукте нет; `AudioEnergySummary` + `AudioEnergyAnalyzer.summarize` + приватный `summarize` (80 строк) и декоративный `AudioCaptureSource.label` (8) не звал никто, кроме двух харнессов. Вместе с ними ушли сами харнессы — таргеты `Experiments` (303 строки, читал `~/.meeting-recorder/test/test-5min.wav`, которого нет; вытеснен `Bench`) и `SpeakerMatchingCoreChecks` (116, самодельный `exit(1)`, не звался ниоткуда). Пять его утверждений про живой код перед удалением переехали в `SystemWindowShiftTests` (927 → 929 тестов). `SourceAwareSpeaker` в `PropellerPure` — другое, живое, не тронуто. Вернуть — `git log -- swift/Experiments swift/Checks/SpeakerMatchingCoreChecks` | — | ✅ |
 
 **Здоров, когда:** один проход по стему на все окна, ASR-ресурсы освобождаются до старта LLM, мёртвые методы удалены.
 

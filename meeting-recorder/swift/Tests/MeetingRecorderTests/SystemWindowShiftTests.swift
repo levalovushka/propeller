@@ -51,4 +51,34 @@ final class SystemWindowShiftTests: XCTestCase {
             .unknown
         )
     }
+
+    /// Both stems carry the same meeting, so "who spoke" is a question about
+    /// which one was louder inside the speaker's own windows — and only clearly
+    /// louder counts. Two stems within the ratio are both sides talking at
+    /// once, which is a third answer, not a tie to be broken.
+    func testTheLouderStemWinsOnlyWhenItIsClearlyLouder() {
+        XCTAssertEqual(
+            AudioSourceEnergyClassifier.classify(microphoneEnergy: 0.01, systemEnergy: 0.001),
+            .microphone
+        )
+        XCTAssertEqual(
+            AudioSourceEnergyClassifier.classify(microphoneEnergy: 0.001, systemEnergy: 0.01),
+            .system
+        )
+        XCTAssertEqual(
+            AudioSourceEnergyClassifier.classify(microphoneEnergy: 0.01, systemEnergy: 0.009),
+            .mixed
+        )
+    }
+
+    /// The stems are found by name beside the mix, never by an index, so these
+    /// two names are a contract with every recording already on disk: renaming
+    /// them orphans the stems of every past meeting silently.
+    func testStemsAreFoundBesideTheMixByName() {
+        let stems = AudioSourceStemURLs.expectedSiblings(
+            for: URL(fileURLWithPath: "/tmp/20260415_120000.wav")
+        )
+        XCTAssertEqual(stems.microphoneURL.lastPathComponent, "20260415_120000.mic.wav")
+        XCTAssertEqual(stems.systemURL.lastPathComponent, "20260415_120000.sys.wav")
+    }
 }
