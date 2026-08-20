@@ -314,6 +314,57 @@ final class CallWindowJournalTests: XCTestCase {
         }
     }
 
+    // MARK: - Applying the journal to a transcript
+
+    func testИмяВладельцаНаходитсяПоПерекрытиюСМикрофоном() {
+        let spans = [
+            CallWindowJournal.Span(start: 0, end: 10, name: "Levon Lobanov"),
+            CallWindowJournal.Span(start: 10, end: 20, name: "Лева Ловушка"),
+            CallWindowJournal.Span(start: 20, end: 30, name: "Levon Lobanov"),
+        ]
+        let ownerTurns = [(start: 1.0, end: 9.0), (start: 21.0, end: 29.0)]
+        XCTAssertEqual(CallWindowJournal.ownerZoomName(spans: spans, ownerTurns: ownerTurns),
+                       "Levon Lobanov")
+        // Nobody co-speaks with the mic enough — no name is claimed.
+        XCTAssertNil(CallWindowJournal.ownerZoomName(spans: spans, ownerTurns: [(start: 40.0, end: 50.0)]))
+        XCTAssertNil(CallWindowJournal.ownerZoomName(spans: [], ownerTurns: ownerTurns))
+    }
+
+    func testЧужаяРепликаНеПолучаетИмяВладельца() {
+        let spans = [
+            CallWindowJournal.Span(start: 0, end: 10, name: "Levon Lobanov"),
+            CallWindowJournal.Span(start: 10, end: 20, name: "Лева Ловушка"),
+        ]
+        XCTAssertEqual(CallWindowJournal.remoteLabel(midpoint: 15, spans: spans,
+                                                     excludingOwner: "Levon Lobanov"),
+                       "Лева Ловушка")
+        // The journal says "the owner" about a far-side remark: overlap or
+        // echo, and Speaker N is honest where a wrong name would not be.
+        XCTAssertNil(CallWindowJournal.remoteLabel(midpoint: 5, spans: spans,
+                                                   excludingOwner: "Levon Lobanov"))
+        XCTAssertNil(CallWindowJournal.remoteLabel(midpoint: 25, spans: spans,
+                                                   excludingOwner: nil))
+    }
+
+    func testНовыйСлучайАтрибуцииПризнаётсяПроИсточник() throws {
+        XCTAssertEqual(SpeakerAttribution.callWindow.rawValue, "callWindow")
+        XCTAssertNotNil(SpeakerAttribution.callWindow.disclosure)
+        // The value survives its round trip through the index on disk.
+        let decoded = try JSONDecoder().decode(SpeakerAttribution.self,
+                                               from: Data("\"callWindow\"".utf8))
+        XCTAssertEqual(decoded, .callWindow)
+    }
+
+    func testТрассаОкнаСтираетсяВместеСоВстречей() {
+        // Names of real people on disk: the trace must be a known kind of
+        // trace, or erasure's completeness test cannot see it.
+        XCTAssertEqual(MeetingErasure.kind(of: "20260820_100315.calltrace.jsonl",
+                                           for: "20260820_100315"),
+                       .callWindowTrace)
+        XCTAssertTrue(MeetingErasure.belongs("20260820_100315.calltrace.jsonl",
+                                             to: "20260820_100315"))
+    }
+
     func testРваныйХвостТрассыНеРоняетЧтение() {
         // A killed probe leaves a torn last line; the recording must survive.
         let jsonl = """

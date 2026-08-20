@@ -311,6 +311,59 @@ public enum CallWindowJournal {
         return out
     }
 
+    // MARK: - Applying the journal to a transcript
+
+    /// The owner's Zoom display name, found by correlation — never asked.
+    ///
+    /// The journal names everyone including the owner, but the transcript's
+    /// owner turns are already attributed by the microphone stem, which is
+    /// the stronger fact. The journal name whose spans co-occur with the
+    /// owner's own turns is the owner's tile (measured 2026-08-20: 94.6 %
+    /// agreement on 221 s of speech); it must never reach the feed, or the
+    /// owner splits into two people («Левон» and «Levon Lobanov»).
+    /// `minShare` is chosen, not measured: below it no name is claimed.
+    public static func ownerZoomName(
+        spans: [Span],
+        ownerTurns: [(start: Double, end: Double)],
+        minShare: Double = 0.5
+    ) -> String? {
+        var overlap: [String: Double] = [:]
+        var total: [String: Double] = [:]
+        for span in spans {
+            total[span.name, default: 0] += span.end - span.start
+            for turn in ownerTurns {
+                let shared = min(span.end, turn.end) - max(span.start, turn.start)
+                if shared > 0 { overlap[span.name, default: 0] += shared }
+            }
+        }
+        let best = overlap
+            .compactMap { name, seconds -> (String, Double)? in
+                guard let t = total[name], t > 0 else { return nil }
+                return (name, seconds / t)
+            }
+            .max { $0.1 < $1.1 }
+        guard let best, best.1 >= minShare else { return nil }
+        return best.0
+    }
+
+    /// The journal's answer for one far-side remark, by the same midpoint
+    /// rule the merge already uses — or nil, and the caller keeps whatever
+    /// label it had (diarization covers the journal's silence).
+    ///
+    /// The owner's Zoom name answers nil too: a far-side remark the journal
+    /// attributes to the owner is an overlap or an echo, and «Speaker N» is
+    /// honest where a wrong name would not be.
+    public static func remoteLabel(
+        midpoint: Double,
+        spans: [Span],
+        excludingOwner ownerZoomName: String?
+    ) -> String? {
+        guard let span = spans.first(where: { midpoint >= $0.start && midpoint <= $0.end })
+        else { return nil }
+        if let ownerZoomName, span.name == ownerZoomName { return nil }
+        return span.name
+    }
+
     /// How often the observer stayed silent, by reason — the lab preview of
     /// the §8.4 telemetry.
     public static func silenceCounts(from polls: [Poll],

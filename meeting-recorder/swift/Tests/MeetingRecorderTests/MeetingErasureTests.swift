@@ -68,6 +68,11 @@ final class MeetingErasureTests: XCTestCase {
                 writeAudio("\(meeting.id).mic.wav", meeting)
             case .audioSystemStem:
                 writeAudio("\(meeting.id).sys.wav", meeting)
+            case .callWindowTrace:
+                write(
+                    "{\"meta\":{\"trusted\":true}}\n{\"t\":0.0,\"tiles\":[]}\n",
+                    to: layout.recordings.appendingPathComponent("\(meeting.id).calltrace.jsonl")
+                )
             case .transcriptDocument:
                 write(
                     "# \(meeting.slug)\n\n## Transcript\n\n**Иван Петров** · 00:12\n\(meeting.sentinel)\n",

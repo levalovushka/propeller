@@ -299,12 +299,22 @@ public enum SpeakerAttribution: String, Codable, Equatable, Sendable, CaseIterab
     case diarized
     /// No clustering — owner by microphone, everyone else as one.
     case stems
+    /// Names read from the call window's speaker label (`CallWindowJournal`),
+    /// diarization filling the seconds the journal honestly declined. Appended,
+    /// never renamed: the rawValue is on users' disks, and an older build
+    /// decodes it as `.diarized` — a harmless degradation, both mean "speakers
+    /// are named" (plan-speaker-tags.md §5).
+    case callWindow
 
     /// Shown in the meeting's card. Nil when there is nothing to disclose.
     public var disclosure: String? {
         switch self {
         case .diarized: return nil
         case .stems:    return "Спикеры не разделены — только «я» и\u{00A0}собеседник"
+        // Said plainly, because the person next to them could see the same
+        // highlight (VISION §3.3) — and the unnamed remarks stay visibly
+        // `Speaker N` in the feed itself, so the mixed origin is not hidden.
+        case .callWindow: return "Имена спикеров — из окна Zoom"
         }
     }
 

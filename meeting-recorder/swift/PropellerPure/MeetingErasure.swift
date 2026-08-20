@@ -34,6 +34,11 @@ public enum MeetingTrace: String, CaseIterable, Sendable {
     case audioMicrophoneStem
     /// `recordings/<id>.sys.wav` — системный стем.
     case audioSystemStem
+    /// `recordings/<id>.calltrace.jsonl` — трасса окна звонилки: снимки плиток
+    /// с именами участников, из которых при расшифровке считается журнал «кто
+    /// говорил» (`CallWindowJournal`). Имена людей на диске — след обязан
+    /// уходить вместе со встречей.
+    case callWindowTrace
     /// `meetings/<id>-<slug>.md` — расшифровка.
     case transcriptDocument
     /// `meetings/<id>-<slug>-recap.md` — конспект.
@@ -164,6 +169,7 @@ public enum MeetingErasure {
         if filename == "\(id).wav" { return .audioMix }
         if filename == "\(id).mic.wav" { return .audioMicrophoneStem }
         if filename == "\(id).sys.wav" { return .audioSystemStem }
+        if filename == "\(id).calltrace.jsonl" { return .callWindowTrace }
         if RecapFile.isRecap(filename, for: id) { return .recapDocument }
         if RecapFile.isTranscript(filename, for: id) { return .transcriptDocument }
         return nil
@@ -189,7 +195,7 @@ public enum MeetingErasure {
         for trace in MeetingTrace.allCases {
             let present: Bool
             switch trace {
-            case .audioMix, .audioMicrophoneStem, .audioSystemStem:
+            case .audioMix, .audioMicrophoneStem, .audioSystemStem, .callWindowTrace:
                 present = mine.recordings.contains { kind(of: $0, for: id) == trace }
             case .transcriptDocument, .recapDocument:
                 present = mine.meetings.contains { kind(of: $0, for: id) == trace }
