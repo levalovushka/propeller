@@ -278,11 +278,14 @@ class AppState: ObservableObject {
         // только на время записи (plan-optimization E7).
         NotchController.shared.install(state: self)
 
-        // Load nearby calendar events if the user opted in. Use the
-        // requesting path so access is re-prompted after an ad-hoc rebuild
-        // resets TCC (otherwise the list silently shows nothing).
+        // События календаря — если доступ уже есть. Именно `load`, а не
+        // запрашивающий путь: окно разрешения на запуске приложения — это
+        // вопрос без повода на экране, и оно же тратило единственную попытку
+        // процесса, из-за чего «Разрешить» в настройках потом не показывало
+        // ничего (`CalendarService.enableAndLoad`). Спрашивают там, где видно
+        // зачем: подошва рельса и строка календаря в настройках.
         if Preferences.shared.calendarEnabled {
-            Task { await CalendarService.shared.enableAndLoad() }
+            CalendarService.shared.load()
         }
 
         // Everything unfinished — recovered recordings, meetings still owed a

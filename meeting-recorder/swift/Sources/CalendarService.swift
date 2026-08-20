@@ -29,7 +29,8 @@ struct CalendarEvent: Identifiable, Equatable {
 final class CalendarService: ObservableObject {
     static let shared = CalendarService()
 
-    private let store = EKEventStore()
+    /// Пересоздаётся на каждый запрос доступа — см. `enableAndLoad`.
+    private var store = EKEventStore()
     /// The window of events around now, kept only so a starting recording can be
     /// matched to one. Nothing draws this.
     @Published var events: [CalendarEvent] = []
@@ -39,8 +40,18 @@ final class CalendarService: ObservableObject {
     /// System Settings (`CalendarAccess`).
     @Published var access: CalendarAccess = .notDetermined
 
-    /// Prompt for calendar access (if needed) and load nearby events.
+    /// Спросить систему про доступ (если нужно) и загрузить события.
+    ///
+    /// Хранилище пересоздаётся перед запросом, и это не гигиена, а условие
+    /// работы кнопки. Окно разрешения показывается один раз на хранилище: тот
+    /// же `EKEventStore`, у которого запрос однажды не удался, дальше отвечает
+    /// отказом из кэша — молча, без окна и без строки в TCC. Приложение
+    /// спрашивало на запуске, и этим тратило единственную попытку процесса:
+    /// нажатие «Разрешить» в настройках после этого не делало ничего видимого
+    /// (2026-08-20). Запрос на запуске убран (`AppState`), а каждый следующий
+    /// идёт с чистого хранилища — тогда и второе нажатие показывает окно.
     func enableAndLoad() async {
+        store = EKEventStore()
         let granted: Bool
         if #available(macOS 14.0, *) {
             granted = (try? await store.requestFullAccessToEvents()) ?? false
