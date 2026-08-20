@@ -47,15 +47,15 @@ public enum RecapDocument {
 
     /// Who was in the meeting, read off the transcript's own speaker labels.
     ///
-    /// Placeholder labels are not people: `Speaker S1` is a diarization track
-    /// number, «Собеседник» is the stems fallback and «Я» is the owner who never
-    /// entered a name (`SourceAwareSpeaker.defaultOwnerName`) — all excluded, so
-    /// a meeting the journal never named contributes no roster and the prompt
-    /// stays exactly as it was. Order of first appearance, no duplicates.
+    /// Placeholder labels are not people, and the question of which labels those
+    /// are is asked in exactly one place — `SourceAwareSpeaker.isPlaceholder`,
+    /// next to the code that emits them. A meeting the journal never named
+    /// therefore contributes no roster at all, and the prompt stays exactly as
+    /// it was. Order of first appearance, no duplicates.
     ///
-    /// «Я» was found by the code review 2026-08-20 in `MeetingMarkdown`, and the
-    /// same hole was here: a meeting without clustering handed the prompt a
-    /// participant called «Я», against which the model then checked names.
+    /// This used to carry its own regex, which is how «Я» slipped through until
+    /// the review of 2026-08-20: a meeting without clustering handed the prompt
+    /// a participant called «Я», against which the model then checked names.
     public static func participants(fromTranscript transcript: String) -> [String] {
         let pattern = #"(?m)^\[([^\]\n]{1,60})\] \[\d{1,3}:\d{2}\]"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
@@ -66,11 +66,7 @@ public enum RecapDocument {
             guard let match, match.numberOfRanges > 1,
                   let labelRange = Range(match.range(at: 1), in: transcript) else { return }
             let label = transcript[labelRange].trimmingCharacters(in: .whitespaces)
-            let isPlaceholder = label.range(
-                of: #"^(?:Speaker|Спикер)(?:\s*S?\d+)?$|^Собеседник$|^Я$"#,
-                options: [.regularExpression, .caseInsensitive]
-            ) != nil
-            guard !label.isEmpty, !isPlaceholder, !seen.contains(label) else { return }
+            guard !SourceAwareSpeaker.isPlaceholder(label), !seen.contains(label) else { return }
             seen.insert(label)
             out.append(label)
         }
