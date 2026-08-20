@@ -461,6 +461,19 @@ class AppState: ObservableObject {
         guard !isRecording else {
             // Already recording (manual) — still link so end-of-call can stop it (DECIDE-7).
             recordingLinkedToCall = true
+            // Запись начали ДО звонка — наблюдатель в beginRecording не
+            // включился, потому что детекту нечего было видеть. Zoom пришёл
+            // сейчас — будим; повторный звонок в той же записи безвреден
+            // (start охраняет трассу от перезаписи). Замечено владельцем
+            // 2026-08-20: «сначала запись, потом Zoom» оставляло встречу
+            // без журнала.
+            if meetingDetector.activePlatformID == "zoom", let id = activeRecordingID {
+                CallWindowObserver.shared.start(
+                    recordingID: id,
+                    anchor: Date().addingTimeInterval(-recorder.elapsed),
+                    directory: URL(fileURLWithPath: Preferences.shared.recordingsPath)
+                )
+            }
             return
         }
         startRecordingFromDetectedCall()

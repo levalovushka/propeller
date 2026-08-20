@@ -33,6 +33,9 @@ final class CallWindowObserver {
     private var stopped = true
     private var paused = false
     private var anchor = Date()
+    /// Guards double-arming: a Zoom call detected mid-recording re-asks the
+    /// observer to start, and a restart would truncate the trace file.
+    private var activeRecordingID: String?
     /// The same machine the offline pass uses — fed by the poll loop, asked by
     /// the live transcript. One smoothing, one owner rule, one answer.
     private var machine = CallWindowJournal.LiveSpeaker()
@@ -42,12 +45,21 @@ final class CallWindowObserver {
 
     func start(recordingID: String, anchor: Date, directory: URL) {
         guard AXIsProcessTrusted() else { return }
+        lock.lock()
+        if !stopped, activeRecordingID == recordingID {
+            // Already watching this recording — a second call within one
+            // recording must not truncate the trace.
+            lock.unlock()
+            return
+        }
+        lock.unlock()
         stop()
         let url = directory.appendingPathComponent("\(recordingID).calltrace.jsonl")
         lock.lock()
         stopped = false
         paused = false
         self.anchor = anchor
+        activeRecordingID = recordingID
         machine = CallWindowJournal.LiveSpeaker()
         lock.unlock()
         let thread = Thread { [weak self] in self?.run(traceURL: url) }
@@ -57,7 +69,7 @@ final class CallWindowObserver {
     }
 
     func stop() {
-        lock.lock(); stopped = true; lock.unlock()
+        lock.lock(); stopped = true; activeRecordingID = nil; lock.unlock()
     }
 
     /// The recorder's clock stops during a pause and the trace must stop with
