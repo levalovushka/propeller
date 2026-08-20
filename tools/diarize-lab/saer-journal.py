@@ -50,9 +50,16 @@ def main() -> None:
     ap.add_argument("--ref", required=True)
     ap.add_argument("--utts", required=True)
     ap.add_argument("--fallback", help="out/<id>.base.json — диаризация для промолчанных секунд")
+    ap.add_argument("--offset", type=float, default=0.0,
+                    help="секунды: время встречи = время трассы + offset. Трасса стартует "
+                         "позже записи; сдвиг калибруется по репликам владельца "
+                         "(микрофонный стем против пролётов журнала), не по часам")
     args = ap.parse_args()
 
-    journal = load_spans(args.journal)
+    journal = [
+        {**s, "start": s["start"] + args.offset, "end": s["end"] + args.offset}
+        for s in load_spans(args.journal)
+    ]
     ref = load_spans(args.ref)
     utts = json.load(open(args.utts))
     fallback = load_spans(args.fallback) if args.fallback else None
