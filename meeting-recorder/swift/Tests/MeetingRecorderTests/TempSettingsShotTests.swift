@@ -70,21 +70,15 @@ final class TempSettingsShotTests: XCTestCase {
                         SettingsSwitch(isOn: $on)
                     }
                 }
-                SettingsGroup("Аналитика") {
+                SettingsGroup("Приватность") {
                     SettingsCell(
-                        "Отправлять анонимную телеметрию",
-                        subtitle: "Только события приложения — без личных данных"
+                        "Делиться аналитикой",
+                        subtitle: "Только обезличенные данные"
                     ) {
                         SettingsSwitch(isOn: $on)
                     }
                 }
                 SettingsGroup("Нейросети") {
-                    SettingsStack(
-                        "Словарь",
-                        subtitle: "Добавь англицизмы, которые нейросеть должна понимать идеально"
-                    ) {
-                        SettingsField("напр. Газпромнефть, Аэрофлот", text: $terms)
-                    }
                     SettingsCell("Модель для саммари", subtitle: "Отвечает на\u{00A0}:11434") {
                         Picker("", selection: $provider) {
                             Text("Ollama").tag("ollama")
@@ -96,6 +90,12 @@ final class TempSettingsShotTests: XCTestCase {
                     }
                     SettingsStack("Промпт") {
                         SettingsEditor(text: $prompt)
+                    }
+                    SettingsStack(
+                        "Личный словарь",
+                        subtitle: "Сленг и англицизмы для распознавания"
+                    ) {
+                        SettingsField("напр. Газпромнефть, Аэрофлот", text: $terms)
                     }
                 }
                 SettingsGroup("Хранилище") {

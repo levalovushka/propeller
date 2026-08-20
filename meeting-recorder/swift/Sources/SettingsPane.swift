@@ -33,7 +33,7 @@ struct SettingsPane: View {
     var body: some View {
         SettingsColumn {
             GeneralSettingsGroup(state: state)
-            AnalyticsSettingsGroup()
+            PrivacySettingsGroup()
             ModelsSettingsGroup(state: state)
             ClaudeSettingsGroup(state: state)
             StorageSettingsGroup(state: state)
@@ -186,16 +186,19 @@ private struct CalendarAccessRow: View {
     }
 }
 
-// MARK: - Аналитика
+// MARK: - Приватность
 
-private struct AnalyticsSettingsGroup: View {
+/// «Приватность», не «Аналитика»: заголовок группы отвечает на вопрос, с
+/// которым человек сюда пришёл, — что уходит из приложения наружу, — а не
+/// называет механизм, которым это делается.
+private struct PrivacySettingsGroup: View {
     @AppStorage("analyticsEnabled") private var analyticsEnabled = true
 
     var body: some View {
-        SettingsGroup("Аналитика") {
+        SettingsGroup("Приватность") {
             SettingsCell(
-                "Отправлять анонимную телеметрию",
-                subtitle: "Только события приложения — без личных данных"
+                "Делиться аналитикой",
+                subtitle: "Только обезличенные данные"
             ) {
                 SettingsSwitch(isOn: $analyticsEnabled)
             }
@@ -239,24 +242,7 @@ private struct ModelsSettingsGroup: View {
         SettingsGroup("Нейросети") {
             // Движка расшифровки здесь нет: он ровно один, выбрать другой
             // нельзя, а строка без выбора — не настройка.
-            SettingsStack(
-                "Словарь",
-                subtitle: "Добавь англицизмы, которые нейросеть должна понимать идеально"
-            ) {
-                VStack(alignment: .leading, spacing: Tokens.Space.s6) {
-                    SettingsField("напр. Газпромнефть, Аэрофлот", text: $domainTerms)
-                    if let restartStatus {
-                        Text(restartStatus)
-                            .typo(Tokens.Settings.Typo.subtitle)
-                            .foregroundStyle(Tokens.Settings.subtitle)
-                    }
-                }
-            }
-            .onChange(of: domainTerms) { _, val in
-                Preferences.shared.domainTerms = val
-                scheduleRestart()
-            }
-
+            //
             // Состояние движка — второй строкой у самого выбора: вопрос «кто
             // пишет саммари» и вопрос «отвечает ли он» — один вопрос.
             SettingsCell("Модель для саммари", subtitle: providerStatus) {
@@ -311,6 +297,27 @@ private struct ModelsSettingsGroup: View {
             }
             .onChange(of: recapPrompt) { _, val in
                 Preferences.shared.recapPrompt = val
+            }
+
+            // Последним: это единственная строка группы, которая настраивает
+            // распознавание, а не саммари, и трогают её реже всего — один раз
+            // под проект, а не под встречу.
+            SettingsStack(
+                "Личный словарь",
+                subtitle: "Сленг и англицизмы для распознавания"
+            ) {
+                VStack(alignment: .leading, spacing: Tokens.Space.s6) {
+                    SettingsField("напр. Газпромнефть, Аэрофлот", text: $domainTerms)
+                    if let restartStatus {
+                        Text(restartStatus)
+                            .typo(Tokens.Settings.Typo.subtitle)
+                            .foregroundStyle(Tokens.Settings.subtitle)
+                    }
+                }
+            }
+            .onChange(of: domainTerms) { _, val in
+                Preferences.shared.domainTerms = val
+                scheduleRestart()
             }
         }
         // Модель доехала — строка состояния обязана это заметить сама: кнопки,
