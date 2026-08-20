@@ -25,7 +25,14 @@ import PropellerPure
 final class CallWindowObserver {
     static let shared = CallWindowObserver()
 
-    private var task: Task<Void, Never>?
+    /// A plain dedicated thread, not a cooperative-pool task: the loop sleeps
+    /// and makes synchronous AX IPC calls for the whole meeting, and parking
+    /// that on the shared pool starves a pool thread (simplification review
+    /// 2026-08-20). State shared with it sits behind `lock`.
+    private let lock = NSLock()
+    private var stopped = true
+    private var paused = false
+    private var anchor = Date()
 
     /// Poll cadence measured by the probe (H12): 0.4 s sees every hand-off.
     private static let interval: TimeInterval = 0.4
@@ -34,41 +41,74 @@ final class CallWindowObserver {
         guard AXIsProcessTrusted() else { return }
         stop()
         let url = directory.appendingPathComponent("\(recordingID).calltrace.jsonl")
-        task = Task.detached(priority: .utility) {
-            Self.run(traceURL: url, anchor: anchor)
-        }
+        lock.lock()
+        stopped = false
+        paused = false
+        self.anchor = anchor
+        lock.unlock()
+        let thread = Thread { [weak self] in self?.run(traceURL: url) }
+        thread.name = "CallWindowObserver"
+        thread.qualityOfService = .utility
+        thread.start()
     }
 
     func stop() {
-        task?.cancel()
-        task = nil
+        lock.lock(); stopped = true; lock.unlock()
+    }
+
+    /// The recorder's clock stops during a pause and the trace must stop with
+    /// it: poll times are the transcript's own seconds, and a wall clock that
+    /// keeps running through a pause shifts the whole journal by the pause's
+    /// length (found while mapping the live layer, 2026-08-20).
+    func pause() {
+        lock.lock(); paused = true; lock.unlock()
+    }
+
+    /// `elapsed` is the recorder's own position: the anchor is re-derived so
+    /// that `now - anchor == elapsed`, and the clocks agree again.
+    func resume(elapsed: TimeInterval) {
+        lock.lock()
+        paused = false
+        anchor = Date().addingTimeInterval(-elapsed)
+        lock.unlock()
     }
 
     // MARK: - The polling loop
 
-    private static func run(traceURL: URL, anchor: Date) {
+    private func run(traceURL: URL) {
         FileManager.default.createFile(atPath: traceURL.path, contents: nil)
         guard let handle = try? FileHandle(forWritingTo: traceURL) else { return }
         defer { try? handle.close() }
 
-        let meta = "{\"meta\":{\"anchorUnix\":\(anchor.timeIntervalSince1970)," +
-                   "\"interval\":\(interval),\"trusted\":true}}\n"
+        lock.lock()
+        let startAnchor = anchor
+        lock.unlock()
+        let meta = "{\"meta\":{\"anchorUnix\":\(startAnchor.timeIntervalSince1970)," +
+                   "\"interval\":\(Self.interval),\"trusted\":true}}\n"
         try? handle.write(contentsOf: Data(meta.utf8))
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        while !Task.isCancelled {
-            let poll = CallWindowJournal.Poll(
-                t: (Date().timeIntervalSince(anchor) * 100).rounded() / 100,
-                tiles: snapshot()
-            )
-            // A poll with no tiles is still written: "Zoom offered nothing at
-            // second N" is a fact the journal's silence accounting needs.
-            if let data = try? encoder.encode(poll) {
-                try? handle.write(contentsOf: data)
-                try? handle.write(contentsOf: Data("\n".utf8))
+        while true {
+            lock.lock()
+            let isStopped = stopped
+            let isPaused = paused
+            let currentAnchor = anchor
+            lock.unlock()
+            if isStopped { return }
+            if !isPaused {
+                let poll = CallWindowJournal.Poll(
+                    t: (Date().timeIntervalSince(currentAnchor) * 100).rounded() / 100,
+                    tiles: Self.snapshot()
+                )
+                // A poll with no tiles is still written: "Zoom offered nothing
+                // at second N" is a fact the silence accounting needs.
+                if let data = try? encoder.encode(poll) {
+                    try? handle.write(contentsOf: data)
+                    try? handle.write(contentsOf: Data("\n".utf8))
+                }
             }
-            Thread.sleep(forTimeInterval: interval)
+            Thread.sleep(forTimeInterval: Self.interval)
         }
     }
 
@@ -125,6 +165,10 @@ final class CallWindowObserver {
 
     private static func windows(of app: NSRunningApplication) -> [AXUIElement] {
         let ax = AXUIElementCreateApplication(app.processIdentifier)
+        // AX calls are synchronous IPC into Zoom; without a timeout a hung
+        // Zoom hangs the poll (and the default is "wait forever"). Half a
+        // second is one poll: a slower answer is worth skipping, not waiting.
+        AXUIElementSetMessagingTimeout(ax, 0.5)
         return (copyAttribute(ax, kAXWindowsAttribute as String) as? [AXUIElement]) ?? []
     }
 

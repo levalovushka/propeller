@@ -703,7 +703,11 @@ class AppState: ObservableObject {
             if meetingDetector.activePlatformID == "zoom" {
                 CallWindowObserver.shared.start(
                     recordingID: entry.id,
-                    anchor: Date(),
+                    // Часы рекордера, не свои: между recorder.start() и этой
+                    // строкой уже прошло время (замерено до 0,64 с — загрузка
+                    // календаря синхронная), и голый Date() сдвигал бы журнал
+                    // на этот хвост.
+                    anchor: Date().addingTimeInterval(-recorder.elapsed),
                     directory: URL(fileURLWithPath: Preferences.shared.recordingsPath)
                 )
             }
@@ -788,6 +792,9 @@ class AppState: ObservableObject {
         guard isRecording, !recorder.isPaused else { return }
         recorder.pause()
         live.pause()
+        // Часы наблюдателя обязаны стоять вместе с часами записи: настенное
+        // время, идущее сквозь паузу, сдвинуло бы весь журнал на её длину.
+        CallWindowObserver.shared.pause()
         // Кнопки паузы в чёлке нет, но состояние там есть: лопасть встаёт
         // совсем, и это единственное, что означает неподвижность.
         NotchController.shared.refresh()
@@ -798,6 +805,7 @@ class AppState: ObservableObject {
         guard isRecording, recorder.isPaused else { return }
         recorder.resume()
         live.resume(at: recorder.elapsed)
+        CallWindowObserver.shared.resume(elapsed: recorder.elapsed)
         NotchController.shared.refresh()
         objectWillChange.send()
     }
