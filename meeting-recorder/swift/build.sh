@@ -335,7 +335,37 @@ echo "  TelemetryDeck App ID embedded (${TELEMETRYDECK_APP_ID:0:8}…)"
 
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-# Entitlements
+# Entitlements. Two files, not one: the ASR binary records, the app also reads the
+# calendar, and an entitlement on a process that has no use for it is a permission
+# handed out for nothing (same reason PropellerMCP is signed without any).
+#
+# `com.apple.security.personal-information.calendars` is not optional under the
+# hardened runtime, which this script turns on for notarization: TCC refuses to
+# even prompt without it, and refuses **silently**. That is what happened between
+# 2026-08-15 and 08-20 — the notarized build asked for calendar access, tccd
+# answered «denied» without a window, названия встреч стал придумывать LLM, and
+# nothing in the app or in System Settings said a word:
+#
+#   tccd: Prompting policy for hardened runtime; service: kTCCServiceCalendar
+#   requires entitlement com.apple.security.personal-information.calendars but it
+#   is missing for accessing={com.simplyai.meeting-recorder}
+#
+# Adding a TCC-backed API to the app means adding its entitlement here in the same
+# breath. The usage-description key in Info.plist is not enough on its own.
+cat > "$BUILD_DIR/entitlements-app.plist" << 'ENT'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.personal-information.calendars</key>
+    <true/>
+</dict>
+</plist>
+ENT
+
 cat > "$BUILD_DIR/entitlements.plist" << 'ENT'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -411,7 +441,7 @@ fi
 if [ -x "$APP/Contents/MacOS/PropellerMCP" ]; then
     sign_target "$APP/Contents/MacOS/PropellerMCP"
 fi
-sign_target --entitlements "$BUILD_DIR/entitlements.plist" "$APP"
+sign_target --entitlements "$BUILD_DIR/entitlements-app.plist" "$APP"
 
 codesign --verify --strict --verbose=2 "$APP" 2>&1 | sed 's/^/  /'
 

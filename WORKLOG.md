@@ -3,6 +3,32 @@
 Что сделано, зачем, как проверено, что осталось. Новейшее сверху.
 Формат — DOCS.md, слой «Рабочий лог».
 
+## 2026-08-20 · Календарь молчал из-за entitlement, которого нет в подписи
+
+- **Что:** `build.sh` генерит два файла entitlements — приложению добавлен
+  `com.apple.security.personal-information.calendars`, ASR-бинарь остаётся с одним
+  `audio-input`; строка `.ask` в `PropellerPure/CalendarAccess.swift` больше не
+  называет причиной обновление («Доступ не выдан»), а её доккоммент — измеренную
+  причину вместо прежней догадки про cdhash.
+- **Зачем:** кнопка «Разрешить» не показывала окна ни разу. Зонд в живой сборке
+  показал `requestFullAccessToEvents()` → `false`, статус `notDetermined`, без
+  исключения; `log stream` по tccd назвал причину дословно: *«Prompting policy for
+  hardened runtime; service: kTCCServiceCalendar requires entitlement
+  com.apple.security.personal-information.calendars but it is missing»*. Hardened
+  runtime включён 15 августа ради нотаризации (4a6fa87) — с того дня календарь
+  был отключён у всех, и молча. Мой прежний диагноз (расхождение csreq по cdhash)
+  неверен: строка TCC ни при чём.
+- **Проверено:** `swift test` — 984 теста, 0 падений, 5 пропущено. `./build.sh` —
+  entitlement в подписи (`codesign -d --entitlements`), приложение установлено.
+  Живой прогон: запрос вернул `true`, статус 3 (`fullAccess`), `events = 25`,
+  первые названия — «Обед», «Вячеслав х Pragmatica…», «PG x VK Музыка // пречек».
+  Строка в TCC легла под Developer ID requirement и **пережила** ещё одну
+  пересборку с переустановкой (`last_modified` не изменился).
+- **Осталось:** зонд из кода убран, но маркер `~/.meeting-recorder/.calendar-probe`
+  удалить может только владелец — хук не пускает агента в каталог данных. Файл
+  инертен: кода, который его читает, больше нет. Юзерам нужен релиз — хвост в
+  `TAILS.md`.
+
 ## 2026-08-20 · Блок 3, часть первая: M4 закрыт замером, M3 — отчётом владельца
 
 - **Что:** комментарий у цикла сложения в `AudioRecorder.mix` переписан — он
