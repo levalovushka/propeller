@@ -1,0 +1,201 @@
+{
+  "echo_over_owner_db": 5.0,
+  "owner_reference": [
+    "Я предлагаю начать с бюджета, потому что смета уже посчитана.",
+    "У меня есть вопрос про сроки поставки макетов.",
+    "Давайте зафиксируем ответственного за релиз.",
+    "Мне нужно понять, кто согласует смету во вторник."
+  ],
+  "far_reference": [
+    "Хорошо, я расскажу про интеграцию плагина и его ограничения по шрифтам.",
+    "Мы можем показать демо на следующей неделе, если успеем собрать сборку.",
+    "Дизайнер выходит двадцать четвёртого, поэтому график сдвигается.",
+    "Пришлю ссылку на доску и черновик оценки в чат после встречи."
+  ],
+  "variants": {
+    "sequential-dup": {
+      "duration_s": 35.14,
+      "owner_over_echo_db": -5.0,
+      "turns": [
+        {
+          "who": "owner",
+          "index": 0,
+          "start": 0.5
+        },
+        {
+          "who": "far",
+          "index": 0,
+          "start": 4.92
+        },
+        {
+          "who": "owner",
+          "index": 1,
+          "start": 10.5
+        },
+        {
+          "who": "far",
+          "index": 1,
+          "start": 13.69
+        },
+        {
+          "who": "owner",
+          "index": 2,
+          "start": 19.27
+        },
+        {
+          "who": "far",
+          "index": 2,
+          "start": 22.18
+        },
+        {
+          "who": "owner",
+          "index": 3,
+          "start": 27.35
+        },
+        {
+          "who": "far",
+          "index": 3,
+          "start": 30.97
+        }
+      ]
+    },
+    "sequential-room": {
+      "duration_s": 35.14,
+      "owner_over_echo_db": -5.0,
+      "turns": [
+        {
+          "who": "owner",
+          "index": 0,
+          "start": 0.5
+        },
+        {
+          "who": "far",
+          "index": 0,
+          "start": 4.92
+        },
+        {
+          "who": "owner",
+          "index": 1,
+          "start": 10.5
+        },
+        {
+          "who": "far",
+          "index": 1,
+          "start": 13.69
+        },
+        {
+          "who": "owner",
+          "index": 2,
+          "start": 19.27
+        },
+        {
+          "who": "far",
+          "index": 2,
+          "start": 22.18
+        },
+        {
+          "who": "owner",
+          "index": 3,
+          "start": 27.35
+        },
+        {
+          "who": "far",
+          "index": 3,
+          "start": 30.97
+        }
+      ]
+    },
+    "overlap-dup": {
+      "duration_s": 21.0,
+      "owner_over_echo_db": -5.0,
+      "turns": [
+        {
+          "who": "far",
+          "index": 0,
+          "start": 0.5
+        },
+        {
+          "who": "owner",
+          "index": 0,
+          "start": 1.5
+        },
+        {
+          "who": "far",
+          "index": 1,
+          "start": 6.08
+        },
+        {
+          "who": "owner",
+          "index": 1,
+          "start": 7.08
+        },
+        {
+          "who": "far",
+          "index": 2,
+          "start": 11.66
+        },
+        {
+          "who": "owner",
+          "index": 2,
+          "start": 12.66
+        },
+        {
+          "who": "far",
+          "index": 3,
+          "start": 16.83
+        },
+        {
+          "who": "owner",
+          "index": 3,
+          "start": 17.83
+        }
+      ]
+    },
+    "overlap-room": {
+      "duration_s": 21.0,
+      "owner_over_echo_db": -5.0,
+      "turns": [
+        {
+          "who": "far",
+          "index": 0,
+          "start": 0.5
+        },
+        {
+          "who": "owner",
+          "index": 0,
+          "start": 1.5
+        },
+        {
+          "who": "far",
+          "index": 1,
+          "start": 6.08
+        },
+        {
+          "who": "owner",
+          "index": 1,
+          "start": 7.08
+        },
+        {
+          "who": "far",
+          "index": 2,
+          "start": 11.66
+        },
+        {
+          "who": "owner",
+          "index": 2,
+          "start": 12.66
+        },
+        {
+          "who": "far",
+          "index": 3,
+          "start": 16.83
+        },
+        {
+          "who": "owner",
+          "index": 3,
+          "start": 17.83
+        }
+      ]
+    }
+  }
+}
