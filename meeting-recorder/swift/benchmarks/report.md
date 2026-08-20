@@ -1,29 +1,29 @@
 # Propeller batch benchmark report
 
-- **Baseline commit:** `40ae070` · machine `MacBook Pro`
-- **Latest commit:** `caf5f9f` · machine `MacBook Pro`
+- **Baseline commit:** `d52ebb7` · machine `MacBook Pro`
+- **Latest commit:** `d52ebb7` · machine `MacBook Pro`
 - **Fixture:** `ru-short-2spk` · audio `27.4394375s` · runs `3`
-- **Verdict:** FAIL
+- **Verdict:** PASS
 
 ## Metrics
 
 | Metric | Baseline | Latest | Δ | Status | Note |
 |--------|---------:|-------:|--:|:------:|------|
-| `asr.cpu_cores` | — | — | — | skip | missing side |
-| `asr.rtf` | 0.0315937 | 0.0311432 | -0.00045045 (-1.4%) | OK | improved |
-| `batch.peak_rss_mb` | 112.031 | 185.969 | +73.9375 (+66.0%) | FAIL | beyond +10% (allow +11.2031) |
-| `batch.rss_after_release_mb` | 83.375 | 84.8125 | +1.4375 (+1.7%) | OK | within tol |
-| `diarize.rtf` | 0.0178479 | 0.00594903 | -0.0118989 (-66.7%) | OK | improved |
-| `live.app_cpu_cores` | 0.00354806 | 0.00739518 | +0.00384712 (+108.4%) | FAIL | beyond +20% (allow +0.000709613) |
-| `live.attribution_accuracy` | 1 | 0.979592 | -0.0204082 (-2.0%) | OK | within tol |
-| `live.coverage` | 0.948276 | 0.982759 | +0.0344828 (+3.6%) | OK | improved |
-| `live.frames_fed_ratio` | 0.817781 | 0.854224 | +0.0364439 (+4.5%) | OK | within tol |
-| `live.lag_median_s` | 0.257766 | 0.279123 | +0.0213569 (+8.3%) | OK | within tol |
-| `live.sidecar_cpu_cores` | 0.336152 | 0.359137 | +0.0229852 (+6.8%) | OK | within tol |
-| `live.sidecar_gcycles_per_audio_s` | 1.12612 | 1.22907 | +0.102946 (+9.1%) | OK | within tol |
-| `live.sidecar_peak_rss_mb` | 916.125 | 973.625 | +57.5 (+6.3%) | OK | within tol |
-| `live.wer` | 0.293103 | 0.344828 | +0.0517241 (+17.6%) | FAIL | beyond +0.03 (allow +0.03) |
-| `sidecar.spawn_ms` | 3112.92 | 3161.98 | +49.06 (+1.6%) | OK | within tol |
+| `asr.cpu_cores` | 2.85136 | 2.85136 | +0 (+0.0%) | OK | within tol |
+| `asr.rtf` | 0.0311432 | 0.0311432 | +0 (+0.0%) | OK | within tol |
+| `batch.peak_rss_mb` | 185.969 | 185.969 | +0 (+0.0%) | OK | within tol |
+| `batch.rss_after_release_mb` | 84.8125 | 84.8125 | +0 (+0.0%) | OK | within tol |
+| `diarize.rtf` | 0.00594903 | 0.00594903 | +0 (+0.0%) | OK | within tol |
+| `live.app_cpu_cores` | 0.0102521 | 0.0102521 | +0 (+0.0%) | OK | within tol |
+| `live.attribution_accuracy` | 0.979592 | 0.979592 | +0 (+0.0%) | OK | within tol |
+| `live.coverage` | 0.982759 | 0.982759 | +0 (+0.0%) | OK | within tol |
+| `live.frames_fed_ratio` | 0.854224 | 0.854224 | +0 (+0.0%) | OK | within tol |
+| `live.lag_median_s` | 0.256847 | 0.256847 | +0 (+0.0%) | OK | within tol |
+| `live.sidecar_cpu_cores` | 0.354501 | 0.354501 | +0 (+0.0%) | OK | within tol |
+| `live.sidecar_gcycles_per_audio_s` | 1.15744 | 1.15744 | +0 (+0.0%) | OK | within tol |
+| `live.sidecar_peak_rss_mb` | 974.703 | 974.703 | +0 (+0.0%) | OK | within tol |
+| `live.wer` | 0.344828 | 0.344828 | +0 (+0.0%) | OK | within tol |
+| `sidecar.spawn_ms` | 3161.98 | 3161.98 | +0 (+0.0%) | OK | within tol |
 
 ## Metric key
 

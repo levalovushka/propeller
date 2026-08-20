@@ -1,143 +1,168 @@
 {
-  "audio_duration_s": 27.4394375,
-  "commit": "40ae070",
-  "fixture": "ru-short-2spk",
-  "live_baseline": {
-    "commit": "a01c4bb",
-    "fixture": "ru-short-2spk",
-    "machine": "MacBook Pro",
-    "note": "echo feed gate ON \u2014 the shipped configuration. Propeller quit for the run.",
-    "os": "Version 26.4.1 (Build 25E253)",
-    "runs": 3,
-    "taken": "2026-08-10"
-  },
-  "machine": "MacBook Pro",
-  "metrics": {
-    "asr.rtf": {
-      "median": 0.031593689929520385,
-      "p90": 0.031593689929520385,
-      "tolerance": "+15%"
-    },
-    "batch.peak_rss_mb": {
-      "median": 112.03125,
-      "p90": 112.03125,
-      "tolerance": "+10%"
-    },
-    "batch.rss_after_release_mb": {
-      "median": 83.375,
-      "p90": 83.375,
-      "tolerance": "+15%"
-    },
-    "diarize.rtf": {
-      "median": 0.017847925411881863,
-      "p90": 0.017847925411881863,
-      "tolerance": "+15%"
-    },
-    "live.app_cpu_cores": {
-      "direction": "lower",
-      "median": 0.0035480638041505046,
-      "p90": 0.0036895040820959495,
-      "samples": [
-        0.0036895040820959495,
-        0.0032903507952741352,
-        0.0035480638041505046
+  "audio_duration_s" : 27.4394375,
+  "commit" : "d52ebb7",
+  "fixture" : "ru-short-2spk",
+  "machine" : "MacBook Pro",
+  "metrics" : {
+    "asr.cpu_cores" : {
+      "direction" : "lower",
+      "median" : 2.8513583065579864,
+      "p90" : 3.1646252724138764,
+      "samples" : [
+        3.1646252724138764,
+        2.8513583065579864,
+        2.573504676976032
       ],
-      "tolerance": "+20%"
+      "tolerance" : "+15%"
     },
-    "live.attribution_accuracy": {
-      "direction": "higher",
-      "median": 1,
-      "p90": 1,
-      "samples": [
-        1,
-        1,
-        1
+    "asr.rtf" : {
+      "median" : 0.03114323988010581,
+      "p90" : 0.03349689830060406,
+      "samples" : [
+        0.028464251596751568,
+        0.03114323988010581,
+        0.03349689830060406
       ],
-      "tolerance": "0.05"
+      "tolerance" : "+15%"
     },
-    "live.coverage": {
-      "direction": "higher",
-      "median": 0.9482758620689655,
-      "p90": 0.9482758620689655,
-      "samples": [
-        0.9482758620689655,
-        0.9482758620689655,
-        0.9482758620689655
+    "batch.peak_rss_mb" : {
+      "median" : 185.96875,
+      "p90" : 187.578125,
+      "samples" : [
+        187.578125,
+        185.96875,
+        185.03125
       ],
-      "tolerance": "0.02"
+      "tolerance" : "+10%"
     },
-    "live.frames_fed_ratio": {
-      "direction": "lower",
-      "median": 0.8177805211932643,
-      "p90": 0.8177805211932643,
-      "samples": [
-        0.8177805211932643,
-        0.8177805211932643,
-        0.8177805211932643
+    "batch.rss_after_release_mb" : {
+      "median" : 84.8125,
+      "p90" : 86.46875,
+      "samples" : [
+        86.46875,
+        84.8125,
+        83.875
       ],
-      "tolerance": "+10%"
+      "tolerance" : "+15%"
     },
-    "live.lag_median_s": {
-      "direction": "lower",
-      "median": 0.2577660608291623,
-      "p90": 0.2839120960235597,
-      "samples": [
-        0.2839120960235597,
-        0.2577660608291623,
-        0.25663297653198214
+    "diarize.rtf" : {
+      "median" : 0.005949026081317347,
+      "p90" : 0.007108964066381061,
+      "samples" : [
+        0.007108964066381061,
+        0.00571600711165568,
+        0.005949026081317347
       ],
-      "tolerance": "+0.5"
+      "tolerance" : "+15%"
     },
-    "live.sidecar_cpu_cores": {
-      "direction": "lower",
-      "median": 0.33615189815753327,
-      "p90": 0.3505210110447782,
-      "samples": [
-        0.3505210110447782,
-        0.33615189815753327,
-        0.33235619656318877
+    "live.app_cpu_cores" : {
+      "direction" : "lower",
+      "median" : 0.010252140129816192,
+      "p90" : 0.010452621037390678,
+      "samples" : [
+        0.010252140129816192,
+        0.009032587676041098,
+        0.010452621037390678
       ],
-      "tolerance": "+10%"
+      "tolerance" : "+20%"
     },
-    "live.sidecar_gcycles_per_audio_s": {
-      "direction": "lower",
-      "median": 1.1261226711371177,
-      "p90": 1.180367215362924,
-      "samples": [
-        1.180367215362924,
-        1.1051985855759616,
-        1.1261226711371177
+    "live.attribution_accuracy" : {
+      "direction" : "higher",
+      "median" : 0.9795918367346939,
+      "p90" : 0.9795918367346939,
+      "samples" : [
+        0.9795918367346939,
+        0.9795918367346939,
+        0.9795918367346939
       ],
-      "tolerance": "+10%"
+      "tolerance" : "0.05"
     },
-    "live.sidecar_peak_rss_mb": {
-      "direction": "lower",
-      "median": 916.125,
-      "p90": 916.125,
-      "samples": [
-        916.125,
-        916.125,
-        867.1875
+    "live.coverage" : {
+      "direction" : "higher",
+      "median" : 0.9827586206896551,
+      "p90" : 0.9827586206896551,
+      "samples" : [
+        0.9827586206896551,
+        0.9827586206896551,
+        0.9827586206896551
       ],
-      "tolerance": "+50%"
+      "tolerance" : "0.02"
     },
-    "live.wer": {
-      "direction": "lower",
-      "median": 0.29310344827586204,
-      "p90": 0.29310344827586204,
-      "samples": [
-        0.29310344827586204,
-        0.29310344827586204,
-        0.29310344827586204
+    "live.frames_fed_ratio" : {
+      "direction" : "lower",
+      "median" : 0.8542244169546114,
+      "p90" : 0.8542244169546114,
+      "samples" : [
+        0.8542244169546114,
+        0.8542244169546114,
+        0.8542244169546114
       ],
-      "tolerance": "+0.03"
+      "tolerance" : "+10%"
     },
-    "sidecar.spawn_ms": {
-      "median": 3112.9199266433716,
-      "p90": 3112.9199266433716,
-      "tolerance": "+20%"
+    "live.lag_median_s" : {
+      "direction" : "lower",
+      "median" : 0.2568469572067258,
+      "p90" : 0.26814106464386,
+      "samples" : [
+        0.25438693523406997,
+        0.26814106464386,
+        0.2568469572067258
+      ],
+      "tolerance" : "+0.5"
+    },
+    "live.sidecar_cpu_cores" : {
+      "direction" : "lower",
+      "median" : 0.35450142548779773,
+      "p90" : 0.35585695467214534,
+      "samples" : [
+        0.35450142548779773,
+        0.3461220339034525,
+        0.35585695467214534
+      ],
+      "tolerance" : "+10%"
+    },
+    "live.sidecar_gcycles_per_audio_s" : {
+      "direction" : "lower",
+      "median" : 1.1574359892763837,
+      "p90" : 1.1606476966227897,
+      "samples" : [
+        1.1606476966227897,
+        1.1540431660087784,
+        1.1574359892763837
+      ],
+      "tolerance" : "+10%"
+    },
+    "live.sidecar_peak_rss_mb" : {
+      "direction" : "lower",
+      "median" : 974.703125,
+      "p90" : 1072.21875,
+      "samples" : [
+        591.953125,
+        1072.21875,
+        974.703125
+      ],
+      "tolerance" : "+50%"
+    },
+    "live.wer" : {
+      "direction" : "lower",
+      "median" : 0.3448275862068966,
+      "p90" : 0.3448275862068966,
+      "samples" : [
+        0.3448275862068966,
+        0.3448275862068966,
+        0.3448275862068966
+      ],
+      "tolerance" : "+0.03"
+    },
+    "sidecar.spawn_ms" : {
+      "median" : 3161.979913711548,
+      "p90" : 3161.979913711548,
+      "samples" : [
+        3161.979913711548
+      ],
+      "tolerance" : "+20%"
     }
   },
-  "os": "Version 26.4.1 (Build 25E253)",
-  "runs": 1
+  "os" : "Version 26.4.1 (Build 25E253)",
+  "runs" : 3
 }
