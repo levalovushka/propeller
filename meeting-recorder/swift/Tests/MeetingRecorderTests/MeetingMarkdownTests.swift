@@ -119,8 +119,8 @@ final class MeetingMarkdownTests: XCTestCase {
 
     /// Dropping stand-ins must not mean dropping everybody.
     func testARealNameSurvivesBesideAStandIn() {
-        let mixed = "[Собеседник] [00:01]\nа\n\n[Арина] [00:05]\nб"
-        XCTAssertEqual(MeetingMarkdown.extractSpeakers(from: mixed), ["Арина"])
+        let mixed = "[Собеседник] [00:01]\nа\n\n[Марина] [00:05]\nб"
+        XCTAssertEqual(MeetingMarkdown.extractSpeakers(from: mixed), ["Марина"])
     }
 
     func testEachNameIsCountedOnce() {
@@ -189,6 +189,6 @@ final class MeetingMarkdownTests: XCTestCase {
     /// vault could not fire once — the feature was dead for its own audience.
     func testACyrillicNameSlugsToSomething() {
         XCTAssertEqual(MeetingMarkdown.speakerSlug("Левон"), "левон")
-        XCTAssertEqual(MeetingMarkdown.speakerSlug("Арина Солдатенкова"), "арина-солдатенкова")
+        XCTAssertEqual(MeetingMarkdown.speakerSlug("Марина Примерова"), "марина-примерова")
     }
 }

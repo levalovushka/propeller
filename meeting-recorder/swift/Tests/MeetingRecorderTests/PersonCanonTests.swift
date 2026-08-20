@@ -2,25 +2,25 @@ import XCTest
 @testable import PropellerPure
 
 /// Случаи взяты из живого конспекта встречи `20260820_160014` — первой, где
-/// имена в ленту принёс журнал окна Zoom: там модель написала «Арина
-/// Soldatenkova», хотя лента подписана «Arina Soldatenkova».
+/// имена в ленту принёс журнал окна Zoom: там модель написала «Марина
+/// Primer», хотя лента подписана «Marina Primer».
 final class PersonCanonTests: XCTestCase {
 
-    private let roster = ["Arina Soldatenkova", "Вячеслав Киржаев", "Левон"]
+    private let roster = ["Marina Primer", "Борис Пример", "Левон"]
 
     func testПолуперевёрнутоеИмяСтановитсяНаписаниемИзСостава() {
-        let recap = "## Задачи\n- **Левон и Арина Soldatenkova**: поделиться планами.\n"
+        let recap = "## Задачи\n- **Левон и Марина Primer**: поделиться планами.\n"
         XCTAssertEqual(
             PersonCanon.normalize(recap, roster: roster),
-            "## Задачи\n- **Левон и Arina Soldatenkova**: поделиться планами.\n"
+            "## Задачи\n- **Левон и Marina Primer**: поделиться планами.\n"
         )
     }
 
     func testОдноИмяБезФамилииТожеПриводитсяКСоставу() {
-        let recap = "- Арина предложила два пути сотрудничества.\n"
+        let recap = "- Марина предложила два пути сотрудничества.\n"
         XCTAssertEqual(
             PersonCanon.normalize(recap, roster: roster),
-            "- Arina предложила два пути сотрудничества.\n"
+            "- Marina предложила два пути сотрудничества.\n"
         )
     }
 
@@ -28,10 +28,10 @@ final class PersonCanonTests: XCTestCase {
     /// считать верное имя выдумкой.
     ///
     /// Случай именно такой — имя целиком в другом алфавите: сверка ищет хотя бы
-    /// один совпавший токен, поэтому «Арина Soldatenkova» проходит её за счёт
-    /// фамилии, а «Арина» против «Arina Soldatenkova» не проходит вовсе.
+    /// один совпавший токен, поэтому «Марина Primer» проходит её за счёт
+    /// фамилии, а «Марина» против «Marina Primer» не проходит вовсе.
     func testПослеЗаменыИсполнительПроходитСверкуССоставом() {
-        let recap = "## Задачи\n- **Арина** — собрать репорты.\n"
+        let recap = "## Задачи\n- **Марина** — собрать репорты.\n"
         let before = RecapLint.findings(recap: recap, transcript: "", participants: roster)
         XCTAssertTrue(before.contains { $0.kind == .assigneeOutsideRoster })
 
@@ -43,26 +43,26 @@ final class PersonCanonTests: XCTestCase {
         XCTAssertFalse(after.contains { $0.kind == .assigneeOutsideRoster })
     }
 
-    /// Косвенный падеж не трогается: «согласовать с Arina» — не по-русски, а
-    /// «Арине» → «Arina» ломает фразу. Это работа редактора, не замены.
+    /// Косвенный падеж не трогается: «согласовать с Marina» — не по-русски, а
+    /// «Марине» → «Marina» ломает фразу. Это работа редактора, не замены.
     func testКосвенныйПадежОстаётсяКакНаписан() {
-        let recap = "- Левон передал документы Арине после встречи.\n"
+        let recap = "- Левон передал документы Марине после встречи.\n"
         XCTAssertEqual(PersonCanon.normalize(recap, roster: roster), recap)
     }
 
-    /// Разница в одной заглавной букве — не разнописание. Zoom-имя «костя»
+    /// Разница в одной заглавной букве — не разнописание. Zoom-имя «боря»
     /// строчное, и опустить букву посреди предложения значило бы починить
     /// сверку ценой опечатки.
     func testРегистрНеПравится() {
-        let recap = "- Костя показал макет.\n"
-        XCTAssertEqual(PersonCanon.normalize(recap, roster: ["костя"]), recap)
+        let recap = "- Боря показал макет.\n"
+        XCTAssertEqual(PersonCanon.normalize(recap, roster: ["боря"]), recap)
     }
 
     /// Перевод имени — не написание. «Alexander» против «Александр» остаётся
     /// редактору: замена, которая это сшивает, начнёт сшивать и разных людей.
     func testПереводИмениНеСчитаетсяТемЖеНаписанием() {
         let recap = "- Alexander согласовал форму.\n"
-        XCTAssertEqual(PersonCanon.normalize(recap, roster: ["Александр Яшин"]), recap)
+        XCTAssertEqual(PersonCanon.normalize(recap, roster: ["Пётр Пример"]), recap)
     }
 
     func testПустойСоставОставляетТекстКакЕсть() {
@@ -83,21 +83,21 @@ final class PersonCanonTests: XCTestCase {
     /// Двое с одинаковой свёрткой — ключ выбрасывается: угаданное имя хуже
     /// разнописания.
     func testОдинаковаяСвёрткаУДвоихНичегоНеМеняет() {
-        let recap = "- Арина уточнит смету.\n"
+        let recap = "- Марина уточнит смету.\n"
         XCTAssertEqual(
-            PersonCanon.normalize(recap, roster: ["Arina Soldatenkova", "Арина Петрова"]),
+            PersonCanon.normalize(recap, roster: ["Marina Primer", "Марина Петрова"]),
             recap
         )
     }
 
     func testФамилииРазныхЛюдейНеСклеиваются() {
-        let recap = "- **Вячеслав Киржаев** проведёт опрос.\n"
+        let recap = "- **Борис Пример** проведёт опрос.\n"
         XCTAssertEqual(PersonCanon.normalize(recap, roster: roster), recap)
     }
 
     func testСвёрткаСшиваетАлфавитыИНеСшиваетРазныеИмена() {
-        XCTAssertEqual(PersonCanon.fold("Арина"), PersonCanon.fold("Arina"))
-        XCTAssertEqual(PersonCanon.fold("Киржаев"), PersonCanon.fold("Kirzhaev"))
-        XCTAssertNotEqual(PersonCanon.fold("Арина"), PersonCanon.fold("Ирина"))
+        XCTAssertEqual(PersonCanon.fold("Марина"), PersonCanon.fold("Marina"))
+        XCTAssertEqual(PersonCanon.fold("Пример"), PersonCanon.fold("Primer"))
+        XCTAssertNotEqual(PersonCanon.fold("Марина"), PersonCanon.fold("Ирина"))
     }
 }

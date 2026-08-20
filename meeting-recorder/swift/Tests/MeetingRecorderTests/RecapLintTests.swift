@@ -298,7 +298,7 @@ final class RecapLintTests: XCTestCase {
         - **Kate** — прислать доступы
         """
         let found = RecapLint.findings(recap: recap, transcript: "",
-                                       participants: ["Левон", "Kate", "Arina Soldatenkova"])
+                                       participants: ["Левон", "Kate", "Marina Primer"])
         XCTAssertEqual(found.filter { $0.kind == .assigneeOutsideRoster }.map(\.text),
                        ["Оля Петрова"])
     }
@@ -306,11 +306,11 @@ final class RecapLintTests: XCTestCase {
     func testПадежИНеполноеИмяПроходятПоСоставу() {
         let recap = """
         ## Задачи
-        - **Арине** — проверить смету
+        - **Марине** — проверить смету
         - **Соня** — принести цифры
         """
         let found = RecapLint.findings(recap: recap, transcript: "",
-                                       participants: ["Арина Солдатенкова", "Соня Ким"])
+                                       participants: ["Марина Примерова", "Соня Ким"])
         XCTAssertTrue(found.filter { $0.kind == .assigneeOutsideRoster }.isEmpty)
     }
 

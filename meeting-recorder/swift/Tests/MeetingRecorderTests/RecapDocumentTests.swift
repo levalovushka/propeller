@@ -91,7 +91,7 @@ final class RecapDocumentTests: XCTestCase {
         [Левон] [00:01]
         Привет.
 
-        [Arina Soldatenkova] [00:05]
+        [Marina Primer] [00:05]
         Привет!
 
         [Speaker S1] [00:12]
@@ -103,11 +103,11 @@ final class RecapDocumentTests: XCTestCase {
         [Я] [00:24]
         (владелец без имени в настройках)
 
-        [Arina Soldatenkova] [00:30]
+        [Marina Primer] [00:30]
         Повтор не задваивается.
         """
         XCTAssertEqual(RecapDocument.participants(fromTranscript: transcript),
-                       ["Левон", "Arina Soldatenkova"])
+                       ["Левон", "Marina Primer"])
     }
 
     /// Расшифровка, которую читает саммари, лежит на диске в другом виде, чем
@@ -119,7 +119,7 @@ final class RecapDocumentTests: XCTestCase {
         [Левон] [00:00]
         Здоровско.
 
-        [Aleksandra Nikandrova] [08:27]
+        [Vera Primer] [08:27]
         Привет.
 
         [Speaker S3] [08:28]
@@ -131,15 +131,15 @@ final class RecapDocumentTests: XCTestCase {
         let onDisk = MeetingMarkdown.transcriptBody(inMemory)
         XCTAssertTrue(onDisk.contains("**Левон** · 00:00"), "формат writer'а сменился — правь оба места")
         XCTAssertEqual(RecapDocument.participants(fromTranscript: onDisk),
-                       ["Левон", "Aleksandra Nikandrova"])
+                       ["Левон", "Vera Primer"])
         XCTAssertEqual(RecapDocument.participants(fromTranscript: inMemory),
                        RecapDocument.participants(fromTranscript: onDisk))
     }
 
     /// Длинная встреча: минуты не капаются, `83:12` — законная метка.
     func testДлиннаяВстречаНеТеряетУчастников() {
-        let onDisk = "**Вячеслав Киржаев** · 83:12\nВот и всё."
-        XCTAssertEqual(RecapDocument.participants(fromTranscript: onDisk), ["Вячеслав Киржаев"])
+        let onDisk = "**Борис Пример** · 83:12\nВот и всё."
+        XCTAssertEqual(RecapDocument.participants(fromTranscript: onDisk), ["Борис Пример"])
     }
 
     func testСоставПопадаетВПромптОднойСтрокой() {
