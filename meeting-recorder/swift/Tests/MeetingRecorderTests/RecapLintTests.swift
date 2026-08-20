@@ -288,4 +288,44 @@ final class RecapLintTests: XCTestCase {
         let prose = "## Итог\nКоманда договорилась о трёх уровнях к 20:34.\n"
         XCTAssertEqual(grounded(prose, transcript: ""), prose)
     }
+
+    // MARK: - Исполнитель вне состава
+
+    func testИсполнительВнеСоставаНаходится() {
+        let recap = """
+        ## Задачи
+        - **Оля Петрова** — собрать макеты — **к пятнице**
+        - **Kate** — прислать доступы
+        """
+        let found = RecapLint.findings(recap: recap, transcript: "",
+                                       participants: ["Левон", "Kate", "Arina Soldatenkova"])
+        XCTAssertEqual(found.filter { $0.kind == .assigneeOutsideRoster }.map(\.text),
+                       ["Оля Петрова"])
+    }
+
+    func testПадежИНеполноеИмяПроходятПоСоставу() {
+        let recap = """
+        ## Задачи
+        - **Арине** — проверить смету
+        - **Соня** — принести цифры
+        """
+        let found = RecapLint.findings(recap: recap, transcript: "",
+                                       participants: ["Арина Солдатенкова", "Соня Ким"])
+        XCTAssertTrue(found.filter { $0.kind == .assigneeOutsideRoster }.isEmpty)
+    }
+
+    func testБезСоставаПравилоМолчит() {
+        let recap = "## Задачи\n- **Кто Угодно** — что угодно\n"
+        XCTAssertTrue(RecapLint.findings(recap: recap, transcript: "", participants: [])
+            .filter { $0.kind == .assigneeOutsideRoster }.isEmpty)
+    }
+
+    func testИмяВнеРазделаЗадачНеПроверяется() {
+        let recap = """
+        ## Ход обсуждения
+        - **Оля Петрова** упоминалась как контакт на стороне клиента.
+        """
+        XCTAssertTrue(RecapLint.findings(recap: recap, transcript: "", participants: ["Левон"])
+            .filter { $0.kind == .assigneeOutsideRoster }.isEmpty)
+    }
 }

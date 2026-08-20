@@ -83,4 +83,40 @@ final class RecapDocumentTests: XCTestCase {
         )
         XCTAssertTrue(out.contains("проверить смету у Иры"))
     }
+
+    // MARK: - Состав встречи (plan-people.md §6, имена из журнала окна)
+
+    func testСоставЧитаетсяИзМетокЛенты() {
+        let transcript = """
+        [Левон] [00:01]
+        Привет.
+
+        [Arina Soldatenkova] [00:05]
+        Привет!
+
+        [Speaker S1] [00:12]
+        (не назван)
+
+        [Собеседник] [00:20]
+        (деградация дорожек)
+
+        [Arina Soldatenkova] [00:30]
+        Повтор не задваивается.
+        """
+        XCTAssertEqual(RecapDocument.participants(fromTranscript: transcript),
+                       ["Левон", "Arina Soldatenkova"])
+    }
+
+    func testСоставПопадаетВПромптОднойСтрокой() {
+        let msg = RecapDocument.userMessage(
+            title: "Синк", transcriptMarkdown: "[Левон] [00:01]\nПривет.",
+            notes: nil, participants: ["Левон", "Kate"]
+        )
+        XCTAssertTrue(msg.contains("Участники: Левон, Kate."))
+        // Без состава промпт остаётся прежним — плейсхолдеры не притворяются людьми.
+        let bare = RecapDocument.userMessage(
+            title: "Синк", transcriptMarkdown: "х", notes: nil, participants: []
+        )
+        XCTAssertFalse(bare.contains("Участники:"))
+    }
 }

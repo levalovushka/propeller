@@ -283,7 +283,11 @@ actor RecapService {
             let userContent = RecapDocument.userMessage(
                 title: title,
                 transcriptMarkdown: trimmed,
-                notes: notes
+                notes: notes,
+                // Настоящие имена из журнала окна — единственные законные
+                // исполнители (plan-people.md §6); плейсхолдеры состава не дают,
+                // и промпт остаётся прежним.
+                participants: RecapDocument.participants(fromTranscript: trimmed)
             )
 
             // Окно выбирается **один раз на встречу**, а не на вызов. Замерено:
@@ -541,7 +545,11 @@ actor RecapService {
         numCtx: Int,
         prefs: RecapPreferences
     ) async -> String {
-        let findings = RecapLint.findings(recap: recap, transcript: transcript)
+        let findings = RecapLint.findings(
+            recap: recap,
+            transcript: transcript,
+            participants: RecapDocument.participants(fromTranscript: transcript)
+        )
         guard !findings.isEmpty else { return recap }
 
         let system = Self.polishPrompt + Self.languageLock

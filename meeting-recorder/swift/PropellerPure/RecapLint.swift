@@ -19,6 +19,12 @@ public enum RecapLint {
         /// «**Система**», «участник с ответственностью» — читается как
         /// назначение и не называет никого.
         case ghostOwner
+        /// Исполнитель-имя, которого нет в составе встречи. Появился вместе с
+        /// настоящими именами из журнала окна (plan-people.md §6): пока метки
+        /// были `Speaker N`, выдуманного человека ловили регексы `ghostOwner`,
+        /// а имя, похожее на настоящее, — нечем. Находка, не удаление: цена
+        /// ложного срабатывания у удаления перевёрнута (урок `ghostOwnerHead`).
+        case assigneeOutsideRoster
         /// «Сторонники согласились» — подлежащее, которого на встрече не было.
         case inventedActor
         /// «Проведите очистку». Конспект рассказывает, что было, а не раздаёт
@@ -164,9 +170,15 @@ public enum RecapLint {
 
     // MARK: - Разбор
 
-    public static func findings(recap: String, transcript: String) -> [Finding] {
+    public static func findings(
+        recap: String, transcript: String, participants: [String] = []
+    ) -> [Finding] {
         let body = withoutSystemBlocks(recap)
         var found: [Finding] = []
+
+        // Исполнитель вне состава — только при известном составе: без ростера
+        // правило молчит, а не гадает.
+        found += assigneesOutsideRoster(recap: body, participants: participants)
 
         let haystack = normalized(transcript)
         let hay = normalized(body)
@@ -387,6 +399,47 @@ public enum RecapLint {
     /// «перепиши» — и модель перенесла этот тон в сам конспект: «Левон —
     /// проведите очистку», девять раз на восьми встречах. Отсюда `.imperative`
     /// в проверках и изъявительное наклонение в каждой строке ниже.
+    /// Жирные исполнители из раздела «Задачи», которых нет в составе встречи.
+    ///
+    /// Совпадение по токенам, не по строке: «Арина» обязана пройти против
+    /// «Arina Soldatenkova» не всегда (кириллица против латиницы — это и есть
+    /// находка: редактор перепишет написанием из состава), но «Соня» против
+    /// «Соня Ким» — всегда. Токен совпал, если равен токену состава или у них
+    /// общий префикс от четырёх букв: падеж меняет хвост («Арине» / «Арина»),
+    /// голова остаётся.
+    static func assigneesOutsideRoster(recap: String, participants: [String]) -> [Finding] {
+        guard !participants.isEmpty else { return [] }
+        guard let tasks = section("Задачи", of: recap) else { return [] }
+
+        func tokens(_ s: String) -> [String] {
+            s.lowercased().components(separatedBy: CharacterSet.letters.inverted)
+                .filter { $0.count >= 3 }
+        }
+        let rosterTokens = participants.flatMap(tokens)
+        func sharedPrefix(_ a: String, _ b: String) -> Int {
+            zip(a, b).prefix(while: ==).count
+        }
+        func inRoster(_ name: String) -> Bool {
+            tokens(name).contains { t in
+                rosterTokens.contains { r in
+                    t == r || sharedPrefix(t, r) >= 4
+                }
+            }
+        }
+
+        return matches(#"(?m)^\s*-\s+\*\*([^*\n]{1,60})\*\*\s*[—–-]"#, in: tasks, group: 1)
+            .filter { !inRoster($0) }
+            .map { Finding(kind: .assigneeOutsideRoster, text: $0) }
+    }
+
+    /// Текст одного раздела `## <имя>` — до следующего `##` или конца.
+    private static func section(_ name: String, of recap: String) -> String? {
+        matches(
+            #"(?ms)^##\s*"# + NSRegularExpression.escapedPattern(for: name) + #"\s*$(.*?)(?=^##\s|\z)"#,
+            in: recap, group: 1
+        ).first
+    }
+
     public static func editorNotes(_ findings: [Finding], limit: Int = maxNotes) -> String {
         guard !findings.isEmpty else { return "" }
 
@@ -410,6 +463,8 @@ public enum RecapLint {
             return "срок «\(finding.text)» на встрече не звучал — в исправленном тексте его нет, задача осталась"
         case .ghostOwner:
             return "«\(finding.text)» — не ответственный: в исправленном тексте пункт стоит без имени"
+        case .assigneeOutsideRoster:
+            return "«\(finding.text)» — такого имени нет в составе встречи: в исправленном тексте либо имя участника в написании из списка «Участники», либо пункт без исполнителя"
         case .inventedActor:
             return "«\(finding.text)» — такого участника на встрече не было: в исправленном тексте здесь «Договорились…» или имя, которое звучало"
         case .computedDeadline:

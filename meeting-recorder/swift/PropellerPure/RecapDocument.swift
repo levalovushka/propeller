@@ -17,10 +17,20 @@ public enum RecapDocument {
     public static func userMessage(
         title: String,
         transcriptMarkdown: String,
-        notes: String?
+        notes: String?,
+        participants: [String] = []
     ) -> String {
         var parts: [String] = []
         parts.append("Встреча: \(title.isEmpty ? "без названия" : title)")
+        // The roster names the only legal assignees — with the call-window
+        // journal the labels are real people for the first time, and the model
+        // should copy their spelling instead of transliterating from memory.
+        // One line plus one rule: prompt length competes with completeness
+        // (the extraction prompt's own lesson), so this earns exactly two.
+        if !participants.isEmpty {
+            parts.append("Участники: \(participants.joined(separator: ", ")).")
+            parts.append("Исполнителем задачи может быть только участник из этого списка, и только если поручение прозвучало вслух.")
+        }
         let trimmedNotes = notes?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !trimmedNotes.isEmpty {
             parts.append("")
@@ -33,6 +43,33 @@ public enum RecapDocument {
         parts.append("")
         parts.append("Ответь строго на русском языке.")
         return parts.joined(separator: "\n")
+    }
+
+    /// Who was in the meeting, read off the transcript's own speaker labels.
+    ///
+    /// Placeholder labels are not people: `Speaker S1` is a diarization track
+    /// number, «Собеседник» is the stems fallback — both are excluded, so a
+    /// meeting the journal never named contributes no roster and the prompt
+    /// stays exactly as it was. Order of first appearance, no duplicates.
+    public static func participants(fromTranscript transcript: String) -> [String] {
+        let pattern = #"(?m)^\[([^\]\n]{1,60})\] \[\d{1,3}:\d{2}\]"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(transcript.startIndex..., in: transcript)
+        var seen = Set<String>()
+        var out: [String] = []
+        regex.enumerateMatches(in: transcript, range: range) { match, _, _ in
+            guard let match, match.numberOfRanges > 1,
+                  let labelRange = Range(match.range(at: 1), in: transcript) else { return }
+            let label = transcript[labelRange].trimmingCharacters(in: .whitespaces)
+            let isPlaceholder = label.range(
+                of: #"^(?:Speaker|Спикер)(?:\s*S?\d+)?$|^Собеседник$"#,
+                options: [.regularExpression, .caseInsensitive]
+            ) != nil
+            guard !label.isEmpty, !isPlaceholder, !seen.contains(label) else { return }
+            seen.insert(label)
+            out.append(label)
+        }
+        return out
     }
 
     /// The recap file around the model's answer.
