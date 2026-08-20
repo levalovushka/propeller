@@ -5,25 +5,32 @@ import ServiceManagement
 
 /// Настройки, как их видит человек, — состояние правой панели.
 ///
-/// Что здесь изменилось против окна с пятью вкладками, и почему:
+/// Экран перебран 2026-08-20 по прототипу `design/prototypes/settings-v2.html`.
+/// Что изменилось против версии от 07 августа и почему:
 ///
-/// - **Вкладок нет.** Пять вкладок на полторы страницы утверждали, что эти
-///   наборы нельзя показывать вместе. Можно: теперь это один столбец групп, и
-///   найти настройку — значит проскроллить, а не вспомнить вкладку.
-/// - **Раздела «Аудио» нет.** Он предлагал выключить захват системного звука —
-///   то есть вторую сторону разговора. Приложение без неё не работает, так что
-///   это был не выбор, а способ сломать продукт (тот же довод, что снял «Выкл»
-///   из провайдеров саммари).
-/// - **«Расшифровка» и «Саммари» — одна группа «Нейросети».** Обе про модели, и
-///   обе настраивают одно и то же: во что превратится записанный звук.
-/// - **Ключи и модели контекстны.** Показываем настройки того провайдера,
-///   который выбран, а не всех трёх сразу.
-/// - **Описаний стало меньше.** Абзац под каждым переключателем — это не помощь,
-///   а шум; остались те, без которых настройка непонятна, и они в одну строку.
-/// - **Показаний прибора нет.** Ушли «Движок расшифровки», «Состояние» детектора
-///   и кнопка «Проверить» у Ollama: настройка — это то, что человек меняет, а не
-///   то, что он у приложения выспрашивает. Единственное оставшееся состояние —
-///   отвечает ли локальный движок — стоит второй строкой у выбора модели, само.
+/// - **Жанры разведены.** «Доступ» стоит первым и держит то, что решает не
+///   человек, а система: разрешения и то, что из них следует. Ниже — только
+///   решения человека. До этого разрешение macOS, тумблер телеметрии и выбор
+///   модели стояли вперемешку, хотя отвечают на разные вопросы.
+/// - **Заголовок строки называет выгоду, а не механизм.** «Доступ к
+///   приложениям» — это имя разрешения в System Settings; человек приходит с
+///   «почему не видно, кто говорил». Стало «Имена спикеров из Zoom».
+/// - **Аналитика уехала в «О программе»** (решение владельца): она про само
+///   приложение, а не про архив. Группы «Приватность» больше нет — в ней
+///   оставалось два тумблера про разное.
+/// - **Вторая строка получила род.** Пояснение, значение, процесс, отказ
+///   переживаемый и отказ системы — пять смыслов, до этого один цвет
+///   (`SettingsSubtitleTone`). «Не запущен» больше не читается как справка.
+/// - **Акцент инвертирован.** Синяя кнопка — на несделанном, галочка «сделано»
+///   тихая. Раньше подсвечено было ровно то, что трогать не надо.
+/// - **Путь не набирают руками.** Папка — это имя, путь и кнопка «Изменить…»;
+///   текстовое поле пути было поверхностью опечатки, а не выбором.
+/// - **Промпт в поле 80 pt** вместо 260: за ним сразу начинается «Хранилище».
+///   Подэкранов у промпта и словаря нет (решение владельца) — чем их заменить,
+///   открытая вилка в прототипе.
+///
+/// Имена групп «MCP» и «Хранилище» владелец оставил как были: правило «вопрос, а
+/// не механизм» действует на строках, но не на этих двух заголовках.
 ///
 /// Вёрстка — `PropellerUI/SettingsKit.swift`. Здесь только то, что читает и
 /// пишет `Preferences`, `AppState` и Keychain.
@@ -32,123 +39,78 @@ struct SettingsPane: View {
 
     var body: some View {
         SettingsColumn {
-            GeneralSettingsGroup(state: state)
-            PrivacySettingsGroup()
+            AccessSettingsGroup(state: state)
+            RecordingSettingsGroup(state: state)
             ModelsSettingsGroup(state: state)
-            ClaudeSettingsGroup(state: state)
             StorageSettingsGroup(state: state)
+            ClaudeSettingsGroup(state: state)
             AboutSettingsGroup()
         }
     }
 }
 
-// MARK: - Основное
+// MARK: - Доступ
 
-/// Запуск и автозапись — два выключателя, оба про то, когда приложение
-/// оживает само.
+/// Что решает не человек, а система: два разрешения macOS.
 ///
-/// Строки «Показывать встречи из Календаря» здесь больше нет. Она обещала
-/// список, которого в интерфейсе нет с 2026-08-04 — секция «Скоро» удалена,
-/// рельс и есть список. Календарь при этом продолжает работать: он **называет**
-/// записи (`CalendarService.suggestedRecordingTitle`), а включается там, где о
-/// нём и спрашивают, — блоком у подошвы рельса (`SetupPromptMachine`).
-private struct GeneralSettingsGroup: View {
+/// Группа стоит первой, потому что от неё зависит, работает ли то, что ниже:
+/// без доступа к приложениям в расшифровке не будет имён, без календаря —
+/// названий. Обе строки — не настройки в смысле §3 дока, а состояние мира, и
+/// живут отдельно ровно поэтому.
+private struct AccessSettingsGroup: View {
     @ObservedObject var state: AppState
-    @State private var launchAtLogin = LoginItem.isEnabled
-    @State private var launchAtLoginError: String?
-    @AppStorage("autoRecordMode") private var autoRecordMode = AutoRecordMode.auto.rawValue
-    @AppStorage("menuBarIconVisible") private var menuBarIconVisible = true
-    @AppStorage("notchIndicator") private var notchIndicator = true
-    @AppStorage("userName") private var userName = ""
 
     var body: some View {
-        SettingsGroup("Основное") {
-            SettingsCell(
-                "Запускать Propeller при входе",
-                // Единственная строка, которая здесь появляется: отказ системы.
-                // Она не описывает настройку, она отвечает на нажатие.
-                subtitle: launchAtLoginError
-            ) {
-                SettingsSwitch(isOn: $launchAtLogin)
-            }
-            .onChange(of: launchAtLogin) { _, want in
-                do {
-                    try LoginItem.setEnabled(want)
-                    launchAtLoginError = nil
-                } catch {
-                    // Вернуть переключатель к правде и назвать причину.
-                    launchAtLogin = LoginItem.isEnabled
-                    launchAtLoginError = error.localizedDescription
-                }
-            }
-
-            // Zoom назван поимённо: у Толка сигнала «идёт звонок» нет вовсе, и
-            // обещать здесь «звонок» вообще значило бы обещать старт, который
-            // не наступит.
-            SettingsCell(
-                "Автоматическая запись",
-                subtitle: "Стартует и заканчивается вместе со звонком в\u{00A0}Zoom"
-            ) {
-                SettingsSwitch(isOn: autoRecord)
-            }
-            .onChange(of: autoRecordMode) { _, val in
-                Preferences.shared.autoRecordMode = AutoRecordMode(rawValue: val) ?? .auto
-                state.applyAutoRecordMode()
-            }
-
+        SettingsGroup("Доступ") {
+            SpeakerAccessRow()
             CalendarAccessRow(state: state)
-
-            // Плейсхолдер — то самое системное имя, которым подпишет фолбэк
-            // (`Preferences.ownerName`). Пустое поле поэтому не врёт: оно
-            // показывает, как встреча будет подписана, если ничего не вводить.
-            SettingsCell("Ваше имя в расшифровках") {
-                SettingsField(NSFullUserName(), text: $userName)
-            }
-            .onChange(of: userName) { _, val in
-                state.setOwnerNameFromSettings(val)
-            }
-
-            // Выключатель живёт здесь, потому что вернуть иконку можно только
-            // отсюда: в поповере, которого без неё не будет, доступно лишь
-            // «Скрыть». Сцена читает тот же ключ (`MenuBarExtra(isInserted:)`).
-            SettingsCell("Показывать Propeller в меню баре") {
-                SettingsSwitch(isOn: $menuBarIconVisible)
-            }
-
-            // Единственная поверхность, которую приложение рисует поверх чужих
-            // окон, — единственная, у которой есть выключатель. Подпись меняется
-            // вместе с железом: на маке без выреза выключать нечего, и честнее
-            // сказать это, чем прятать строку и оставить человека гадать, куда
-            // делась настройка, про которую он читал.
-            SettingsCell(
-                "Показывать запись в\u{00A0}чёлке",
-                subtitle: NotchController.hardwareHasNotch
-                    ? "Пока идёт запись, вырез показывает лопасть и\u{00A0}принимает заметку по\u{00A0}⌃⌥N"
-                    : "На этом маке нет выреза — заметки живут в\u{00A0}окне встречи"
-            ) {
-                SettingsSwitch(isOn: $notchIndicator)
-                    .disabled(!NotchController.hardwareHasNotch)
-            }
-            .onChange(of: notchIndicator) { _, _ in
-                NotchController.shared.preferenceChanged()
-            }
-        }
-        .onAppear {
-            launchAtLogin = LoginItem.isEnabled
-            // Через `Preferences`, а не из defaults напрямую: там живёт миграция
-            // удалённого «Спросить», и без этого чтения выключатель показал бы
-            // «выкл» при записанном `ask`.
-            autoRecordMode = Preferences.shared.autoRecordMode.rawValue
         }
     }
+}
 
-    /// Два режима — выключатель, а не пикер из двух пунктов. `AutoRecordMode`
-    /// остаётся на диске строкой: её `rawValue` уже лежат у людей.
-    private var autoRecord: Binding<Bool> {
-        Binding(
-            get: { (AutoRecordMode(rawValue: autoRecordMode) ?? .auto) == .auto },
-            set: { autoRecordMode = ($0 ? AutoRecordMode.auto : .off).rawValue }
-        )
+/// Доступ к приложениям — то, чем читаются имена спикеров из окна Zoom.
+///
+/// Заголовок называет то, что человек получит, а не имя разрешения: имя
+/// разрешения он увидит в System Settings, куда его и уводит кнопка.
+///
+/// Polled, not cached: the grant lands in System Settings, sometimes only after
+/// a relaunch, and the tick must appear the moment it is true — same contract as
+/// the onboarding plate's rows.
+private struct SpeakerAccessRow: View {
+    @State private var granted = AXIsProcessTrusted()
+    @State private var promptShown = false
+    private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        SettingsCell(
+            "Имена спикеров из\u{00A0}Zoom",
+            // Разрешено — сказать нечего: об этом говорит галочка. Не разрешено —
+            // сказать надо, потому что цена молчания видна только в расшифровке.
+            subtitle: granted ? nil : "Без доступа — «Участник\u{00A0}1» и «Участник\u{00A0}2»"
+        ) {
+            if granted {
+                SettingsCheck()
+            } else {
+                SettingsButton("Разрешить", prominent: true) { press() }
+            }
+        }
+        .onReceive(poll) { _ in granted = AXIsProcessTrusted() }
+    }
+
+    private func press() {
+        // Системное окно показывается один раз за установку. Второй нажим уже
+        // ничего не спросит, поэтому ведёт туда, где решение принимают руками.
+        if promptShown {
+            if let url = URL(
+                string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            ) {
+                NSWorkspace.shared.open(url)
+            }
+            return
+        }
+        promptShown = true
+        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as NSString
+        _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
     }
 }
 
@@ -156,9 +118,11 @@ private struct GeneralSettingsGroup: View {
 /// названий из календаря не будет.
 ///
 /// Решение состояния — в `PropellerPure/CalendarAccess.swift`; здесь только
-/// чтение системы и нажатие. Перечитывает ответ системы на открытии настроек и
-/// на возврате в приложение — тот же приём, что у `MCPClientRow`: человек уходит
-/// выдавать доступ руками и обязан вернуться к изменившейся строке.
+/// чтение системы и нажатие. Тексты состояний живут там и покрыты тестами —
+/// поэтому переписан только заголовок строки. Перечитывает ответ системы на
+/// открытии настроек и на возврате в приложение — тот же приём, что у
+/// `MCPClientRow`: человек уходит выдавать доступ руками и обязан вернуться к
+/// изменившейся строке.
 private struct CalendarAccessRow: View {
     @ObservedObject var state: AppState
     @ObservedObject private var calendar = CalendarService.shared
@@ -169,7 +133,7 @@ private struct CalendarAccessRow: View {
     }
 
     var body: some View {
-        SettingsCell("Календарь", subtitle: row.subtitle) {
+        SettingsCell("Названия встреч из\u{00A0}Календаря", subtitle: row.subtitle) {
             control
         }
         .onAppear { calendar.refreshAccess() }
@@ -181,7 +145,7 @@ private struct CalendarAccessRow: View {
     @ViewBuilder
     private var control: some View {
         if let title = row.actionTitle {
-            SettingsButton(title) { press() }
+            SettingsButton(title, prominent: true) { press() }
         } else if row.showsCheckmark {
             SettingsCheck()
         } else {
@@ -205,75 +169,126 @@ private struct CalendarAccessRow: View {
     }
 }
 
-// MARK: - Приватность
+// MARK: - Запись
 
-/// «Приватность», не «Аналитика»: заголовок группы отвечает на вопрос, с
-/// которым человек сюда пришёл, — что уходит из приложения наружу, — а не
-/// называет механизм, которым это делается.
-private struct PrivacySettingsGroup: View {
-    @AppStorage("analyticsEnabled") private var analyticsEnabled = true
-    /// Polled, not cached: the grant lands in System Settings, sometimes only
-    /// after a relaunch, and the tick must appear the moment it is true —
-    /// same contract as the onboarding plate's rows.
-    @State private var accessibilityGranted = AXIsProcessTrusted()
-    @State private var accessibilityPromptShown = false
-    private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+/// Когда приложение оживает само и чем себя показывает.
+///
+/// Заголовки — существительными, все пять: глаз идёт по группе одним ритмом, а
+/// не спотыкается на «Показывать…» посреди «Автоматической записи». «Запуск
+/// Propeller при входе» назван с субъектом намеренно: без него строка в группе
+/// «Запись» читалась как «запускать запись при входе».
+private struct RecordingSettingsGroup: View {
+    @ObservedObject var state: AppState
+    @State private var launchAtLogin = LoginItem.isEnabled
+    @State private var launchAtLoginError: String?
+    @AppStorage("autoRecordMode") private var autoRecordMode = AutoRecordMode.auto.rawValue
+    @AppStorage("menuBarIconVisible") private var menuBarIconVisible = true
+    @AppStorage("notchIndicator") private var notchIndicator = true
+    @AppStorage("userName") private var userName = ""
 
     var body: some View {
-        SettingsGroup("Приватность") {
-            // The door for everyone who onboarded before this row existed —
-            // the onboarding plate never shows again (plan-speaker-tags.md §6).
+        SettingsGroup("Запись") {
+            // Zoom назван поимённо: у Толка сигнала «идёт звонок» нет вовсе, и
+            // обещать здесь «звонок» вообще значило бы обещать старт, который
+            // не наступит.
             SettingsCell(
-                "Доступ к приложениям",
-                subtitle: accessibilityGranted
-                    ? "Имена спикеров читаются из окна Zoom"
-                    : "Чтобы узнавать спикеров"
+                "Автоматическая запись",
+                subtitle: "Вместе со звонком в\u{00A0}Zoom"
             ) {
-                if accessibilityGranted {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel("Разрешено")
-                } else {
-                    SettingsButton("Разрешить") {
-                        if accessibilityPromptShown {
-                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        } else {
-                            accessibilityPromptShown = true
-                            let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as NSString
-                            _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
-                        }
-                    }
+                SettingsSwitch(isOn: autoRecord)
+            }
+            .onChange(of: autoRecordMode) { _, val in
+                Preferences.shared.autoRecordMode = AutoRecordMode(rawValue: val) ?? .auto
+                state.applyAutoRecordMode()
+            }
+
+            SettingsCell(
+                "Запуск Propeller при\u{00A0}входе",
+                // Единственная строка, которая здесь появляется: отказ системы.
+                // Она не описывает настройку, она отвечает на нажатие — и потому
+                // красится как отказ, а не как подсказка.
+                subtitle: launchAtLoginError,
+                tone: .failure
+            ) {
+                SettingsSwitch(isOn: $launchAtLogin)
+            }
+            .onChange(of: launchAtLogin) { _, want in
+                do {
+                    try LoginItem.setEnabled(want)
+                    launchAtLoginError = nil
+                } catch {
+                    // Вернуть переключатель к правде и назвать причину.
+                    launchAtLogin = LoginItem.isEnabled
+                    launchAtLoginError = error.localizedDescription
                 }
             }
-            .onReceive(poll) { _ in accessibilityGranted = AXIsProcessTrusted() }
-            SettingsCell(
-                "Делиться аналитикой",
-                subtitle: "Только обезличенные данные"
-            ) {
-                SettingsSwitch(isOn: $analyticsEnabled)
+
+            // Выключатель живёт здесь, потому что вернуть иконку можно только
+            // отсюда: в поповере, которого без неё не будет, доступно лишь
+            // «Скрыть». Сцена читает тот же ключ (`MenuBarExtra(isInserted:)`).
+            SettingsCell("Иконка в\u{00A0}меню баре") {
+                SettingsSwitch(isOn: $menuBarIconVisible)
             }
-            .onChange(of: analyticsEnabled) { _, on in
-                Analytics.setEnabled(on)
+
+            // Единственная поверхность, которую приложение рисует поверх чужих
+            // окон, — единственная, у которой есть выключатель. Подпись меняется
+            // вместе с железом: на маке без выреза выключать нечего, и честнее
+            // сказать это, чем прятать строку и оставить человека гадать, куда
+            // делась настройка, про которую он читал.
+            SettingsCell(
+                "Индикация записи в\u{00A0}чёлке",
+                subtitle: NotchController.hardwareHasNotch
+                    ? "Заметка по\u{00A0}⌃⌥N"
+                    : "На этом маке нет выреза — заметки живут в\u{00A0}окне встречи"
+            ) {
+                SettingsSwitch(isOn: $notchIndicator)
+                    .disabled(!NotchController.hardwareHasNotch)
+            }
+            .onChange(of: notchIndicator) { _, _ in
+                NotchController.shared.preferenceChanged()
+            }
+
+            // Плейсхолдер — то самое системное имя, которым подпишет фолбэк
+            // (`Preferences.ownerName`). Пустое поле поэтому не врёт: оно
+            // показывает, как встреча будет подписана, если ничего не вводить.
+            // Поле узкое: имя человека короче любого пути, а широкое поле
+            // обещало бы, что сюда пишут больше, чем два слова.
+            SettingsCell("Ваше имя") {
+                SettingsField(
+                    NSFullUserName(),
+                    text: $userName,
+                    width: Tokens.Settings.fieldNarrowWidth
+                )
+            }
+            .onChange(of: userName) { _, val in
+                state.setOwnerNameFromSettings(val)
             }
         }
+        .onAppear {
+            launchAtLogin = LoginItem.isEnabled
+            // Через `Preferences`, а не из defaults напрямую: там живёт миграция
+            // удалённого «Спросить», и без этого чтения выключатель показал бы
+            // «выкл» при записанном `ask`.
+            autoRecordMode = Preferences.shared.autoRecordMode.rawValue
+        }
+    }
+
+    /// Два режима — выключатель, а не пикер из двух пунктов. `AutoRecordMode`
+    /// остаётся на диске строкой: её `rawValue` уже лежат у людей.
+    private var autoRecord: Binding<Bool> {
+        Binding(
+            get: { (AutoRecordMode(rawValue: autoRecordMode) ?? .auto) == .auto },
+            set: { autoRecordMode = ($0 ? AutoRecordMode.auto : .off).rawValue }
+        )
     }
 }
 
-// Группы «Автозапись звонков» больше нет. В ней остался один выключатель, и
-// заголовок группы повторял его же название; сам выключатель переехал в
-// «Основное», к запуску при входе — оба про то, когда приложение оживает само.
-// Строка «Состояние» с ручной пробой детектора удалена: приложение и так
-// проверяет это само, а показание прибора в настройках — не настройка.
+// MARK: - Расшифровка и саммари
 
-// MARK: - Нейросети
-
-/// Расшифровка и саммари в одной группе.
+/// Во что превращается записанный звук — сначала в текст, потом в конспект.
 ///
-/// Их разделяло только то, что это были две вкладки. Настраивают они одно: во
-/// что превращается записанный звук — сначала в текст, потом в конспект.
+/// Группа называется тем, что делает, а не механизмом, которым делает: «Нейросети»
+/// отвечали на вопрос, которого человек не задавал.
 private struct ModelsSettingsGroup: View {
     @ObservedObject var state: AppState
     @AppStorage("domainTerms") private var domainTerms = ""
@@ -294,13 +309,18 @@ private struct ModelsSettingsGroup: View {
     @State private var pendingRestart: DispatchWorkItem?
 
     var body: some View {
-        SettingsGroup("Нейросети") {
+        SettingsGroup("Расшифровка и саммари") {
             // Движка расшифровки здесь нет: он ровно один, выбрать другой
             // нельзя, а строка без выбора — не настройка.
             //
+            // Заголовок — вопрос человека («кто пишет саммари»), а не имя поля.
             // Состояние движка — второй строкой у самого выбора: вопрос «кто
             // пишет саммари» и вопрос «отвечает ли он» — один вопрос.
-            SettingsCell("Модель для саммари", subtitle: providerStatus) {
+            SettingsCell(
+                "Кто пишет саммари",
+                subtitle: providerStatus.text,
+                tone: providerStatus.tone
+            ) {
                 Picker("", selection: $recapProvider) {
                     ForEach(RecapProviderKind.allCases) { kind in
                         Text(kind.displayName).tag(kind.rawValue)
@@ -346,8 +366,9 @@ private struct ModelsSettingsGroup: View {
             // намеренно без списка моделей: их там тысячи, они меняются каждую
             // неделю, и любой встроенный список устареет к следующему релизу.
             // Кто пришёл за OpenRouter, знает имя модели и приносит его с
-            // собой; подсказка формата стоит в подписи, потому что префикс
-            // вендора — единственное, чем это поле отличается от соседних.
+            // собой; подсказка формата стоит в подписи — и только здесь, потому
+            // что префикс вендора и есть единственное, чем это поле отличается
+            // от соседних.
             if provider == .openrouter {
                 keyRow("Ключ OpenRouter", placeholder: "sk-or-…", text: $openRouterKey) { val in
                     Preferences.shared.openRouterAPIKey = val
@@ -355,43 +376,44 @@ private struct ModelsSettingsGroup: View {
                 modelRow(
                     "Модель OpenRouter",
                     placeholder: "anthropic/claude-sonnet-4.5",
-                    subtitle: "Имя как в каталоге OpenRouter, с префиксом вендора",
+                    subtitle: "С префиксом вендора, как в каталоге OpenRouter",
                     text: $recapOpenRouterModel
                 ) { val in
                     Preferences.shared.recapOpenRouterModel = val
                 }
             }
 
-            // «Сбросить промпт» здесь больше нет, и замены ей не нужно: пустое
-            // поле **и есть** сброс — `Preferences.recapPrompt` отдаёт дефолт,
-            // когда сохранённого нет. Кнопка была третьим способом сказать то же
-            // самое, что ⌘A и Delete.
-            SettingsStack("Промпт") {
-                SettingsEditor(text: $recapPrompt)
-            }
-            .onChange(of: recapPrompt) { _, val in
-                Preferences.shared.recapPrompt = val
-            }
-
-            // Последним: это единственная строка группы, которая настраивает
-            // распознавание, а не саммари, и трогают её реже всего — один раз
-            // под проект, а не под встречу.
-            SettingsStack(
-                "Личный словарь",
-                subtitle: "Сленг и англицизмы для распознавания"
-            ) {
+            // Словарь стоит перед промптом: он про распознавание, то есть про
+            // шаг раньше. Подпись называет, что сюда пишут, — не то, что с этим
+            // потом случится: «ломает распознаватель» человек и так знает, он
+            // потому и пришёл.
+            SettingsStack("Личный словарь", subtitle: "Имена, компании и сленг") {
                 VStack(alignment: .leading, spacing: Tokens.Space.s6) {
                     SettingsField("напр. Газпромнефть, Аэрофлот", text: $domainTerms)
                     if let restartStatus {
                         Text(restartStatus)
                             .typo(Tokens.Settings.Typo.subtitle)
-                            .foregroundStyle(Tokens.Settings.subtitle)
+                            .foregroundStyle(Tokens.Settings.subtitleProgress)
                     }
                 }
             }
             .onChange(of: domainTerms) { _, val in
                 Preferences.shared.domainTerms = val
                 scheduleRestart()
+            }
+
+            // «Сбросить промпт» здесь больше нет, и замены ей не нужно: пустое
+            // поле **и есть** сброс — `Preferences.recapPrompt` отдаёт дефолт,
+            // когда сохранённого нет. Об этом и говорит подпись; вторая её
+            // половина — про прошлое, как требует §6.2 дока.
+            SettingsStack(
+                "Промпт",
+                subtitle: "Пусто — встроенный; старые саммари не меняются"
+            ) {
+                SettingsEditor(text: $recapPrompt)
+            }
+            .onChange(of: recapPrompt) { _, val in
+                Preferences.shared.recapPrompt = val
             }
         }
         // Модель доехала — строка состояния обязана это заметить сама: кнопки,
@@ -454,20 +476,30 @@ private struct ModelsSettingsGroup: View {
         .onChange(of: text.wrappedValue) { _, val in onCommit(val) }
     }
 
-    /// Что сказать про выбранного провайдера. Про облачные — ничего: ключ либо
-    /// есть, либо нет, и об этом говорит само поле ключа. Про локальный есть
-    /// что: он либо отвечает, либо ещё едет, либо не поднялся.
-    private var providerStatus: String? {
-        guard provider == .ollama else { return nil }
-        // Пока модель едет — процент. Полосы загрузки под этой строкой больше
-        // нет, и это единственное место, где про загрузку вообще сказано.
-        if let frac = state.ollamaSetupProgress {
-            return "Скачиваем модель… \(Int(frac * 100))%"
-        }
-        switch ollamaReachable {
-        case true: return "Отвечает на\u{00A0}:11434"
-        case false: return "Не запущен"
-        case nil: return "Проверяем…"
+    /// Что сказать про выбранного провайдера и каким родом второй строки.
+    ///
+    /// Про локальный: едет, отвечает или не поднялся — и «не поднялся» это
+    /// предупреждение, а не пояснение. Слова «транскрипт не уходит с мака» тут
+    /// нет намеренно: «локально» ровно это и означает.
+    ///
+    /// Про облачный сказать есть что одно, и это не про качество: куда уедет
+    /// транскрипт. Это же и есть цена выбора.
+    private var providerStatus: (text: String?, tone: SettingsSubtitleTone) {
+        switch provider {
+        case .openai:     return ("Транскрипт уходит в OpenAI", .help)
+        case .claude:     return ("Транскрипт уходит в Anthropic", .help)
+        case .openrouter: return ("Транскрипт уходит в OpenRouter, дальше — вендору модели", .help)
+        case .ollama:
+            // Пока модель едет — процент. Полосы загрузки под этой строкой
+            // больше нет, и это единственное место, где про загрузку сказано.
+            if let frac = state.ollamaSetupProgress {
+                return ("Скачиваем модель… \(Int(frac * 100))%", .progress)
+            }
+            switch ollamaReachable {
+            case true: return ("Отвечает локально", .help)
+            case false: return ("Не запущен", .warning)
+            case nil: return ("Проверяем…", .progress)
+            }
         }
     }
 
@@ -498,6 +530,9 @@ private struct ModelsSettingsGroup: View {
 
 /// Группа «MCP»: по строке на клиента, у каждой одна кнопка и ни одного диалога.
 ///
+/// Имя группы владелец оставил протоколом, а не вопросом («кто ещё читает
+/// архив»): кто пришёл сюда подключать клиента, ищет именно эти три буквы.
+///
 /// Чужой конфиг можно отредактировать руками — сегодня это единственный способ,
 /// и он не работает: путь надо знать. Здесь всё, что от человека требуется, —
 /// нажать; остальное (найти приложение, сделать копию его конфига, дописать в
@@ -518,8 +553,6 @@ struct ClaudeSettingsGroup: View {
     @ObservedObject var state: AppState
 
     var body: some View {
-        // Группа — «MCP», а не имя клиента: подключение к модели через MCP это
-        // способ, а не имя, и клиентов в ней теперь двое.
         SettingsGroup("MCP") {
             ForEach(MCPClient.allCases, id: \.self) { client in
                 if client.configLocation == nil {
@@ -588,7 +621,10 @@ private struct MCPClientRow: View {
     @ViewBuilder
     private var control: some View {
         if let title = cell.actionTitle {
-            SettingsButton(title) { connect() }
+            // Акцент — на том, что ещё не подключено; у подключённого тихая
+            // галочка. «Попробовать снова» после отказа записи — тоже акцент:
+            // это единственное, что осталось сделать в строке.
+            SettingsButton(title, prominent: true) { connect() }
         } else if cell.showsCheckmark {
             SettingsCheck()
         } else {
@@ -617,6 +653,13 @@ private struct MCPClientRow: View {
 
 // MARK: - Хранилище
 
+/// Где лежат файлы и сколько занимают.
+///
+/// Имя группы владелец оставил как было. Внутри изменилось одно, зато важное:
+/// путь больше не набирают руками. Папка — это её имя, её путь второй строкой и
+/// кнопка «Изменить…»; текстовое поле пути ничего не настраивало, а только
+/// давало опечатке шанс — нормализация живёт на чтении
+/// (`ArchivePath.normalized`), и сломанный путь выглядел как рабочий.
 private struct StorageSettingsGroup: View {
     @ObservedObject var state: AppState
     @AppStorage("markdownOutputFormat") private var markdownOutputFormat = MarkdownOutputFormat.simple.rawValue
@@ -632,7 +675,7 @@ private struct StorageSettingsGroup: View {
 
     var body: some View {
         SettingsGroup("Хранилище") {
-            SettingsCell("Формат Markdown", subtitle: formatHelp) {
+            SettingsCell("Формат заметок", subtitle: formatHelp) {
                 Picker("", selection: $markdownOutputFormat) {
                     ForEach(MarkdownOutputFormat.allCases) { format in
                         Text(format.displayName).tag(format.rawValue)
@@ -647,34 +690,30 @@ private struct StorageSettingsGroup: View {
                     MarkdownOutputFormat(rawValue: val) ?? .simple
             }
 
-            pathCell("Записи", path: $recordingsPath) {
-                Preferences.shared.recordingsPath = recordingsPath
-            }
-            pathCell("Заметки", path: $meetingsPath) {
+            pathCell("Папка заметок", path: $meetingsPath) {
                 Preferences.shared.meetingsPath = meetingsPath
             }
-            if markdownOutputFormat == MarkdownOutputFormat.obsidian.rawValue {
-                pathCell(
-                    "Страницы людей",
-                    subtitle: "Папка vault Obsidian со страницами людей. Если задана, имена спикеров ссылаются через [[wikilinks]].",
-                    path: $peoplePagesPath
-                ) {
-                    Preferences.shared.peoplePagesPath = peoplePagesPath
-                }
+            pathCell("Папка записей", path: $recordingsPath) {
+                Preferences.shared.recordingsPath = recordingsPath
             }
-
-            // Порога нет и у кнопки: пока чистить нечего, её просто нет, а не
-            // «есть, но не работает».
-            SettingsCell("Аудио на диске") {
-                HStack(spacing: Tokens.Space.s8) {
-                    SettingsValue(Self.bytes(state.storageLibraryBytes))
-                    if reclaimable > 0 {
-                        SettingsButton("Очистить") { showingClearConfirm = true }
+            if markdownOutputFormat == MarkdownOutputFormat.obsidian.rawValue {
+                // Единственная папка, у которой есть пустое состояние: без неё
+                // wikilinks просто не появятся. Поэтому и подпись у неё не про
+                // путь, а про то, что даёт её выбор.
+                SettingsCell(
+                    "Страницы людей",
+                    subtitle: peoplePagesPath.isEmpty
+                        ? "Имена спикеров станут [[wikilinks]]"
+                        : peoplePagesPath,
+                    tone: peoplePagesPath.isEmpty ? .help : .value
+                ) {
+                    SettingsButton(peoplePagesPath.isEmpty ? "Выбрать…" : "Изменить…") {
+                        choose($peoplePagesPath) { Preferences.shared.peoplePagesPath = peoplePagesPath }
                     }
                 }
             }
 
-            // Подписи под строкой нет намеренно: два пункта по два слова
+            // Подписи под строкой у режима нет: два пункта по слову-двум
             // объясняют себя сами, а абзац под ними объяснял бы выбор, которого
             // больше не осталось.
             SettingsCell("Хранить аудио") {
@@ -693,6 +732,17 @@ private struct StorageSettingsGroup: View {
                 // обязан проходить через то же место, что и чтение.
                 Preferences.shared.audioRetentionMode =
                     AudioRetentionMode(rawValue: val) ?? .afterTranscript
+            }
+
+            // Порога нет и у кнопки: пока чистить нечего, её просто нет, а не
+            // «есть, но не работает».
+            SettingsCell("Аудио на диске") {
+                HStack(spacing: Tokens.Space.s8) {
+                    SettingsValue(Self.bytes(state.storageLibraryBytes))
+                    if reclaimable > 0 {
+                        SettingsButton("Очистить…") { showingClearConfirm = true }
+                    }
+                }
             }
 
             // «Стереть человека» двери не получает намеренно (решение владельца
@@ -725,30 +775,39 @@ private struct StorageSettingsGroup: View {
 
     private var formatHelp: String {
         markdownOutputFormat == MarkdownOutputFormat.obsidian.rawValue
-            ? "YAML frontmatter + [[wikilinks]] для vault Obsidian."
-            : "Читаемый markdown: заголовок, участники, расшифровка. По умолчанию для обмена."
+            ? "YAML и [[wikilinks]]; старые файлы не меняются"
+            : "Читаемый markdown для обмена"
     }
 
+    /// Папка: имя строкой, путь второй строкой, «Изменить…» справа.
+    ///
+    /// Путь — это значение, а не пояснение, поэтому тон `.value`: одна строка,
+    /// обрезается серединой. У пути важны и начало (какой диск), и хвост (какая
+    /// папка), а середина — как раз то, что человек и так знает.
     private func pathCell(
         _ title: String,
-        subtitle: String? = nil,
         path: Binding<String>,
         onUpdate: @escaping () -> Void
     ) -> some View {
-        SettingsStack(title, subtitle: subtitle) {
-            HStack(spacing: Tokens.Space.s8) {
-                SettingsField(title, text: path)
-                    .onChange(of: path.wrappedValue) { _, _ in onUpdate() }
-                SettingsButton("Выбрать") {
-                    let panel = NSOpenPanel()
-                    panel.canChooseDirectories = true
-                    panel.canChooseFiles = false
-                    if panel.runModal() == .OK, let url = panel.url {
-                        path.wrappedValue = url.path
-                        onUpdate()
-                    }
-                }
-            }
+        // Пустой путь — не пустая строка под заголовком, а её отсутствие: до
+        // `onAppear` значение ещё не прочитано из `Preferences`, и пустая
+        // вторая строка растила бы ячейку молча.
+        SettingsCell(
+            title,
+            subtitle: path.wrappedValue.isEmpty ? nil : path.wrappedValue,
+            tone: .value
+        ) {
+            SettingsButton("Изменить…") { choose(path, onUpdate: onUpdate) }
+        }
+    }
+
+    private func choose(_ path: Binding<String>, onUpdate: @escaping () -> Void) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        if panel.runModal() == .OK, let url = panel.url {
+            path.wrappedValue = url.path
+            onUpdate()
         }
     }
 
@@ -764,9 +823,27 @@ private struct StorageSettingsGroup: View {
 
 // MARK: - О программе
 
+/// Приложение о себе — и один тумблер, который тоже про него.
+///
+/// Аналитика приехала сюда из распущенной «Приватности» (решение владельца
+/// 2026-08-20): она не про архив и не про то, кто его читает, — она про само
+/// приложение, как версия и обновления. Заголовок строки — глагол, потому что
+/// это единственная строка группы, где человек что-то решает.
 private struct AboutSettingsGroup: View {
+    @AppStorage("analyticsEnabled") private var analyticsEnabled = true
+
     var body: some View {
         SettingsGroup("О программе") {
+            SettingsCell(
+                "Отправлять аналитику",
+                subtitle: "Только события приложения, без личных данных"
+            ) {
+                SettingsSwitch(isOn: $analyticsEnabled)
+            }
+            .onChange(of: analyticsEnabled) { _, on in
+                Analytics.setEnabled(on)
+            }
+
             SettingsCell("Версия") {
                 SettingsValue(LoginItem.appVersionString)
             }
@@ -784,7 +861,7 @@ private struct AboutSettingsGroup: View {
 
 // MARK: - Launch at login (native SMAppService) + version
 
-/// Thin wrapper over `SMAppService.mainApp` so the General group can offer a
+/// Thin wrapper over `SMAppService.mainApp` so the Recording group can offer a
 /// native "Launch at login" toggle. macOS surfaces approval/management under
 /// System Settings → General → Login Items; we never write a LaunchAgent plist.
 enum LoginItem {

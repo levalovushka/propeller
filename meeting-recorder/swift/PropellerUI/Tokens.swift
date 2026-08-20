@@ -1271,10 +1271,16 @@ public enum Tokens {
         /// длиной в экран утащил бы вниз всё, что под ним, а дальше он всё
         /// равно скроллится внутри себя.
         ///
-        /// 260, а не 400: на четырёхсотых поле занимало столько, что строка под
-        /// ним переставала быть видна вместе с ним, — а промпт правят реже, чем
-        /// читают то, что стоит рядом.
-        public static let editorHeight: CGFloat = 260
+        /// 80, а не 260 и не 400 (решение владельца 2026-08-20): тот же довод,
+        /// доведённый до конца. На 400 не была видна строка под полем, на 260 —
+        /// следующая группа; на 80 за промптом сразу начинается «Хранилище».
+        /// Видно три строки и половину четвёртой — и эта половинка работает: она
+        /// и есть знак, что текст продолжается.
+        public static let editorHeight: CGFloat = 80
+
+        /// Поле, которому не нужна вся колонка: имя человека короче любого пути
+        /// и любой модели. Не новое число, а шаг сетки: `s40 * 4`.
+        public static let fieldNarrowWidth = Space.s40 * 4
 
         // MARK: Command — поле с готовой командой
 
@@ -1303,6 +1309,21 @@ public enum Tokens {
         public static let header = Sidebar.sectionHeader
         public static let title = Sidebar.meetingTitle
         public static let subtitle = Setup.cellSubtitle
+        /// Вторая строка бывает четырёх родов, и до 2026-08-20 все четыре
+        /// красились одним цветом — поэтому «Не запущен» читалось как справка.
+        /// Пояснение остаётся тихим (`subtitle`), остальные три — нет.
+        public static let subtitleValue = Sidebar.meetingMeta
+        public static let subtitleProgress = Paint.Text.secondary
+        public static let subtitleWarning = Paint.Status.warning
+        public static let subtitleFailure = Paint.Status.record
+        /// Галочка «сделано» — тихая. Акцент принадлежит несделанному: до
+        /// инверсии подсвечено было ровно то, что трогать не надо.
+        public static let check = Paint.Text.tertiary
+        /// Единственная кнопка строки, без которой настройка не работает:
+        /// «Разрешить», «Подключить». Заливка — акцент, подпись — белая в обеих
+        /// темах, потому что акцент в обеих один.
+        public static let buttonAccentFill = Paint.Status.accent
+        public static let buttonAccentLabel = Primitive.AlphaWhite.color(Primitive.AlphaWhite.a100)
         /// То, что настройка сообщает, а не спрашивает: версия, движок, объём.
         public static let value = Sidebar.meetingMeta
 

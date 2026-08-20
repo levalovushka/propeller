@@ -156,21 +156,24 @@ struct SettingsDivider: View {
 public struct SettingsCell<Control: View>: View {
     private let title: String
     private let subtitle: String?
+    private let tone: SettingsSubtitleTone
     @ViewBuilder private let control: () -> Control
 
     public init(
         _ title: String,
         subtitle: String? = nil,
+        tone: SettingsSubtitleTone = .help,
         @ViewBuilder control: @escaping () -> Control
     ) {
         self.title = title
         self.subtitle = subtitle
+        self.tone = tone
         self.control = control
     }
 
     public var body: some View {
         HStack(alignment: .center, spacing: Tokens.Settings.cellGap) {
-            SettingsCellHead(title: title, subtitle: subtitle)
+            SettingsCellHead(title: title, subtitle: subtitle, tone: tone)
             // Никакого `fixedSize` на управлении: в узкой панели длинное
             // показание должно ужаться само, а не выдавить заголовок за край.
             // Кнопки и списки держат ширину своим содержимым.
@@ -186,8 +189,8 @@ extension SettingsCell where Control == EmptyView {
     /// Ячейка без управления — то, что настройки просто сообщают: какой движок
     /// расшифровывает, какая стоит версия. Строка остаётся строкой настроек, а
     /// не превращается в абзац посреди списка.
-    public init(_ title: String, subtitle: String? = nil) {
-        self.init(title, subtitle: subtitle) { EmptyView() }
+    public init(_ title: String, subtitle: String? = nil, tone: SettingsSubtitleTone = .help) {
+        self.init(title, subtitle: subtitle, tone: tone) { EmptyView() }
     }
 }
 
@@ -196,21 +199,24 @@ extension SettingsCell where Control == EmptyView {
 public struct SettingsStack<Content: View>: View {
     private let title: String
     private let subtitle: String?
+    private let tone: SettingsSubtitleTone
     @ViewBuilder private let content: () -> Content
 
     public init(
         _ title: String,
         subtitle: String? = nil,
+        tone: SettingsSubtitleTone = .help,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
         self.subtitle = subtitle
+        self.tone = tone
         self.content = content
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Settings.stackGap) {
-            SettingsCellHead(title: title, subtitle: subtitle)
+            SettingsCellHead(title: title, subtitle: subtitle, tone: tone)
             content()
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -219,10 +225,38 @@ public struct SettingsStack<Content: View>: View {
     }
 }
 
+/// Что говорит вторая строка. Четыре рода, потому что до 2026-08-20 их было
+/// четыре по смыслу и один по цвету: отказ системы выглядел как подсказка.
+///
+/// - `help` — пояснение настройки. Тихое, и его можно не читать.
+/// - `value` — не пояснение, а значение: путь к папке. Одна строка, обрезается
+///   серединой, потому что у пути важны и начало, и хвост.
+/// - `progress` — приложение сейчас что-то делает. Ярче пояснения.
+/// - `warning` — не работает, но переживаемо: движок не запущен.
+/// - `failure` — отказ системы в ответ на нажатие.
+public enum SettingsSubtitleTone {
+    case help, value, progress, warning, failure
+
+    var paint: SwiftUI.Color {
+        switch self {
+        case .help:     return Tokens.Settings.subtitle
+        case .value:    return Tokens.Settings.subtitleValue
+        case .progress: return Tokens.Settings.subtitleProgress
+        case .warning:  return Tokens.Settings.subtitleWarning
+        case .failure:  return Tokens.Settings.subtitleFailure
+        }
+    }
+
+    /// Значение живёт в одну строку: путь, выросший на три, отодвинул бы
+    /// кнопку «Изменить…» от своей же строки.
+    var singleLine: Bool { self == .value }
+}
+
 /// Заголовок ячейки и его тихая вторая строка — одна и та же пара в обоих видах.
 struct SettingsCellHead: View {
     let title: String
     let subtitle: String?
+    var tone: SettingsSubtitleTone = .help
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Settings.cellLineGap) {
@@ -233,8 +267,10 @@ struct SettingsCellHead: View {
             if let subtitle {
                 Text(subtitle)
                     .typoBlock(Tokens.Settings.Typo.subtitle)
-                    .foregroundStyle(Tokens.Settings.subtitle)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(tone.paint)
+                    .lineLimit(tone.singleLine ? 1 : nil)
+                    .truncationMode(.middle)
+                    .fixedSize(horizontal: false, vertical: !tone.singleLine)
             }
         }
         .multilineTextAlignment(.leading)
@@ -264,6 +300,10 @@ public struct SettingsValue: View {
 
 /// Галочка справа — «это уже сделано, трогать нечего».
 ///
+/// Тихая, а не акцентная (инверсия 2026-08-20): акцент в строке принадлежит
+/// тому, что ещё не сделано, — кнопке «Разрешить». Пока красилась галочка,
+/// подсвечено было ровно то, что трогать не надо.
+///
 /// Не плашка и не бейдж: по канону студии (PR-005) статус разводится с текстом
 /// расстоянием и типографикой, а не рамкой. Стоит там же, где стояло бы
 /// управление, потому что она его и заменяет.
@@ -273,7 +313,7 @@ public struct SettingsCheck: View {
     public var body: some View {
         Image(systemName: "checkmark")
             .font(.system(size: Tokens.Settings.Typo.value.size, weight: .medium))
-            .foregroundStyle(Tokens.Paint.Status.accent)
+            .foregroundStyle(Tokens.Settings.check)
             .frame(height: Tokens.Settings.controlHeight)
             .accessibilityLabel("Подключено")
     }
@@ -303,13 +343,22 @@ public struct SettingsSwitch: View {
 public struct SettingsButton: View {
     private let title: String
     private let enabled: Bool
+    /// Единственная кнопка строки, без которой настройка не работает. Ровно
+    /// одна на строку и ни одной в строке, где всё уже хорошо.
+    private let prominent: Bool
     private let action: () -> Void
 
     @State private var hovering = false
 
-    public init(_ title: String, enabled: Bool = true, action: @escaping () -> Void) {
+    public init(
+        _ title: String,
+        enabled: Bool = true,
+        prominent: Bool = false,
+        action: @escaping () -> Void
+    ) {
         self.title = title
         self.enabled = enabled
+        self.prominent = prominent
         self.action = action
     }
 
@@ -317,16 +366,14 @@ public struct SettingsButton: View {
         Button(action: action) {
             Text(title)
                 .typo(Tokens.Settings.Typo.button)
-                .foregroundStyle(enabled ? Tokens.Settings.buttonLabel : Tokens.Paint.Text.disabled)
+                .foregroundStyle(label)
                 .lineLimit(1)
                 // Кнопку не сжимают: её ширина — её слово.
                 .fixedSize()
                 .padding(.horizontal, Tokens.Settings.buttonHPadding)
                 .frame(height: Tokens.Settings.buttonHeight)
                 .background(
-                    hovering && enabled
-                        ? Tokens.Settings.buttonHoverFill
-                        : Tokens.Settings.buttonFill,
+                    fill,
                     in: RoundedRectangle(cornerRadius: Tokens.Settings.buttonRadius, style: .continuous)
                 )
                 .contentShape(
@@ -338,6 +385,20 @@ public struct SettingsButton: View {
         .onHover { hovering = $0 && enabled }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
     }
+
+    private var label: SwiftUI.Color {
+        guard enabled else { return Tokens.Paint.Text.disabled }
+        return prominent ? Tokens.Settings.buttonAccentLabel : Tokens.Settings.buttonLabel
+    }
+
+    /// У акцентной кнопки ховер светлее заливки, а не темнее: тот же приём, что
+    /// у ghost-кнопок — содержимое и фон только прибавляют, никогда не гаснут.
+    private var fill: SwiftUI.Color {
+        if prominent {
+            return Tokens.Settings.buttonAccentFill.opacity(hovering && enabled ? 0.85 : 1)
+        }
+        return hovering && enabled ? Tokens.Settings.buttonHoverFill : Tokens.Settings.buttonFill
+    }
 }
 
 /// Однострочное поле — путь, модель, ключ.
@@ -348,11 +409,20 @@ public struct SettingsField: View {
     private let placeholder: String
     @Binding private var text: String
     private let isSecure: Bool
+    /// `nil` — поле занимает то, что ему дали. Число — поле, которому вся
+    /// колонка не нужна: имя человека, короткая модель.
+    private let width: CGFloat?
 
-    public init(_ placeholder: String, text: Binding<String>, secure: Bool = false) {
+    public init(
+        _ placeholder: String,
+        text: Binding<String>,
+        secure: Bool = false,
+        width: CGFloat? = nil
+    ) {
         self.placeholder = placeholder
         self._text = text
         self.isSecure = secure
+        self.width = width
     }
 
     public var body: some View {
@@ -362,7 +432,7 @@ public struct SettingsField: View {
             .foregroundStyle(Tokens.Settings.title)
             .lineLimit(1)
             .padding(.horizontal, Tokens.Settings.fieldHPadding)
-            .frame(height: Tokens.Settings.fieldHeight)
+            .frame(width: width, height: Tokens.Settings.fieldHeight)
             .background(
                 Tokens.Settings.fieldFill,
                 in: RoundedRectangle(cornerRadius: Tokens.Settings.fieldRadius, style: .continuous)
