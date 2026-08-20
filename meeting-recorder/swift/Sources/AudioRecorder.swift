@@ -540,6 +540,21 @@ class AudioRecorder: ObservableObject {
         }
     }
 
+    /// Mic + system into one 16 kHz mono file, a block at a time.
+    ///
+    /// Two passes over each stem, and never a whole one in memory. The first
+    /// pass is owed to `MixGain`: the gain is one number for the entire meeting,
+    /// computed from both stems' RMS and peak, so not a frame can be summed
+    /// until both files have been read once. Per-block gain would push a loud
+    /// passage down and lift a quiet one inside a single recording — a different
+    /// product, not a faster one.
+    ///
+    /// What this replaced read both stems whole and allocated a third buffer for
+    /// the sum: 195 MB per stem for fifty minutes, a ~584 MB peak, on every
+    /// meeting and again in a loop at launch (defect M1). The block plan and the
+    /// summation live in `PropellerPure/MixPlan.swift`, where a test can reach
+    /// them — nothing here can be checked, and no consumer in the app would
+    /// notice a block boundary off by one.
     private static func mix(
         micURL: URL,
         sysURL: URL,
@@ -565,41 +580,65 @@ class AudioRecorder: ObservableObject {
             AVLinearPCMIsFloatKey: false,
             AVLinearPCMIsBigEndianKey: false,
         ]
-        _ = try? FileManager.default.removeItem(at: finalURL)
-        let outFile = try AVAudioFile(forWriting: finalURL, settings: writeSettings)
 
-        let micMono = try Self.readAndResample(file: micFile, to: outFormat)
-        let sysMono = try Self.readAndResample(file: sysFile, to: outFormat)
-        let sysGain = Self.systemMixGain(mic: micMono, system: sysMono)
+        // Both writers pin 16 kHz mono (`ProcessTapCapture.stemSampleRate`, and
+        // the `AVAudioRecorder` fallback's settings), so the streaming path is
+        // the only one a stem from this build can take. A stem at another rate
+        // could only come from an archive older than that decision, and it keeps
+        // the whole-buffer path with its resampler rather than losing the
+        // ability to rebuild those meetings at all.
+        guard Self.isStreamable(micFile, at: targetSR), Self.isStreamable(sysFile, at: targetSR) else {
+            debugLog("[AudioRecorder] stem not 16 kHz mono — mixing the old way, whole buffers")
+            try Self.mixWholeBuffer(
+                micFile: micFile, sysFile: sysFile, finalURL: finalURL,
+                outFormat: outFormat, writeSettings: writeSettings,
+                targetSR: targetSR, systemStemOffset: systemStemOffset
+            )
+            return
+        }
+
+        let micN = Int(micFile.length)
+        let sysN = Int(sysFile.length)
+
+        // Pass one: levels, for the one gain that covers the meeting.
+        var micLevel = MixPlan.Level()
+        var sysLevel = MixPlan.Level()
+        try Self.streamSamples(of: micFile, blockSize: Self.mixBlockFrames) { micLevel.add($0) }
+        try Self.streamSamples(of: sysFile, blockSize: Self.mixBlockFrames) { sysLevel.add($0) }
+        let sysGain = MixGain.systemMixGain(
+            micRMS: micLevel.rms, micPeak: micLevel.peak,
+            systemRMS: sysLevel.rms, systemPeak: sysLevel.peak
+        )
         debugLog("[AudioRecorder] Mixing mic + system with systemGain=\(String(format: "%.2f", sysGain))")
 
         // The system stem does not start when the microphone does — it opens
         // `systemStemOffset` seconds in, and summing both from index zero is what
         // put the far end into the recording twice, half a second apart
-        // (`StemTimeline`, docs/ECHO_AND_MIX_EXPERIMENTS.md).
-        let micN = Int(micMono.frameLength)
-        let sysN = Int(sysMono.frameLength)
+        // (`StemTimeline`, docs/ECHO_AND_MIX_EXPERIMENTS.md). On the shipping
+        // capture path the offset is zero by construction; it is non-zero only
+        // for recordings rebuilt from before the shared clock.
         let sysStart = StemTimeline.systemStartFrame(
             offsetSeconds: systemStemOffset, sampleRate: targetSR
         )
-        let n = AVAudioFrameCount(
-            StemTimeline.mixedFrameCount(
-                micFrames: micN, systemFrames: sysN, systemStartFrame: sysStart
-            )
-        )
         debugLog("[AudioRecorder] mixing mic=\(micN) sys=\(sysN) frames, system stem placed at \(sysStart) frames (\(Int(systemStemOffset * 1000)) ms)")
 
+        let blocks = MixPlan.blocks(
+            micFrames: micN, systemFrames: sysN,
+            systemStartFrame: sysStart, blockSize: Self.mixBlockFrames
+        )
+        guard !blocks.isEmpty else { throw RecorderError.failedToMix }
+
         // Sum, and clamp **hard** at ±1. The comment here used to promise a soft
-        // clamp, which is not what the loop below does, and the difference is
+        // clamp, which is not what `MixPlan.sum` does, and the difference is
         // worth writing down rather than quietly fixing in either direction.
         //
         // Measured 2026-08-20 on both committed fixtures, replicating `MixGain`
-        // and this loop sample for sample: `ru-short-2spk` peaks at 0.787 and
+        // and the summation sample for sample: `ru-short-2spk` peaks at 0.787 and
         // clips **0** samples; `ru-pauses-2spk` peaks at 1.117 and clips **7 of
         // 869 000** — 0.0008 %, four tenths of a millisecond of distortion in
         // 54 seconds. On this evidence the hard clamp costs nothing and a softer
-        // curve would buy nothing, so the loop stays and the comment is the
-        // thing that changes.
+        // curve would buy nothing, so the clamp stays and the comment is the
+        // thing that changed.
         //
         // The evidence is thin on purpose, and its limit is known: both fixtures
         // carry the far side *below* the owner and both score `sysGain == 1`,
@@ -611,6 +650,110 @@ class AudioRecorder: ObservableObject {
         //
         // System audio can arrive quieter than the mic, so a bounded automatic
         // gain is applied before the clamp (`MixGain`).
+        //
+        // The write is scoped so `AVAudioFile` is released — and the header
+        // finalised — before this function returns: `recoverMissingFinalMixes`
+        // reads the finished file's duration back on the very next line after
+        // its `await`.
+        _ = try? FileManager.default.removeItem(at: finalURL)
+        do {
+            let outFile = try AVAudioFile(forWriting: finalURL, settings: writeSettings)
+            guard let block = AVAudioPCMBuffer(
+                pcmFormat: outFormat, frameCapacity: AVAudioFrameCount(Self.mixBlockFrames)
+            ) else { throw RecorderError.failedToMix }
+
+            micFile.framePosition = 0
+            sysFile.framePosition = 0
+            // Both stems are read straight through: the plan hands out
+            // contiguous, increasing ranges, and a block a stem does not reach
+            // asks for nothing and leaves its position alone.
+            for plan in blocks {
+                let micSamples = try plan.micRange.map {
+                    try Self.readSamples(from: micFile, count: $0.count)
+                } ?? []
+                let sysSamples = try plan.systemRange.map {
+                    try Self.readSamples(from: sysFile, count: $0.count)
+                } ?? []
+                let summed = MixPlan.sum(
+                    plan, mic: micSamples, system: sysSamples, systemGain: sysGain
+                )
+                block.frameLength = AVAudioFrameCount(summed.count)
+                guard let out = block.floatChannelData?[0] else {
+                    throw RecorderError.failedToMix
+                }
+                for i in 0..<summed.count { out[i] = summed[i] }
+                try outFile.write(from: block)
+            }
+        }
+    }
+
+    /// Frames per read and per write. 64 Ki frames is 256 KB of Float32 — three
+    /// of those is the whole memory cost of a mix now, whatever the meeting's
+    /// length.
+    private static let mixBlockFrames = 1 << 16
+
+    private static func isStreamable(_ file: AVAudioFile, at sampleRate: Double) -> Bool {
+        let format = file.processingFormat
+        return format.sampleRate == sampleRate && format.channelCount == 1
+    }
+
+    /// The next `count` frames as floats, from wherever the file is positioned.
+    private static func readSamples(from file: AVAudioFile, count: Int) throws -> [Float] {
+        guard count > 0 else { return [] }
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(count)
+        ) else { throw RecorderError.failedToMix }
+        try file.read(into: buffer, frameCount: AVAudioFrameCount(count))
+        guard let data = buffer.floatChannelData?[0] else { throw RecorderError.failedToMix }
+        let read = Int(buffer.frameLength)
+        var out = [Float](repeating: 0, count: count)
+        for i in 0..<min(read, count) { out[i] = data[i] }
+        return out
+    }
+
+    /// Whole file through `body`, a block at a time, position restored after.
+    private static func streamSamples(
+        of file: AVAudioFile, blockSize: Int, _ body: ([Float]) -> Void
+    ) throws {
+        file.framePosition = 0
+        var remaining = Int(file.length)
+        while remaining > 0 {
+            let count = min(blockSize, remaining)
+            body(try Self.readSamples(from: file, count: count))
+            remaining -= count
+        }
+        file.framePosition = 0
+    }
+
+    /// The pre-2026-08-20 mix, kept for stems that are not 16 kHz mono — an
+    /// archive older than the decision to pin that format. It loads both stems
+    /// whole, which is the cost this rewrite removed everywhere else.
+    private static func mixWholeBuffer(
+        micFile: AVAudioFile,
+        sysFile: AVAudioFile,
+        finalURL: URL,
+        outFormat: AVAudioFormat,
+        writeSettings: [String: Any],
+        targetSR: Double,
+        systemStemOffset: TimeInterval
+    ) throws {
+        _ = try? FileManager.default.removeItem(at: finalURL)
+        let outFile = try AVAudioFile(forWriting: finalURL, settings: writeSettings)
+
+        let micMono = try Self.readAndResample(file: micFile, to: outFormat)
+        let sysMono = try Self.readAndResample(file: sysFile, to: outFormat)
+        let sysGain = Self.systemMixGain(mic: micMono, system: sysMono)
+
+        let micN = Int(micMono.frameLength)
+        let sysN = Int(sysMono.frameLength)
+        let sysStart = StemTimeline.systemStartFrame(
+            offsetSeconds: systemStemOffset, sampleRate: targetSR
+        )
+        let n = AVAudioFrameCount(
+            StemTimeline.mixedFrameCount(
+                micFrames: micN, systemFrames: sysN, systemStartFrame: sysStart
+            )
+        )
         guard n > 0, let mixed = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: n) else {
             throw RecorderError.failedToMix
         }
