@@ -358,8 +358,19 @@ actor RecapService {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !extracted.isEmpty else { throw RecapError.emptyResponse }
 
+            // Написание имён приводится к составу **до** редактуры, а не
+            // после: иначе «Арина» при ленточном «Arina Soldatenkova» уезжает
+            // редактору находкой `assigneeOutsideRoster` — защита от
+            // выдуманного ответственного тратится на верное имя, записанное в
+            // другом алфавите. Замена детерминированная и узкая: точное
+            // совпадение свёртки, падежи и регистр не трогаются (`PersonCanon`).
+            let named = PersonCanon.normalize(
+                extracted,
+                roster: RecapDocument.participants(fromTranscript: trimmed)
+            )
+
             let edited = await polished(
-                extracted, transcript: trimmed, backend: backend,
+                named, transcript: trimmed, backend: backend,
                 numCtx: effectiveWindow, prefs: prefs
             )
 
