@@ -9,7 +9,16 @@
 проде промолчанные секунды уходят диаризации, а не ближайшему пролёту
 журнала. Поэтому здесь реплика получает имя только от НАКРЫВАЮЩЕГО пролёта;
 непокрытая реплика — не ошибка, а «наблюдатель промолчал», и она считается
-отдельно. С `--fallback` (out/<id>.base.json диаризации) промолчанные
+отдельно.
+
+**Но накрывающий пролёт — это не то правило, которое отгружено** (хвост от
+2026-08-20). Продукт спрашивает `LiveSpeaker.name(at:)`: ближайший образец в
+пределах секунды, плита владельца исключена. Расходятся они ровно на стыках, а
+стыки — это и есть трудная часть атрибуции, поэтому счёт по пролётам мерил
+правило, которого в приложении нет. Починено не здесь: `CallWindowJournalLab`
+с `--utts` отвечает **по репликам**, самой отгруженной машинкой, и кладёт ответ
+в `labels`. Если в журнале есть `labels`, скрипт считает по ним и говорит об
+этом; иначе — по пролётам, как раньше. С `--fallback` (out/<id>.base.json диаризации) промолчанные
 реплики получают метку диаризации по её обычному правилу — это сквозное
 число, которое сравнивается с сегодняшними 2,7 % (ГПН) и 7,8 % (160113).
 
@@ -63,10 +72,22 @@ def main() -> None:
                          "вне списка всегда неправо")
     args = ap.parse_args()
 
+    raw = json.load(open(args.journal))
+    by_line = raw.get("labels")
     journal = [
         {**s, "start": s["start"] + args.offset, "end": s["end"] + args.offset}
         for s in load_spans(args.journal)
     ]
+    if by_line is None:
+        print("  правило: НАКРЫВАЮЩИЙ ПРОЛЁТ — это лабораторное правило, а не "
+              "отгруженное. Пересними журнал с --utts, чтобы мерить продукт")
+        labels_at = None
+    else:
+        print("  правило: ближайший образец ≤1 с, плита владельца исключена — "
+              "то же, что в приложении")
+        labels_at = {
+            round(l["start"] + args.offset, 3): l["speaker"] for l in by_line
+        }
     ref = load_spans(args.ref)
     utts = json.load(open(args.utts))
     fallback = load_spans(args.fallback) if args.fallback else None
@@ -79,7 +100,12 @@ def main() -> None:
         if person is None:
             continue  # реплика вне размеченного — не в счёт, как в saer.py
         seconds = u["end"] - u["start"]
-        name = covering_label(mid, journal)
+        if labels_at is None:
+            name = covering_label(mid, journal)
+        else:
+            # Метку дала отгруженная машинка; пустая строка — «журнал промолчал»,
+            # и в проде эта секунда уходит диаризации, а не ближайшему пролёту.
+            name = labels_at.get(round(u["start"] + args.offset, 3)) or None
         if name is None:
             silent.append((person, seconds))
         else:
@@ -92,8 +118,10 @@ def main() -> None:
 
     covered = sum(s for _, _, s in named)
     print(f"  реплик размечено {len(named) + len(silent)}, {total:.0f} с")
-    print(f"  покрытие: журнал назвал {covered / total * 100:.1f} % секунд ({covered:.0f} с)")
-    print(f"  честность: промолчал {100 - covered / total * 100:.1f} % ({total - covered:.0f} с)")
+    # Одна цифра после запятой, а не ноль: на короткой реплике «(0 с)» рядом с
+    # «16.7 %» читается как «ничего не потеряно», то есть врёт.
+    print(f"  покрытие: журнал назвал {covered / total * 100:.1f} % секунд ({covered:.1f} с)")
+    print(f"  честность: промолчал {100 - covered / total * 100:.1f} % ({total - covered:.1f} с)")
 
     if named:
         if args.names:
