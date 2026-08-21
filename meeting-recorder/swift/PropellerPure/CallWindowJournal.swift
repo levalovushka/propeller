@@ -249,13 +249,10 @@ public enum CallWindowJournal {
             return .silent(.twoWindows)
         }
 
-        func tailContains(_ tile: Tile, anyOf markers: [String]) -> Bool {
-            let tail = statusTail(ofDescription: tile.description).lowercased()
-            return markers.contains { !$0.isEmpty && tail.contains($0.lowercased()) }
-        }
-
         let chosen: (name: String, tile: Tile)
-        let labelled = named.filter { tailContains($0.tile, anyOf: tuning.speakerMarkers) }
+        let labelled = named.filter {
+            CallWindowJournal.tailContains($0.tile, anyOf: tuning.speakerMarkers)
+        }
         if labelled.count == 1 {
             chosen = labelled[0]
         } else if labelled.count > 1 {
@@ -274,10 +271,19 @@ public enum CallWindowJournal {
         }
 
         // The veto: a muted candidate yields silence, never a different name.
-        if tailContains(chosen.tile, anyOf: tuning.mutedMarkers) {
+        if CallWindowJournal.tailContains(chosen.tile, anyOf: tuning.mutedMarkers) {
             return .silent(.muted)
         }
         return .speaker(chosen.name)
+    }
+
+    /// Совпал ли хвост описания плитки с каким-нибудь из маркеров.
+    ///
+    /// Хвост не разбирается на структуру — только сравнивается подстроками, —
+    /// поэтому смена локализации Zoom ломает маркер, а не имя.
+    static func tailContains(_ tile: Tile, anyOf markers: [String]) -> Bool {
+        let tail = statusTail(ofDescription: tile.description).lowercased()
+        return markers.contains { !$0.isEmpty && tail.contains($0.lowercased()) }
     }
 
     // MARK: - The machine: one ledger for live and batch
@@ -319,6 +325,13 @@ public enum CallWindowJournal {
         private var overlapPolls: [String: Int] = [:]
         private var ownerTurns: [(start: Double, end: Double)] = []
         private var lockedOwner: String?
+        /// Время каждого опроса — чтобы «не знаю» отличалось от «не был выключен».
+        /// Одно `Double` на опрос: 80-минутная встреча это ~11 000 чисел.
+        private var pollTimes: [Double] = []
+        /// Только выключенные плитки, по имени и времени. Хранить включённые
+        /// незачем: вопрос всегда «был ли выключен», а «не найдено» при живом
+        /// опросе рядом и означает «не был».
+        private var mutedTiles: [(t: Double, name: String)] = []
 
         public init(tuning: Tuning = Tuning(),
                     ownerMinShare: Double = 0.5,
@@ -338,6 +351,16 @@ public enum CallWindowJournal {
         private var pending: [(t: Double, name: String)] = []
 
         public mutating func take(_ poll: Poll) {
+            pollTimes.append(poll.t)
+            for tile in poll.tiles where tile.role == "AXTabGroup" {
+                guard let name = CallWindowJournal.name(
+                    fromDescription: tile.description, tuning: tuning
+                ) else { continue }
+                if CallWindowJournal.tailContains(tile, anyOf: tuning.mutedMarkers) {
+                    mutedTiles.append((t: poll.t, name: name))
+                }
+            }
+
             var name: String?
             if case .speaker(let n) = CallWindowJournal.verdict(in: poll, tuning: tuning) {
                 name = n
@@ -377,6 +400,41 @@ public enum CallWindowJournal {
 
         /// The owner's Zoom display name, once the correlation is evident.
         public var ownerZoomName: String? { lockedOwner }
+
+        /// Был ли микрофон владельца выключен в звонилке около секунды `t`.
+        ///
+        /// `nil` — «не знаю», и это законный ответ: замок владельца ещё не
+        /// защёлкнулся, или опросов рядом с этой секундой нет вовсе. Отличать
+        /// «не знаю» от «не был выключен» обязательно: на первом можно только
+        /// молчать, на втором — утверждать.
+        ///
+        /// Зачем это вообще. Замерено 2026-08-20: из 23 реплик владельца в ленте
+        /// **21 сказана при выключенной в Zoom плитке** — человек в этот момент
+        /// на встрече молчал, а расшифровка его цитирует. Микрофон Мака слышит
+        /// его всегда, мьют живёт только в звонилке. Здесь пока лишь **знание**:
+        /// что с такой репликой делать — отдельный шаг, и до живой проверки
+        /// фильтровать саммари этим нельзя, иначе ложный мьют съест настоящую речь.
+        public func ownerMuted(at t: Double) -> Bool? {
+            guard let lockedOwner else { return nil }
+            guard let nearestPoll = pollTimes.min(by: { abs($0 - t) < abs($1 - t) }),
+                  abs(nearestPoll - t) <= nameWindow else { return nil }
+            return mutedTiles.contains {
+                $0.name == lockedOwner && abs($0.t - t) <= nameWindow
+            }
+        }
+
+        /// Доля реплик владельца, сказанных при выключенной плитке, и сколько их
+        /// удалось рассудить. Для лога и для следующего замера — одна строка вместо
+        /// пересчёта руками.
+        public var ownerMutedTurnShare: (muted: Int, judged: Int) {
+            var muted = 0, judged = 0
+            for turn in ownerTurns {
+                guard let isMuted = ownerMuted(at: (turn.start + turn.end) / 2) else { continue }
+                judged += 1
+                if isMuted { muted += 1 }
+            }
+            return (muted, judged)
+        }
 
         /// Who was speaking around second `t`, owner excluded; nil = don't
         /// know, and the caller keeps whatever label it had.

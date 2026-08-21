@@ -381,6 +381,76 @@ final class CallWindowJournalTests: XCTestCase {
         return live
     }
 
+    // MARK: - Мьют своей плитки: пока только знание
+
+    /// Замерено 2026-08-20: из 23 реплик владельца 21 сказана при выключенной в
+    /// Zoom плитке. Микрофон Мака слышит его всегда, мьют живёт только в звонилке,
+    /// поэтому расшифровка цитирует то, чего на встрече не слышали.
+    func testМьютСвоейПлиткиВиденПослеОпознанияВладельца() {
+        let mutedOwner = "Levon Lobanov, Звук компьютера выключен, Video on"
+        var live = CallWindowJournal.LiveSpeaker()
+        // Первые восемь секунд владелец говорит с включённым микрофоном — на этом
+        // защёлкивается замок, иначе спрашивать не о ком.
+        for i in 0..<40 {
+            live.take(.init(t: Double(i * 4) / 10, tiles: [
+                tile(levon + ", active speaker", w: 520, h: 280),
+                tile(leva, w: 520, h: 280),
+            ]))
+        }
+        live.noteOwnerTurn(start: 0.0, end: 16.0)
+        XCTAssertEqual(live.ownerZoomName, "Levon Lobanov")
+        XCTAssertEqual(live.ownerMuted(at: 4.0), false)
+
+        // Дальше он выключает микрофон в Zoom, а Мак его по-прежнему слышит.
+        for i in 40..<80 {
+            live.take(.init(t: Double(i * 4) / 10, tiles: [
+                tile(mutedOwner, w: 520, h: 280),
+                tile(leva, w: 520, h: 280),
+            ]))
+        }
+        live.noteOwnerTurn(start: 20.0, end: 28.0)
+        XCTAssertEqual(live.ownerMuted(at: 24.0), true)
+
+        // Две реплики рассуждены, одна из них при выключенном.
+        let share = live.ownerMutedTurnShare
+        XCTAssertEqual(share.judged, 2)
+        XCTAssertEqual(share.muted, 1)
+    }
+
+    /// «Не знаю» — законный ответ, и он обязан отличаться от «не был выключен»:
+    /// на первом можно только молчать, на втором — утверждать.
+    func testБезЗамкаИБезОпросовРядомОтветНеЗнаю() {
+        var live = CallWindowJournal.LiveSpeaker()
+        for i in 0..<10 {
+            live.take(.init(t: Double(i * 4) / 10, tiles: [
+                tile(leva + ", active speaker", w: 520, h: 280),
+                tile(levon, w: 520, h: 280),
+            ]))
+        }
+        // Замка нет — сказать нечего, даже про соседнюю секунду.
+        XCTAssertNil(live.ownerMuted(at: 2.0))
+
+        // Замок есть, но опросов вокруг этой секунды нет: тоже «не знаю», а не «нет».
+        var warmed = warmedMachine()
+        warmed.noteOwnerTurn(start: 0.0, end: 16.0)
+        XCTAssertNotNil(warmed.ownerZoomName)
+        XCTAssertNil(warmed.ownerMuted(at: 900.0))
+    }
+
+    /// Чужой мьют своим не считается — иначе реплики владельца пропадали бы из-за
+    /// того, что молчит собеседник.
+    func testМьютСобеседникаНеПутаетсяСоСвоим() {
+        var live = warmedMachine()
+        for i in 40..<80 {
+            live.take(.init(t: Double(i * 4) / 10, tiles: [
+                tile(levon, w: 520, h: 280),
+                tile("Лева Ловушка, Звук компьютера выключен, Video off", w: 520, h: 280),
+            ]))
+        }
+        live.noteOwnerTurn(start: 20.0, end: 28.0)
+        XCTAssertEqual(live.ownerMuted(at: 24.0), false)
+    }
+
     func testЖивоеИмяПоявляетсяТолькоПослеОпознанияВладельца() {
         var live = CallWindowJournal.LiveSpeaker()
         // Far side speaks from the first second — but nobody has co-spoken
