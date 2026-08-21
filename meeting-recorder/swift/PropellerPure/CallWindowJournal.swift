@@ -106,29 +106,79 @@ public enum CallWindowJournal {
         /// 2026-08-20: exactly one labelled tile per poll in gallery and
         /// screen-share views, English suffix under a RU locale.
         public var speakerMarkers: [String]
+        /// Всё, чем описание плитки заканчивается **вместо имени**, lowercase.
+        ///
+        /// Нужно ровно для одного: отделить имя от хвоста, когда в самом имени
+        /// есть запятая. Список — из замера (`plan-speaker-tags.md` §1:
+        /// `«Лева Ловушка, Звук компьютера включен, Video off»`) плюс третий
+        /// маркер из трассы 2026-08-20 (`звуковое устройство не подключено`,
+        /// 3 опроса). Локали, кроме RU, не мерены — и это **не страшно**: если ни
+        /// один маркер не совпал, разбор откатывается на «до первой запятой», то
+        /// есть на прежнее поведение. Хуже, чем было, стать не может.
+        public var stateMarkers: [String]
 
         public init(areaSpreadRatio: Double = 2.0,
                     minRunPolls: Int = 2,
                     mutedMarkers: [String] = ["звук компьютера выключен"],
-                    speakerMarkers: [String] = ["active speaker"]) {
+                    speakerMarkers: [String] = ["active speaker"],
+                    stateMarkers: [String] = [
+                        "звук компьютера включен",
+                        "звук компьютера выключен",
+                        "звуковое устройство не подключено",
+                        "video on",
+                        "video off",
+                        "active speaker",
+                    ]) {
             self.areaSpreadRatio = areaSpreadRatio
             self.minRunPolls = minRunPolls
             self.mutedMarkers = mutedMarkers
             self.speakerMarkers = speakerMarkers
+            self.stateMarkers = stateMarkers
         }
     }
 
     // MARK: - Name parsing
 
-    /// Participant name: the `AXDescription` prefix up to the first comma.
-    /// The tail (audio/video state) is never parsed for structure — only
-    /// matched against marker substrings — so a Zoom localization change
-    /// breaks a marker, not the name.
-    public static func name(fromDescription description: String) -> String? {
-        let head = description.split(separator: ",", maxSplits: 1,
-                                     omittingEmptySubsequences: false).first ?? ""
-        let trimmed = head.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+    /// Имя участника: описание плитки без хвоста состояния.
+    ///
+    /// Считается **с конца**, а не «до первой запятой»: запятая — законный символ
+    /// в display name («Иванов, Иван»), и прежнее правило резало такое имя до
+    /// фамилии, а двое однофамильцев склеивались под одной подписью (Н11).
+    /// Отрезаются только куски, совпадающие с `Tuning.stateMarkers`.
+    ///
+    /// **Если не совпал ни один — откат на прежнее правило.** Так локаль, которую
+    /// не мерили, не превращает маркеры в часть имени: она просто получает то же
+    /// поведение, что и до 2026-08-21. Прежний принцип («смена локализации ломает
+    /// маркер, а не имя») этим сохранён.
+    public static func name(
+        fromDescription description: String, tuning: Tuning = Tuning()
+    ) -> String? {
+        let parts = description.split(
+            separator: ",", omittingEmptySubsequences: false
+        ).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        var kept = parts
+        while let last = kept.last, kept.count > 1, isStateMarker(last, tuning: tuning) {
+            kept.removeLast()
+        }
+        let stripped = parts.count - kept.count
+
+        // Имя из одного куска — старое и новое правило совпадают, спорить не о чем.
+        // Имя с запятой — это утверждение, и оно требует доказательства: в
+        // замеренном формате хвост несёт **и звук, и видео**
+        // (`plan-speaker-tags.md` §1), то есть минимум два маркера. Опознан один —
+        // значит локаль разобрана наполовину, и «John Smith, Computer audio on»
+        // приехало бы именем; в этом случае откат на прежнее «до первой запятой».
+        // Ошибаться безопасно только в эту сторону.
+        let name = (kept.count > 1 && stripped < 2)
+            ? (parts.first ?? "")
+            : kept.joined(separator: ", ")
+        return name.isEmpty ? nil : name
+    }
+
+    private static func isStateMarker(_ part: String, tuning: Tuning) -> Bool {
+        let lowered = part.lowercased()
+        return tuning.stateMarkers.contains { lowered.contains($0) }
     }
 
     /// Everything after the first comma.

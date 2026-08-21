@@ -144,14 +144,64 @@ final class CallWindowJournalTests: XCTestCase {
         ])
     }
 
-    func testИмяЭтоПрефиксДоПервойЗапятой() {
+    func testИмяЭтоОписаниеБезХвостаСостояния() {
         XCTAssertEqual(CallWindowJournal.name(fromDescription: levon), "Levon Lobanov")
         // No status tail at all: the name is still a name.
         XCTAssertEqual(CallWindowJournal.name(fromDescription: "Иван"), "Иван")
+        // Неопознанный хвост — прежнее правило, «до первой запятой».
         XCTAssertEqual(CallWindowJournal.name(fromDescription: "  Иван , что-то"), "Иван")
         // A tile with no name is not a participant.
         XCTAssertNil(CallWindowJournal.name(fromDescription: ""))
         XCTAssertNil(CallWindowJournal.name(fromDescription: ", Звук компьютера включен"))
+    }
+
+    /// Н11. Запятая — законный символ в display name, и прежнее правило резало
+    /// «Иванов, Иван» до фамилии: двое однофамильцев говорили под одной подписью.
+    func testЗапятаяВИмениНеРежетЧеловекаПополам() {
+        XCTAssertEqual(
+            CallWindowJournal.name(
+                fromDescription: "Иванов, Иван, Звук компьютера включен, Video off"
+            ),
+            "Иванов, Иван"
+        )
+        // И двое таких больше не сходятся в одну подпись. Хвост — как в замере:
+        // и звук, и видео, потому что имя с запятой заявляется только на них.
+        XCTAssertNotEqual(
+            CallWindowJournal.name(
+                fromDescription: "Иванов, Иван, Звук компьютера включен, Video on"
+            ),
+            CallWindowJournal.name(
+                fromDescription: "Иванов, Пётр, Звук компьютера включен, Video on"
+            )
+        )
+        // Один опознанный маркер — недостаточно, чтобы объявить имя составным:
+        // половина разобранной локали не должна приехать подписью.
+        XCTAssertEqual(
+            CallWindowJournal.name(fromDescription: "Иванов, Иван, Video on"),
+            "Иванов"
+        )
+    }
+
+    /// Три маркера из замера и четвёртый из трассы — все режутся, регистр не важен.
+    func testВсеЗамеренныеМаркерыСостоянияОтрезаются() {
+        for tail in ["Звук компьютера включен", "звук компьютера выключен",
+                     "Звуковое устройство не подключено", "Video on", "VIDEO OFF",
+                     "active speaker"] {
+            XCTAssertEqual(
+                CallWindowJournal.name(fromDescription: "Мария Петрова, \(tail)"),
+                "Мария Петрова",
+                tail
+            )
+        }
+    }
+
+    /// Локаль, которую не мерили, не должна превращать маркеры в часть имени:
+    /// не совпало ничего — работает прежнее правило, а не худшее.
+    func testНеизмереннаяЛокальПолучаетПрежнееПоведение() {
+        XCTAssertEqual(
+            CallWindowJournal.name(fromDescription: "John Smith, Computer audio on, Video off"),
+            "John Smith"
+        )
     }
 
     // MARK: - "Don't know" is a legal answer
