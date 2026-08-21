@@ -849,6 +849,47 @@ final class GigasttSidecar: @unchecked Sendable {
         }
         NSLog("[GigasttSidecar] removed \(stale.count) weight file(s) from the previous model set, "
               + "\(reclaimed / 1_048_576) MB: \(stale.joined(separator: ", "))")
+
+        // Кэш CoreML — тоже мусор, но только **в этой ветке**.
+        //
+        // Записи в `coreml_cache/` ключуются по весам, поэтому после смены
+        // энкодера каждая из них мертва по построению — гадать не о чем и
+        // спрашивать gigastt не нужно. Отсюда и триггер: не «каждый запуск» и не
+        // «сменилась версия», а «мы только что удалили устаревшие веса». Если
+        // ничего не устарело, кэш валиден целиком, и мы его не касаемся — это
+        // прежнее правило «чужой процесс знает про свой кэш больше нас», просто
+        // теперь у него есть одно точное исключение.
+        //
+        // Цена — одна медленная первая расшифровка после смены весов: gigastt
+        // соберёт заново то, что ему нужно. Плата за то, чтобы мёртвые ~21 МБ не
+        // росли с каждой сменой набора. Момент безопасный: сюда приходят сразу
+        // после раскладки и **до** `spawnServer`, так что файлы никем не открыты.
+        let cache = modelDir.appendingPathComponent("coreml_cache")
+        guard fm.fileExists(atPath: cache.path) else { return }
+        let cacheSize = directorySize(cache)
+        do {
+            try fm.removeItem(at: cache)
+            NSLog("[GigasttSidecar] dropped coreml_cache (\(cacheSize / 1_048_576) MB): "
+                  + "its entries are keyed to weights that are gone")
+        } catch {
+            // Не наша беда: кэш пересоберётся, а сборка не должна падать из-за
+            // уборки. Молчать всё же нельзя — иначе «21 МБ не ушли» необъяснимо.
+            NSLog("[GigasttSidecar] coreml_cache left in place: \(error.localizedDescription)")
+        }
+    }
+
+    /// Размер каталога рекурсивно — только чтобы лог назвал число.
+    private func directorySize(_ url: URL) -> Int64 {
+        let fm = FileManager.default
+        guard let walker = fm.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) else {
+            return 0
+        }
+        var total: Int64 = 0
+        for case let item as URL in walker {
+            let size = (try? item.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+            total += Int64(size)
+        }
+        return total
     }
 
     /// Work around a gigastt 2.14 inconsistency between its own subcommands.
