@@ -2,84 +2,6 @@ import Foundation
 import PropellerMetrics
 import PropellerPure
 
-/// Кто пишет саммари. Выключателя здесь нет и быть не может.
-///
-/// «Выкл» был пятым вариантом этого пикера, и он отключал ровно то, зачем
-/// приложение существует: расшифровка без конспекта — это файл, который никто не
-/// откроет. Выбор провайдера — да, выбор «а давайте без саммари» — нет, ровно
-/// как нет гейта на скачивание модели (`CLAUDE.md`: «нет LLM» не является
-/// законным состоянием приложения).
-///
-/// «Авто» ушло следом (2026-08-07). Оно означало «Ollama, а если её нет — тот
-/// облачный, у кого нашёлся ключ», то есть настройку, по которой нельзя было
-/// сказать, куда уедет транскрипт. Для локального по умолчанию приложения это
-/// не удобство, а неопределённость в самом чувствительном месте. Локальная
-/// модель приезжает сама и чинится сама, так что дефолт — `ollama`, и он
-/// означает ровно себя.
-///
-/// Сохранённые `"off"` и `"auto"` переписываются на `.ollama` при чтении —
-/// `Preferences.recapProvider`.
-///
-/// OpenRouter (2026-08-20) — четвёртый и единственный, про кого нельзя сказать
-/// заранее, чей сервер увидит транскрипт: маршрутизатор на то и маршрутизатор.
-/// Тем же аргументом убрали «Авто», и разница здесь не в аргументе, а в том,
-/// кто его выбирает: «Авто» было настройкой по умолчанию у всех, а OpenRouter
-/// человек включает руками, вписывая имя модели с префиксом вендора. Дефолт
-/// остаётся локальным, и цена выбора — на том, кто выбрал.
-///
-/// Отдельным вариантом, а не полем «свой адрес» у OpenAI: провайдер — это ось
-/// телеметрии (`Analytics.environment`), заголовок настроек и ответ на вопрос
-/// «куда уехала эта встреча». Спрятанный base URL сделал бы все три ответа
-/// неправдой при том же значении в префах.
-enum RecapProviderKind: String, CaseIterable, Identifiable {
-    case ollama
-    case openai
-    case claude
-    case openrouter
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .ollama: return "Ollama"
-        case .openai: return "OpenAI"
-        case .claude: return "Claude"
-        case .openrouter: return "OpenRouter"
-        }
-    }
-}
-
-/// Почему саммари не сделали. Обе причины — про то, чего нет снаружи, ни одна не
-/// про наше решение: ветка `.disabled` ушла вместе с «Выкл», потому что после
-/// него её нечем было произвести.
-enum RecapSkipReason: Error, Equatable {
-    case noProvider
-    case emptyTranscript
-}
-
-enum RecapError: LocalizedError {
-    case httpStatus(Int, String)
-    case emptyResponse
-    case badJSON
-    case providerUnavailable(String)
-    case timedOut
-
-    var errorDescription: String? {
-        switch self {
-        case .httpStatus(let code, let body):
-            return "LLM HTTP \(code): \(body.prefix(200))"
-        case .emptyResponse:
-            return "LLM вернул пустое саммари"
-        case .badJSON:
-            return "Не удалось разобрать ответ LLM"
-        case .providerUnavailable(let name):
-            return "\(name) недоступен"
-        case .timedOut:
-            return "Саммари не успело за 10 минут — модель перегружена. Подожди минуту и нажми «Сгенерировать» снова."
-        }
-    }
-}
-
 struct RecapResult {
     let path: String
     let provider: String
@@ -218,13 +140,19 @@ actor RecapService {
         }
     }
 
-    /// Resolve which backend to use given preferences. Returns nil + reason if skipped.
+    /// Кто отвечает за саммари. Здесь остался один вопрос к сайдкару, сам выбор —
+    /// `RecapBackendChoice.resolve`, где его достаёт тест.
+    ///
     /// A reachable Ollama is not a usable one. We start the server ourselves, so
     /// it answers whether or not a model was ever pulled — and the recap then
     /// died on `HTTP 404: model not found` after *every* recording, with the
     /// backfill re-running it on a timer. The model has to be present for this
     /// backend to count as available; otherwise the caller gets `.noProvider`
     /// and the honest "download the model" empty state.
+    ///
+    /// Пригодность спрашивается **только** у своего провайдера: поднимать сайдкар
+    /// ради выбора между двумя облачными ключами — это платить за ответ, который
+    /// в нём не нужен.
     func resolveBackend(
         kind: RecapProviderKind,
         ollamaModel: String,
@@ -232,16 +160,14 @@ actor RecapService {
         claudeKey: String?,
         openRouterKey: String?
     ) async -> Result<String, RecapSkipReason> {
-        switch kind {
-        case .ollama:
-            return await ollamaUsable(model: ollamaModel) ? .success("ollama") : .failure(.noProvider)
-        case .openai:
-            return (openAIKey?.isEmpty == false) ? .success("openai") : .failure(.noProvider)
-        case .claude:
-            return (claudeKey?.isEmpty == false) ? .success("claude") : .failure(.noProvider)
-        case .openrouter:
-            return (openRouterKey?.isEmpty == false) ? .success("openrouter") : .failure(.noProvider)
-        }
+        let usable = kind == .ollama ? await ollamaUsable(model: ollamaModel) : false
+        return RecapBackendChoice.resolve(
+            kind: kind,
+            ollamaUsable: usable,
+            openAIKey: openAIKey,
+            claudeKey: claudeKey,
+            openRouterKey: openRouterKey
+        )
     }
 
     /// Cheapest question first: nothing to serve if the weights are not on disk.
@@ -313,7 +239,7 @@ actor RecapService {
             // второй вызов в том же окне платит 0,2 с за модель, в другом — 2,3 с,
             // потому что Ollama поднимает свежий llama-server (`OllamaContext`).
             let window = OllamaContext.numCtx(promptCharacters: prompt.count + userContent.count)
-            let cutUp = TranscriptChunking.needed(
+            let route = RecapRoute.of(
                 backend: backend, promptCharacters: prompt.count + userContent.count
             )
 
@@ -327,7 +253,8 @@ actor RecapService {
             let effectiveWindow: Int
             var draftStats: RecapGenerationPolicy.CallStats?
             var author: RecapDigestGuard.Author?
-            if cutUp {
+            switch route {
+            case .chunked:
                 let run = try await recapByChunks(
                     title: title, transcriptMarkdown: trimmed, notes: notes,
                     system: prompt, prefs: prefs, progress: progress
@@ -336,7 +263,7 @@ actor RecapService {
                 effectiveWindow = run.window
                 draftStats = run.stats
                 author = run.author
-            } else if backend == "ollama" {
+            case .localSingle:
                 // Порог схлопывания есть только у локального пути: облако длину
                 // ответа не сообщает, и его путь в этом релизе не тронут (Г3).
                 let tracked = try await callOllamaTracked(
@@ -347,7 +274,7 @@ actor RecapService {
                 draft = tracked.content
                 draftStats = tracked.stats
                 effectiveWindow = window
-            } else {
+            case .cloudSingle:
                 draft = try await callBackend(
                     backend, system: prompt, user: userContent, numCtx: window, prefs: prefs
                 )
@@ -407,7 +334,7 @@ actor RecapService {
             return .success(RecapResult(
                 path: path, provider: backend, body: body,
                 stats: RecapRunStats(
-                    draft: draftStats, chunked: cutUp, window: effectiveWindow,
+                    draft: draftStats, chunked: route == .chunked, window: effectiveWindow,
                     seconds: Date().timeIntervalSince(started), author: author
                 )
             ))
@@ -1099,10 +1026,11 @@ actor RecapService {
 
     private func throwIfBadHTTP(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else { return }
-        guard (200..<300).contains(http.statusCode) else {
-            let body = String(data: data, encoding: .utf8) ?? ""
-            throw RecapError.httpStatus(http.statusCode, body)
-        }
+        guard let failure = RecapBackendChoice.httpFailure(
+            status: http.statusCode,
+            body: { String(data: data, encoding: .utf8) ?? "" }
+        ) else { return }
+        throw failure
     }
 }
 
