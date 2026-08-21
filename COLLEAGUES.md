@@ -90,7 +90,7 @@ cd meeting-recorder/swift
 ./build.sh          # → /Applications/Propeller.app (TelemetryDeck App ID уже вшит)
 ./notarize.sh       # нотаризует и стейплит .app (нужен Developer ID + профиль notarytool)
 ./package-dmg.sh    # → ../../dist/Propeller-….dmg, подписывает и нотаризует образ
-./make-appcast.sh   # → ../../dist/appcast.xml (нужен private key)
+./make-appcast.sh   # → ../../dist/appcast.xml + *.delta (нужен private key)
 ```
 
 `.app` нотаризуется отдельно от образа, и порядок именно такой: Sparkle ставит
