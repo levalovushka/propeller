@@ -124,7 +124,7 @@ ad-hoc. Оба годятся только локально — раздават
 | `Recording.cancelled` | `source`, `age`; секунды в `value` |
 | `Transcription.finished` | `result`, `reason` |
 | `Recap.finished` | `result`, `backend`, `skip` |
-| `Recap.generated` | `collapsed`, `author`; секунды в `value` |
+| `Recap.generated` | `collapsed`, `author`, `cause` (`digestEmpty` / `collapsed` / `bulletShare`, только у `author=assembly`); секунды в `value` |
 | `Summary.waited` | `awaited`, `meeting`; секунды в `value` |
 | `Notice.shown` | `kind`, `surface` (включая `silent`) |
 | `Search.opened` | — |

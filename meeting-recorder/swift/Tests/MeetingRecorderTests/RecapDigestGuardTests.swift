@@ -59,6 +59,7 @@ final class RecapDigestGuardTests: XCTestCase {
         XCTAssertEqual(decision.author, .assembly)
         XCTAssertEqual(decision.recap, assembly)
         XCTAssertEqual(decision.reason, "свод схлопнут после ретрая")
+        XCTAssertEqual(decision.cause, .collapsed)
     }
 
     /// Пустой ответ — тот же случай: отдавать читателю нечего.
@@ -66,6 +67,7 @@ final class RecapDigestGuardTests: XCTestCase {
         let decision = RecapDigestGuard.decide(digest: "  \n ", collapsed: false, assembly: assembly)
         XCTAssertEqual(decision.author, .assembly)
         XCTAssertEqual(decision.reason, "свод пуст")
+        XCTAssertEqual(decision.cause, .digestEmpty)
     }
 
     // MARK: - Свод набрал длину, но потерял пункты
@@ -79,6 +81,7 @@ final class RecapDigestGuardTests: XCTestCase {
         XCTAssertEqual(decision.author, .assembly)
         XCTAssertEqual(decision.recap, assembly)
         XCTAssertEqual(decision.reason, "в своде 3 пунктов против 8 в сборке")
+        XCTAssertEqual(decision.cause, .bulletShare)
     }
 
     /// Ровно половина — не потеря: порог отделяет съеденное содержание от
@@ -88,6 +91,34 @@ final class RecapDigestGuardTests: XCTestCase {
             digest: digest(bullets: 4), collapsed: false, assembly: assembly
         )
         XCTAssertEqual(decision.author, .digest)
+        XCTAssertNil(decision.cause)
+    }
+
+    // MARK: - Причина отбора отделима от строки для человека
+
+    /// `reason` несёт числа и в телеметрии дал бы новое значение почти на каждой
+    /// встрече; `cause` — закрытый список. Калибруется ровно `bulletShare`, и без
+    /// этого разреза «сборка победила N раз» не говорит, трогать ли порог.
+    func testПричинаОтбораНеСодержитЧисел() {
+        let byBullets = RecapDigestGuard.decide(
+            digest: digest(bullets: 3), collapsed: false, assembly: assembly
+        )
+        let byCollapse = RecapDigestGuard.decide(
+            digest: digest(bullets: 8), collapsed: true, assembly: assembly
+        )
+        XCTAssertEqual(byBullets.cause, .bulletShare)
+        XCTAssertEqual(byCollapse.cause, .collapsed)
+        // Обе отдали документ сборке — по строке это не различить машинально,
+        // потому что в одной из них живут счётчики пунктов.
+        XCTAssertEqual(byBullets.author, .assembly)
+        XCTAssertEqual(byCollapse.author, .assembly)
+        XCTAssertNotEqual(byBullets.cause, byCollapse.cause)
+        for cause in [byBullets.cause, byCollapse.cause] {
+            XCTAssertFalse(
+                cause?.rawValue.contains(where: \.isNumber) ?? true,
+                "значение параметра телеметрии не должно нести чисел: \(cause?.rawValue ?? "nil")"
+            )
+        }
     }
 
     // MARK: - Здоровый свод остаётся документом

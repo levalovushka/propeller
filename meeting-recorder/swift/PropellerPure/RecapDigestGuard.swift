@@ -41,16 +41,38 @@ public enum RecapDigestGuard {
         case assembly
     }
 
+    /// Почему сборка отобрала документ — короткое слово, а не фраза.
+    ///
+    /// Отдельно от `reason`: тот пишется человеку в лог и несёт числа
+    /// («в своде 3 пунктов против 14 в сборке»), то есть в телеметрии дал бы
+    /// новое значение почти на каждой встрече. Калибруется же ровно одна из
+    /// причин — `bulletShare`; без этого разреза «сборка победила N раз» не
+    /// говорит, трогать ли порог.
+    public enum Cause: String, Equatable, Sendable {
+        /// Свода нет вовсе: модель не ответила или ответ пуст.
+        case digestEmpty
+        /// Порог токенов — свод остался коротким и после повтора.
+        case collapsed
+        /// `digestMinBulletShare` — длину набрал, содержание выбросил.
+        case bulletShare
+    }
+
     public struct Decision: Equatable, Sendable {
         public let author: Author
         public let recap: String
         /// Почему сборка отобрала документ у автора. `nil` — автор победил.
         public let reason: String?
+        /// То же самое словом из закрытого списка — для телеметрии. `nil` там же,
+        /// где `nil` у `reason`.
+        public let cause: Cause?
 
-        public init(author: Author, recap: String, reason: String?) {
+        public init(
+            author: Author, recap: String, reason: String?, cause: Cause? = nil
+        ) {
             self.author = author
             self.recap = recap
             self.reason = reason
+            self.cause = cause
         }
     }
 
@@ -61,23 +83,28 @@ public enum RecapDigestGuard {
         let digestText = digest.trimmingCharacters(in: .whitespacesAndNewlines)
         let assemblyText = assembly.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        func fallback(_ reason: String) -> Decision {
+        func fallback(_ reason: String, _ cause: Cause) -> Decision {
             // Отбирать документ нечем: сборка пуста. Тогда свод — единственное,
             // что есть, и пустоту дальше по конвейеру ловит `emptyResponse`.
             guard !assemblyText.isEmpty else {
                 return Decision(author: .digest, recap: digestText, reason: nil)
             }
-            return Decision(author: .assembly, recap: assemblyText, reason: reason)
+            return Decision(
+                author: .assembly, recap: assemblyText, reason: reason, cause: cause
+            )
         }
 
-        if digestText.isEmpty { return fallback("свод пуст") }
-        if collapsed { return fallback("свод схлопнут после ретрая") }
+        if digestText.isEmpty { return fallback("свод пуст", .digestEmpty) }
+        if collapsed { return fallback("свод схлопнут после ретрая", .collapsed) }
 
         let digestBullets = RecapLint.shape(of: digestText).bullets
         let assemblyBullets = RecapLint.shape(of: assemblyText).bullets
         if assemblyBullets > 0,
            Double(digestBullets) < RecapGenerationPolicy.digestMinBulletShare * Double(assemblyBullets) {
-            return fallback("в своде \(digestBullets) пунктов против \(assemblyBullets) в сборке")
+            return fallback(
+                "в своде \(digestBullets) пунктов против \(assemblyBullets) в сборке",
+                .bulletShare
+            )
         }
 
         return Decision(author: .digest, recap: digestText, reason: nil)

@@ -2381,7 +2381,8 @@ class AppState: ObservableObject {
                     Analytics.recapGenerated(
                         collapsed: stats.draft?.collapsed ?? false,
                         seconds: stats.seconds,
-                        author: stats.author
+                        author: stats.author,
+                        cause: stats.cause
                     )
                 }
                 // The wait a person felt: from the meeting ending to the summary

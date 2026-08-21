@@ -229,13 +229,21 @@ enum Analytics {
     /// пути нарезки: на одиночном выбирать не из чего. Доля `assembly` — частота
     /// срыва свода в проде, то самое число, ради которого страховку оставили
     /// видимой. Облачные бэкенды сигнал не шлют.
+    ///
+    /// `cause` — почему именно сборка отобрала документ. Без него доля `assembly`
+    /// не разбирается на «свод схлопнулся» и «свод выбросил содержание», а
+    /// калибруется (`digestMinBulletShare`) только второе. Параметр к прежнему
+    /// имени, а не новое имя: чистка 2026-08-19 убирала имена, собранные
+    /// интерполяцией, — вариант в параметре это и есть её правило.
     static func recapGenerated(
         collapsed: Bool,
         seconds: Double,
-        author: RecapDigestGuard.Author? = nil
+        author: RecapDigestGuard.Author? = nil,
+        cause: RecapDigestGuard.Cause? = nil
     ) {
         var params = ["collapsed": collapsed ? "1" : "0"]
         if let author { params["author"] = author.rawValue }
+        if let cause { params["cause"] = cause.rawValue }
         signal("Recap.generated", parameters: params, value: seconds)
     }
 

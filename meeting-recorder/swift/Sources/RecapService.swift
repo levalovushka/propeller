@@ -25,6 +25,8 @@ struct RecapRunStats {
     /// Чей документ уехал читателю на пути нарезки. `nil` у одиночного пути:
     /// там выбирать не из чего, автор один.
     let author: RecapDigestGuard.Author?
+    /// Почему документ отдали сборке. `nil`, когда его написал свод.
+    let cause: RecapDigestGuard.Cause?
 }
 
 /// LLM meeting recap on top of a saved transcript markdown.
@@ -253,6 +255,7 @@ actor RecapService {
             let effectiveWindow: Int
             var draftStats: RecapGenerationPolicy.CallStats?
             var author: RecapDigestGuard.Author?
+            var cause: RecapDigestGuard.Cause?
             switch route {
             case .chunked:
                 let run = try await recapByChunks(
@@ -263,6 +266,7 @@ actor RecapService {
                 effectiveWindow = run.window
                 draftStats = run.stats
                 author = run.author
+                cause = run.cause
             case .localSingle:
                 // Порог схлопывания есть только у локального пути: облако длину
                 // ответа не сообщает, и его путь в этом релизе не тронут (Г3).
@@ -335,7 +339,7 @@ actor RecapService {
                 path: path, provider: backend, body: body,
                 stats: RecapRunStats(
                     draft: draftStats, chunked: route == .chunked, window: effectiveWindow,
-                    seconds: Date().timeIntervalSince(started), author: author
+                    seconds: Date().timeIntervalSince(started), author: author, cause: cause
                 )
             ))
         }
@@ -394,7 +398,8 @@ actor RecapService {
         progress: (@Sendable (String) -> Void)? = nil
     ) async throws -> (
         recap: String, window: Int,
-        stats: RecapGenerationPolicy.CallStats?, author: RecapDigestGuard.Author
+        stats: RecapGenerationPolicy.CallStats?,
+        author: RecapDigestGuard.Author, cause: RecapDigestGuard.Cause?
     ) {
         let chunks = TranscriptChunking.split(transcriptMarkdown)
         let extractSystem = Self.chunkExtractPrompt + Self.languageLock
@@ -481,7 +486,7 @@ actor RecapService {
             debugLog("[RecapService] документ пишет свод модели")
         }
         guard !decision.recap.isEmpty else { throw RecapError.emptyResponse }
-        return (decision.recap, window, digest?.stats, decision.author)
+        return (decision.recap, window, digest?.stats, decision.author, decision.cause)
     }
 
     /// Второй проход: та же модель правит форму по адресам от `RecapLint`.
