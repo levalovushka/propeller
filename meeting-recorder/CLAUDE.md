@@ -135,6 +135,23 @@ status: [`../STATE.md`](../STATE.md) §13.
 # fetched over the network). By far the largest thing the app puts on a person's disk.
 ```
 
+**Nothing the app writes here is allowed to outlive the version that wrote it.** Both
+sidecars replace their payload in place, and both used to only ever add: the engine
+unpacks over itself and half its file names carry a version, the ASR weights were copied
+only when missing. So a raised `releaseTag` or a new weight set left the previous one on
+disk forever — and, worse, *did not arrive*: a set with the same names and different bytes
+was invisible to a presence check. Both now ask about identity, not existence
+(`ASRModelSweep.outdatedPaths` by size, `installedVersion` for the engine) and delete what
+the current version does not ship. What they must never delete is written where they decide
+it — `PropellerPure/EngineHousekeeping.swift`, `PropellerPure/ASRModelSweep.swift` — with
+the empty-input case as a named test: **not knowing what the new version ships means
+deleting nothing, never deleting everything.**
+
+**The engine's version has two doors, and both have to ask.** `ensureReady` runs at
+provisioning; `ensureServerRunning` runs before *every* recap. The second one asked only
+whether the binary existed, so a version bump could sit unapplied indefinitely — the check
+lived at the other door. Adding a third entry point means asking there too.
+
 ## Pipeline state — invariants
 
 The pipeline was rebuilt around one state model; the reasoning and every defect it
