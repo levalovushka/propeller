@@ -186,9 +186,12 @@ ephemeral, and there is exactly one of it because there is one worker.
   ended is the one someone is waiting to read; the backlog is catch-up. Prioritising transcripts over
   summaries looks equivalent and is not — it drops the fresh meeting to the back of the queue right
   after `.saved`.
-- **Catch-up is silent.** Notifications and window activation are for meetings recorded this session
-  (`isAwaited`); a launch that owes twenty summaries must not post twenty notifications, steal focus
-  twenty times, or open a modal. A modal is worse than noise — awaiting one suspends the worker.
+- **Catch-up is silent.** Notifications are for meetings recorded this session (`isAwaited`); a
+  launch that owes twenty summaries must not post twenty notifications or open a modal. A modal is
+  worse than noise — awaiting one suspends the worker. **Nothing brings the window forward, ever**
+  (`design/notifications.md` R8): the last surface that did — auto-record with notifications denied —
+  was removed 2026-08-21 after telemetry showed it firing 122 times for 8 people in 45 days, mid-call.
+  `PushPolicy.Surface` has no window case to reach for.
 - Do not add `@Published` flags to `AppState` for pipeline state. Seven of them were removed; the
   point was to stop having a second source of truth.
 - **Changing what a function *means* means reading every caller first** (`grep` the name). Cheap
