@@ -140,13 +140,43 @@ final class PushPolicyTests: XCTestCase {
         )
     }
 
-    func testБезРазрешенияНаУведомленияАлармИдётВОкно() {
-        // «Не записывать» живёт в уведомлении: без уведомлений отказаться негде.
+    func testБезРазрешенияНаУведомленияПриложениеМолчит() {
+        // «Не записывать» живёт в уведомлении: без уведомлений отказаться негде,
+        // и приложение молчит. Вместо этого здесь выводилось окно на себя —
+        // посреди звонка, из которого запись и началась.
         let denied = context(authorized: false)
-        XCTAssertEqual(PushPolicy.surface(for: .recordingStarted, in: denied), .window)
-        XCTAssertEqual(PushPolicy.surface(for: .micDenied, in: denied), .window)
-        // А хорошие новости в этом случае просто молчат.
+        XCTAssertEqual(PushPolicy.surface(for: .recordingStarted, in: denied), .none)
+        XCTAssertEqual(PushPolicy.surface(for: .micDenied, in: denied), .none)
+        // Хорошие новости в этом случае тоже молчат.
         XCTAssertEqual(PushPolicy.surface(for: .meetingReady, in: denied), .none)
+    }
+
+    func testНиОдинПоводНеВыводитОкноНаСебя() {
+        // Кража фокуса снята целиком (R8). Проверяются все поводы на всех
+        // комбинациях контекста, а не только тот, из-за которого правило
+        // появилось: поверхностей всего три, и четвёртой быть не должно.
+        let allowed: [PushPolicy.Surface] = [.none, .banner, .bannerWithSound]
+        for kind in PushPolicy.Kind.allCases {
+            for authorized in [true, false] {
+                for isRecording in [true, false] {
+                    for windowVisible in [true, false] {
+                        let surface = PushPolicy.surface(
+                            for: kind,
+                            in: context(
+                                isRecording: isRecording,
+                                windowVisible: windowVisible,
+                                appActive: windowVisible,
+                                authorized: authorized
+                            )
+                        )
+                        XCTAssertTrue(
+                            allowed.contains(surface),
+                            "\(kind): поверхность \(surface) забирает экран у того, что человек делает"
+                        )
+                    }
+                }
+            }
+        }
     }
 
     func testПоводовВсегоЧетыреИНиОдинИзНихНеПроСостояниеАрхива() {

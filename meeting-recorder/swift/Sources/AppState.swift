@@ -534,24 +534,10 @@ class AppState: ObservableObject {
             NotificationManager.shared.post(title: title, body: body, sound: false)
         case .bannerWithSound:
             NotificationManager.shared.post(title: title, body: body, sound: true)
-        case .window:
-            // No notification channel left, and the state that would have said
-            // this lives in the window: bring the window (R8's one exception).
-            surfaceMeetingUI(preferSummaryTab: false)
-            bringWindowForward()
         }
         // Both halves are measured: a rule nobody counts is a rule nobody keeps
         // (design/notifications.md §7).
         Analytics.noticeShown(kind: kind.rawValue, surface: surface.signalName)
-    }
-
-    /// Put the main window in front. Only for a level-3 notice with nowhere else
-    /// to go — never for good news, and never during a recording.
-    private func bringWindowForward() {
-        NSApp.activate(ignoringOtherApps: true)
-        for window in NSApp.windows where window.frame.width > 400 {
-            window.makeKeyAndOrderFront(nil)
-        }
     }
 
     // MARK: - Disk Space Pre-flight
@@ -739,20 +725,19 @@ class AppState: ObservableObject {
             // while recording — the recording is a second old, and an alarm
             // nobody hears is not an alarm.
             //
-            // If notifications are denied, surface the window so Discard is
-            // reachable (BUG-REC-05): the decline lives in the notification, so
-            // without one there is no channel left.
+            // Notifications denied means there is no channel, and that is the
+            // end of it: the recording runs silently. Bringing the window
+            // forward instead (BUG-REC-05's old answer) stole the front from the
+            // call the recording belongs to — see `PushPolicy.recordingStarted`
+            // for the measurement that closed it. Stop lives in the menu bar.
             if autoStartedFromMeeting {
                 NotificationManager.shared.notifyRecordingStarted { [weak self] authorized in
                     Task { @MainActor in
                         guard let self, self.isRecording else { return }
                         Analytics.noticeShown(
                             kind: PushPolicy.Kind.recordingStarted.rawValue,
-                            surface: authorized ? "sound" : "window"
+                            surface: authorized ? "sound" : "silent"
                         )
-                        guard !authorized else { return }
-                        self.surfaceMeetingUI(preferSummaryTab: false)
-                        self.bringWindowForward()
                     }
                 }
             }
