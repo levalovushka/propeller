@@ -3,9 +3,9 @@ import SwiftUI
 import AppKit
 import PropellerUI
 
-/// Scratch tool, same idea as `TempRailShotTests`: renders the settings kit to a
+/// A tool, not a test — same idea as `RailShotTests`: renders the settings kit to a
 /// PNG so it can be looked at. Skipped unless `SETTINGS_SHOT` names a path.
-final class TempSettingsShotTests: XCTestCase {
+final class SettingsShotTests: XCTestCase {
 
     @MainActor
     func testShoot() throws {

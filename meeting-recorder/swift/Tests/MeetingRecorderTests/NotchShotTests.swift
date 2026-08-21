@@ -4,10 +4,10 @@ import AppKit
 import PropellerUI
 import PropellerPure
 
-/// Scratch tool, same idea as `TempSettingsShotTests`: renders the notch surface
+/// A tool, not a test — same idea as `SettingsShotTests`: renders the notch surface
 /// onto a fake desktop so the silhouette can be looked at without starting a
 /// real recording. Skipped unless `NOTCH_SHOT` names a path.
-final class TempNotchShotTests: XCTestCase {
+final class NotchShotTests: XCTestCase {
 
     @MainActor
     func testShoot() throws {

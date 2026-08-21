@@ -7,8 +7,8 @@ import PropellerUI
 /// Scratch tool: renders the ⌥Tab panel in three situations so they can be
 /// compared with the comps. Skipped unless `SWITCHER_SHOT` names an output path:
 ///
-///     SWITCHER_SHOT=/tmp/switcher.png swift test --filter TempSwitcherShot
-final class TempSwitcherShotTests: XCTestCase {
+///     SWITCHER_SHOT=/tmp/switcher.png swift test --filter SwitcherShot
+final class SwitcherShotTests: XCTestCase {
 
     @MainActor
     func testShoot() throws {

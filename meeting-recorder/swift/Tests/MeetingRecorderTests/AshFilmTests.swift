@@ -12,10 +12,10 @@ import PropellerUI
 /// Skipped unless `ASH_FILM` names which row to burn (`first` / `middle`):
 ///
 ///     screencapture -x -V 5 /tmp/film.mov &
-///     ASH_FILM=first swift test --filter TempAshFilm
+///     ASH_FILM=first swift test --filter AshFilm
 ///
 /// It prints the window's frame, which is what the measuring pass needs.
-final class TempAshFilmTests: XCTestCase {
+final class AshFilmTests: XCTestCase {
 
     @MainActor
     final class Burn: ObservableObject {

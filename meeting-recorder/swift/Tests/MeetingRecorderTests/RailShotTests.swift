@@ -15,12 +15,12 @@ private func XCTSkipIfNil(_ value: String?) throws -> String {
 /// Not an assertion about anything — it is skipped unless `RAIL_SHOT` names an
 /// output path:
 ///
-///     RAIL_SHOT=/tmp/rail.png swift test --filter TempRailShot
+///     RAIL_SHOT=/tmp/rail.png swift test --filter RailShot
 ///
 /// It used to run on every `swift test` and take the whole suite down with it:
 /// `NSApp` is nil in the xctest process, and the line that set its appearance
 /// force-unwrapped it. Everything after this suite — seventeen cases — never ran.
-final class TempRailShotTests: XCTestCase {
+final class RailShotTests: XCTestCase {
 
     @MainActor
     func testShoot() throws {
