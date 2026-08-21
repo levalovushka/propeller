@@ -25,6 +25,43 @@ public enum ASRModelSweep {
     /// открывает (`GigasttSidecar.ensureEncoderPresenceMarker`). Ноль байт, наш файл.
     public static let presenceMarker = "v3_e2e_rnnt_encoder.onnx"
 
+    /// Файл из бандла: имя и размер. Размер — потому что имя не отвечает на вопрос
+    /// «те ли это байты»: набор может поехать, не поменяв ни одного имени.
+    public struct BundledFile: Equatable, Sendable {
+        public var name: String
+        public var size: Int64
+
+        public init(name: String, size: Int64) {
+            self.name = name
+            self.size = size
+        }
+    }
+
+    /// Какие файлы надо положить из бандла: которых нет или которые другого размера.
+    ///
+    /// **Почему размер, а не только имя.** Копирование пропускало всё, что уже на
+    /// месте, а имена у набора стабильные — `v3_e2e_rnnt_encoder_int8.onnx` тот же
+    /// в каждой сборке. Значит сборка, которая поменяла **байты** весов, не меняя
+    /// имён, не доехала бы ни до одной существующей установки: файл на месте,
+    /// вопросов нет, у человека навсегда остаются прошлые веса. Так же выглядел бы
+    /// и обрыв первого копирования — половина файла на диске и никто её не переложит.
+    ///
+    /// Размер, а не хеш, потому что это 225 МБ на каждом запуске против пяти
+    /// обращений к метаданным. Разные веса одного размера до байта — случай, за
+    /// который здесь не платят; за ним стоит менять имя.
+    ///
+    /// Пустой бандл, как и в `stalePaths`, означает «ничего не делать».
+    public static func outdatedPaths(
+        bundled: [BundledFile],
+        installed: [String: Int64]
+    ) -> [String] {
+        guard !bundled.isEmpty else { return [] }
+        return bundled.filter { file in
+            guard let have = installed[file.name] else { return true }
+            return have != file.size
+        }.map(\.name).sorted()
+    }
+
     /// Веса, оставшиеся от предыдущего набора.
     ///
     /// - Parameters:

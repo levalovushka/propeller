@@ -233,9 +233,10 @@ final class GigasttSidecar: @unchecked Sendable {
         let modelDir = resolveModelDir()
         try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
 
-        if !modelsPresent(at: modelDir) {
-            seedModelsFromBundle(into: modelDir, statusCallback: statusCallback)
-        }
+        // Unconditional, not gated on `modelsPresent`: the gate asked whether three
+        // names exist, so it could only ever catch a missing file, never a changed
+        // one. Costs five metadata reads when everything already matches.
+        syncModelsFromBundle(into: modelDir, statusCallback: statusCallback)
 
         if !modelsPresent(at: modelDir) {
             statusCallback?("Загрузка GigaAM…")
@@ -748,8 +749,20 @@ final class GigasttSidecar: @unchecked Sendable {
     ///
     /// Copied rather than used in place: gigastt writes `coreml_cache/` and lock
     /// files next to the models, and Contents/Resources is code-signed — writing
-    /// there would break the signature.
-    private func seedModelsFromBundle(into modelDir: URL, statusCallback: ((String) -> Void)?) {
+    /// there would break the signature. On APFS the copy is a clone, so it shares
+    /// blocks with the bundle and costs no disk (measured: 200 MB → ~0 bytes of free
+    /// space).
+    ///
+    /// **The question is "are these the same bytes", not "is a file there".** Names
+    /// in this set are stable across releases, so the old "copy what is missing"
+    /// version meant a build that changed the *weights* without changing a *name*
+    /// reached nobody who already had them — and an interrupted first copy left half
+    /// a file that nothing would ever replace. Both are decided by size now
+    /// (`ASRModelSweep.outdatedPaths`); five metadata reads, not 225 MB of hashing.
+    ///
+    /// Safe to run on every ensure, and it is: the call site sits after the point
+    /// where a live server has been stopped, so nothing holds these files open.
+    private func syncModelsFromBundle(into modelDir: URL, statusCallback: ((String) -> Void)?) {
         guard let bundled = Bundle.main.url(forResource: "gigastt-models", withExtension: nil) else {
             return
         }
@@ -757,18 +770,47 @@ final class GigasttSidecar: @unchecked Sendable {
         guard let files = try? fm.contentsOfDirectory(at: bundled, includingPropertiesForKeys: nil),
               !files.isEmpty else { return }
 
-        statusCallback?("Готовим модель распознавания…")
-        for src in files {
-            let dst = modelDir.appendingPathComponent(src.lastPathComponent)
-            guard !fm.fileExists(atPath: dst.path) else { continue }
+        let bundledFiles = files.map { src in
+            ASRModelSweep.BundledFile(
+                name: src.lastPathComponent,
+                size: (try? fm.attributesOfItem(atPath: src.path)[.size]) as? Int64 ?? -1
+            )
+        }
+        let installed = (try? fm.contentsOfDirectory(atPath: modelDir.path))?
+            .reduce(into: [String: Int64]()) { acc, name in
+                let path = modelDir.appendingPathComponent(name).path
+                acc[name] = (try? fm.attributesOfItem(atPath: path)[.size]) as? Int64 ?? -1
+            } ?? [:]
+
+        let outdated = ASRModelSweep.outdatedPaths(bundled: bundledFiles, installed: installed)
+        if !outdated.isEmpty {
+            statusCallback?("Готовим модель распознавания…")
+        }
+        for name in outdated {
+            let src = bundled.appendingPathComponent(name)
+            let dst = modelDir.appendingPathComponent(name)
+            // Через временное имя и `replaceItemAt`: файл на 225 МБ, и обрыв на
+            // середине не должен оставлять человека ни с половиной нового файла, ни
+            // без старого. Не сложилось — на месте остаётся то, что работало.
+            let tmp = modelDir.appendingPathComponent("\(name).incoming")
             do {
-                try fm.copyItem(at: src, to: dst)
+                try? fm.removeItem(at: tmp)
+                try fm.copyItem(at: src, to: tmp)
+                if fm.fileExists(atPath: dst.path) {
+                    _ = try fm.replaceItemAt(dst, withItemAt: tmp)
+                } else {
+                    try fm.moveItem(at: tmp, to: dst)
+                }
             } catch {
-                NSLog("[GigasttSidecar] seeding \(src.lastPathComponent) failed: \(error.localizedDescription)")
+                try? fm.removeItem(at: tmp)
+                NSLog("[GigasttSidecar] seeding \(name) failed: \(error.localizedDescription)")
             }
         }
-        sweepPreviousWeights(in: modelDir, bundled: Set(files.map(\.lastPathComponent)))
-        NSLog("[GigasttSidecar] seeded ASR models from app bundle")
+        sweepPreviousWeights(in: modelDir, bundled: Set(bundledFiles.map(\.name)))
+        if !outdated.isEmpty {
+            NSLog("[GigasttSidecar] seeded \(outdated.count) ASR weight file(s) from the app bundle: "
+                  + outdated.joined(separator: ", "))
+        }
     }
 
     /// Delete weights from a set we no longer ship.
