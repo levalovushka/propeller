@@ -64,7 +64,7 @@
         0.009032587676041098,
         0.010452621037390678
       ],
-      "tolerance" : "+20%"
+      "tolerance" : "+0.004"
     },
     "live.attribution_accuracy" : {
       "direction" : "higher",

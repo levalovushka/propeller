@@ -79,8 +79,14 @@ func runLive(_ args: [String]) async throws {
         metrics.live_sidecar_peak_rss_mb = sampleStat(
             outcomes.map(\.sidecarPeakRSSMB), tolerance: "+50%", direction: .lower
         )
+        // Абсолютный, а не процентный, и это замер, а не вкус: один и тот же код
+        // живого слоя дал 0,00740 (11 авг) и 0,01025 (20 авг) — 39 % при допуске
+        // +20 %, то есть красное здесь не значило ничего. Проценты не работают на
+        // околонулевом числе: всё приложение целиком стоит около одного процента
+        // ядра. +0,004 ядра — шаг, который заметен: это половина нынешнего
+        // расхода, и настоящий регресс через него не пролезет.
         metrics.live_app_cpu_cores = sampleStat(
-            outcomes.map(\.appCPUCores), tolerance: "+20%", direction: .lower
+            outcomes.map(\.appCPUCores), tolerance: "+0.004", direction: .lower
         )
         // Not a cost and not a quality — the receipt. A change that claims a
         // saving has to show here how much audio it stopped sending.
