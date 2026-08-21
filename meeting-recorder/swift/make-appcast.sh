@@ -209,20 +209,46 @@ fi
 cp "$ARCHIVES/appcast.xml" "$DIST/appcast.xml"
 for delta in ${DELTAS[@]+"${DELTAS[@]}"}; do cp "$delta" "$DIST/"; done
 
+# The stable alias is package-dmg.sh's, not ours, but it ships in the same release and the
+# site's download button is the thing that breaks when it is missing — so it is checked here,
+# where the upload list is printed, rather than discovered by a failing `gh release upload`.
+STABLE="$DIST/Propeller.dmg"
+UPLOAD=("$DMG" "$DIST/appcast.xml")
+if [ -f "$STABLE" ]; then
+    UPLOAD+=("$STABLE")
+else
+    echo ""
+    echo "WARNING: $STABLE is missing — run ./package-dmg.sh, which hard-links it next to the"
+    echo "         versioned image. The site's Download button points at that name; a release"
+    echo "         without it leaves the landing page serving the previous version."
+fi
+for delta in ${DELTAS[@]+"${DELTAS[@]}"}; do UPLOAD+=("$DIST/$(basename "$delta")"); done
+
 echo ""
 echo "=== Appcast: $DIST/appcast.xml ==="
 echo "Upload every one of these to the v${VERSION} release, names unchanged:"
-echo "  $DMG"
-echo "  $DIST/appcast.xml"
-for delta in ${DELTAS[@]+"${DELTAS[@]}"}; do echo "  $DIST/$(basename "$delta")"; done
-echo "  $DIST/Propeller.dmg  (stable alias for the site's download button)"
+for f in "${UPLOAD[@]}"; do echo "  $f"; done
 echo ""
 echo "  gh release upload v${VERSION} \\"
-echo "    \"$DMG\" \"$DIST/Propeller.dmg\" \"$DIST/appcast.xml\"$([ ${#DELTAS[@]} -gt 0 ] && printf ' \\\n    ' ; for d in ${DELTAS[@]+"${DELTAS[@]}"}; do printf '"%s" ' "$DIST/$(basename "$d")"; done)"
+printf '   '; for f in "${UPLOAD[@]}"; do printf ' "%s"' "$f"; done; echo ""
+echo ""
+echo "Then check the release is the one Sparkle will read — the feed lives at"
+echo "releases/latest/download/, so a draft or a pre-release leaves everybody on the old"
+echo "version while looking published:"
+echo ""
+echo "  curl -sL ${FEED_BASE}/appcast.xml | grep -E 'shortVersionString|deltaFrom'"
+for delta in ${DELTAS[@]+"${DELTAS[@]}"}; do
+    echo "  curl -s -o /dev/null -w '%{http_code} %{url_effective}\\n' -IL ${FEED_BASE}/$(basename "$delta")"
+done
 echo ""
 echo "Asset names must match the enclosure URLs in the feed exactly — Sparkle fetches them"
 echo "from ${FEED_BASE}/. A missing .delta is not fatal (clients fall back to the full image),"
 echo "a *renamed* one is: the download 404s and the update fails."
+if [ ! -f "$ARCHIVES/${DMG_NAME%.dmg}.md" ]; then
+    echo ""
+    echo "REMINDER: this feed carries no release notes — the update window will be an empty"
+    echo "          panel. Write $NOTES_SRC and run this script again."
+fi
 echo ""
 echo "Extraction cache: ~/Library/Caches/Sparkle_generate_appcast (~1 GB, generate_appcast's"
 echo "own, safe to delete; keeping it makes the next run faster)."
