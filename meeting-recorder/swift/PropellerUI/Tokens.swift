@@ -760,58 +760,6 @@ public enum Tokens {
     }
 
     
-    /// The bar that docks at the foot of the rail — Figma 53:2664.
-    ///
-    /// Its own group rather than a `Sidebar.*` prefix: a toast is an app-wide
-    /// idea that happens to be drawn here first. The older 280 pt card that the
-    /// four content-pane alerts used (`Tokens.Toast`, `PropellerToast`) is gone —
-    /// they all dock here now, one at a time, out of one queue.
-    public enum ToastBar {
-        /// Inset from the rail's edges — `left 12, bottom 16` in the comps.
-        public static let inset = Space.s12
-        public static let bottomInset = Space.s16
-        public static let radius = Radius.sm
-        /// `pl-12 pr-8` — the trailing side is tighter because a 32 pt
-        /// button already carries its own optical margin.
-        public static let leadingPadding = Space.s12
-        public static let trailingPadding = Space.s8
-        public static let vPadding = Space.s10
-        /// Text block's own inset inside the bar.
-        public static let textInset = Space.s8
-        public static let lineGap = Space.s2
-        public static let actionGap = Space.s4
-        public static let leadingSlot = Space.s16
-        /// Blur behind the bar, so the list reads through it as texture.
-        public static let backdropBlur: CGFloat = 16
-
-        public static let actionHeight = Space.s32
-        public static let actionHPadding = Space.s10
-        public static let actionRadius = Radius.xxs
-        public static let closeSide = Space.s32
-        public static let closeRadius = Radius.xs
-
-        public static let fill = Primitive.ink(dark: Primitive.AlphaWhite.a5,
-                                               light: Primitive.AlphaBlack.a5)
-        public static let border = Sidebar.border
-        public static let title = Sidebar.meetingTitle
-        public static let subtitle = Sidebar.meetingPreview
-        public static let actionFill = Primitive.ink(dark: Primitive.AlphaWhite.a7,
-                                                     light: Primitive.AlphaBlack.a7)
-        public static let actionHoverFill = Primitive.ink(dark: Primitive.AlphaWhite.a12,
-                                                          light: Primitive.AlphaBlack.a10)
-        public static let actionLabel = Sidebar.navLabelSelected
-        public static let closeIcon = Sidebar.chromeIcon
-
-        /// 14 / 18 regular — the message.
-        public static let titleType = Sidebar.Typo.meetingTitle
-        /// 12 / 16 regular — the supporting line, when there is one.
-        public static let subtitleType = Typography.Label.smRegular.lineHeight(16)
-        /// 12 / 16 medium — the action's label. The one place in the rail
-        /// that still uses medium: it is a button, and it has to out-weigh
-        /// the sentence it sits beside.
-        public static let actionType = Typography.Label.smRegular.lineHeight(16)
-    }
-
     /// The content pane beside the rail — Figma 31:4624.
     ///
     /// Two columns that both flex: the summary takes the room it can up to a
@@ -1175,11 +1123,6 @@ public enum Tokens {
                 weightTrim: Typography.railWeightTrim
             )
             public static let sectionTracking: CGFloat = -0.14
-            /// 14 / 18 regular — a note.
-            public static let note = Sidebar.Typo.meetingTitle
-            /// 11 / 14 regular — «Заметки» over the column. The rail's date
-            /// header, sideways: same face, same job, same quiet.
-            public static let notesHeader = Sidebar.Typo.sectionHeader
             /// 11 / 14 regular — the speaker and timecode over a remark.
             public static let transcriptMeta = Sidebar.Typo.meta
             /// Реплика — тем же кеглем, что и саммари.
@@ -1190,11 +1133,6 @@ public enum Tokens {
             /// разном кегле читается как перерисовка встречи, а не как её
             /// уточнение. Читаемость важнее компактности: это речь, а не список.
             public static let transcriptBody = body
-            /// 12 / 16 regular — «Добавьте заметку…».
-            public static let notePlaceholder = Typography.Style(
-                size: 12, lineHeight: 16, weight: .regular,
-                weightTrim: Typography.railWeightTrim
-            )
         }
     }
 
@@ -1661,14 +1599,10 @@ public enum Tokens {
             }
         }
 
-        /// Titles. Semibold. LH% 95→105 as size drops.
+        /// Titles. Semibold. One size — the only heading the app draws.
         public enum Heading {
             /// 36 / 34 (95%)
             public static let lg = Style(size: 36, lineHeight: 34, weight: .semibold)
-            /// 28 / 28 (~100%)
-            public static let md = Style(size: 28, lineHeight: 28, weight: .semibold)
-            /// 22 / 23 (105%)
-            public static let sm = Style(size: 22, lineHeight: 23, weight: .semibold)
         }
 
         /// UI copy — mostly single-line. One weight: regular.
