@@ -83,7 +83,18 @@ final class OllamaSidecar: @unchecked Sendable {
         // the middle of it — a lost minute of GPU and a retry, per meeting.
         cancelIdleStop()
         if await probeAPI() { return }
-        if !FileManager.default.isExecutableFile(atPath: binaryURL.path) {
+        // "A file exists" is not "the right version exists". This door asked only
+        // whether the binary was there, so a raised `releaseTag` never reached anyone
+        // through it — and it is the door the summary path uses (`RecapService`), which
+        // is the common one: `ensureReady` runs at provisioning, this runs at every
+        // recap. The same mistake `installedVersionURL` was introduced to fix
+        // (see its documentation), at a different entrance.
+        //
+        // Killing an adopted foreign engine is not a risk here: `probeAPI` above
+        // already returned for anything that answers on the port, so a version
+        // mismatch at this point can only be our own unpacked copy.
+        let fm = FileManager.default
+        if !fm.isExecutableFile(atPath: binaryURL.path) || installedVersion != Self.releaseTag {
             do {
                 try await ensureBinaryInstalled(statusCallback: nil, progress: nil)
             } catch {
