@@ -191,4 +191,66 @@ final class PipelineRetryTests: XCTestCase {
         XCTAssertEqual(decoded, original)
         XCTAssertEqual(decoded.nextAttemptAt, original.nextAttemptAt)
     }
+
+    // MARK: - Корзина причины
+
+    /// Строки взяты из кода, который их бросает, а не придуманы: если формулировку
+    /// в пайплайне поменяют, этот тест обязан покраснеть — иначе корзина молча
+    /// станет `other`, и телеметрия будет говорить «что-то случилось».
+    func testEachRealFailureMessageLandsInItsOwnBucket() {
+        let cases: [(String, String)] = [
+            ("gigastt недоступен — файл не найден", "engine_missing"),
+            ("Бинарник gigastt не найден в бандле приложения.", "engine_missing"),
+            ("gigastt недоступен — не удалось запустить движок речи.", "engine_down"),
+            ("gigastt недоступен", "engine_down"),
+            ("не удалось подключиться", "engine_down"),
+            ("gigastt не вернул сегменты (тишина или слишком короткий фрагмент?).", "no_speech"),
+            ("В записи не нашлось речи", "no_speech"),
+            ("не удалось разобрать ответ gigastt", "parse"),
+            ("Транскрипт не найден на диске", "transcript_missing"),
+            ("Не удалось прочитать транскрипт", "transcript_missing"),
+            ("Не удалось определить темы встречи", "topics"),
+            ("Фаза не продвинула стадию", "stalled"),
+            ("тело запроса слишком большое", "too_large"),
+            ("HTTP 413", "too_large"),
+            ("файл слишком маленький (128 байт)", "audio_small"),
+            ("Модель ушла в рассуждения", "thinking"),
+            ("Запрос не успело завершиться: таймаут", "timeout"),
+            ("HTTP 503", "server"),
+            ("The Internet connection appears to be offline.", "network"),
+            ("Недостаточно места на диске", "disk"),
+        ]
+        for (message, expected) in cases {
+            XCTAssertEqual(
+                PipelineRetry.cause(message), expected,
+                "«\(message)» ожидалось в корзине \(expected)"
+            )
+        }
+    }
+
+    /// Порядок таблицы — часть смысла, а не оформление. 413 это и код ответа
+    /// сервера, и наш просчёт чанкера; если `server` окажется выше, мы будем
+    /// чинить сеть вместо чанкера.
+    func testSpecificBucketsWinOverGeneralOnes() {
+        XCTAssertEqual(PipelineRetry.cause("HTTP 413 too large"), "too_large")
+        XCTAssertEqual(
+            PipelineRetry.cause("gigastt недоступен — файл не найден"), "engine_missing",
+            "«недоступен» здесь есть, но чинить надо установку"
+        )
+    }
+
+    /// Незнакомое не притворяется знакомым: `other` — честный ответ, и по его
+    /// доле в телеметрии видно, что таблица отстала от кода.
+    func testAnUnknownMessageIsOtherRatherThanAGuess() {
+        XCTAssertEqual(PipelineRetry.cause("Kernel panic in the espresso machine"), "other")
+        XCTAssertEqual(PipelineRetry.cause(""), "other")
+    }
+
+    /// Корзина и вина независимы: одна отвечает «что случилось», другая «ждать ли».
+    func testCauseDoesNotDecideWhetherToRetry() {
+        XCTAssertEqual(PipelineRetry.classify("HTTP 413"), .ourFault)
+        XCTAssertEqual(PipelineRetry.cause("HTTP 413"), "too_large")
+        XCTAssertEqual(PipelineRetry.classify("gigastt недоступен"), .transient)
+        XCTAssertEqual(PipelineRetry.cause("gigastt недоступен"), "engine_down")
+    }
 }

@@ -2576,7 +2576,11 @@ class AppState: ObservableObject {
     /// to mean «the user asked for this, so they get to see it fail»; a hand-made
     /// request that fails now waits on the same ladder as everything else.
     private func report(_ failure: PipelineFailure, for recordingID: String, force: Bool = false) {
-        Analytics.pipelineFailed(phase: failure.phase, kind: failure.kind.rawValue)
+        Analytics.pipelineFailed(
+            phase: failure.phase,
+            kind: failure.kind.rawValue,
+            cause: PipelineRetry.cause(failure.message)
+        )
         NSLog("[AppState] \(failure.phase) failed on \(recordingID) "
               + "(attempt \(failure.attempt), \(failure.kind.rawValue)): \(failure.message)")
         if failure.kind == .ourFault {

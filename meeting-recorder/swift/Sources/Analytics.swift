@@ -270,8 +270,13 @@ enum Analytics {
         signal("Invariant.broken", parameters: ["name": name])
     }
 
-    static func pipelineFailed(phase: String, kind: String) {
-        signal("Pipeline.failed", parameters: ["phase": phase, "kind": kind])
+    /// `cause` — грубая корзина природы отказа (`PipelineRetry.cause`), потому что
+    /// `kind` отвечает только «чья вина и ждать ли»: замер 2026-08-21 дал 37
+    /// отказов `transcribing`/`transient` у двух человек и ни одного способа
+    /// понять, один это дефект или три. Текст сообщения наружу не уходит — он
+    /// несёт имена файлов и содержание встречи (STATE §12).
+    static func pipelineFailed(phase: String, kind: String, cause: String) {
+        signal("Pipeline.failed", parameters: ["phase": phase, "kind": kind, "cause": cause])
     }
 
     /// `reason` различает первую выдачу модели и починку. Путь в коде один и
