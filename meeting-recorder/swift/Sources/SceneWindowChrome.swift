@@ -10,7 +10,8 @@ enum AppWindowRole: String {
 @MainActor
 enum AppWindowRegistry {
     /// First-open size: rail + a pane narrow enough that notes stay a button.
-    /// After that, the frame the user left is restored (`frameAutosaveName`).
+    /// After that, the frame the user left is restored — from the key
+    /// `WindowGroup` keeps (`swiftUIFrameKey`), see `applySavedFrame`.
     static let mainSize = CGSize(
         width: Tokens.Sidebar.width + Tokens.Window.defaultPaneWidth,
         height: 640
@@ -25,9 +26,15 @@ enum AppWindowRegistry {
         height: 480
     )
 
-    /// Our key in UserDefaults (`NSWindow Frame PropellerMain`). SwiftUI also
-    /// writes `main-AppWindow-1` for the same window — we read that as a
-    /// fallback so a resize the system already remembered is not thrown away.
+    /// Наш прежний ключ (`NSWindow Frame PropellerMain`) — **только на чтение**.
+    ///
+    /// Писать в него перестали 2026-08-21: замер показал, что на этой macOS запись
+    /// не доходит вовсе (двадцать пять вызовов за один драг — значение не
+    /// изменилось), потому что персистентностью окна владеет `WindowGroup`.
+    /// Наблюдатель, который писал сюда «на случай системы, где запись доходит»,
+    /// снят: непроверенный фолбэк хуже отсутствующего — отсутствующий не врёт.
+    /// Читать продолжаем: у кого-то под этим ключом лежит кадр от прежних сборок,
+    /// и выбросить его было бы потерей без выигрыша.
     static let frameAutosaveName = "PropellerMain"
 
     /// SwiftUI's WindowGroup id `"main"` persists under this name. Do not
@@ -82,32 +89,12 @@ enum AppWindowRegistry {
         window.contentView?.layoutSubtreeIfNeeded()
         window.displayIfNeeded()
         window.alphaValue = 1
-        rememberFrame(on: window)
         if !applySavedFrame(to: window), centered {
             debugLog("[frame] no saved frame taken — centring at \(mainSize)")
             placeCentered(window, contentSize: mainSize)
-            persistFrame(window, reason: "first open")
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-    }
-
-    /// Watch resize/move so a frame we can still read is written somewhere.
-    ///
-    /// **`setFrameAutosaveName` is deliberately not called any more.** Measured
-    /// 2026-08-21: it returns `true`, is invoked twice per open because something
-    /// resets the name, and every call re-reads the saved frame and applies it —
-    /// which is the snap-back the older comment here described. And it buys
-    /// nothing: with the name set, twenty-five `saveFrame(usingName:)` calls
-    /// across one drag left `NSWindow Frame PropellerMain` untouched while
-    /// SwiftUI's own key followed the drag to 1014 pt. The window's persistence
-    /// belongs to `WindowGroup`; we read it instead of competing with it.
-    ///
-    /// The watcher stays: one call on an event that already fires, and the only
-    /// thing that would keep our own key alive on a system where that write
-    /// works.
-    static func rememberFrame(on window: NSWindow) {
-        MainWindowFramePersistence.shared.watch(window)
     }
 
     static func placeCentered(_ window: NSWindow, contentSize: CGSize) {
@@ -125,23 +112,12 @@ enum AppWindowRegistry {
         window.setFrame(frame, display: true, animate: false)
     }
 
-    /// Writes our own key. **Measured 2026-08-21: on this macOS it has no
-    /// effect** — twenty-five calls across one drag left the key untouched,
-    /// because `WindowGroup` owns the window's persistence. Kept because it is
-    /// one call on an event that already fires and it is the fallback on a
-    /// system where the write does land; never relied upon.
-    static func persistFrame(_ window: NSWindow, reason: String = "?") {
-        _ = reason
-        window.saveFrame(usingName: frameAutosaveName)
-    }
-
     /// Open at the frame the system actually keeps.
     ///
     /// SwiftUI's key first, ours only as a legacy fallback — the reasoning and
-    /// the measurement behind it are in `WindowFrameProvenance`. Ours is still
-    /// written by the watcher on every resize, so an install where that write
-    /// works keeps a usable fallback; on this macOS it does not, and preferring
-    /// it is what threw away the size a person had just set.
+    /// the measurement behind it are in `WindowFrameProvenance`. Nothing writes
+    /// ours any more (2026-08-21); what is under it came from builds that tried,
+    /// and preferring it is what threw away the size a person had just set.
     private static func applySavedFrame(to window: NSWindow) -> Bool {
         let ownKey = "NSWindow Frame \(frameAutosaveName)"
         let maintained = UserDefaults.standard.string(forKey: swiftUIFrameKey)
@@ -152,40 +128,6 @@ enum AppWindowRegistry {
         window.setFrame(from: chosen)
         debugLog("[frame] applied, window is now \(window.frame.size)")
         return true
-    }
-}
-
-/// Writes `PropellerMain` on every user resize/move. `setFrameAutosaveName`
-/// alone was not enough: the window is often `orderOut`'d rather than closed,
-/// and AppKit then never flushes the frame.
-@MainActor
-private final class MainWindowFramePersistence {
-    static let shared = MainWindowFramePersistence()
-
-    private var watched: ObjectIdentifier?
-    private var observations: [NSObjectProtocol] = []
-
-    func watch(_ window: NSWindow) {
-        let id = ObjectIdentifier(window)
-        guard watched != id else { return }
-        observations.forEach { NotificationCenter.default.removeObserver($0) }
-        observations.removeAll()
-        watched = id
-
-        let center = NotificationCenter.default
-        for name in [NSWindow.didResizeNotification, NSWindow.didMoveNotification] {
-            observations.append(center.addObserver(
-                forName: name, object: window, queue: .main
-            ) { [weak self] note in
-                MainActor.assumeIsolated {
-                    guard let self,
-                          let noted = note.object as? NSWindow,
-                          ObjectIdentifier(noted) == self.watched
-                    else { return }
-                    AppWindowRegistry.persistFrame(noted, reason: "watcher/\(name.rawValue)")
-                }
-            })
-        }
     }
 }
 
@@ -222,7 +164,6 @@ struct SceneWindowChrome: NSViewRepresentable {
         if !window.styleMask.contains(.fullSizeContentView) {
             window.styleMask.insert(.fullSizeContentView)
         }
-        AppWindowRegistry.rememberFrame(on: window)
         positionTrafficLights(on: window)
         if startHidden, window.isVisible || window.alphaValue > 0 {
             window.alphaValue = 0
