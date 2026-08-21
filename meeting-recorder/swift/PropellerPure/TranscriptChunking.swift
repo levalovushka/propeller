@@ -26,8 +26,9 @@ public enum TranscriptChunking {
     /// `ollama ps`). Нарезанная встреча грузит машину меньше, чем целая.
     public static let charactersPerChunk = 13_000
 
-    /// Реплика начинается с `**Имя** · 12:34` — так пишет `MarkdownWriter`.
-    private static let turnPattern = "(?m)^(?=\\*\\*[^*]+\\*\\*\\s*·\\s*\\d)"
+    /// Реплика начинается с `**Имя** · 12:34` — форму держит writer,
+    /// `MeetingMarkdown.diskTurnLookahead`.
+    private static let turnPattern = MeetingMarkdown.diskTurnLookahead
 
     /// Нужно ли резать: тот же вопрос, что задаёт `OllamaContext`, но заданный
     /// до вызова, а не в логе после него.

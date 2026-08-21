@@ -67,11 +67,12 @@ public enum RecapDocument {
     /// the review of 2026-08-20: a meeting without clustering handed the prompt
     /// a participant called «Я», against which the model then checked names.
     public static func participants(fromTranscript transcript: String) -> [String] {
-        // Первая ветка — вид в памяти (`Timecode.transcriptHeadPattern`), вторая —
-        // вид на диске (`MeetingMarkdown.transcriptBody`, строка 129). Менять
-        // здесь можно только вместе с ними: тест кормит эту функцию выводом
-        // самого writer'а, чтобы формат не разошёлся молча.
-        let pattern = #"(?m)^(?:\[([^\]\n]{1,60})\] \[\d{1,3}:\d{2}(?::\d{2})?\]|\*\*([^*\n]{1,60})\*\*\s*·\s*\d{1,3}:\d{2}(?::\d{2})?)\s*$"#
+        // Первая ветка — вид в памяти, вторая — вид на диске, и вторую держит
+        // writer (`MeetingMarkdown.diskHeadBody`), а не своё выражение здесь:
+        // расхождение уже стоило инертного ростера. Тест кормит эту функцию
+        // выводом самого writer'а, чтобы формат не разошёлся молча.
+        let inMemory = #"\[([^\]\n]{1,60})\] \[\d{1,3}:\d{2}(?::\d{2})?\]"#
+        let pattern = "(?m)^(?:" + inMemory + "|" + MeetingMarkdown.diskHeadBody + #")\s*$"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
         let range = NSRange(transcript.startIndex..., in: transcript)
         var seen = Set<String>()

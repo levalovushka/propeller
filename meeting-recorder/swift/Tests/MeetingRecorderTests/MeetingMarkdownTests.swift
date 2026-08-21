@@ -100,6 +100,35 @@ final class MeetingMarkdownTests: XCTestCase {
         XCTAssertEqual(MeetingMarkdown.transcriptBody("\n\n\n"), "")
     }
 
+    // MARK: - The shape the readers rely on
+
+    /// Три читателя дискового вида берут форму у writer'а. Этот тест — единственное
+    /// место, где сходится «как пишем» с «как читаем»: расхождение между ними уже
+    /// один раз выдало промпту пустой ростер, и падать оно должно здесь, а не там.
+    func testWhatTheWriterEmitsIsWhatTheReadersMatch() throws {
+        let head = MeetingMarkdown.diskHead(speaker: "Левон", timecode: "1:30:20")
+        XCTAssertEqual(head, "**Левон** · 1:30:20")
+
+        let anchored = try NSRegularExpression(pattern: MeetingMarkdown.diskHeadPattern)
+        let whole = NSRange(head.startIndex..., in: head)
+        let match = anchored.firstMatch(in: head, range: whole)
+        XCTAssertNotNil(match, "голова, которую пишет writer, не читается его же выражением")
+        if let match, let name = Range(match.range(at: 1), in: head),
+           let stamp = Range(match.range(at: 2), in: head) {
+            XCTAssertEqual(String(head[name]), "Левон")
+            XCTAssertEqual(String(head[stamp]), "1:30:20")
+        }
+
+        // И то же самое как граница нарезки: две реплики — две границы.
+        let two = MeetingMarkdown.transcriptBody("[Левон] [00:03]\nРаз.\n\n[Мария] [00:09]\nДва.")
+        let lookahead = try NSRegularExpression(pattern: MeetingMarkdown.diskTurnLookahead)
+        let all = NSRange(two.startIndex..., in: two)
+        XCTAssertEqual(lookahead.numberOfMatches(in: two, range: all), 2)
+
+        // И ростер, собранный с того же вывода writer'а.
+        XCTAssertEqual(RecapDocument.participants(fromTranscript: two), ["Левон", "Мария"])
+    }
+
     // MARK: - Who spoke
 
     /// `Speaker N` is the diarizer admitting it has no name. Listing it under

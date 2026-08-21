@@ -105,6 +105,27 @@ public enum MeetingMarkdown {
         return lines.joined(separator: "\n")
     }
 
+    /// Реплика на диске: `**Иван** · 12:34`.
+    ///
+    /// Одно определение на writer'а и всех читателей дискового вида. Раньше их
+    /// было три отдельных выражения — здесь, в `TranscriptChunking` и в
+    /// `RecapDocument.participants`, — и расхождение уже стоило инертного ростера
+    /// в промпте (2026-08-20). Строится из `diskHeadBody`, чтобы форма имени и
+    /// таймкода жила в одном месте, а анкеры и просмотр вперёд — производные.
+    public static let diskHeadBody =
+        #"\*\*([^*\n]{1,60})\*\*\s*·\s*(\d{1,3}:\d{2}(?::\d{2})?)"#
+
+    /// Голова реплики целиком, от начала строки до конца.
+    public static let diskHeadPattern = "^" + diskHeadBody + #"\s*$"#
+
+    /// Та же голова как граница нарезки: где начинается следующая реплика.
+    public static let diskTurnLookahead = "(?m)^(?=" + diskHeadBody + ")"
+
+    /// Единственное место, где голова реплики собирается.
+    public static func diskHead(speaker: String, timecode: String) -> String {
+        "**\(speaker)** · \(timecode)"
+    }
+
     /// `[Кто] [12:34]\nтекст` blocks into something a person reads. A block whose
     /// head is not a stamp keeps its words as they are: an unrecognised line is
     /// somebody's content, not noise to drop.
@@ -126,7 +147,7 @@ public enum MeetingMarkdown {
                 let ts = String(first[tsR])
                 let text = lines.dropFirst().joined(separator: "\n")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                out.append("**\(speaker)** · \(ts)")
+                out.append(diskHead(speaker: speaker, timecode: ts))
                 if !text.isEmpty {
                     out.append(text)
                 }
