@@ -57,7 +57,15 @@ phase2/verify_smoke.json
 tools/gigastt/*.log
 
 # Batch bench — latest is machine-local; baseline + report are committed
-meeting-recorder/swift/benchmarks/latest.json
+# Bench: выход харнесса, а не репозитория. Каждый прогон перезаписывает эти
+# файлы, и в гите они дают шум в `git status` при нулевой пользе — базлайн
+# (точка отсчёта) и разборы прозой остаются. Новый разбор прозой придётся
+# внести сюда исключением, иначе он молча не попадёт в гит.
+meeting-recorder/swift/benchmarks/latest*.json
+meeting-recorder/swift/benchmarks/report*.md
+!meeting-recorder/swift/benchmarks/report-gate.md
+!meeting-recorder/swift/benchmarks/report-owner-loss.md
+!meeting-recorder/swift/benchmarks/report-pipeline-cpu.md
 meeting-recorder/tools/gigastt/bench-gigastt-serve.log
 
 # Собранные DMG и appcast — артефакты релиза, не исходники
