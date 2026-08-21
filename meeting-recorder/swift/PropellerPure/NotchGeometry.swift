@@ -69,10 +69,34 @@ public enum NotchGeometry {
     /// есть. Дальше по коду «а вдруг чёлки нет» уже не спрашивают — этот вопрос
     /// заканчивается здесь, одним `nil`.
     public struct Screen: Equatable {
+        /// Левый край экрана в общих координатах рабочего стола. У главного
+        /// экрана он ноль, у всякого другого — нет, и именно этого числа тут
+        /// однажды не было: чёлка вставала по нулю, то есть на главном экране,
+        /// а вырез был на встроенном.
+        public let left: CGFloat
         public let width: CGFloat
         public let top: CGFloat
+        /// Левый край самого выреза, тоже в общих координатах. Отсчитывать
+        /// фигуру от него, а не от середины экрана, — единственный способ
+        /// попасть в вырез: `NSScreen` отдаёт свободные углы разной ширины
+        /// (665 и 662 на 14″), и по центру экрана вырез не стоит.
+        public let notchLeft: CGFloat
         public let notchWidth: CGFloat
         public let notchHeight: CGFloat
+
+        /// Стоит ли фигура на этом экране, а не на соседнем.
+        ///
+        /// Проверка есть, потому что промах тут получается не «криво стоит», а
+        /// «нет вовсе»: рамку за краями всех экранов AppKit не подтягивает —
+        /// панель остаётся невидимой (замерено: `window.screen == nil`,
+        /// `occlusionState` без `.visible`), и человек видит отсутствие чёлки, а
+        /// не сдвинутую чёлку.
+        ///
+        /// Только вширь: высоты экрана модель не знает, а по вертикали фигура
+        /// прижата к `top` по построению.
+        public func contains(_ frame: Frame) -> Bool {
+            frame.originX >= left && frame.originX + frame.width <= left + width
+        }
     }
 
     /// Что нарисовано и где.
@@ -80,7 +104,9 @@ public enum NotchGeometry {
         /// Габарит панели целиком.
         public let width: CGFloat
         public let height: CGFloat
-        /// Левый нижний угол в координатах экрана (у macOS начало внизу).
+        /// Левый нижний угол в общих координатах рабочего стола — в них же
+        /// живёт рамка окна (у macOS начало внизу). На экране, который не
+        /// главный, это не то же, что координаты внутри экрана.
         public let originX: CGFloat
         public let originY: CGFloat
         /// Ширина самого выреза — середина фигуры.
@@ -118,7 +144,12 @@ public enum NotchGeometry {
     /// Оба признака обязательны. `safeAreaInsets.top` бывает ненулевым и без
     /// выреза, а разность свободных углов на экране без чёлки складывается в
     /// доли пикселя — по отдельности каждый из них однажды соврёт.
+    ///
+    /// `left` и `top` — края этого экрана в общих координатах рабочего стола, а
+    /// не в его собственных: панель ставится одной рамкой на весь рабочий стол,
+    /// и экран без них неотличим от главного.
     public static func screen(
+        left: CGFloat,
         width: CGFloat,
         top: CGFloat,
         safeAreaTop: CGFloat,
@@ -126,10 +157,12 @@ public enum NotchGeometry {
         auxiliaryRightWidth: CGFloat?
     ) -> Screen? {
         guard safeAreaTop > 0, width > 0 else { return nil }
-        guard let left = auxiliaryLeftWidth, let right = auxiliaryRightWidth else { return nil }
-        let cut = width - left - right
+        guard let leftCorner = auxiliaryLeftWidth, let right = auxiliaryRightWidth else { return nil }
+        let cut = width - leftCorner - right
         guard cut >= minimumNotchWidth, cut < width else { return nil }
-        return Screen(width: width, top: top, notchWidth: cut, notchHeight: safeAreaTop)
+        return Screen(left: left, width: width, top: top,
+                      notchLeft: left + leftCorner, notchWidth: cut,
+                      notchHeight: safeAreaTop)
     }
 
     /// Габарит и положение панели.
@@ -152,9 +185,12 @@ public enum NotchGeometry {
         return Frame(
             width: width,
             height: height,
-            // Вырез стоит по центру экрана, значит и фигура тоже: любое смещение
-            // здесь читается как незакреплённая накладка.
-            originX: (screen.width - width) / 2,
+            // Строго по вырезу: он и есть то, из чего фигура растёт. Считать
+            // от середины экрана нельзя дважды — на экране, который не главный,
+            // это уводит плиту на другой монитор целиком, а на самом ноутбуке
+            // даёт полтора пункта промаха, потому что свободные углы у выреза
+            // разной ширины.
+            originX: screen.notchLeft + (screen.notchWidth - width) / 2,
             originY: screen.top - height,
             notchWidth: screen.notchWidth,
             notchHeight: screen.notchHeight

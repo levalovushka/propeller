@@ -8,14 +8,16 @@ import PropellerPure
 /// становится видно только через сорок минут встречи.
 final class NotchGeometryTests: XCTestCase {
 
-    /// Как это приходит из `NSScreen`: ширина экрана, свободные углы и
-    /// `safeAreaInsets.top`. Ничего из этого мы не знаем заранее.
+    /// Как это приходит из `NSScreen`: края экрана, свободные углы и
+    /// `safeAreaInsets.top`. Ничего из этого мы не знаем заранее. `left` по
+    /// умолчанию нулевой — это экран, который сейчас главный.
     private func screen(
-        width: CGFloat, top: CGFloat, safeTop: CGFloat, aux: CGFloat?
+        left: CGFloat = 0, width: CGFloat, top: CGFloat, safeTop: CGFloat,
+        aux: CGFloat?, auxRight: CGFloat? = nil
     ) -> NotchGeometry.Screen? {
         NotchGeometry.screen(
-            width: width, top: top, safeAreaTop: safeTop,
-            auxiliaryLeftWidth: aux, auxiliaryRightWidth: aux
+            left: left, width: width, top: top, safeAreaTop: safeTop,
+            auxiliaryLeftWidth: aux, auxiliaryRightWidth: auxRight ?? aux
         )
     }
 
@@ -47,9 +49,72 @@ final class NotchGeometryTests: XCTestCase {
         XCTAssertEqual(f.contentInset * 2 + f.earWidth * 2 + f.notchWidth, f.width)
     }
 
-    func testФигураСтоитПоЦентруЭкранаТамЖеГдеВырез() {
-        let f = NotchGeometry.frame(on: mbp16, stage: .resting)
-        XCTAssertEqual(f.originX + f.width / 2, 1728 / 2, accuracy: 0.001)
+    func testФигураСтоитПоЦентруВырезаАНеЭкрана() {
+        // Не «по центру экрана»: `NSScreen` на 14″ отдаёт свободные углы 665 и
+        // 662 — вырез стоит на 1,5 pt правее середины, и фигура идёт за ним.
+        // Замерено на встроенном экране 1512×982.
+        let s = screen(width: 1512, top: 982, safeTop: 32, aux: 665, auxRight: 662)!
+        let f = NotchGeometry.frame(on: s, stage: .resting)
+        XCTAssertEqual(f.originX + f.width / 2, 665 + 185 / 2, accuracy: 0.001)
+        XCTAssertNotEqual(f.originX + f.width / 2, 1512 / 2)
+    }
+
+    // MARK: - Мультимонитор
+
+    /// Экран с вырезом лежит в нуле только пока он главный. Стоит сделать
+    /// главным внешний монитор — и у встроенного появляется свой левый край,
+    /// а рамка панели живёт в общих координатах рабочего стола, а не в
+    /// координатах экрана.
+    ///
+    /// Так это и выглядело у первого же человека с докой: чёлка выросла на
+    /// внешнем мониторе. Промах был ровно `-minX`.
+    private let arrangements: [(name: String, left: CGFloat, top: CGFloat)] = [
+        ("ноутбук главный", 0, 982),
+        ("внешний главный, ноутбук справа", 2560, 0),
+        ("внешний главный, ноутбук слева", -1512, 0),
+        ("внешний главный сверху, ноутбук снизу по центру", 524, 0),
+    ]
+
+    func testНаЛюбойРаскладкеЭкрановФигураПопадаетВСвойВырез() {
+        for a in arrangements {
+            let s = screen(left: a.left, width: 1512, top: a.top, safeTop: 32,
+                           aux: 665, auxRight: 662)!
+            for stage in [NotchGeometry.Stage.sealed, .resting, .composing] {
+                let f = NotchGeometry.frame(on: s, stage: stage)
+                XCTAssertEqual(f.originX + f.width / 2,
+                               a.left + 665 + 185 / 2, accuracy: 0.001,
+                               "\(a.name), \(stage): фигура не по вырезу")
+                XCTAssertEqual(f.originY + f.height, a.top, "\(a.name): не на кромке")
+            }
+        }
+    }
+
+    func testФигураНеВыходитЗаПределыЭкранаСВырезом() {
+        // Промах здесь означал не «криво стоит», а «нет вовсе»: рамку за краями
+        // всех экранов AppKit не подтягивает — панель остаётся невидимой, а
+        // ⌃⌥N при этом продолжает брать клавиатуру.
+        for a in arrangements {
+            let s = screen(left: a.left, width: 1512, top: a.top, safeTop: 32,
+                           aux: 665, auxRight: 662)!
+            for stage in [NotchGeometry.Stage.sealed, .resting, .composing] {
+                let f = NotchGeometry.frame(on: s, stage: stage)
+                XCTAssertTrue(s.contains(f),
+                              "\(a.name), \(stage): фигура на \(f.originX) — не на этом экране")
+            }
+        }
+    }
+
+    func testЛевыйКрайЭкранаНеМеняетНиРазмерНиВысоту() {
+        // Раскладка переставляет фигуру, но не пересчитывает её: тот же вырез —
+        // та же плита.
+        let home = NotchGeometry.frame(on: screen(width: 1512, top: 982, safeTop: 32,
+                                                 aux: 665, auxRight: 662)!, stage: .composing)
+        let docked = NotchGeometry.frame(on: screen(left: 2560, width: 1512, top: 0,
+                                                   safeTop: 32, aux: 665, auxRight: 662)!,
+                                        stage: .composing)
+        XCTAssertEqual(home.width, docked.width)
+        XCTAssertEqual(home.height, docked.height)
+        XCTAssertEqual(docked.originX - home.originX, 2560)
     }
 
     func testВерхФигурыСовпадаетСВерхомЭкрана() {
@@ -103,14 +168,14 @@ final class NotchGeometryTests: XCTestCase {
         // Подставлять полэкрана вместо них нельзя: получится вырез шириной ноль
         // на машине, где его нет.
         XCTAssertNil(NotchGeometry.screen(
-            width: 1920, top: 1080, safeAreaTop: 32,
+            left: 0, width: 1920, top: 1080, safeAreaTop: 32,
             auxiliaryLeftWidth: nil, auxiliaryRightWidth: nil
         ))
     }
 
     func testПогрешностьВПолпиксаНеСтановитсяВырезом() {
         XCTAssertNil(
-            NotchGeometry.screen(width: 1920, top: 1080, safeAreaTop: 24,
+            NotchGeometry.screen(left: 0, width: 1920, top: 1080, safeAreaTop: 24,
                                  auxiliaryLeftWidth: 960, auxiliaryRightWidth: 959.5),
             "экран без чёлки не должен отрастить вырез в полпикселя"
         )
