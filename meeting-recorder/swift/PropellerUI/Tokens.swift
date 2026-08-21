@@ -816,7 +816,7 @@ public enum Tokens {
         public static let transcriptMetaGap = Space.s8
         /// Fixed, so the timecodes form a column instead of drifting with names.
         ///
-        /// Sized for the widest form `formatTimestamp` emits below the ten-hour
+        /// Sized for the widest form `Timecode.text` emits below the ten-hour
         /// mark — `H:MM:SS`, e.g. `1:23:12` — not just `MM:SS`: at 40 pt a
         /// meeting past the one-hour mark wrapped its own timecode onto a
         /// second line next to the speaker name (measured on a live meeting,

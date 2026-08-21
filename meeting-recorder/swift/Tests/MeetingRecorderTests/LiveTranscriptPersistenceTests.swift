@@ -77,6 +77,6 @@ final class LiveTranscriptPersistenceTests: XCTestCase {
         let turns = TranscriptPresentation.turns(from: saved)
         XCTAssertEqual(turns.count, 2)
         XCTAssertEqual(turns[0].speaker, "Левон")
-        XCTAssertEqual(turns[1].timestamp, TranscriptPresentation.formatTimestamp(30))
+        XCTAssertEqual(turns[1].timestamp, "00:30")
     }
 }

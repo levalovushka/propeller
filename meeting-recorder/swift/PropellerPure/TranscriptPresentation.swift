@@ -132,10 +132,6 @@ public enum TranscriptPresentation {
 
     // MARK: - Timestamps
 
-    public static func formatTimestamp(_ seconds: Double) -> String {
-        Timecode.text(seconds)
-    }
-
     /// Nothing is not a time, and this caller would rather have a number than a
     /// decision: an unparseable head keeps its words at second zero.
     public static func parseTimestamp(_ text: String) -> Double {
@@ -161,7 +157,7 @@ public enum TranscriptPresentation {
             } else {
                 turns.append(
                     Turn(
-                        timestamp: formatTimestamp(phrase.startSeconds),
+                        timestamp: Timecode.text(phrase.startSeconds),
                         startSeconds: phrase.startSeconds,
                         endSeconds: phrase.endSeconds,
                         speaker: speaker,

@@ -916,7 +916,7 @@ struct MainView: View {
             let placed = MeetingNotes.placed(note)
             return TranscriptNote(
                 id: note.id,
-                time: placed.seconds.map(MeetingNotes.timecode) ?? "",
+                time: placed.seconds.map(Timecode.text) ?? "",
                 text: placed.text,
                 seconds: placed.seconds
             )

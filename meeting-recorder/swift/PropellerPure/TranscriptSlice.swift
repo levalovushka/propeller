@@ -134,10 +134,6 @@ public enum TranscriptSlice {
 
     // MARK: - В текст
 
-    public static func stamp(_ seconds: Double) -> String {
-        Timecode.text(seconds)
-    }
-
     /// Фрагменты словами. Пропуск между ними назван, а не проглочен: иначе две
     /// далёкие реплики читаются как один разговор.
     public static func render(_ slice: Slice) -> String {
@@ -145,7 +141,7 @@ public enum TranscriptSlice {
         for (index, fragment) in slice.fragments.enumerated() where !fragment.segments.isEmpty {
             if index > 0 { lines.append("…") }
             for segment in fragment.segments {
-                lines.append("[\(stamp(segment.startTime))] \(segment.speaker): \(segment.text)")
+                lines.append("[\(Timecode.text(segment.startTime))] \(segment.speaker): \(segment.text)")
             }
         }
         if slice.truncated { lines.append("… расшифровка показана не целиком") }

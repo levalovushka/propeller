@@ -85,8 +85,16 @@ final class TranscriptSliceTests: XCTestCase {
         XCTAssertTrue(TranscriptSlice.render(slice).hasPrefix("[04:50] Костя: "))
     }
 
+    /// Час в вырезке виден там, где его читают, — в самой строке.
     func testStampGrowsAnHourHandOnlyWhenThereIsOne() {
-        XCTAssertEqual(TranscriptSlice.stamp(65), "01:05")
-        XCTAssertEqual(TranscriptSlice.stamp(3725), "1:02:05")
+        let slice = TranscriptSlice.run(
+            segments: [.init(index: 0, startTime: 3725, endTime: 3728,
+                             text: "и через час", speaker: "Костя")],
+            request: .init(around: 3725)
+        )
+        XCTAssertTrue(
+            TranscriptSlice.render(slice).hasPrefix("[1:02:05] Костя: "),
+            TranscriptSlice.render(slice)
+        )
     }
 }

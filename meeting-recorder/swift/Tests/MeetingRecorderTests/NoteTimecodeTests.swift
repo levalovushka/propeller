@@ -17,12 +17,12 @@ final class NoteTimecodeTests: XCTestCase {
         XCTAssertEqual(MeetingNotes.blob(from: [note]), "[12:34] решили не тянуть")
     }
 
-    /// Час и больше — та же форма, что у таймера записи.
+    /// Час и больше — та же форма, что у таймера записи. Проверяется через то,
+    /// что уходит на диск: формой числа владеет `Timecode` и её тесты, а здесь
+    /// вопрос про заметку — дошла ли эта форма до файла.
     func testAnHourInIsWrittenTheWayTheTimerWritesIt() {
-        XCTAssertEqual(MeetingNotes.timecode(0), "00:00")
-        XCTAssertEqual(MeetingNotes.timecode(59), "00:59")
-        XCTAssertEqual(MeetingNotes.timecode(754), "12:34")
-        XCTAssertEqual(MeetingNotes.timecode(3723), "1:02:03")
+        let note = MeetingNoteRecord(id: "a", text: "и через час", offsetSeconds: 3723)
+        XCTAssertEqual(MeetingNotes.blob(from: [note]), "[1:02:03] и через час")
     }
 
     /// Заметка, написанная после встречи, никакой секунде не принадлежит — и

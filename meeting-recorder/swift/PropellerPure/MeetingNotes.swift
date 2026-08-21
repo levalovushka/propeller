@@ -78,13 +78,7 @@ public enum MeetingNotes {
     /// would give it two.
     public static func line(of note: MeetingNoteRecord) -> String {
         guard let offset = note.offsetSeconds, stamp(in: note.text) == nil else { return note.text }
-        return "[\(timecode(offset))] \(note.text)"
-    }
-
-    /// Elapsed time as the app has always written it: `12:34`, and `1:02:03`
-    /// once an hour is past.
-    public static func timecode(_ seconds: Double) -> String {
-        Timecode.text(seconds)
+        return "[\(Timecode.text(offset))] \(note.text)"
     }
 
     /// Where a note belongs on the timeline, and what it says once the stamp is

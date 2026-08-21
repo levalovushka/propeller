@@ -138,9 +138,9 @@ final class TranscriptPresentationTests: XCTestCase {
         XCTAssertEqual(Sut.speakers(in: turns), ["Б", "А"])
     }
 
-    func testTimestampRoundTrip() {
-        XCTAssertEqual(Sut.formatTimestamp(62), "01:02")
-        XCTAssertEqual(Sut.formatTimestamp(3723), "1:02:03")
+    /// Разбор — своё решение (`?? 0`), а не обёртка: у нечитаемой головы время
+    /// нулевое, но слова остаются. Обратную сторону держит `TimecodeTests`.
+    func testAnUnreadableHeadKeepsItsWordsAtSecondZero() {
         XCTAssertEqual(Sut.parseTimestamp("01:02"), 62)
         XCTAssertEqual(Sut.parseTimestamp("1:02:03"), 3723)
         XCTAssertEqual(Sut.parseTimestamp("мусор"), 0)

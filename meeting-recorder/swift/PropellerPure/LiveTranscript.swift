@@ -138,7 +138,7 @@ public struct LiveTranscript: Equatable, Sendable {
                         channel: segment.channel,
                         name: segment.name,
                         startSeconds: segment.start,
-                        timestamp: TranscriptPresentation.formatTimestamp(segment.start),
+                        timestamp: Timecode.text(segment.start),
                         text: segment.text
                     )
                 )
