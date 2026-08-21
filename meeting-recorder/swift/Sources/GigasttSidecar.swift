@@ -762,6 +762,14 @@ final class GigasttSidecar: @unchecked Sendable {
     ///
     /// Safe to run on every ensure, and it is: the call site sits after the point
     /// where a live server has been stopped, so nothing holds these files open.
+    ///
+    /// Which also means it runs on a **cold spawn only**. An `ensureReady` that finds
+    /// a healthy server with the right meeting vocabulary returns before reaching here,
+    /// so a truncated weight on disk goes unnoticed for as long as that process lives —
+    /// it loaded the file at startup and never reads it again (measured 2026-08-21: a
+    /// vocabulary cut to 88 bytes under a running server changed nothing about the
+    /// transcript). That is the right shape for the case this exists for: new weights
+    /// arrive with a new version of the app, and installing one restarts the process.
     private func syncModelsFromBundle(into modelDir: URL, statusCallback: ((String) -> Void)?) {
         guard let bundled = Bundle.main.url(forResource: "gigastt-models", withExtension: nil) else {
             return
