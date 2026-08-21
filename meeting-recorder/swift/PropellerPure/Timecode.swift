@@ -54,10 +54,21 @@ public enum Timecode {
         return total
     }
 
-    /// The head of a transcript block: `[Иван] [12:34]`, or `[Иван] [1:02:34]`.
+    /// Голова реплики в памяти: `[Иван] [12:34]` или `[Иван] [1:02:34]`.
     ///
     /// One definition, because two of them are how a format drifts: the writer
     /// and both readers were separately deciding whether a third component was
     /// allowed, and they did not agree.
-    public static let transcriptHeadPattern = #"^\[(.+?)\]\s*\[(\d+:\d+(?::\d+)?)\]$"#
+    ///
+    /// Имя — «всё до закрывающей скобки», без лимита длины (решение владельца
+    /// 2026-08-21). Лимит стоял в `RecapDocument` (`[^\]\n]{1,60}`) и не защищал
+    /// ни от чего: длиннее шестидесяти display name не бывает, а вот законную
+    /// скобку внутри имени («[Lead] Иван») строгая форма не матчила вовсе — и
+    /// человек молча выпадал из ростера в промпте. Нестрогая берёт его целиком и
+    /// через перевод строки не перелезает: `.` в `NSRegularExpression` по
+    /// умолчанию не матчит newline.
+    public static let transcriptHeadBody = #"\[(.+?)\]\s*\[(\d+:\d+(?::\d+)?)\]"#
+
+    /// Та же голова от начала строки до конца.
+    public static let transcriptHeadPattern = "^" + transcriptHeadBody + "$"
 }

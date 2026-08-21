@@ -71,16 +71,18 @@ public enum RecapDocument {
         // writer (`MeetingMarkdown.diskHeadBody`), а не своё выражение здесь:
         // расхождение уже стоило инертного ростера. Тест кормит эту функцию
         // выводом самого writer'а, чтобы формат не разошёлся молча.
-        let inMemory = #"\[([^\]\n]{1,60})\] \[\d{1,3}:\d{2}(?::\d{2})?\]"#
-        let pattern = "(?m)^(?:" + inMemory + "|" + MeetingMarkdown.diskHeadBody + #")\s*$"#
+        let pattern = "(?m)^(?:" + Timecode.transcriptHeadBody
+            + "|" + MeetingMarkdown.diskHeadBody + #")\s*$"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
         let range = NSRange(transcript.startIndex..., in: transcript)
         var seen = Set<String>()
         var out: [String] = []
         regex.enumerateMatches(in: transcript, range: range) { match, _, _ in
-            guard let match, match.numberOfRanges > 2 else { return }
+            // У каждой формы по две группы (имя, таймкод), поэтому имя — первая
+            // и третья: вторая и четвёртая это время, и его здесь никто не спрашивал.
+            guard let match, match.numberOfRanges > 3 else { return }
             let labelRange = Range(match.range(at: 1), in: transcript)
-                ?? Range(match.range(at: 2), in: transcript)
+                ?? Range(match.range(at: 3), in: transcript)
             guard let labelRange else { return }
             let label = transcript[labelRange].trimmingCharacters(in: .whitespaces)
             guard !SourceAwareSpeaker.isPlaceholder(label), !seen.contains(label) else { return }

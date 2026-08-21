@@ -179,6 +179,12 @@ public enum TranscriptPresentation {
 
     /// Current shape is `[Speaker] [MM:SS]\ntext`; the two older ones are still
     /// on disk in meetings recorded before it, so they have to keep parsing.
+    ///
+    /// Плюс дисковый вид (`**Кто** · 12:34`) — тот, которым лента лежит в файле
+    /// встречи. До 2026-08-21 его не знала ни одна ветка, и такой блок падал в
+    /// «нераспознанную строку»: слова оставались, подпись и время терялись. На
+    /// проде это не стреляло — единственный вызов кормит вид из индекса, — но
+    /// выстрелило бы у первого, кто скормит сюда файл.
     private static func parseRemarks(_ transcript: String) -> [Remark] {
         var remarks: [Remark] = []
         for block in transcript.components(separatedBy: "\n\n") {
@@ -188,6 +194,16 @@ public enum TranscriptPresentation {
             }
 
             if let match = capture(Timecode.transcriptHeadPattern, in: head) {
+                let text = lines.dropFirst().joined(separator: "\n")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { continue }
+                remarks.append(
+                    Remark(speaker: match[0], text: text, start: parseTimestamp(match[1]))
+                )
+                continue
+            }
+
+            if let match = capture(MeetingMarkdown.diskHeadPattern, in: head) {
                 let text = lines.dropFirst().joined(separator: "\n")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { continue }

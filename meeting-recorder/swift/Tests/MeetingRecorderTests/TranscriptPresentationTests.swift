@@ -138,6 +138,32 @@ final class TranscriptPresentationTests: XCTestCase {
         XCTAssertEqual(Sut.speakers(in: turns), ["Б", "А"])
     }
 
+    /// Лента с диска — та же лента. До 21 августа `**Кто** · 12:34` не матчила ни
+    /// одна ветка: блок падал в «нераспознанную строку», слова оставались, а
+    /// подпись и время исчезали. Показываем это на выводе самого writer'а, чтобы
+    /// тест не разошёлся с форматом файла.
+    func testALineFromTheFileKeepsItsSpeakerAndItsTime() {
+        let onDisk = MeetingMarkdown.transcriptBody(
+            "[Левон] [00:03]\nНачали.\n\n[Мария] [1:02:03]\nИ через час."
+        )
+        let turns = Sut.turns(parsing: onDisk, duration: 3800)
+        XCTAssertEqual(turns.map(\.speaker), ["Левон", "Мария"])
+        XCTAssertEqual(turns.map(\.startSeconds), [3, 3723])
+        XCTAssertEqual(turns.flatMap { $0.phrases.map(\.text) }, ["Начали.", "И через час."])
+    }
+
+    /// Скобка внутри имени — законный display name, и лимит длины на неё ронял
+    /// разбор целиком (решение 21 августа: лимит снят).
+    func testABracketInsideANameIsStillOneName() {
+        let turns = Sut.turns(parsing: "[[Lead] Иван] [00:07]\nЯ отвечаю за это.", duration: 30)
+        XCTAssertEqual(turns.map(\.speaker), ["[Lead] Иван"])
+        XCTAssertEqual(turns.map(\.startSeconds), [7])
+        XCTAssertEqual(
+            RecapDocument.participants(fromTranscript: "[[Lead] Иван] [00:07]\nЯ отвечаю."),
+            ["[Lead] Иван"]
+        )
+    }
+
     /// Разбор — своё решение (`?? 0`), а не обёртка: у нечитаемой головы время
     /// нулевое, но слова остаются. Обратную сторону держит `TimecodeTests`.
     func testAnUnreadableHeadKeepsItsWordsAtSecondZero() {
