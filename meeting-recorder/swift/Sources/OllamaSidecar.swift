@@ -275,10 +275,16 @@ final class OllamaSidecar: @unchecked Sendable {
         return OllamaRetry.isRetryable(message: error.localizedDescription)
     }
 
-    /// Models we shipped as a default in an earlier version and no longer use.
-    /// A 1.11 install pulled qwen2.5:7b (4.7 GB); after the 1.12 migration it is
-    /// dead weight next to the 3.4 GB replacement.
-    static let supersededModels = ["qwen2.5:7b"]
+    /// Every tag this app has ever pulled as its own default, oldest first.
+    ///
+    /// The history, not a list of exclusions. The previous shape — "models to delete" —
+    /// knew only `qwen2.5:7b` while the default had moved on to `qwen3.5:4b`, so the
+    /// next change of default would have left 3,2 GB on every disk with nothing to
+    /// notice it. Forgetting a line here is the harmless direction: a tag missing from
+    /// the history was never installed by us in the first place.
+    ///
+    /// **Append when `Preferences.defaultRecapModel` changes. Never remove a line.**
+    static let shippedDefaultModels = ["qwen2.5:7b", "qwen3.5:4b"]
 
     /// Delete superseded default models to get the disk back.
     ///
@@ -287,10 +293,14 @@ final class OllamaSidecar: @unchecked Sendable {
     /// 2026-07-27, made with the facts: the audience is managers who have no
     /// personal Ollama, and every qwen2.5:7b in the fleet was put there by
     /// Propeller 1.11. Scope stays narrow on purpose — only tags this app once
-    /// shipped as its default (`supersededModels`), never an arbitrary model
+    /// shipped as its default (`shippedDefaultModels`), never an arbitrary model
     /// someone pulled themselves.
     private func reclaimSupersededModels(keeping keep: String) async {
-        for stale in Self.supersededModels where stale != keep {
+        let superseded = EngineHousekeeping.supersededModels(
+            shippedDefaults: Self.shippedDefaultModels,
+            current: keep
+        )
+        for stale in superseded {
             guard await modelPresent(stale) else { continue }
             if await deleteModel(stale) {
                 NSLog("[OllamaSidecar] reclaimed disk from superseded model \(stale)")
@@ -397,10 +407,17 @@ final class OllamaSidecar: @unchecked Sendable {
 
         statusCallback?("Распаковываем движок саммари…")
         progress?(0.9)
+        // Snapshot *before* the archive lands on top of it: afterwards there is no way
+        // to tell a file the new engine brought from one the old engine left behind.
+        let before = (try? fm.contentsOfDirectory(atPath: installDir.path)) ?? []
         try extractTarball(tarball, into: installDir)
         if tarball.path != bundledTarballURL?.path {
             try? fm.removeItem(at: tarball)
         }
+        // Sweeping *after* the extraction, not before, is deliberate: there is never a
+        // moment where the engine is missing from disk, so a failed unpack leaves the
+        // old, working engine in place instead of nothing.
+        sweepPreviousEngine(replacing: before, using: tarball)
 
         if !fm.fileExists(atPath: binaryURL.path) {
             if let found = findOllamaBinary(under: installDir) {
@@ -481,6 +498,61 @@ final class OllamaSidecar: @unchecked Sendable {
         task.standardError = FileHandle.nullDevice
         try? task.run()
         task.waitUntilExit()
+    }
+
+    /// Delete what the previous engine version left in the install directory.
+    ///
+    /// Half the engine's file names carry a version — `libggml-base.0.17.0.dylib`,
+    /// `libllama.0.0.1.dylib` — so raising `releaseTag` does not overwrite them, it
+    /// orphans them. Measured on an installed 1.16.7: 13 of 26 entries are named that
+    /// way, and nothing has ever removed one.
+    ///
+    /// What may go is decided by `EngineHousekeeping`, in `PropellerPure`, where a test
+    /// can reach it — the decision is "delete these files off someone's disk", and the
+    /// dangerous answers (the 3,4 GB of weights, the log a person would send us) are
+    /// exactly the ones that would look fine here.
+    private func sweepPreviousEngine(replacing before: [String], using tarball: URL) {
+        guard !before.isEmpty else { return }
+        let shipped = tarballTopLevelEntries(tarball)
+        let stale = EngineHousekeeping.stalePaths(existing: before, shipped: shipped)
+        guard !stale.isEmpty else { return }
+
+        let fm = FileManager.default
+        var reclaimed: Int64 = 0
+        for name in stale {
+            let url = installDir.appendingPathComponent(name)
+            if let size = (try? fm.attributesOfItem(atPath: url.path)[.size]) as? Int64 {
+                reclaimed += size
+            }
+            try? fm.removeItem(at: url)
+        }
+        NSLog("[OllamaSidecar] removed \(stale.count) file(s) from the previous engine, "
+              + "\(reclaimed / 1_048_576) MB: \(stale.joined(separator: ", "))")
+    }
+
+    /// Top-level names the archive carries. Empty means "could not read it", and
+    /// `EngineHousekeeping` treats that as "delete nothing" — see its documentation.
+    private func tarballTopLevelEntries(_ tarball: URL) -> Set<String> {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        task.arguments = ["-tzf", tarball.path]
+        let out = Pipe()
+        task.standardOutput = out
+        task.standardError = FileHandle.nullDevice
+        do { try task.run() } catch { return [] }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        task.waitUntilExit()
+        guard task.terminationStatus == 0,
+              let text = String(data: data, encoding: .utf8) else { return [] }
+
+        var names = Set<String>()
+        for line in text.split(separator: "\n") {
+            var path = String(line)
+            if path.hasPrefix("./") { path.removeFirst(2) }
+            guard let first = path.split(separator: "/").first, !first.isEmpty else { continue }
+            names.insert(String(first))
+        }
+        return names
     }
 
     private func extractTarball(_ tarball: URL, into dir: URL) throws {

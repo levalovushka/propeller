@@ -767,7 +767,38 @@ final class GigasttSidecar: @unchecked Sendable {
                 NSLog("[GigasttSidecar] seeding \(src.lastPathComponent) failed: \(error.localizedDescription)")
             }
         }
+        sweepPreviousWeights(in: modelDir, bundled: Set(files.map(\.lastPathComponent)))
         NSLog("[GigasttSidecar] seeded ASR models from app bundle")
+    }
+
+    /// Delete weights from a set we no longer ship.
+    ///
+    /// Seeding only ever copies what is missing, so a build that renames the encoder
+    /// leaves the previous 225 MB file in Application Support with nobody left to look
+    /// for it. This runs right after seeding — before `spawnServer`, so nothing has the
+    /// files open — and only in that path: the set is known exactly then, because we
+    /// just read it out of the bundle.
+    ///
+    /// The decision is `ASRModelSweep`, in `PropellerPure` with tests. It removes only
+    /// `.onnx` weights absent from the bundle, and never the zero-byte FP32 marker;
+    /// `coreml_cache/` and gigastt's lock files belong to gigastt, which is the one
+    /// process that knows what in them is still valid.
+    private func sweepPreviousWeights(in modelDir: URL, bundled: Set<String>) {
+        let fm = FileManager.default
+        let existing = (try? fm.contentsOfDirectory(atPath: modelDir.path)) ?? []
+        let stale = ASRModelSweep.stalePaths(existing: existing, bundled: bundled)
+        guard !stale.isEmpty else { return }
+
+        var reclaimed: Int64 = 0
+        for name in stale {
+            let url = modelDir.appendingPathComponent(name)
+            if let size = (try? fm.attributesOfItem(atPath: url.path)[.size]) as? Int64 {
+                reclaimed += size
+            }
+            try? fm.removeItem(at: url)
+        }
+        NSLog("[GigasttSidecar] removed \(stale.count) weight file(s) from the previous model set, "
+              + "\(reclaimed / 1_048_576) MB: \(stale.joined(separator: ", "))")
     }
 
     /// Work around a gigastt 2.14 inconsistency between its own subcommands.
