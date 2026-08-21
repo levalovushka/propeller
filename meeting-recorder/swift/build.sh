@@ -321,8 +321,25 @@ ${ICON_PLIST_KEYS}
          GitHub feed. -->
     <key>SUScheduledCheckInterval</key>
     <integer>3600</integer>
-    <key>SUAutomaticallyDownloadsUpdates</key>
-    <false/>
+    <!-- The key is SUAutomaticallyUpdate, and it has to be spelled exactly that:
+         SUConstants.m:38 maps it, SPUUpdaterSettings.m:327 reads it, and nothing in
+         Sparkle ever looks up "SUAutomaticallyDownloadsUpdates" — which is what stood
+         here until 1.16.8 and therefore decided nothing at all.
+
+         True means Sparkle fetches the update in the background and installs it the
+         next time the app quits (SPUUpdaterDelegate.h:420 — "Sparkle will always
+         attempt to install the update when the app terminates"). Nothing is replaced
+         under a running app, so a meeting being recorded cannot be interrupted by it,
+         and nobody has to sit through a progress bar: the download is 1-2 MB now that
+         the feed carries delta patches. Someone whose version is older than the
+         patches in the feed still pulls the whole 282 MB image in the background — the
+         reason make-appcast.sh keeps five patches rather than one.
+
+         This is the initial value only. Sparkle persists a user's own choice in
+         defaults and reads that first; there is no switch for it in Settings, because
+         "how updates arrive" is not a decision we want to hand someone. -->
+    <key>SUAutomaticallyUpdate</key>
+    <true/>
 </dict>
 </plist>
 PLIST
