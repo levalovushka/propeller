@@ -2579,7 +2579,8 @@ class AppState: ObservableObject {
         Analytics.pipelineFailed(
             phase: failure.phase,
             kind: failure.kind.rawValue,
-            cause: PipelineRetry.cause(failure.message)
+            cause: PipelineRetry.cause(failure.message),
+            attempt: failure.attempt
         )
         NSLog("[AppState] \(failure.phase) failed on \(recordingID) "
               + "(attempt \(failure.attempt), \(failure.kind.rawValue)): \(failure.message)")
@@ -2593,7 +2594,10 @@ class AppState: ObservableObject {
     /// Clear the block so the worker can pick this recording up again. No-op when
     /// there is nothing to clear, so a successful phase doesn't rewrite the index.
     func clearFailure(_ recordingID: String) {
-        guard recordingStore.recording(for: recordingID)?.lastFailure != nil else { return }
+        guard let failure = recordingStore.recording(for: recordingID)?.lastFailure else { return }
+        // Исход, парный к `Pipeline.failed`: эта функция и есть единственное
+        // место, где известно, что отказ был и что он кончился.
+        Analytics.pipelineRecovered(phase: failure.phase)
         recordingStore.update(id: recordingID, lastFailure: .some(nil))
     }
 

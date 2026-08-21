@@ -275,8 +275,18 @@ enum Analytics {
     /// отказов `transcribing`/`transient` у двух человек и ни одного способа
     /// понять, один это дефект или три. Текст сообщения наружу не уходит — он
     /// несёт имена файлов и содержание встречи (STATE §12).
-    static func pipelineFailed(phase: String, kind: String, cause: String) {
+    /// Только **первый** отказ серии (`TelemetryNoise.reportsFailure`): ретраи
+    /// бесконечны, и сообщать каждую ступень значит делать самый безнадёжный
+    /// случай самым громким в статистике.
+    static func pipelineFailed(phase: String, kind: String, cause: String, attempt: Int) {
+        guard TelemetryNoise.reportsFailure(attempt: attempt) else { return }
         signal("Pipeline.failed", parameters: ["phase": phase, "kind": kind, "cause": cause])
+    }
+
+    /// Фаза прошла после отказа. Пара к `Pipeline.failed`: «застряло» — это
+    /// вычитание одного из другого, а не порог по числу попыток.
+    static func pipelineRecovered(phase: String) {
+        signal("Pipeline.recovered", parameters: ["phase": phase])
     }
 
     /// `reason` различает первую выдачу модели и починку. Путь в коде один и
@@ -289,11 +299,30 @@ enum Analytics {
     /// `health`, `pull`, `other`), потому что «не встал» без причины ничего не
     /// решает: у 18 человек из 41 движок не поднялся, и по одному `fail` было не
     /// понять, что чинить (STATE.md §12, первая продуктовая аналитика 2026-08-19).
+    /// Отказ сообщается один раз на процесс и заново при смене причины
+    /// (`TelemetryNoise.reportsSetupFailure`): `ensureSummaryModel` заходит на
+    /// каждом запуске и на каждой остановке пайплайна из-за провайдера, и до
+    /// 2026-08-21 каждый заход отчитывался отдельным отказом — 28 событий у
+    /// двенадцати человек, из которых одиннадцать саммари всё же получили.
+    /// Успех сообщается всегда: он и есть исход.
     static func ollamaSetup(ok: Bool, reason: String? = nil) {
+        if ok {
+            lastReportedSetupFailure = nil
+        } else {
+            let bucket = reason ?? "other"
+            guard TelemetryNoise.reportsSetupFailure(
+                reason: bucket, lastReported: lastReportedSetupFailure
+            ) else { return }
+            lastReportedSetupFailure = bucket
+        }
         var params = ["result": ok ? "ok" : "fail"]
         if let reason { params["reason"] = reason }
         signal("Ollama.setup", parameters: params)
     }
+
+    /// Причина последнего сообщённого отказа установки — на процесс, не на диск:
+    /// после перезапуска отказ стоит услышать заново, он мог стать другим.
+    private static var lastReportedSetupFailure: String?
 
     /// Диаризация отступила: на какой ступени и почему нет кластеризации.
     static func diarizeFallback(stage: String) {
