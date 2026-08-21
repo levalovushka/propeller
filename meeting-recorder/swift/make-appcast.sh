@@ -106,7 +106,35 @@ else
     echo "  WARNING: $NOTES_SRC not found — the update window will have no release notes."
 fi
 
-echo "=== Generating appcast + deltas ==="
+# A release that fixes something people are living with is marked critical, and that is what
+# makes our hourly feed check matter. Sparkle's two intervals do different jobs: the hour is
+# how often it asks the feed (`SUScheduledCheckInterval`), and a **week** is how long it then
+# sits on an already-downloaded update before offering it in the interface
+# (`SUScheduledImpatientCheckInterval`, default 604800 — SPUUpdaterSettings.m:427). Once a
+# patch is on disk, the next cycle is MAX(hour, week) for an ordinary release and
+# MIN(hour, week) for a critical one (SPUUpdater.m:527-535) — so "critical" is the difference
+# between somebody seeing the fix within the hour and seeing it in a week. That is exactly the
+# 1.13 story: the build broke every meeting over 25 minutes, the fix existed four hours later,
+# and the people carrying it had no way to learn that.
+#
+#   CRITICAL_FOR=all      — critical for everyone (no version attribute)
+#   CRITICAL_FOR=1.16.9   — critical only for hosts *below* 1.16.9; strictly ascending
+#                           comparison in SPUAppcastItemStateResolver.m:94, so name the first
+#                           version that already has the fix, not the broken one
+#   unset                 — an ordinary release (today's behaviour)
+#
+# It changes when the update is *offered*, never whether it installs: installation still
+# happens at the next quit either way.
+CRITICAL_ARGS=()
+case "${CRITICAL_FOR:-}" in
+    "")    CRITICAL_NOTE="ordinary release" ;;
+    all)   CRITICAL_ARGS=(--critical-update-version "")
+           CRITICAL_NOTE="CRITICAL for every earlier version" ;;
+    *)     CRITICAL_ARGS=(--critical-update-version "$CRITICAL_FOR")
+           CRITICAL_NOTE="CRITICAL for hosts below ${CRITICAL_FOR}" ;;
+esac
+
+echo "=== Generating appcast + deltas (${CRITICAL_NOTE}) ==="
 # --maximum-versions 1: the feed keeps only the current release. Older items would carry
 # enclosure URLs under releases/latest/download/, and those assets live in *their own* release,
 # so every historical item would be a dead link. Sparkle only ever needs the newest item, and
@@ -117,6 +145,7 @@ echo "=== Generating appcast + deltas ==="
     --maximum-versions 1 \
     --maximum-deltas "$MAX_DELTAS" \
     --embed-release-notes \
+    ${CRITICAL_ARGS[@]+"${CRITICAL_ARGS[@]}"} \
     "$ARCHIVES"
 
 DELTAS=()
@@ -225,7 +254,12 @@ fi
 for delta in ${DELTAS[@]+"${DELTAS[@]}"}; do UPLOAD+=("$DIST/$(basename "$delta")"); done
 
 echo ""
-echo "=== Appcast: $DIST/appcast.xml ==="
+echo "=== Appcast: $DIST/appcast.xml (${CRITICAL_NOTE}) ==="
+if [ -z "${CRITICAL_FOR:-}" ]; then
+    echo "An ordinary release waits for the next quit, and only offers itself in the interface"
+    echo "after a week of not being quit. A release that fixes something people are living with"
+    echo "should say so: CRITICAL_FOR=<first version with the fix> ./make-appcast.sh (or =all)."
+fi
 echo "Upload every one of these to the v${VERSION} release, names unchanged:"
 for f in "${UPLOAD[@]}"; do echo "  $f"; done
 echo ""
