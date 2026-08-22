@@ -54,11 +54,22 @@ final class OllamaSidecar: @unchecked Sendable {
             defer { lock.unlock() }
             if let existing = ensureTask { return (existing, false) }
             let created = Task<Void, Error> {
-                try await self.runEnsureReady(
-                    model: model,
-                    statusCallback: statusCallback,
-                    progress: progress
-                )
+                do {
+                    try await self.runEnsureReady(
+                        model: model,
+                        statusCallback: statusCallback,
+                        progress: progress
+                    )
+                } catch {
+                    // Cancellation is not a failure and leaves no trace; every
+                    // real failure lands in the flight recorder with its class
+                    // and full detail — locally, where privacy costs nothing.
+                    if !(error is CancellationError) {
+                        let reason = (error as? SidecarError)?.signalReason ?? "other"
+                        self.recordProvisioning("fail \(reason): \(error.localizedDescription)")
+                    }
+                    throw error
+                }
             }
             ensureTask = created
             return (created, true)
@@ -212,79 +223,32 @@ final class OllamaSidecar: @unchecked Sendable {
         }
 
         statusCallback?("Скачиваем модель саммари…")
-        try await pullModelWithRetry(
-            model,
-            statusCallback: statusCallback,
-            progress: { frac in progress?(0.25 + frac * 0.75) }
-        )
+        do {
+            try await pullModel(
+                model,
+                statusCallback: statusCallback,
+                progress: { frac in progress?(0.25 + frac * 0.75) }
+            )
+        } catch {
+            // A pull that actually landed the model counts as success even if
+            // the stream died on the last line — or if somebody else's pull
+            // (a hand-run curl, a system Ollama) delivered it meanwhile.
+            guard await modelPresent(model) else { throw error }
+        }
+        recordProvisioning("pull ok model=\(model)")
         statusCallback?("Модель готова")
         progress?(1.0)
         await reclaimSupersededModels(keeping: model)
     }
 
-    /// Backoff between pull attempts. Long tail on purpose: the download is
-    /// unattended, so waiting out a tunnel or a hotel Wi-Fi hiccup beats making
-    /// the user find Settings. ~17 minutes of wall clock across all attempts.
-    private static let pullRetryDelays: [UInt64] = [5, 15, 45, 120, 300, 600]
-
-    /// Retry a dropped model pull instead of dying on the first blip.
-    ///
-    /// Ollama stores blobs incrementally and skips what it already has, so a
-    /// retry resumes rather than restarting the 3.4 GB — which is what makes an
-    /// aggressive retry policy affordable here.
-    ///
-    /// Only transport failures are retried: a bad model name or an out-of-space
-    /// disk fails the same way forever, and hiding that behind 17 minutes of
-    /// silent retries would be worse than reporting it.
-    private func pullModelWithRetry(
-        _ model: String,
-        statusCallback: ((String) -> Void)?,
-        progress: ((Double) -> Void)?
-    ) async throws {
-        var attempt = 0
-        while true {
-            do {
-                try await pullModel(model, statusCallback: statusCallback, progress: progress)
-                return
-            } catch {
-                // A pull that actually landed the model counts as success even if
-                // the stream died on the last line.
-                if await modelPresent(model) { return }
-
-                guard Self.isRetryable(error), attempt < Self.pullRetryDelays.count else {
-                    throw error
-                }
-                let delay = Self.pullRetryDelays[attempt]
-                attempt += 1
-                NSLog("[OllamaSidecar] pull failed (\(error.localizedDescription)) — retry \(attempt) in \(delay)s")
-                statusCallback?("Связь прервалась. Продолжим через \(Self.humanDelay(delay))…")
-                try await Task.sleep(nanoseconds: delay * 1_000_000_000)
-                statusCallback?("Догружаем модель саммари…")
-            }
-        }
-    }
-
-    private static func humanDelay(_ seconds: UInt64) -> String {
-        seconds < 60 ? "\(seconds) с" : "\(seconds / 60) мин"
-    }
-
-    /// Transport-level failure worth another attempt, as opposed to a request
-    /// that will fail identically forever. Message classification lives in
-    /// `PropellerPure.OllamaRetry` so it can be tested without a network.
-    static func isRetryable(_ error: Error) -> Bool {
-        if error is CancellationError { return false }
-        if let urlError = error as? URLError {
-            switch urlError.code {
-            case .notConnectedToInternet, .networkConnectionLost, .timedOut,
-                 .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed,
-                 .resourceUnavailable, .secureConnectionFailed, .badServerResponse:
-                return true
-            default:
-                return false
-            }
-        }
-        return OllamaRetry.isRetryable(message: error.localizedDescription)
-    }
+    // There is deliberately no retry loop here any more. One attempt, a fast
+    // classified failure, and the ladder lives with the owner of the obligation
+    // (`AppState`, `ProvisioningLadder`) — one ladder per obligation, endless,
+    // reset by signals (`design/principles.md` §10). The finite ladder that used
+    // to sit here burned all six steps inside the one dead hour of network and
+    // left the app silent for exactly the hour in which it came back (2026-08-22).
+    // What keeps a single attempt affordable: Ollama stores blobs incrementally,
+    // so the next attempt resumes rather than restarting the 3.4 GB.
 
     /// Every tag this app has ever pulled as its own default, oldest first.
     ///
@@ -733,6 +697,39 @@ final class OllamaSidecar: @unchecked Sendable {
         return models.compactMap { $0["name"] as? String }
     }
 
+    /// The pull's liveness, shared between the stream reader and the watchdog.
+    /// «Progress» is bytes advancing or the pull entering a new phase — the two
+    /// facts §10 classifies failures by, so they are measured here and nowhere
+    /// else.
+    private final class PullProgressClock: @unchecked Sendable {
+        private let lock = NSLock()
+        private let started = Date()
+        private var lastProgressAt: Date
+        private var progressed = false
+
+        init() { lastProgressAt = started }
+
+        func tick() {
+            lock.lock()
+            lastProgressAt = Date()
+            progressed = true
+            lock.unlock()
+        }
+
+        /// (attempt duration, time since last progress, whether any came) —
+        /// exactly the inputs of `ProvisioningRetry.transportClass`.
+        func measurements() -> (duration: TimeInterval, sinceLastProgress: TimeInterval, sawProgress: Bool) {
+            lock.lock()
+            defer { lock.unlock() }
+            let now = Date()
+            return (
+                now.timeIntervalSince(started),
+                now.timeIntervalSince(lastProgressAt),
+                progressed
+            )
+        }
+    }
+
     private func pullModel(
         _ model: String,
         statusCallback: ((String) -> Void)?,
@@ -741,31 +738,60 @@ final class OllamaSidecar: @unchecked Sendable {
         var req = URLRequest(url: Self.baseURL.appendingPathComponent("api/pull"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Backstop only. The watchdog below decides what «hung» means; this
+        // exists so an abandoned socket cannot outlive the app's patience.
         req.timeoutInterval = 60 * 60
         req.httpBody = try JSONSerialization.data(withJSONObject: [
             "name": model,
             "stream": true,
         ])
 
-        let (bytes, response) = try await URLSession.shared.bytes(for: req)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw SidecarError.pullFailed("HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
-        }
-
-        var lineData = Data()
-        var lastFrac = 0.0
-        for try await byte in bytes {
-            if byte == UInt8(ascii: "\n") {
-                if let line = String(data: lineData, encoding: .utf8) {
-                    try handlePullLine(line, statusCallback: statusCallback, progress: progress, lastFrac: &lastFrac)
+        let clock = PullProgressClock()
+        do {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    try await self.streamPull(
+                        req, statusCallback: statusCallback, progress: progress, clock: clock
+                    )
                 }
-                lineData.removeAll(keepingCapacity: true)
-            } else {
-                lineData.append(byte)
+                // The watchdog: a transfer with no progress for `stallThreshold`
+                // is dead even when the socket is not. The blackholed-transport
+                // shape of the 2026-08-22 incident would otherwise sit frozen
+                // until the hour-long idle timeout — a timeout only in name.
+                group.addTask {
+                    while true {
+                        try await Task.sleep(nanoseconds: 10_000_000_000)
+                        if ProvisioningRetry.shouldAbort(
+                            sinceLastProgress: clock.measurements().sinceLastProgress
+                        ) {
+                            throw SidecarError.pullStalled
+                        }
+                    }
+                }
+                // The stream finishing is the only normal completion; the first
+                // failure of either child cancels the other.
+                try await group.next()
+                group.cancelAll()
             }
-        }
-        if !lineData.isEmpty, let line = String(data: lineData, encoding: .utf8) {
-            try handlePullLine(line, statusCallback: statusCallback, progress: progress, lastFrac: &lastFrac)
+        } catch let error as SidecarError {
+            // Already classified: `refused` from an error line or HTTP status,
+            // `stall` from the watchdog.
+            throw error
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // Transport died on its own — classify by what was measured, never
+            // by the message (§10): the text is a witness that may not show up,
+            // duration and progress always do.
+            let m = clock.measurements()
+            throw SidecarError.pullTransport(
+                error.localizedDescription,
+                ProvisioningRetry.transportClass(
+                    duration: m.duration,
+                    sinceLastProgress: m.sinceLastProgress,
+                    sawProgress: m.sawProgress
+                )
+            )
         }
 
         guard await modelPresent(model) else {
@@ -774,11 +800,52 @@ final class OllamaSidecar: @unchecked Sendable {
         progress?(1.0)
     }
 
+    private func streamPull(
+        _ req: URLRequest,
+        statusCallback: ((String) -> Void)?,
+        progress: ((Double) -> Void)?,
+        clock: PullProgressClock
+    ) async throws {
+        let (bytes, response) = try await URLSession.shared.bytes(for: req)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw SidecarError.pullFailed("HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+        }
+
+        var lineData = Data()
+        var state = PullLineState()
+        for try await byte in bytes {
+            if byte == UInt8(ascii: "\n") {
+                if let line = String(data: lineData, encoding: .utf8) {
+                    try handlePullLine(
+                        line, statusCallback: statusCallback, progress: progress,
+                        state: &state, clock: clock
+                    )
+                }
+                lineData.removeAll(keepingCapacity: true)
+            } else {
+                lineData.append(byte)
+            }
+        }
+        if !lineData.isEmpty, let line = String(data: lineData, encoding: .utf8) {
+            try handlePullLine(
+                line, statusCallback: statusCallback, progress: progress,
+                state: &state, clock: clock
+            )
+        }
+    }
+
+    private struct PullLineState {
+        var lastFrac = 0.0
+        var lastCompleted = -1.0
+        var lastStatus = ""
+    }
+
     private func handlePullLine(
         _ line: String,
         statusCallback: ((String) -> Void)?,
         progress: ((Double) -> Void)?,
-        lastFrac: inout Double
+        state: inout PullLineState,
+        clock: PullProgressClock
     ) throws {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
@@ -790,16 +857,56 @@ final class OllamaSidecar: @unchecked Sendable {
             throw SidecarError.pullFailed(err)
         }
         let status = obj["status"] as? String ?? ""
+        // Progress for the watchdog is bytes moving or the phase changing —
+        // manifest fetch and digest verification advance by status, the
+        // download itself by bytes. A repeated identical status is not
+        // progress: that is exactly what a wedged transfer looks like.
+        if !status.isEmpty, status != state.lastStatus {
+            state.lastStatus = status
+            clock.tick()
+        }
         if let total = obj["total"] as? Double, total > 0,
            let completed = obj["completed"] as? Double {
+            if completed > state.lastCompleted {
+                state.lastCompleted = completed
+                clock.tick()
+            }
             let frac = min(max(completed / total, 0), 0.99)
-            if frac > lastFrac + 0.005 {
-                lastFrac = frac
+            if frac > state.lastFrac + 0.005 {
+                state.lastFrac = frac
                 progress?(frac)
                 statusCallback?("Скачиваем модель саммари… \(Int(frac * 100))%")
             }
         } else if !status.isEmpty {
             statusCallback?(status)
+        }
+    }
+
+    // MARK: - Flight recorder
+
+    /// The local trace §10 demands of anything that retries silently and
+    /// forever: the 2026-08-22 incident's root cause lived for milliseconds
+    /// inside the pull stream and was recorded nowhere, so it is lost for good.
+    /// Full detail stays on this disk next to `ollama-serve.log`; telemetry
+    /// still gets only the class bucket (`SidecarError.signalReason`).
+    func recordProvisioning(_ line: String) {
+        let url = installDir.appendingPathComponent("provisioning.log")
+        let fm = FileManager.default
+        try? fm.createDirectory(at: installDir, withIntermediateDirectories: true)
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let entry = "\(stamp) \(line)\n"
+        // Один файл, потолок полмегабайта: журнал, а не архив. Обнуление, а не
+        // ротация — интересен всегда последний отказ, а не история за год.
+        if let size = try? fm.attributesOfItem(atPath: url.path)[.size] as? Int,
+           size > 512 * 1024 {
+            try? fm.removeItem(at: url)
+        }
+        if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: Data(entry.utf8))
+        } else {
+            fm.createFile(atPath: url.path, contents: Data(entry.utf8))
         }
     }
 
@@ -811,7 +918,15 @@ final class OllamaSidecar: @unchecked Sendable {
         case downloadFailed(String)
         case extractFailed(String)
         case healthTimeout
+        /// The far side answered and said no: an HTTP error status or an
+        /// `error` line inside the pull stream.
         case pullFailed(String)
+        /// The watchdog cut a transfer with no progress for
+        /// `ProvisioningRetry.stallThreshold`.
+        case pullStalled
+        /// The transport itself died; the class was measured from duration and
+        /// progress at the moment of death (§10 — never from the message).
+        case pullTransport(String, ProvisioningRetry.FailureClass)
 
         /// Грубая корзина для телеметрии: почему движок не встал.
         ///
@@ -826,6 +941,24 @@ final class OllamaSidecar: @unchecked Sendable {
             case .downloadFailed:          return "download"
             case .healthTimeout:           return "health"
             case .pullFailed:              return "pull"
+            case .pullStalled:             return "pull_stall"
+            case .pullTransport(_, let c): return "pull_\(c.rawValue)"
+            }
+        }
+
+        /// Which disease this was, for the ladder's owner: decides what signal
+        /// earns an immediate fresh start (`ProvisioningRetry.resets`).
+        var provisioningClass: ProvisioningRetry.FailureClass {
+            switch self {
+            case .pullFailed:                return .refused
+            case .pullStalled:               return .stall
+            case .pullTransport(_, let c):   return c
+            // Local failures — a broken unpack, a server that will not come
+            // up. Not transport-shaped and not disk: retried on the ladder,
+            // reset by wake, left alone by the network signal.
+            case .binaryNotFound, .binaryMissingAfterExtract,
+                 .downloadFailed, .extractFailed, .healthTimeout:
+                return .other
             }
         }
 
@@ -842,6 +975,10 @@ final class OllamaSidecar: @unchecked Sendable {
             case .healthTimeout:
                 return "Ollama не успел запуститься. Попробуйте ещё раз."
             case .pullFailed(let detail):
+                return "Не удалось скачать модель: \(detail)"
+            case .pullStalled:
+                return "Загрузка модели остановилась — нет прогресса \(Int(ProvisioningRetry.stallThreshold / 60))\u{00A0}мин."
+            case .pullTransport(let detail, _):
                 return "Не удалось скачать модель: \(detail)"
             }
         }

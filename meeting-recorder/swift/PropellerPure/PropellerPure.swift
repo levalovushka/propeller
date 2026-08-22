@@ -422,37 +422,11 @@ public enum SidecarProcess {
     }
 }
 
-/// Which model-pull failures are worth another attempt.
-///
-/// Ollama reports transport trouble as free text from its Go stack ("dial tcp:
-/// lookup ... no such host", "unexpected EOF"), so classification is by message.
-/// Getting the direction right matters more than precision: retrying a
-/// permanent failure wastes ~17 minutes of silence before telling the user
-/// anything, while not retrying a blip strands a 3.4 GB download.
-public enum OllamaRetry {
-    /// Same failure every time — the name is wrong, the disk is full, or we are
-    /// not allowed. Checked first, because a permanent failure often surfaces
-    /// wrapped in transport wording ("pull model manifest: ... manifest unknown"
-    /// carries "manifest", "no space left" arrives mid-connection). DNS failure
-    /// is deliberately NOT here: "no such host" means the link is down, which is
-    /// exactly the case worth waiting out.
-    static let permanentMarkers = [
-        "manifest unknown", "file does not exist", "not found", "no space left",
-        "unauthorized", "invalid model", "insufficient", "access denied",
-    ]
-
-    static let transientMarkers = [
-        "connection", "timeout", "timed out", "eof", "reset by peer", "network",
-        "temporarily", "tls", "handshake", "unreachable", "no such host",
-        "dial tcp", "broken pipe", "i/o error",
-    ]
-
-    public static func isRetryable(message: String) -> Bool {
-        let text = message.lowercased()
-        if permanentMarkers.contains(where: text.contains) { return false }
-        return transientMarkers.contains(where: text.contains)
-    }
-}
+// `OllamaRetry` (pull-failure classification by error message) lived here until
+// 2026-08-22. Deleted with the sidecar's finite retry ladder: provisioning
+// failures are now classified by measurement (`ProvisioningRetry.transportClass`)
+// and every class is retried forever, so «is this message retryable» stopped
+// being a question anyone asks (`design/principles.md` §10).
 
 /// Context window sizing for the Ollama recap call.
 ///

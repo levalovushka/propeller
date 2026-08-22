@@ -153,43 +153,9 @@ final class PureFunctionTests: XCTestCase {
         }
     }
 
-    // MARK: - OllamaRetry
-
-    /// The failure that actually stranded a download on 2026-07-27: the link
-    /// dropped mid-pull. This must retry, or a 3.4 GB download dies on a blip.
-    func testDroppedConnectionIsRetryable() {
-        let real = #"pull model manifest: Get "https://registry.ollama.ai/v2/library/qwen3.5/manifests/4b": dial tcp: lookup registry.ollama.ai: no such host"#
-        XCTAssertTrue(OllamaRetry.isRetryable(message: real))
-        for m in ["unexpected EOF", "connection reset by peer", "context deadline exceeded: timeout",
-                  "TLS handshake timeout", "network is unreachable"] {
-            XCTAssertTrue(OllamaRetry.isRetryable(message: m), m)
-        }
-    }
-
-    /// These fail identically forever — retrying buys 17 minutes of silence and
-    /// then the same error, so the user must hear about them immediately.
-    func testPermanentFailuresAreNotRetried() {
-        for m in ["pull model manifest: manifest unknown",
-                  "write /models/blobs/sha256-abc: no space left on device",
-                  "model \"qwen9:999b\" not found",
-                  "unauthorized: authentication required"] {
-            XCTAssertFalse(OllamaRetry.isRetryable(message: m), m)
-        }
-    }
-
-    /// A permanent reason wrapped in transport wording must still read permanent —
-    /// this is why the permanent list is checked first.
-    func testPermanentWinsOverTransientWording() {
-        XCTAssertFalse(OllamaRetry.isRetryable(
-            message: "Get \"https://registry.ollama.ai/v2/...\": manifest unknown"))
-        XCTAssertFalse(OllamaRetry.isRetryable(
-            message: "connection established, then: no space left on device"))
-    }
-
-    func testUnknownFailureIsNotRetried() {
-        XCTAssertFalse(OllamaRetry.isRetryable(message: "something completely unexpected"))
-        XCTAssertFalse(OllamaRetry.isRetryable(message: ""))
-    }
+    // OllamaRetry tests deleted 2026-08-22 with the enum itself: provisioning
+    // failures are classified by measurement now (`ProvisioningRetryTests`),
+    // and every class retries forever — see `design/principles.md` §10.
 
     // MARK: - BuiltinHotwords
 
