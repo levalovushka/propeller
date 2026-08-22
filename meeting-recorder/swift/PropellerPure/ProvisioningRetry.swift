@@ -39,9 +39,14 @@ public enum ProvisioningRetry {
         case instant
         /// No progress for `stallThreshold`, connection formally alive.
         case stall
-        /// The far side answered and said no: an HTTP error status, or an
-        /// `error` line inside the pull stream. Declared by the call site that
-        /// saw the response — not derivable from timing.
+        /// A definitive «no» that no amount of waiting or network changes: only
+        /// a call site that *saw* such an answer may declare it — never timing,
+        /// and never an error line from the local daemon. The daemon proxies
+        /// the registry, so its error lines report somebody else's transport
+        /// («dial tcp … no such host» arrives exactly this way) and are
+        /// classified by measurement like any transport death. Misfiling one
+        /// here is the expensive direction: `refused` is the class the network
+        /// signal deliberately leaves alone.
         case refused
         /// No room for the payload. Declared by the call site that measured
         /// the disk. Time does not cure it, which is why the network signal
@@ -98,7 +103,21 @@ public enum ProvisioningRetry {
     /// obligation. The previous, finite ladder (`pullRetryDelays`, ~17 minutes
     /// total) is how the app came to be silent for exactly the hour in which
     /// the tester's network came back.
-    public static let steps: [TimeInterval] = [20, 60, 300, 1200, 3600]
+    ///
+    /// The pipeline's ladder, by construction: one backoff policy in the app,
+    /// tuned in one place. What differs between the two machines is everything
+    /// else — classes, signals — never the pacing.
+    public static let steps: [TimeInterval] = PipelineRetry.steps
+
+    /// How soon to look again when an attempt was declined because recording
+    /// or transcription is running (`ModelProvisioning.decide` →
+    /// `.waitForQuiet`). This is the deadline that keeps «busy» from becoming
+    /// a dead end: the one-shot ladder timer is consumed whether or not the
+    /// attempt ran, and the end of a recording is not a provisioning signal —
+    /// without a recheck the vigil would depend on somebody clicking the app.
+    /// Two minutes: cheap (the check is a couple of field reads), and no
+    /// meeting ends in less.
+    public static let busyRecheck: TimeInterval = 120
 
     // MARK: - Signals
 
@@ -130,6 +149,60 @@ public enum ProvisioningRetry {
             case .refused, .disk:          return false
             }
         }
+    }
+}
+
+/// The edge detector for the network signal: fires exactly on the transition
+/// from a broken path to a working one.
+///
+/// Pure and separate from the `NWPathMonitor` that feeds it, for two reasons.
+/// The rule itself («the first callback is a baseline, not news; only
+/// false→true is a restore») is decidable without a network and must be
+/// testable — treating the baseline as a restore would turn the signal into
+/// the timer §10 forbids. And the detector must be advanced *on the monitor's
+/// own serial queue*: hopping every raw update to the main actor in its own
+/// `Task` loses ordering — a down→up pair observed as up→down misses the
+/// restore entirely. Mutate here, hop only when this returns true.
+public struct NetworkRestoreEdge: Equatable, Sendable {
+    private var wasSatisfied: Bool?
+
+    public init() {}
+
+    /// Feed one path update; true means the network just came back.
+    public mutating func observe(satisfied: Bool) -> Bool {
+        defer { wasSatisfied = satisfied }
+        return wasSatisfied == false && satisfied
+    }
+}
+
+/// What counts as a pull still moving — the watchdog's other half.
+///
+/// A pull line carries a status and, during transfers, a byte counter. The
+/// counter restarts at zero for every blob, so «bytes grew» is wrong twice: a
+/// blob following a bigger one reads as three silent minutes and gets a live
+/// download killed. Liveness is any *change* in the pair — the wedged-transfer
+/// signature this exists to catch is the same line repeating verbatim.
+public struct PullLiveness: Equatable, Sendable {
+    private var lastStatus = ""
+    private var lastCompleted: Double?
+
+    public init() {}
+
+    /// Feed one pull line; true means the pull moved and the watchdog's clock
+    /// restarts.
+    public mutating func advanced(status: String, completed: Double?) -> Bool {
+        var moved = false
+        if !status.isEmpty, status != lastStatus {
+            lastStatus = status
+            moved = true
+        }
+        if completed != lastCompleted {
+            lastCompleted = completed
+            // `completed` going *down* is a new blob starting, not time
+            // flowing backwards — progress either way.
+            if completed != nil { moved = true }
+        }
+        return moved
     }
 }
 

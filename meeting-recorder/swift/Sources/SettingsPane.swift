@@ -495,9 +495,16 @@ private struct ModelsSettingsGroup: View {
             // стоил диагностики дороже самой поломки (2026-08-22). Строку
             // диктует тот, кто фазу выполняет (`statusCallback` сайдкара):
             // «Запуск Ollama…» — это запуск, а не четверть модели.
-            if state.ollamaSetupProgress != nil {
+            if state.ollamaSetupInFlight {
                 let msg = state.ollamaSetupMessage
                 return (msg.isEmpty ? "Готовим саммари…" : msg, .progress)
+            }
+            // Пауза между попытками лестницы — не тишина: исчезнувшая без слов
+            // строка загрузки читалась как «приложение замолчало» — форма
+            // инцидента 2026-08-22. Момент не тикает вживую и не должен:
+            // сигналы мира умеют опередить его в любой миг.
+            if let retry = state.ollamaRetryAt, retry.timeIntervalSinceNow > 1 {
+                return ("Загрузка прервалась — продолжим \(Self.retryWhen(retry))", .progress)
             }
             switch ollamaReachable {
             case true: return ("Отвечает локально", .help)
@@ -505,6 +512,15 @@ private struct ModelsSettingsGroup: View {
             case nil: return ("Проверяем…", .progress)
             }
         }
+    }
+
+    /// «через 5 мин» / «через 40 с» — грубо и honestly: точная секунда не нужна,
+    /// строка не тикает.
+    private static func retryWhen(_ date: Date) -> String {
+        let seconds = max(1, Int(date.timeIntervalSinceNow))
+        return seconds < 90
+            ? "через \(seconds)\u{00A0}с"
+            : "через \(seconds / 60)\u{00A0}мин"
     }
 
     /// Hotwords are a server-launch argument for gigastt, not per-request, so

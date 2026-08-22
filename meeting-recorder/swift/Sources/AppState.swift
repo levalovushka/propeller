@@ -105,15 +105,18 @@ class AppState: ObservableObject {
     @Published var recordingDuration: TimeInterval = 0
     /// Model download progress 0.0–1.0. Nil when no download is active.
     @Published var modelDownloadProgress: Double? = nil
-    /// Ollama engine/model setup (onboarding + Settings). Nil when idle.
-    @Published var ollamaSetupProgress: Double? = nil
+    /// Ollama engine/model setup is running (onboarding + Settings). A Bool by
+    /// §10 п. 8: the Double this used to be was a composite of phase weights —
+    /// «25% при нуле скачанных байт» — and every reader only ever asked
+    /// «идёт ли». What shows on screen is `ollamaSetupMessage`, phase-honest,
+    /// written by whoever runs the phase.
+    @Published var ollamaSetupInFlight = false
     @Published var ollamaSetupMessage = ""
-    /// Failure of the summary-model setup specifically. Separate from
-    /// `pipelineError`: onboarding used to show the shared pipeline error, so an
-    /// unrelated ASR failure ("gigastt недоступен") appeared on the screen that
-    /// offers to download the *summary* model, which reads as that download
-    /// having failed.
-    @Published var ollamaSetupError: String? = nil
+    /// When the provisioning ladder tries again — the visible half of a wait
+    /// between attempts. Nil when idle, delivered, or currently downloading.
+    /// Without it a failed pull read as «приложение замолчало»: the status line
+    /// vanished for the whole 20 s … 1 ч step.
+    @Published var ollamaRetryAt: Date? = nil
     /// Is the local summary model on disk? Nil until first checked. Drives the
     /// empty-summary panel: without it the UI offers «Сгенерировать», which can
     /// only fail with `HTTP 404: model not found`.
@@ -1623,17 +1626,10 @@ class AppState: ObservableObject {
         wakeTimer?.invalidate()
         wakeTimer = nil
         guard let date else { return }
-        let delay = max(1, date.timeIntervalSinceNow)
-        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.kickPipeline("deadline") }
+        wakeTimer = oneShotTimer(at: date) { [weak self] in
+            self?.kickPipeline("deadline")
         }
-        // Well over Apple's 10%-of-interval guidance, capped so a 20-second
-        // retry still feels immediate. Lets the system fold this wakeup into
-        // whatever else it was going to do anyway.
-        timer.tolerance = min(30, delay * 0.25)
-        RunLoop.main.add(timer, forMode: .common)
-        wakeTimer = timer
-        debugLog("[pipeline] next look in \(Int(delay))s")
+        debugLog("[pipeline] next look in \(Int(max(1, date.timeIntervalSinceNow)))s")
     }
 
     /// Подобрать записи с диска и, если кого-то подобрали, дать им ход.
@@ -1745,6 +1741,10 @@ class AppState: ObservableObject {
             debugLog("[pipeline] provider changed: \(cleared) meeting(s) back in the queue")
         }
         refreshLocalRecapModelState()
+        // «Провайдер — его появление» is a §10 signal too: switching back to
+        // the local model must start the fetch (or settle the vigil) right
+        // here, not wait for the pipeline to trip over the missing provider.
+        Task { await ensureSummaryModel() }
         kickPipeline("provider changed")
     }
 
@@ -1822,6 +1822,12 @@ class AppState: ObservableObject {
     /// that is already up. Nothing is downloaded twice — `startOllamaRuntimeDownload`
     /// is idempotent while a download is in flight.
     func ensureSummaryModel() async {
+        // Whichever way this exits — declined for a recording, raced a stale
+        // in-flight flag, anything — the obligation leaves with a clock (§10:
+        // model owed ⇒ attempt running or deadline armed). A return without
+        // this was a stop with no deadline, and one such path already shipped:
+        // a signal reset the ladder, hit «не сейчас», and the vigil was dead.
+        defer { ensureProvisioningVigil() }
         // Two of the four inputs are known without touching the disk, so ask them
         // first: a cloud key or summaries turned off means this is not our job at
         // all, and 3.4 GB is not something to fetch on a maybe.
@@ -1830,7 +1836,7 @@ class AppState: ObservableObject {
             usesLocalModel: ModelProvisioning.usesLocalModel(providerRawValue: provider),
             modelInstalled: false,                    // not asked yet
             busyWithAudio: isRecording || meetingDetected || isTranscribing,
-            downloadInFlight: ollamaDownloadTask != nil || ollamaSetupProgress != nil
+            downloadInFlight: ollamaDownloadTask != nil || ollamaSetupInFlight
         ))
         switch quickAnswer {
         case .notOurs:
@@ -1858,10 +1864,14 @@ class AppState: ObservableObject {
 
         // Distinguishes «первая выдача» from «починка» in telemetry only — the code
         // path is deliberately the same one, because a missing model is a missing
-        // model whatever the reason.
-        Analytics.modelFetch(
-            reason: Preferences.shared.localRecapModelRequested ? "repair" : "provision"
-        )
+        // model whatever the reason. Counted once per incident, not per ladder
+        // step: attempt 0 is the moment the obligation appears, everything after
+        // is the same missing model (082d9ef — count incidents, not attempts).
+        if provisioningLadder.attempt == 0 {
+            Analytics.modelFetch(
+                reason: Preferences.shared.localRecapModelRequested ? "repair" : "provision"
+            )
+        }
         NSLog("[AppState] summary model missing — fetching it")
         startOllamaRuntimeDownload()
     }
@@ -2664,7 +2674,7 @@ class AppState: ObservableObject {
     }
 
     /// Download Ollama binary (if needed), start serve, pull the recap model.
-    /// Progress → `ollamaSetupProgress` / `ollamaSetupMessage` (onboarding + status bar).
+    /// Status → `ollamaSetupMessage`, `ollamaSetupInFlight` (onboarding + status bar).
     /// On success, kicks the pipeline so meetings recorded meanwhile get recaps.
     @discardableResult
     func downloadOllamaRuntime() async -> Bool {
@@ -2673,10 +2683,6 @@ class AppState: ObservableObject {
         // «Всё равно скачать» with 2 GB free only moved the failure to the middle
         // of a 3.4 GB pull. The refusal says so where the download was started.
         guard hasRoomForSummaryModel() else {
-            // Стоит в настройках, где этим управляют, и больше нигде: встреча к
-            // нехватке места на диске отношения не имеет, а сделать с этим
-            // человек может только одно — освободить место, когда захочет.
-            ollamaSetupError = "Недостаточно места для модели саммари (~3,4\u{00A0}ГБ)."
             // Этот отказ до сих пор не считался вовсе: он не бросает ошибку, а
             // возвращает `false` — и в телеметрии выглядел как «настройку не
             // начинали». Из всех причин она единственная, которую человек может
@@ -2690,8 +2696,8 @@ class AppState: ObservableObject {
             return false
         }
         pipelineError = nil
-        ollamaSetupError = nil
-        ollamaSetupProgress = 0
+        ollamaSetupInFlight = true
+        ollamaRetryAt = nil
         ollamaSetupMessage = "Подготовка…"
         let model = Preferences.shared.recapOllamaModel
         do {
@@ -2701,16 +2707,10 @@ class AppState: ObservableObject {
                     Task { @MainActor in
                         self?.ollamaSetupMessage = msg
                     }
-                },
-                progress: { [weak self] frac in
-                    Task { @MainActor in
-                        self?.ollamaSetupProgress = frac
-                    }
                 }
             )
-            ollamaSetupProgress = nil
+            ollamaSetupInFlight = false
             ollamaSetupMessage = "Модель готова"
-            ollamaSetupError = nil
             localRecapModelReady = true
             settleProvisioning()
             Analytics.ollamaSetup(ok: true)
@@ -2725,26 +2725,29 @@ class AppState: ObservableObject {
             applySummaryProviderChange()
             return true
         } catch is CancellationError {
-            ollamaSetupProgress = nil
+            ollamaSetupInFlight = false
             ollamaSetupMessage = ""
             // Cancellation is not a failure (§10, same rule as the pipeline):
             // no ladder step, no error line — whoever cancelled knows why.
             return false
         } catch {
-            ollamaSetupProgress = nil
+            ollamaSetupInFlight = false
             ollamaSetupMessage = ""
-            // Тоже только в настройках. Загрузка сама поедет снова — по своей
-            // лестнице (`provisioningFailed`), по сигналам мира и на каждой
-            // остановке пайплайна из-за провайдера (`ensureSummaryModel`),
-            // поэтому это состояние, а не событие.
-            ollamaSetupError = error.localizedDescription
+            var failureClass =
+                (error as? OllamaSidecar.SidecarError)?.provisioningClass ?? .other
+            // Диск мог кончиться посреди 3,4-ГБ pull — тогда демон отдаёт свою
+            // ошибку и класс выглядит транспортным. Диск измеряется, а не
+            // вычитывается из текста (§10): перемеряем его в момент отказа.
+            if failureClass != .stall, !hasRoomForSummaryModel() {
+                failureClass = .disk
+            }
             Analytics.ollamaSetup(
                 ok: false,
-                reason: (error as? OllamaSidecar.SidecarError)?.signalReason ?? "other"
+                reason: failureClass == .disk
+                    ? "disk"
+                    : (error as? OllamaSidecar.SidecarError)?.signalReason ?? "other"
             )
-            provisioningFailed(
-                (error as? OllamaSidecar.SidecarError)?.provisioningClass ?? .other
-            )
+            provisioningFailed(failureClass)
             return false
         }
     }
@@ -2760,14 +2763,18 @@ class AppState: ObservableObject {
     private var provisioningLadder = ProvisioningLadder()
     private var provisioningRetryTimer: Timer?
     private var networkPathMonitor: NWPathMonitor?
-    private var networkPathWasSatisfied: Bool?
 
     /// A provisioning attempt failed: take a ladder step, arm the deadline, and
-    /// start watching for the signals that can cut the wait short.
+    /// start watching for the signals that can cut the wait short. The monitor
+    /// is started only for classes the network signal can actually cure
+    /// (`ProvisioningRetry.resets`) — a full disk watched by a path monitor is
+    /// a probe that can never produce an actionable event.
     private func provisioningFailed(_ failureClass: ProvisioningRetry.FailureClass) {
         let next = provisioningLadder.failed(failureClass, at: Date())
         scheduleProvisioningRetry(at: next)
-        watchNetworkPath()
+        if ProvisioningRetry.resets(.networkPathRestored, class: failureClass) {
+            watchNetworkPath()
+        }
         NSLog("[AppState] provisioning failed (\(failureClass.rawValue)) — next attempt in \(Int(next.timeIntervalSinceNow))s")
     }
 
@@ -2777,19 +2784,17 @@ class AppState: ObservableObject {
         provisioningLadder.succeeded()
         provisioningRetryTimer?.invalidate()
         provisioningRetryTimer = nil
+        ollamaRetryAt = nil
         stopWatchingNetworkPath()
     }
 
     private func scheduleProvisioningRetry(at date: Date) {
         provisioningRetryTimer?.invalidate()
-        let delay = max(1, date.timeIntervalSinceNow)
-        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
-            Task { @MainActor in await self?.ensureSummaryModel() }
+        provisioningRetryTimer = oneShotTimer(at: date) { [weak self] in
+            await self?.ensureSummaryModel()
         }
-        timer.tolerance = min(30, delay * 0.25)
-        RunLoop.main.add(timer, forMode: .common)
-        provisioningRetryTimer = timer
-        debugLog("[provisioning] next attempt in \(Int(delay))s")
+        ollamaRetryAt = date
+        debugLog("[provisioning] next attempt in \(Int(max(1, date.timeIntervalSinceNow)))s")
     }
 
     /// The world changed in a way that may have changed the answer (§10): the
@@ -2797,6 +2802,12 @@ class AppState: ObservableObject {
     /// one is attempted now instead of waiting out the current step. The blind
     /// ladder alone is how the app burned six attempts inside the one dead hour
     /// of network and went quiet for the hour in which it came back (2026-08-22).
+    ///
+    /// The reset must not out-live its own attempt: `ensureSummaryModel` may
+    /// decline (recording in progress, a stale in-flight flag), and a consumed
+    /// ladder with no timer would leave the vigil dead — the silent-forever
+    /// shape this whole mechanism exists against. `ensureProvisioningVigil`,
+    /// run on every `ensureSummaryModel` exit, restores the deadline.
     func provisioningSignal(_ signal: ProvisioningRetry.Signal) {
         guard provisioningLadder.signal(signal) else { return }
         provisioningRetryTimer?.invalidate()
@@ -2805,25 +2816,36 @@ class AppState: ObservableObject {
         Task { await ensureSummaryModel() }
     }
 
+    /// The invariant §10 actually promises: **model owed ⇒ an attempt is
+    /// running or a deadline is armed.** Runs on every `ensureSummaryModel`
+    /// exit and after a download task clears; whichever path declined the
+    /// attempt — recording in progress, a signal that raced a finishing task —
+    /// the obligation keeps a clock. Without this, «не сейчас» was a stop
+    /// with no deadline (I12's «stop and hope something kicks us»).
+    private func ensureProvisioningVigil() {
+        guard ModelProvisioning.usesLocalModel(
+            providerRawValue: Preferences.shared.recapProvider.rawValue
+        ), localRecapModelReady != true else { return }
+        if ollamaDownloadTask != nil || ollamaSetupInFlight { return }
+        if provisioningRetryTimer?.isValid == true { return }
+        scheduleProvisioningRetry(at: Date().addingTimeInterval(ProvisioningRetry.busyRecheck))
+    }
+
     /// Watching starts with the first failure and stops with settlement:
     /// a monitor with nothing owed would violate «нечего делать ⇒ нет проб».
     private func watchNetworkPath() {
         guard networkPathMonitor == nil else { return }
         let monitor = NWPathMonitor()
         networkPathMonitor = monitor
-        networkPathWasSatisfied = nil
+        // The edge is advanced on the monitor's own serial queue: one hop per
+        // raw update in its own Task loses ordering, and a down→up pair
+        // observed as up→down misses the restore. The rule itself is pure and
+        // tested (`NetworkRestoreEdge`); only the firing hops to the actor.
+        var edge = NetworkRestoreEdge()
         monitor.pathUpdateHandler = { [weak self] path in
-            let satisfied = path.status == .satisfied
+            guard edge.observe(satisfied: path.status == .satisfied) else { return }
             Task { @MainActor in
-                guard let self else { return }
-                let was = self.networkPathWasSatisfied
-                self.networkPathWasSatisfied = satisfied
-                // Only the transition into a working network is a signal. The
-                // first callback (current state) sets the baseline: a network
-                // that was fine all along is not news and resets nothing.
-                if was == false && satisfied {
-                    self.provisioningSignal(.networkPathRestored)
-                }
+                self?.provisioningSignal(.networkPathRestored)
             }
         }
         monitor.start(queue: .global(qos: .utility))
@@ -2832,7 +2854,6 @@ class AppState: ObservableObject {
     private func stopWatchingNetworkPath() {
         networkPathMonitor?.cancel()
         networkPathMonitor = nil
-        networkPathWasSatisfied = nil
     }
 
     /// Fire-and-forget: start Ollama install in background so onboarding / Settings
@@ -2841,13 +2862,34 @@ class AppState: ObservableObject {
         // Remember the opt-in before the first byte, so quitting mid-download
         // still resumes on the next launch.
         Preferences.shared.localRecapModelRequested = true
-        if ollamaDownloadTask != nil || ollamaSetupProgress != nil { return }
+        if ollamaDownloadTask != nil || ollamaSetupInFlight { return }
         ollamaDownloadTask = Task { [weak self] in
             defer {
-                Task { @MainActor in self?.ollamaDownloadTask = nil }
+                Task { @MainActor in
+                    self?.ollamaDownloadTask = nil
+                    // A signal that raced this task's last moments may have
+                    // consumed the ladder against a stale in-flight flag; the
+                    // invariant check re-arms the deadline if nothing else did.
+                    self?.ensureProvisioningVigil()
+                }
             }
             _ = await self?.downloadOllamaRuntime()
         }
+    }
+
+    /// One-shot deadline on the main run loop — the shared shape of the
+    /// pipeline's wake and the provisioning retry. The tolerance policy lives
+    /// once: well over Apple's 10%-of-interval guidance, capped so a short
+    /// retry still feels immediate, letting the system fold the wakeup into
+    /// whatever else it was going to do anyway.
+    private func oneShotTimer(at date: Date, _ action: @escaping () async -> Void) -> Timer {
+        let delay = max(1, date.timeIntervalSinceNow)
+        let timer = Timer(timeInterval: delay, repeats: false) { _ in
+            Task { @MainActor in await action() }
+        }
+        timer.tolerance = min(30, delay * 0.25)
+        RunLoop.main.add(timer, forMode: .common)
+        return timer
     }
 
     // MARK: - Per-Segment Reassignment

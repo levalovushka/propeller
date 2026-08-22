@@ -733,7 +733,7 @@ struct MainView: View {
     }
 
     private var topStatusText: String? {
-        if state.ollamaSetupProgress != nil {
+        if state.ollamaSetupInFlight {
             // Сообщение фазы как есть — свой процент в него вписывает та фаза,
             // у которой он есть (pull). Дописывать сюда композит из весов фаз
             // запрещено §10: «Запуск Ollama… 20%» — это ложь про модель.

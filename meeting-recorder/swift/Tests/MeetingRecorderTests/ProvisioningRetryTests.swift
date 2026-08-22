@@ -97,6 +97,68 @@ final class ProvisioningRetryTests: XCTestCase {
         }
     }
 
+    // MARK: - Кромка сетевого сигнала
+
+    func testПервыйОтсчётЭтоБазаАНеСигнал() {
+        // Сеть, которая была живой всё время, — не новость: принять базу за
+        // восстановление значит превратить сигнал в таймер, который §10 запрещает.
+        var edge = NetworkRestoreEdge()
+        XCTAssertFalse(edge.observe(satisfied: true))
+        XCTAssertFalse(edge.observe(satisfied: false))
+    }
+
+    func testВозвратСетиСрабатываетРовноОдинРаз() {
+        var edge = NetworkRestoreEdge()
+        _ = edge.observe(satisfied: false)
+        XCTAssertTrue(edge.observe(satisfied: true))
+        XCTAssertFalse(edge.observe(satisfied: true), "повтор satisfied — не событие")
+    }
+
+    func testКаждоеНовоеПадениеДаётНовыйВозврат() {
+        var edge = NetworkRestoreEdge()
+        _ = edge.observe(satisfied: false)
+        XCTAssertTrue(edge.observe(satisfied: true))
+        _ = edge.observe(satisfied: false)
+        XCTAssertTrue(edge.observe(satisfied: true))
+    }
+
+    // MARK: - Живость pull
+
+    func testРастущиеБайтыПриОдномСтатусеЭтоДвижение() {
+        var live = PullLiveness()
+        XCTAssertTrue(live.advanced(status: "pulling sha256:aa", completed: 100))
+        XCTAssertTrue(live.advanced(status: "pulling sha256:aa", completed: 200))
+    }
+
+    func testТаЖеСтрокаДословноЭтоКлин() {
+        var live = PullLiveness()
+        _ = live.advanced(status: "pulling sha256:aa", completed: 300)
+        XCTAssertFalse(live.advanced(status: "pulling sha256:aa", completed: 300))
+        XCTAssertFalse(live.advanced(status: "pulling sha256:aa", completed: 300))
+    }
+
+    func testНовыйБлобСНуляЭтоДвижениеАНеОткат() {
+        // Пойманный руками баг ревью 2026-08-22: правило «байты выросли»
+        // считало блоб после большого 3,4-ГБ тремя минутами тишины и убивало
+        // живую закачку вотчдогом.
+        var live = PullLiveness()
+        _ = live.advanced(status: "pulling sha256:big", completed: 3_400_000_000)
+        XCTAssertTrue(live.advanced(status: "pulling sha256:small", completed: 0))
+        XCTAssertTrue(live.advanced(status: "pulling sha256:small", completed: 512))
+    }
+
+    func testСменаФазыБезБайтовЭтоДвижение() {
+        var live = PullLiveness()
+        XCTAssertTrue(live.advanced(status: "pulling manifest", completed: nil))
+        XCTAssertFalse(live.advanced(status: "pulling manifest", completed: nil))
+        XCTAssertTrue(live.advanced(status: "verifying sha256 digest", completed: nil))
+    }
+
+    func testПустойСтатусНичегоНеДвигает() {
+        var live = PullLiveness()
+        XCTAssertFalse(live.advanced(status: "", completed: nil))
+    }
+
     // MARK: - Сигналы
 
     func testСетьВернуласьТранспортныеОтказыНачинаютСНачала() {
