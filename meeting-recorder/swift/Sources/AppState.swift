@@ -2837,18 +2837,21 @@ class AppState: ObservableObject {
         guard networkPathMonitor == nil else { return }
         let monitor = NWPathMonitor()
         networkPathMonitor = monitor
-        // The edge is advanced on the monitor's own serial queue: one hop per
-        // raw update in its own Task loses ordering, and a down→up pair
-        // observed as up→down misses the restore. The rule itself is pure and
-        // tested (`NetworkRestoreEdge`); only the firing hops to the actor.
+        // The edge is advanced on the monitor's own queue — serial by
+        // construction, because ordering is the point: one hop per raw update
+        // in its own Task can observe a down→up pair as up→down. The rule
+        // itself is pure and tested (`NetworkRestoreEdge`, fingerprint of
+        // status + interfaces — a VPN keeps the status satisfied through a
+        // Wi-Fi outage, measured 2026-08-22); only the firing hops to the actor.
         var edge = NetworkRestoreEdge()
         monitor.pathUpdateHandler = { [weak self] path in
-            guard edge.observe(satisfied: path.status == .satisfied) else { return }
+            let interfaces = path.availableInterfaces.map(\.name).sorted().joined(separator: ",")
+            guard edge.observe(satisfied: path.status == .satisfied, interfaces: interfaces) else { return }
             Task { @MainActor in
                 self?.provisioningSignal(.networkPathRestored)
             }
         }
-        monitor.start(queue: .global(qos: .utility))
+        monitor.start(queue: DispatchQueue(label: "propeller.network-path"))
     }
 
     private func stopWatchingNetworkPath() {

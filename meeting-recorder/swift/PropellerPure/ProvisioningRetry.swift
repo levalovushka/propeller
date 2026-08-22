@@ -152,26 +152,37 @@ public enum ProvisioningRetry {
     }
 }
 
-/// The edge detector for the network signal: fires exactly on the transition
-/// from a broken path to a working one.
+/// The edge detector for the network signal: fires when a usable path just
+/// *changed* — not when its status flipped, because on a machine with a VPN
+/// the status never flips. Measured 2026-08-22 on a Mac with utun4: Wi-Fi off
+/// and on, `NWPath.status == .satisfied` the whole time, and the only honest
+/// trace of the change is `en0` leaving and rejoining `availableInterfaces`.
+/// A detector waiting for unsatisfied→satisfied waits forever there — and a
+/// VPN is the norm, not the exception, for exactly the users whose registry
+/// path is broken.
 ///
-/// Pure and separate from the `NWPathMonitor` that feeds it, for two reasons.
-/// The rule itself («the first callback is a baseline, not news; only
-/// false→true is a restore») is decidable without a network and must be
-/// testable — treating the baseline as a restore would turn the signal into
-/// the timer §10 forbids. And the detector must be advanced *on the monitor's
-/// own serial queue*: hopping every raw update to the main actor in its own
-/// `Task` loses ordering — a down→up pair observed as up→down misses the
-/// restore entirely. Mutate here, hop only when this returns true.
+/// So the edge is: **satisfied, and the fingerprint (status + interface set)
+/// differs from the last one seen.** The first callback is a baseline, never
+/// news. Repeated identical updates (the monitor delivers them in bursts,
+/// measured four for one Wi-Fi join) stay silent. A VPN toggling fires — it
+/// can genuinely cure a failure. A roam that changes nothing observable does
+/// not; the ladder still covers that case.
+///
+/// Pure and separate from the `NWPathMonitor` that feeds it: the rule is
+/// decidable without a network and must be testable. Advance it on the
+/// monitor's own **serial** queue — hopping every raw update to the main
+/// actor in its own `Task` loses ordering — and hop only when this fires.
 public struct NetworkRestoreEdge: Equatable, Sendable {
-    private var wasSatisfied: Bool?
+    private var lastFingerprint: String?
 
     public init() {}
 
-    /// Feed one path update; true means the network just came back.
-    public mutating func observe(satisfied: Bool) -> Bool {
-        defer { wasSatisfied = satisfied }
-        return wasSatisfied == false && satisfied
+    /// Feed one path update; true means a usable network just changed under us.
+    /// `interfaces` is any stable rendering of the interface set (sorted names).
+    public mutating func observe(satisfied: Bool, interfaces: String) -> Bool {
+        let fingerprint = "\(satisfied)|\(interfaces)"
+        defer { lastFingerprint = fingerprint }
+        return satisfied && lastFingerprint != nil && lastFingerprint != fingerprint
     }
 }
 

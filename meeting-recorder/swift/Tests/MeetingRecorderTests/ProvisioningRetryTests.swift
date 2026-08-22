@@ -103,23 +103,50 @@ final class ProvisioningRetryTests: XCTestCase {
         // Сеть, которая была живой всё время, — не новость: принять базу за
         // восстановление значит превратить сигнал в таймер, который §10 запрещает.
         var edge = NetworkRestoreEdge()
-        XCTAssertFalse(edge.observe(satisfied: true))
-        XCTAssertFalse(edge.observe(satisfied: false))
+        XCTAssertFalse(edge.observe(satisfied: true, interfaces: "en0,utun4"))
+        XCTAssertFalse(edge.observe(satisfied: true, interfaces: "en0,utun4"))
     }
 
     func testВозвратСетиСрабатываетРовноОдинРаз() {
         var edge = NetworkRestoreEdge()
-        _ = edge.observe(satisfied: false)
-        XCTAssertTrue(edge.observe(satisfied: true))
-        XCTAssertFalse(edge.observe(satisfied: true), "повтор satisfied — не событие")
+        _ = edge.observe(satisfied: false, interfaces: "")
+        XCTAssertTrue(edge.observe(satisfied: true, interfaces: "en0"))
+        XCTAssertFalse(edge.observe(satisfied: true, interfaces: "en0"),
+                       "повтор того же пути — не событие; монитор шлёт дубли пачками (замер: четыре на один вход в Wi-Fi)")
+    }
+
+    func testWiFiВернулсяПодVPNХотяСтатусВсёВремяSatisfied() {
+        // Живой прогон 2026-08-22: с utun4 статус satisfied не мигал вовсе,
+        // Wi-Fi выключался и включался — менялся только состав интерфейсов.
+        // Детектор по статусу прождал бы вечно; детектор по отпечатку стреляет.
+        //
+        // Стреляет он на ЛЮБУЮ смену живого пути, включая уход Wi-Fi: из имён
+        // интерфейсов не узнать направление («en0 ушёл» — это и деградация, и
+        // «переключился на рабочий ethernet»). Цена ложного — одна дешёвая
+        // попытка, цена пропуска — снова мёртвый час инцидента.
+        var edge = NetworkRestoreEdge()
+        _ = edge.observe(satisfied: true, interfaces: "en0,utun4,utun4")   // база
+        XCTAssertTrue(edge.observe(satisfied: true, interfaces: "utun4,utun4"),
+                      "путь сменился — попытка не повредит")
+        XCTAssertTrue(edge.observe(satisfied: true, interfaces: "en0,utun4,utun4"),
+                      "Wi-Fi вернулся — сигнал, хотя статус не менялся")
+    }
+
+    func testСменаИнтерфейсовБезЖивойСетиНеСигнал() {
+        var edge = NetworkRestoreEdge()
+        _ = edge.observe(satisfied: true, interfaces: "en0")
+        XCTAssertFalse(edge.observe(satisfied: false, interfaces: ""),
+                       "сеть умерла — сигналить нечего")
+        XCTAssertTrue(edge.observe(satisfied: true, interfaces: "en0"),
+                      "и ожила — вот теперь сигнал")
     }
 
     func testКаждоеНовоеПадениеДаётНовыйВозврат() {
         var edge = NetworkRestoreEdge()
-        _ = edge.observe(satisfied: false)
-        XCTAssertTrue(edge.observe(satisfied: true))
-        _ = edge.observe(satisfied: false)
-        XCTAssertTrue(edge.observe(satisfied: true))
+        _ = edge.observe(satisfied: false, interfaces: "")
+        XCTAssertTrue(edge.observe(satisfied: true, interfaces: "en0"))
+        _ = edge.observe(satisfied: false, interfaces: "")
+        XCTAssertTrue(edge.observe(satisfied: true, interfaces: "en0"))
     }
 
     // MARK: - Живость pull
