@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import Network
 import PropellerPure
 import PropellerUI
 import SwiftUI
@@ -1686,6 +1687,7 @@ class AppState: ObservableObject {
             Task { @MainActor in
                 self?.adoptOrphans()
                 self?.kickPipeline("app active")
+                self?.provisioningSignal(.wokeOrActivated)
                 // Same two events the pipeline wakes on: a menu-bar app that
                 // never quits would otherwise report one session per install.
                 Analytics.noteDayBoundary()
@@ -1697,6 +1699,7 @@ class AppState: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.kickPipeline("machine woke")
+                self?.provisioningSignal(.wokeOrActivated)
                 Analytics.noteDayBoundary()
             }
         })
@@ -1830,7 +1833,12 @@ class AppState: ObservableObject {
             downloadInFlight: ollamaDownloadTask != nil || ollamaSetupProgress != nil
         ))
         switch quickAnswer {
-        case .notOurs, .inFlight, .waitForQuiet:
+        case .notOurs:
+            // The obligation dissolved (cloud key, summaries off): the vigil
+            // goes with it — no timers, no probes, nothing owed (§10).
+            settleProvisioning()
+            return
+        case .inFlight, .waitForQuiet:
             return
         case .fetch, .alreadyThere:
             break
@@ -1841,7 +1849,12 @@ class AppState: ObservableObject {
             model.isEmpty ? OllamaSidecar.defaultModel : model
         )
         localRecapModelReady = installed
-        guard installed == false else { return }
+        guard installed == false else {
+            // Delivered — possibly by somebody else's pull (a hand-run curl, a
+            // system Ollama): whoever delivered it, nothing is owed any more.
+            settleProvisioning()
+            return
+        }
 
         // Distinguishes «первая выдача» from «починка» in telemetry only — the code
         // path is deliberately the same one, because a missing model is a missing
@@ -2669,6 +2682,11 @@ class AppState: ObservableObject {
             // начинали». Из всех причин она единственная, которую человек может
             // устранить сам, так что видеть её нужно первой.
             Analytics.ollamaSetup(ok: false, reason: "disk")
+            OllamaSidecar.shared.recordProvisioning("fail disk: недостаточно места для модели")
+            // Не тупик, а класс отказа (§10): проверка места дешёвая, лестница
+            // дойдёт до часового хвоста и будет спрашивать дальше — место
+            // освобождают в своё время, и никто не обязан помнить про нас.
+            provisioningFailed(.disk)
             return false
         }
         pipelineError = nil
@@ -2694,6 +2712,7 @@ class AppState: ObservableObject {
             ollamaSetupMessage = "Модель готова"
             ollamaSetupError = nil
             localRecapModelReady = true
+            settleProvisioning()
             Analytics.ollamaSetup(ok: true)
             // Setup is done and nothing needs the server yet. Without this a
             // launch-time resume check that finds the model already present
@@ -2705,22 +2724,116 @@ class AppState: ObservableObject {
             // including meetings that ran out of attempts while it was missing.
             applySummaryProviderChange()
             return true
+        } catch is CancellationError {
+            ollamaSetupProgress = nil
+            ollamaSetupMessage = ""
+            // Cancellation is not a failure (§10, same rule as the pipeline):
+            // no ladder step, no error line — whoever cancelled knows why.
+            return false
         } catch {
             ollamaSetupProgress = nil
             ollamaSetupMessage = ""
-            // Тоже только в настройках. Загрузка сама поедет снова — на каждом
-            // запуске и на каждой остановке пайплайна из-за провайдера
-            // (`ensureSummaryModel`), поэтому это состояние, а не событие.
+            // Тоже только в настройках. Загрузка сама поедет снова — по своей
+            // лестнице (`provisioningFailed`), по сигналам мира и на каждой
+            // остановке пайплайна из-за провайдера (`ensureSummaryModel`),
+            // поэтому это состояние, а не событие.
             ollamaSetupError = error.localizedDescription
             Analytics.ollamaSetup(
                 ok: false,
                 reason: (error as? OllamaSidecar.SidecarError)?.signalReason ?? "other"
+            )
+            provisioningFailed(
+                (error as? OllamaSidecar.SidecarError)?.provisioningClass ?? .other
             )
             return false
         }
     }
 
     private var ollamaDownloadTask: Task<Void, Never>?
+
+    // MARK: - Provisioning vigil (§10)
+
+    /// The one ladder of the «model on disk» obligation. Owned here and not in
+    /// the sidecar deliberately: one ladder per obligation, inner layers fail
+    /// fast (`design/principles.md` §10). Never persisted — a relaunch starting
+    /// clean is correct, launch is itself a wake signal.
+    private var provisioningLadder = ProvisioningLadder()
+    private var provisioningRetryTimer: Timer?
+    private var networkPathMonitor: NWPathMonitor?
+    private var networkPathWasSatisfied: Bool?
+
+    /// A provisioning attempt failed: take a ladder step, arm the deadline, and
+    /// start watching for the signals that can cut the wait short.
+    private func provisioningFailed(_ failureClass: ProvisioningRetry.FailureClass) {
+        let next = provisioningLadder.failed(failureClass, at: Date())
+        scheduleProvisioningRetry(at: next)
+        watchNetworkPath()
+        NSLog("[AppState] provisioning failed (\(failureClass.rawValue)) — next attempt in \(Int(next.timeIntervalSinceNow))s")
+    }
+
+    /// Nothing is owed any more — delivered, or the obligation dissolved
+    /// (cloud provider). Nothing owed ⇒ no timers, no probes.
+    private func settleProvisioning() {
+        provisioningLadder.succeeded()
+        provisioningRetryTimer?.invalidate()
+        provisioningRetryTimer = nil
+        stopWatchingNetworkPath()
+    }
+
+    private func scheduleProvisioningRetry(at date: Date) {
+        provisioningRetryTimer?.invalidate()
+        let delay = max(1, date.timeIntervalSinceNow)
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            Task { @MainActor in await self?.ensureSummaryModel() }
+        }
+        timer.tolerance = min(30, delay * 0.25)
+        RunLoop.main.add(timer, forMode: .common)
+        provisioningRetryTimer = timer
+        debugLog("[provisioning] next attempt in \(Int(delay))s")
+    }
+
+    /// The world changed in a way that may have changed the answer (§10): the
+    /// ladder decides whether this signal cures its last failure, and a cured
+    /// one is attempted now instead of waiting out the current step. The blind
+    /// ladder alone is how the app burned six attempts inside the one dead hour
+    /// of network and went quiet for the hour in which it came back (2026-08-22).
+    func provisioningSignal(_ signal: ProvisioningRetry.Signal) {
+        guard provisioningLadder.signal(signal) else { return }
+        provisioningRetryTimer?.invalidate()
+        provisioningRetryTimer = nil
+        NSLog("[AppState] provisioning signal \(signal.rawValue) — attempting now")
+        Task { await ensureSummaryModel() }
+    }
+
+    /// Watching starts with the first failure and stops with settlement:
+    /// a monitor with nothing owed would violate «нечего делать ⇒ нет проб».
+    private func watchNetworkPath() {
+        guard networkPathMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        networkPathMonitor = monitor
+        networkPathWasSatisfied = nil
+        monitor.pathUpdateHandler = { [weak self] path in
+            let satisfied = path.status == .satisfied
+            Task { @MainActor in
+                guard let self else { return }
+                let was = self.networkPathWasSatisfied
+                self.networkPathWasSatisfied = satisfied
+                // Only the transition into a working network is a signal. The
+                // first callback (current state) sets the baseline: a network
+                // that was fine all along is not news and resets nothing.
+                if was == false && satisfied {
+                    self.provisioningSignal(.networkPathRestored)
+                }
+            }
+        }
+        monitor.start(queue: .global(qos: .utility))
+    }
+
+    private func stopWatchingNetworkPath() {
+        networkPathMonitor?.cancel()
+        networkPathMonitor = nil
+        networkPathWasSatisfied = nil
+    }
 
     /// Fire-and-forget: start Ollama install in background so onboarding / Settings
     /// can proceed immediately. Progress stays in the status bar.
