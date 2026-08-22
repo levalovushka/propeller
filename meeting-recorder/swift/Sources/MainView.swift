@@ -733,12 +733,12 @@ struct MainView: View {
     }
 
     private var topStatusText: String? {
-        if let frac = state.ollamaSetupProgress {
-            let msg = state.ollamaSetupMessage.isEmpty
-                ? "Скачиваем модель саммари…"
-                : state.ollamaSetupMessage
-            if msg.contains("%") { return msg }
-            return "\(msg) \(Int(frac * 100))%"
+        if state.ollamaSetupProgress != nil {
+            // Сообщение фазы как есть — свой процент в него вписывает та фаза,
+            // у которой он есть (pull). Дописывать сюда композит из весов фаз
+            // запрещено §10: «Запуск Ollama… 20%» — это ложь про модель.
+            let msg = state.ollamaSetupMessage
+            return msg.isEmpty ? "Скачиваем модель саммари…" : msg
         }
         if let frac = state.modelDownloadProgress {
             return "Загрузка модели… \(Int(frac * 100))%"

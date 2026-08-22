@@ -490,10 +490,14 @@ private struct ModelsSettingsGroup: View {
         case .claude:     return ("Транскрипт уходит в\u{00A0}Anthropic", .help)
         case .openrouter: return ("Транскрипт уходит в\u{00A0}OpenRouter, дальше — вендору модели", .help)
         case .ollama:
-            // Пока модель едет — процент. Полосы загрузки под этой строкой
-            // больше нет, и это единственное место, где про загрузку сказано.
-            if let frac = state.ollamaSetupProgress {
-                return ("Скачиваем модель… \(Int(frac * 100))%", .progress)
+            // Пока установка едет — фаза и её собственный прогресс, никогда
+            // композит из весов фаз (§10): «25%» при нуле скачанных байт модели
+            // стоил диагностики дороже самой поломки (2026-08-22). Строку
+            // диктует тот, кто фазу выполняет (`statusCallback` сайдкара):
+            // «Запуск Ollama…» — это запуск, а не четверть модели.
+            if state.ollamaSetupProgress != nil {
+                let msg = state.ollamaSetupMessage
+                return (msg.isEmpty ? "Готовим саммари…" : msg, .progress)
             }
             switch ollamaReachable {
             case true: return ("Отвечает локально", .help)
