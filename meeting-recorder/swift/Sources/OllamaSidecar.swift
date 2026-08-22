@@ -107,7 +107,7 @@ final class OllamaSidecar: @unchecked Sendable {
         let fm = FileManager.default
         if !fm.isExecutableFile(atPath: binaryURL.path) || installedVersion != Self.releaseTag {
             do {
-                try await ensureBinaryInstalled(statusCallback: nil, progress: nil)
+                try await ensureBinaryInstalled(statusCallback: nil)
             } catch {
                 NSLog("[OllamaSidecar] unpack for serve failed: \(error.localizedDescription)")
                 return
@@ -201,7 +201,7 @@ final class OllamaSidecar: @unchecked Sendable {
         if await probeAPI() {
             statusCallback?("Ollama уже запущен")
         } else {
-            try await ensureBinaryInstalled(statusCallback: statusCallback, progress: nil)
+            try await ensureBinaryInstalled(statusCallback: statusCallback)
             statusCallback?("Запуск Ollama…")
             try await startServeIfNeeded(statusCallback: statusCallback)
             try await waitUntilHealthy(timeout: 90, statusCallback: statusCallback)
@@ -329,16 +329,12 @@ final class OllamaSidecar: @unchecked Sendable {
 
     /// Prefer the DMG-bundled tarball (no network). Fall back to GitHub only if
     /// the bundle is missing (dev / incomplete build).
-    private func ensureBinaryInstalled(
-        statusCallback: ((String) -> Void)?,
-        progress: ((Double) -> Void)?
-    ) async throws {
+    private func ensureBinaryInstalled(statusCallback: ((String) -> Void)?) async throws {
         let fm = FileManager.default
         try fm.createDirectory(at: installDir, withIntermediateDirectories: true)
         try fm.createDirectory(at: modelsDir, withIntermediateDirectories: true)
 
         if fm.isExecutableFile(atPath: binaryURL.path), installedVersion == Self.releaseTag {
-            progress?(1.0)
             return
         }
 
@@ -354,14 +350,11 @@ final class OllamaSidecar: @unchecked Sendable {
         let tarball: URL
         if let bundled = bundledTarballURL, fm.fileExists(atPath: bundled.path) {
             statusCallback?("Распаковываем движок саммари…")
-            progress?(0.2)
             tarball = bundled
         } else {
             statusCallback?("Скачиваем движок саммари…")
-            progress?(0)
             let dest = installDir.appendingPathComponent("ollama-darwin.tgz")
             try await downloadFile(from: downloadURL, to: dest) { frac in
-                progress?(frac * 0.85)
                 let pct = Int(frac * 100)
                 statusCallback?("Скачиваем движок саммари… \(pct)%")
             }
@@ -369,7 +362,6 @@ final class OllamaSidecar: @unchecked Sendable {
         }
 
         statusCallback?("Распаковываем движок саммари…")
-        progress?(0.9)
         // Snapshot *before* the archive lands on top of it: afterwards there is no way
         // to tell a file the new engine brought from one the old engine left behind.
         let before = (try? fm.contentsOfDirectory(atPath: installDir.path)) ?? []
@@ -395,7 +387,6 @@ final class OllamaSidecar: @unchecked Sendable {
         try makeExecutable(binaryURL)
         stripQuarantine(installDir)
         try? Self.releaseTag.write(to: installedVersionURL, atomically: true, encoding: .utf8)
-        progress?(1.0)
         NSLog("[OllamaSidecar] binary ready at \(binaryURL.path) (\(Self.releaseTag))")
     }
 

@@ -193,17 +193,11 @@ public enum TranscriptPresentation {
                 continue
             }
 
-            if let match = capture(Timecode.transcriptHeadPattern, in: head) {
-                let text = lines.dropFirst().joined(separator: "\n")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else { continue }
-                remarks.append(
-                    Remark(speaker: match[0], text: text, start: parseTimestamp(match[1]))
-                )
-                continue
-            }
-
-            if let match = capture(MeetingMarkdown.diskHeadPattern, in: head) {
+            // Head on its own line, body below it: the current shape and the
+            // disk one differ only in the pattern, so a third form is a row
+            // here rather than another copy of the body.
+            let headed = [Timecode.transcriptHeadPattern, MeetingMarkdown.diskHeadPattern]
+            if let match = headed.lazy.compactMap({ capture($0, in: head) }).first {
                 let text = lines.dropFirst().joined(separator: "\n")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { continue }

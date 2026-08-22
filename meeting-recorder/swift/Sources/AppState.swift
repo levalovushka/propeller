@@ -1836,7 +1836,7 @@ class AppState: ObservableObject {
             usesLocalModel: ModelProvisioning.usesLocalModel(providerRawValue: provider),
             modelInstalled: false,                    // not asked yet
             busyWithAudio: isRecording || meetingDetected || isTranscribing,
-            downloadInFlight: ollamaDownloadTask != nil || ollamaSetupInFlight
+            downloadInFlight: provisioningAttemptRunning
         ))
         switch quickAnswer {
         case .notOurs:
@@ -2754,6 +2754,13 @@ class AppState: ObservableObject {
 
     private var ollamaDownloadTask: Task<Void, Never>?
 
+    /// Is a provisioning attempt on the go? Two fields carry it — the task
+    /// covers the whole attempt, the published flag only the part with a status
+    /// line — and every reader wants their union, so the union is written once.
+    private var provisioningAttemptRunning: Bool {
+        ollamaDownloadTask != nil || ollamaSetupInFlight
+    }
+
     // MARK: - Provisioning vigil (§10)
 
     /// The one ladder of the «model on disk» obligation. Owned here and not in
@@ -2823,11 +2830,19 @@ class AppState: ObservableObject {
     /// the obligation keeps a clock. Without this, «не сейчас» was a stop
     /// with no deadline (I12's «stop and hope something kicks us»).
     private func ensureProvisioningVigil() {
-        guard ModelProvisioning.usesLocalModel(
-            providerRawValue: Preferences.shared.recapProvider.rawValue
-        ), localRecapModelReady != true else { return }
-        if ollamaDownloadTask != nil || ollamaSetupInFlight { return }
-        if provisioningRetryTimer?.isValid == true { return }
+        // The same decision as `ensureSummaryModel`'s, asked of the same pure
+        // rule rather than re-derived here — `busyWithAudio: false` on purpose:
+        // being busy is precisely the case that needs a deadline, so it must not
+        // come back as `.waitForQuiet`.
+        let decision = ModelProvisioning.decide(.init(
+            usesLocalModel: ModelProvisioning.usesLocalModel(
+                providerRawValue: Preferences.shared.recapProvider.rawValue
+            ),
+            modelInstalled: localRecapModelReady == true,
+            busyWithAudio: false,
+            downloadInFlight: provisioningAttemptRunning
+        ))
+        guard decision == .fetch, provisioningRetryTimer?.isValid != true else { return }
         scheduleProvisioningRetry(at: Date().addingTimeInterval(ProvisioningRetry.busyRecheck))
     }
 
@@ -2865,7 +2880,7 @@ class AppState: ObservableObject {
         // Remember the opt-in before the first byte, so quitting mid-download
         // still resumes on the next launch.
         Preferences.shared.localRecapModelRequested = true
-        if ollamaDownloadTask != nil || ollamaSetupInFlight { return }
+        if provisioningAttemptRunning { return }
         ollamaDownloadTask = Task { [weak self] in
             defer {
                 Task { @MainActor in

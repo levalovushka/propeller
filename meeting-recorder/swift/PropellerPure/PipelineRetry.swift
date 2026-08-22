@@ -92,34 +92,27 @@ public enum PipelineRetry {
     /// prevent. Terminals are declared by the call site that checked the input
     /// itself, and only there.
     public static func classify(_ message: String) -> FailureKind {
-        let text = message.lowercased()
-        for marker in ourFaultMarkers where text.contains(marker) { return .ourFault }
-        // Everything else — known transient markers *and* unknowns — waits and
+        // Read off the cause, not off a second marker table: the two questions
+        // are asked of the same string, and two tables meant a marker added to
+        // one silently disagreed with the other.
+        //
+        // Everything not ours — known transient causes *and* unknowns — waits and
         // tries again. There is no longer a cost to being wrong about an unknown:
         // the ladder walks out to an hour and nobody is told either way.
-        return .transient
+        ourFaultCauses.contains(cause(message)) ? .ourFault : .transient
     }
 
-    /// Ours, and knowable from the message alone. Data, not code, so a new case is
-    /// one string and one test.
-    static let ourFaultMarkers: [String] = [
-        // The request can never fit as built: the chunker miscounted. Retrying is
-        // still right (Э4 makes the retry divide the chunk instead of repeating
-        // it), and the signal goes to telemetry rather than to a person.
-        "413", "too large", "слишком велик", "слишком больш",
-        // A reasoning model that spent the whole window thinking will spend it
-        // again on the next identical call — our prompt handling, not the weather.
-        "ушла в рассуждения",
-    ]
-
-    static let transientMarkers: [String] = [
-        "недоступен", "unavailable", "не запущен", "not running",
-        "timed out", "timeout", "таймаут", "не успело", "перегружен",
-        "connection", "соединени", "network", "сеть", "offline", "офлайн",
-        "socket", "broken pipe", "eof", "cannot connect", "could not connect",
-        "не удалось подключиться", "temporarily", "busy", "занят",
-        "408", "429", "500", "502", "503", "504",
-    ]
+    /// Which causes are ours. Data, not code, so a new case is one string and
+    /// one test.
+    ///
+    /// - `too_large`: the request can never fit as built — the chunker
+    ///   miscounted. Retrying is still right (Э4 makes the retry divide the
+    ///   chunk instead of repeating it), and the signal goes to telemetry
+    ///   rather than to a person.
+    /// - `thinking`: a reasoning model that spent the whole window thinking
+    ///   will spend it again on the next identical call — our prompt handling,
+    ///   not the weather.
+    static let ourFaultCauses: Set<String> = ["too_large", "thinking"]
 
     // MARK: - Cause
 

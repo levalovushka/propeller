@@ -239,11 +239,27 @@ public enum CallWindowJournal {
     /// There is deliberately no third rule: "first tile speaks" was refuted
     /// live (0 of 626 polls), and equal unlabelled tiles are silence.
     public static func verdict(in poll: Poll, tuning: Tuning = Tuning()) -> Verdict {
-        let named: [(name: String, tile: Tile)] = poll.tiles.compactMap { tile in
+        verdict(named: namedTiles(in: poll, tuning: tuning), tuning: tuning)
+    }
+
+    /// Участники опроса: плитки, из описания которых удалось прочитать имя.
+    ///
+    /// Одно место, где живёт правило «что считается плиткой участника»: у него
+    /// три читателя (вердикт, ледгер мьюта, роспись пары), и раньше каждый
+    /// выбирал плитки сам — причём один из трёх забывал передать `tuning`, так
+    /// что при нестандартных маркерах одна плитка получала два разных имени.
+    static func namedTiles(in poll: Poll, tuning: Tuning) -> [(name: String, tile: Tile)] {
+        poll.tiles.compactMap { tile in
             guard tile.role == "AXTabGroup",
-                  let name = name(fromDescription: tile.description) else { return nil }
+                  let name = name(fromDescription: tile.description, tuning: tuning)
+            else { return nil }
             return (name, tile)
         }
+    }
+
+    /// Вердикт по уже выбранным участникам — чтобы вызывающий, которому список
+    /// нужен и для себя, не разбирал описания плиток дважды за опрос.
+    static func verdict(named: [(name: String, tile: Tile)], tuning: Tuning) -> Verdict {
         guard !named.isEmpty else { return .silent(.noTiles) }
         guard Set(named.map { $0.tile.process + "\u{1}" + $0.tile.window }).count == 1 else {
             return .silent(.twoWindows)
@@ -352,17 +368,14 @@ public enum CallWindowJournal {
 
         public mutating func take(_ poll: Poll) {
             pollTimes.append(poll.t)
-            for tile in poll.tiles where tile.role == "AXTabGroup" {
-                guard let name = CallWindowJournal.name(
-                    fromDescription: tile.description, tuning: tuning
-                ) else { continue }
-                if CallWindowJournal.tailContains(tile, anyOf: tuning.mutedMarkers) {
-                    mutedTiles.append((t: poll.t, name: name))
-                }
+            let named = CallWindowJournal.namedTiles(in: poll, tuning: tuning)
+            for (name, tile) in named
+            where CallWindowJournal.tailContains(tile, anyOf: tuning.mutedMarkers) {
+                mutedTiles.append((t: poll.t, name: name))
             }
 
             var name: String?
-            if case .speaker(let n) = CallWindowJournal.verdict(in: poll, tuning: tuning) {
+            if case .speaker(let n) = CallWindowJournal.verdict(named: named, tuning: tuning) {
                 name = n
             }
             if let name, name == runName {
@@ -518,10 +531,7 @@ public enum CallWindowJournal {
         var companion: String?
         var qualifying = 0
         for poll in polls {
-            let names = Set(poll.tiles.compactMap { tile -> String? in
-                guard tile.role == "AXTabGroup" else { return nil }
-                return name(fromDescription: tile.description)
-            })
+            let names = Set(namedTiles(in: poll, tuning: Tuning()).map(\.name))
             guard names.count >= 2 else { continue }
             guard names.count == 2, names.contains(ownerZoomName),
                   let other = names.first(where: { $0 != ownerZoomName })

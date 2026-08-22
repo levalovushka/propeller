@@ -97,12 +97,19 @@ func utterances(_ path: String) -> [Utterance] {
     return list
 }
 
-/// The by-line answer, produced by the shipped machine rather than a copy of it.
-func labels(utts: [Utterance], ownerTurns: [Utterance]) -> [Label] {
+/// The shipped machine, fed the whole trace once. The feeding order is load-bearing
+/// (`noteOwnerTurn` credits overlap retroactively), so it is written in one place:
+/// every answer below — labels, owner, mute share — comes off this one ledger.
+func warmed(ownerTurns: [Utterance]) -> CallWindowJournal.LiveSpeaker {
     var live = CallWindowJournal.LiveSpeaker(tuning: tuning)
     for poll in polls.sorted(by: { $0.t < $1.t }) { live.take(poll) }
     for turn in ownerTurns { live.noteOwnerTurn(start: turn.start, end: turn.end) }
-    return utts.map { utt in
+    return live
+}
+
+/// The by-line answer, produced by the shipped machine rather than a copy of it.
+func labels(utts: [Utterance], from live: CallWindowJournal.LiveSpeaker) -> [Label] {
+    utts.map { utt in
         let mid = (utt.start + utt.end) / 2
         return Label(start: utt.start, end: utt.end, speaker: live.name(at: mid) ?? "")
     }
@@ -134,11 +141,8 @@ if let uttsPath = flag("utts") {
             ("предупреждение: без --owner-utts замок владельца не защёлкнется, "
              + "и каждая строка вернётся безымянной\n").utf8))
     }
-    byLine = labels(utts: utterances(uttsPath), ownerTurns: owner)
-
-    var live = CallWindowJournal.LiveSpeaker(tuning: tuning)
-    for poll in polls.sorted(by: { $0.t < $1.t }) { live.take(poll) }
-    for turn in owner { live.noteOwnerTurn(start: turn.start, end: turn.end) }
+    let live = warmed(ownerTurns: owner)
+    byLine = labels(utts: utterances(uttsPath), from: live)
     ownerName = live.ownerZoomName
     let share = live.ownerMutedTurnShare
     ownerMuted = ["muted": share.muted, "judged": share.judged]

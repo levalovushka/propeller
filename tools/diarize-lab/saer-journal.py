@@ -72,11 +72,12 @@ def main() -> None:
                          "вне списка всегда неправо")
     args = ap.parse_args()
 
-    raw = json.load(open(args.journal))
+    with open(args.journal) as fh:
+        raw = json.load(fh)
     by_line = raw.get("labels")
     journal = [
         {**s, "start": s["start"] + args.offset, "end": s["end"] + args.offset}
-        for s in load_spans(args.journal)
+        for s in raw["spans"]
     ]
     if by_line is None:
         print("  правило: НАКРЫВАЮЩИЙ ПРОЛЁТ — это лабораторное правило, а не "
@@ -85,9 +86,9 @@ def main() -> None:
     else:
         print("  правило: ближайший образец ≤1 с, плита владельца исключена — "
               "то же, что в приложении")
-        labels_at = {
-            round(l["start"] + args.offset, 3): l["speaker"] for l in by_line
-        }
+        # Без `--offset`: метки и реплики пришли из одного файла `--utts`, то
+        # есть уже на одних часах, и сдвиг сократился бы с обеих сторон.
+        labels_at = {round(l["start"], 3): l["speaker"] for l in by_line}
     ref = load_spans(args.ref)
     utts = json.load(open(args.utts))
     fallback = load_spans(args.fallback) if args.fallback else None
@@ -105,7 +106,7 @@ def main() -> None:
         else:
             # Метку дала отгруженная машинка; пустая строка — «журнал промолчал»,
             # и в проде эта секунда уходит диаризации, а не ближайшему пролёту.
-            name = labels_at.get(round(u["start"] + args.offset, 3)) or None
+            name = labels_at.get(round(u["start"], 3)) or None
         if name is None:
             silent.append((person, seconds))
         else:
