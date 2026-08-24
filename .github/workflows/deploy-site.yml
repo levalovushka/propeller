@@ -1,0 +1,36 @@
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+    paths: ['site/**']
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-site
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "201.24.53.31 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBcHrySZBn4JQ9tWGpj3CNiGJnTPbpBJtObpMACcwO4V" >> ~/.ssh/known_hosts
+
+      - name: Rsync site
+        run: |
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/deploy_key" \
+            site/ deploy@201.24.53.31:/var/www/site/
+
+      - name: Verify
+        run: |
+          sleep 2
+          curl -sSf --max-time 15 https://propeller.report/ -o /dev/null
+          echo "site is up"
