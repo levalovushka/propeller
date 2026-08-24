@@ -80,6 +80,10 @@ final class NotchController {
     func stopRecording() {
         stopObservingScreens()
         stopMonitoring()
+        // Раньше проверки на панель: вырез мог исчезнуть посреди записи (крышку
+        // закрыли, монитор отключили), и тогда панели уже нет — а привод ходил
+        // и его замер существует.
+        Self.finishDrive()
         guard panel != nil else { return }
         stage = .sealed
         render()
@@ -136,6 +140,7 @@ final class NotchController {
 
         panel.orderFrontRegardless()
         startMonitoring()
+        Self.startDrive()
     }
 
     private func hide() {
@@ -273,17 +278,60 @@ final class NotchController {
         return nil
     }
 
-    /// Сколько раз привод лопасти опоздал и насколько. Пишется раз в десять
-    /// секунд: цифра нужна, чтобы знать, стоял ли главный поток, — сам поворот
-    /// от этого уже не зависит, он живёт в слое.
+    /// Сколько раз привод лопасти опоздал и насколько. Цифра нужна, чтобы знать,
+    /// стоял ли главный поток, — сам поворот от этого уже не зависит, он живёт
+    /// в слое.
+    ///
+    /// В лог пишется раз в десять секунд: живую запись смотрят живьём, и там
+    /// нужна частота. В телеметрию уходит **один агрегат на запись**
+    /// (`Analytics.bladeDrive` из `finishDrive`) — почему так, написано у него.
     private static var stalls = 0
     private static var worstStall: Double = 0
     private static var stallWindow: Date?
+    /// Ходил ли привод в эту запись и с какого момента. `nil` — плиты не было
+    /// (нет выреза, чёлка выключена), и тогда сигналу не о чем говорить.
+    private static var driveStarted: Date?
+    /// Худшее за всю запись, а не за окно лога.
+    private static var worstStallOfDrive: Double = 0
+    private static var stallsOfDrive = 0
+
+    /// Плита появилась. Первый показ за запись стартует замер; повторные (экран
+    /// переставили, крышку закрыли) продолжают его — запись одна.
+    private static func startDrive() {
+        guard driveStarted == nil else { return }
+        driveStarted = Date()
+        stallsOfDrive = 0
+        worstStallOfDrive = 0
+    }
+
+    /// Запись кончилась. Один сигнал за запись, в том числе когда всё было ровно:
+    /// без нулей не существует знаменателя «у скольких записей привод не спотыкался».
+    private static func finishDrive() {
+        guard let started = driveStarted else { return }
+        driveStarted = nil
+        let seconds = Date().timeIntervalSince(started)
+        debugLog(String(
+            format: "[Notch] привод: %d опозданий за %.0f с, худшее — %.0f мс",
+            stallsOfDrive, seconds, worstStallOfDrive * 1000
+        ))
+        Analytics.bladeDrive(
+            stalls: stallsOfDrive,
+            worstStallMs: worstStallOfDrive * 1000,
+            seconds: seconds
+        )
+        stalls = 0
+        worstStall = 0
+        stallWindow = nil
+        stallsOfDrive = 0
+        worstStallOfDrive = 0
+    }
 
     private static func noteStall(_ seconds: Double) {
         let now = Date()
         stalls += 1
         worstStall = max(worstStall, seconds)
+        stallsOfDrive += 1
+        worstStallOfDrive = max(worstStallOfDrive, seconds)
         guard let started = stallWindow else {
             stallWindow = now
             return
@@ -294,7 +342,6 @@ final class NotchController {
             format: "[Notch] привод опоздал %d раз за %.0f с, худший — %.0f мс",
             stalls, elapsed, worstStall * 1000
         ))
-        Analytics.signal("Notch.bladeStall", value: worstStall * 1000)
         stalls = 0
         worstStall = 0
         stallWindow = now
