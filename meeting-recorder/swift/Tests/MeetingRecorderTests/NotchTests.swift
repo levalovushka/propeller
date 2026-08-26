@@ -24,10 +24,19 @@ final class NotchGeometryTests: XCTestCase {
     /// 16″ — 1728×1117, вырез 220×38.
     private lazy var mbp16 = screen(width: 1728, top: 1117, safeTop: 38, aux: 754)!
 
+    func testЧёлкаРастётТолькоВширь() {
+        // Плита, свисающая под вырез, читается как выехавшая панель, а не как
+        // раздавшаяся чёлка. Высота у обеих стадий одна.
+        let open = NotchGeometry.frame(on: mbp14, stage: .open)
+        let sealed = NotchGeometry.frame(on: mbp14, stage: .sealed)
+        XCTAssertEqual(open.height, sealed.height)
+        XCTAssertGreaterThan(open.width, sealed.width)
+    }
+
     func testРаскрытаяЧёлкаЭтоВырезИДваКрыла() {
         let f = NotchGeometry.frame(on: mbp14, stage: .open)
         XCTAssertEqual(f.width, 185 + 2 * 107.5)
-        XCTAssertEqual(f.height, 47, "плита свисает под кромку — иначе кнопкам негде стоять")
+        XCTAssertEqual(f.height, 32, "чёлка растёт вширь, а не вниз: высота — её собственная")
         XCTAssertEqual(f.wingWidth, 107.5)
     }
 

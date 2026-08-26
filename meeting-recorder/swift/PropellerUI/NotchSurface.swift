@@ -135,8 +135,6 @@ public struct NotchFace: View {
                     NotchButton(symbol: "stop.fill", enabled: true, action: onStop)
                 )
             }
-            // По высоте плиты, а не выреза: в макете пара стоит по центру
-            // всей плиты (7,5 сверху при 47), то есть заметно ниже кромки.
             .frame(width: frame.width - 2 * NotchGeometry.groupInset,
                    height: frame.height)
             .opacity(open ? 1 : 0)
@@ -194,12 +192,21 @@ private struct NotchButton: View {
     }
 
     private var glyph: some View {
-        Image(systemName: symbol)
-            .font(.system(size: 16, weight: .regular))
-            .foregroundStyle(.white.opacity(opacity))
-            .frame(width: NotchGeometry.buttonSide, height: NotchGeometry.buttonSide)
-            .animation(.easeOut(duration: 0.12), value: hovering)
-            .animation(.smooth(duration: 0.24), value: symbol)
+        // Знак сменяет знак не подстановкой, а уходом: старый уменьшается,
+        // размывается и гаснет, новый приходит тем же путём назад. Пауза,
+        // сменившаяся плеем щелчком, читается как подмена картинки, а не как
+        // ответ на нажатие. `.id` нужен, чтобы SwiftUI считал это двумя разными
+        // знаками и включил переход, а не переписал один системный символ.
+        ZStack {
+            Image(systemName: symbol)
+                .font(.system(size: 16, weight: .regular))
+                .transition(.blurReplace)
+                .id(symbol)
+        }
+        .foregroundStyle(.white.opacity(opacity))
+        .frame(width: NotchGeometry.buttonSide, height: NotchGeometry.buttonSide)
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(.smooth(duration: 0.26), value: symbol)
     }
 
     var body: some View {

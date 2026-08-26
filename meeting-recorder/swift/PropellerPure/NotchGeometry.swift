@@ -24,9 +24,10 @@ public enum NotchGeometry {
     /// кнопок, а внешний край уходит книзу S-образной кривой (`NotchShape`).
     public static let wingWidth: CGFloat = 107.5
 
-    /// Высота плиты. Больше высоты выреза: чёлка не продолжается вбок на своей
-    /// высоте, как раньше, а свисает под кромку — иначе кнопкам негде стоять.
-    public static let plateHeight: CGFloat = 47
+    /// Плита **не свисает под вырез**: её высота — высота самого выреза, и
+    /// растёт чёлка только вширь. Свисающая на 47 pt плита (как нарисована в
+    /// макете) читается как выехавшая панель, а не как раздавшаяся чёлка, и в
+    /// этом всё различие между «прибор в железе» и «окно поверх экрана».
 
     /// Кнопка: 32×32 с полем 8, то есть знак 16.
     public static let buttonSide: CGFloat = 32
@@ -70,8 +71,7 @@ public enum NotchGeometry {
         public let originY: CGFloat
         /// Ширина самого выреза — середина фигуры.
         public let notchWidth: CGFloat
-        /// Высота выреза. Плита ниже него, но кнопки стоят по центру выреза,
-        /// а не по центру плиты: глаз ровняет их по кромке экрана.
+        /// Высота выреза, она же высота плиты.
         public let notchHeight: CGFloat
 
         /// Ширина крыла слева и справа от выреза — в нём живёт пара кнопок.
@@ -140,7 +140,7 @@ public enum NotchGeometry {
             height = screen.notchHeight
         case .open:
             width = screen.notchWidth + 2 * wingWidth
-            height = max(plateHeight, screen.notchHeight)
+            height = screen.notchHeight
         }
 
         return Frame(
