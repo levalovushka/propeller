@@ -82,6 +82,22 @@ class AudioRecorder: ObservableObject {
     private var pausedTotal: TimeInterval = 0
     private var pausedSince: Date?
 
+    /// Микрофон заглушён человеком.
+    ///
+    /// Состояние записи, как и пауза: файл тот же, дорожки те же, системный звук
+    /// продолжает писаться. Живёт только на общих часах — на микрофонном пути
+    /// глушить нечего, там микрофон и есть вся запись, поэтому кнопка в чёлке
+    /// там недоступна, а не врёт.
+    @Published private(set) var isMicMuted = false
+
+    var canMuteMic: Bool { capturePath == .processTap }
+
+    func setMicMuted(_ muted: Bool) {
+        guard canMuteMic else { return }
+        (tapCapture as? ProcessTapCapture)?.setMicMuted(muted)
+        isMicMuted = muted
+    }
+
     /// Rolling history of mic audio levels (0–1) for waveform display.
     /// Уровни звука по времени. **Не `@Published` намеренно.**
     ///
@@ -112,6 +128,7 @@ class AudioRecorder: ObservableObject {
         lastStopWasMicOnly = false
         systemStemOffset = nil
         isPaused = false
+        isMicMuted = false
         pausedTotal = 0
         pausedSince = nil
         debugLog("[AudioRecorder] start() called — captureSystemAudio=\(Preferences.shared.captureSystemAudio)")

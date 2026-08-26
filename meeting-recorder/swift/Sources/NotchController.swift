@@ -5,23 +5,18 @@ import PropellerPure
 
 /// Панель у выреза: живёт ровно столько, сколько идёт запись.
 ///
-/// Заменила нижний оверлей заметки (⌃⌥N). Причина не в том, что так красивее:
-/// камера — в чёлке, и человек, печатающий в поле, которое выросло из выреза,
-/// на встрече продолжает выглядеть смотрящим в глаза. Нижняя плашка уводила
-/// взгляд вниз, и это видели все участники.
+/// Четыре кнопки: микрофон и вейвформа слева, пауза и стоп справа
+/// (Figma 299:26711). Всё, что человек в звонке может захотеть за секунду, — и
+/// ничего сверх того: заметки живут в окне встречи, а не здесь.
 ///
-/// Два элемента и одно действие: слева лопасть, которую крутит записываемый
-/// звук, справа заметка. Паузы и стопа тут нет — см. `NotchSurface`.
-///
-/// Плита ловит мышь только своим правым ухом: всё остальное пропускает клик в
-/// меню-бар под собой, потому что перекрывать меню чужого приложения на время
-/// встречи мы права не имеем.
+/// Плита ловит мышь только кнопками: всё остальное пропускает клик в меню-бар
+/// под собой, потому что перекрывать меню чужого приложения на время встречи мы
+/// права не имеем.
 ///
 /// **Нет выреза — нет фичи, целиком.** Air M1, iMac, ноутбук с закрытой крышкой
-/// на внешнем мониторе — там не поднимается ни панель, ни монитор ⌃⌥N. Второе
-/// важнее первого: горячая клавиша, открывающая поле, которого не видно, — это
-/// клавиатура, проваливающаяся в никуда посреди встречи. Заметки в таком случае
-/// живут в колонке окна, где они есть всегда.
+/// на внешнем мониторе — панель там не поднимается. Пауза, стоп и микрофон
+/// остаются доступными в окне и в меню-баре, то есть теряется удобство, а не
+/// возможность.
 ///
 /// Вырез может появиться и исчезнуть посреди записи (крышку открыли, монитор
 /// отключили, разрешение переключили) — поэтому наблюдатель за экранами живёт
@@ -33,16 +28,11 @@ final class NotchController {
     private weak var state: AppState?
     private var panel: NotchPanel?
     private var hosting: NSHostingView<NotchFace>?
-    private var globalMonitor: Any?
-    private var localMonitor: Any?
     private var screenObserver: NSObjectProtocol?
     /// Плита уходит в вырез и только потом снимается — таск ждёт конца хода.
     private var dismissTask: Task<Void, Never>?
 
-    private var stage: NotchGeometry.Stage = .resting
-
-    /// ⌃⌥N — keyCode 45 это «n».
-    private let noteKeyCode: UInt16 = 45
+    private var stage: NotchGeometry.Stage = .open
 
     func install(state: AppState) {
         self.state = state
@@ -79,11 +69,6 @@ final class NotchController {
     /// вырез: появилась она оттуда же.
     func stopRecording() {
         stopObservingScreens()
-        stopMonitoring()
-        // Раньше проверки на панель: вырез мог исчезнуть посреди записи (крышку
-        // закрыли, монитор отключили), и тогда панели уже нет — а привод ходил
-        // и его замер существует.
-        Self.finishDrive()
         guard panel != nil else { return }
         stage = .sealed
         render()
@@ -99,7 +84,7 @@ final class NotchController {
     /// который уже ничего не показывает.
     private static let dismissDelayMs = 620
 
-    /// Пауза меняет только лопасть, но перерисовать плиту всё равно надо.
+    /// Пауза, мьют — состояние кнопок изменилось, плиту надо перерисовать.
     func refresh() {
         guard panel != nil else { return }
         render()
@@ -107,12 +92,12 @@ final class NotchController {
 
     private func show() {
         guard panel == nil, let screen = Self.notchScreen() else { return }
-        stage = .resting
+        stage = .open
 
         // Окно сразу максимального габарита и больше не двигается: всё движение
         // плиты — внутри SwiftUI (`NotchFace`). Анимировать `setFrame` мы уже
         // пробовали, и на сворачивании плита отлипала от кромки экрана.
-        let frame = Self.geometry(on: screen, stage: .composing)
+        let frame = Self.geometry(on: screen, stage: .open)
         let panel = NotchPanel(
             contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -139,17 +124,13 @@ final class NotchController {
         self.panel = panel
 
         panel.orderFrontRegardless()
-        startMonitoring()
-        Self.startDrive()
     }
 
     private func hide() {
-        stopMonitoring()
-        panel?.resignKey()
         panel?.orderOut(nil)
         panel = nil
         hosting = nil
-        stage = .resting
+        stage = .open
     }
 
     /// Экраны переставили, крышку открыли или закрыли, разрешение переключили —
@@ -174,9 +155,8 @@ final class NotchController {
     private func screensChanged() {
         guard state?.isRecording == true, Preferences.shared.notchIndicator else { return }
         guard let screen = Self.notchScreen() else {
-            // Крышку закрыли или встроенный экран ушёл: чёлки нет, а значит нет
-            // и фичи — вместе с горячей клавишей, которой больше некуда открыть
-            // поле. Уходим молча, запись при этом идёт.
+            // Крышку закрыли или встроенный экран ушёл: рисовать плиту не на
+            // чем. Уходим молча, запись при этом идёт.
             hide()
             return
         }
@@ -191,65 +171,23 @@ final class NotchController {
         // монитор — тогда у экрана с вырезом меняется его левый край, а с ним и
         // рамка. Окно переезжает без анимации: это движение железа, а не
         // интерфейса.
-        panel.setFrame(Self.geometry(on: screen, stage: .composing), display: true)
+        panel.setFrame(Self.geometry(on: screen, stage: .open), display: true)
         render()
     }
 
-    // MARK: - Заметка
+    // MARK: - Действия
 
-    private func startMonitoring() {
-        guard globalMonitor == nil, localMonitor == nil else { return }
-        let handler: (NSEvent) -> Void = { [weak self] event in
-            guard let self else { return }
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if event.keyCode == self.noteKeyCode, flags.contains(.control), flags.contains(.option) {
-                self.toggleNote()
-            }
-        }
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { handler($0) }
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            handler(event)
-            return event
-        }
+    private func toggleMute() {
+        state?.toggleMicMuted()
     }
 
-    private func stopMonitoring() {
-        if let g = globalMonitor {
-            NSEvent.removeMonitor(g)
-            globalMonitor = nil
-        }
-        if let l = localMonitor {
-            NSEvent.removeMonitor(l)
-            localMonitor = nil
-        }
+    private func togglePause() {
+        guard let state, state.isRecording else { return }
+        if state.isRecordingPaused { state.resumeRecording() } else { state.pauseRecording() }
     }
 
-    private func toggleNote() {
-        guard state?.isRecording == true else { return }
-        if stage == .composing { cancelNote() } else { openNote() }
-    }
-
-    private func openNote() {
-        guard panel != nil else { return }
-        stage = .composing
-        render()
-        // Фокус клавиатуры без активации приложения: человек в звонке, и
-        // выдёргивать Zoom из-под него ради одной строки нельзя.
-        panel?.makeKeyAndOrderFront(nil)
-    }
-
-    private func cancelNote() {
-        stage = .resting
-        render()
-        panel?.resignKey()
-    }
-
-    /// Заметка записана — и это всё, что об этом сообщается: поле закрылось.
-    private func commitNote(_ text: String) {
-        _ = state?.appendTimestampedNote(text)
-        stage = .resting
-        render()
-        panel?.resignKey()
+    private func stop() {
+        state?.stopRecording()
     }
 
     // MARK: - Геометрия и отрисовка
@@ -278,75 +216,6 @@ final class NotchController {
         return nil
     }
 
-    /// Сколько раз привод лопасти опоздал и насколько. Цифра нужна, чтобы знать,
-    /// стоял ли главный поток, — сам поворот от этого уже не зависит, он живёт
-    /// в слое.
-    ///
-    /// В лог пишется раз в десять секунд: живую запись смотрят живьём, и там
-    /// нужна частота. В телеметрию уходит **один агрегат на запись**
-    /// (`Analytics.bladeDrive` из `finishDrive`) — почему так, написано у него.
-    private static var stalls = 0
-    private static var worstStall: Double = 0
-    private static var stallWindow: Date?
-    /// Ходил ли привод в эту запись и с какого момента. `nil` — плиты не было
-    /// (нет выреза, чёлка выключена), и тогда сигналу не о чем говорить.
-    private static var driveStarted: Date?
-    /// Худшее за всю запись, а не за окно лога.
-    private static var worstStallOfDrive: Double = 0
-    private static var stallsOfDrive = 0
-
-    /// Плита появилась. Первый показ за запись стартует замер; повторные (экран
-    /// переставили, крышку закрыли) продолжают его — запись одна.
-    private static func startDrive() {
-        guard driveStarted == nil else { return }
-        driveStarted = Date()
-        stallsOfDrive = 0
-        worstStallOfDrive = 0
-    }
-
-    /// Запись кончилась. Один сигнал за запись, в том числе когда всё было ровно:
-    /// без нулей не существует знаменателя «у скольких записей привод не спотыкался».
-    private static func finishDrive() {
-        guard let started = driveStarted else { return }
-        driveStarted = nil
-        let seconds = Date().timeIntervalSince(started)
-        debugLog(String(
-            format: "[Notch] привод: %d опозданий за %.0f с, худшее — %.0f мс",
-            stallsOfDrive, seconds, worstStallOfDrive * 1000
-        ))
-        Analytics.bladeDrive(
-            stalls: stallsOfDrive,
-            worstStallMs: worstStallOfDrive * 1000,
-            seconds: seconds
-        )
-        stalls = 0
-        worstStall = 0
-        stallWindow = nil
-        stallsOfDrive = 0
-        worstStallOfDrive = 0
-    }
-
-    private static func noteStall(_ seconds: Double) {
-        let now = Date()
-        stalls += 1
-        worstStall = max(worstStall, seconds)
-        stallsOfDrive += 1
-        worstStallOfDrive = max(worstStallOfDrive, seconds)
-        guard let started = stallWindow else {
-            stallWindow = now
-            return
-        }
-        let elapsed = now.timeIntervalSince(started)
-        guard elapsed >= 10 else { return }
-        debugLog(String(
-            format: "[Notch] привод опоздал %d раз за %.0f с, худший — %.0f мс",
-            stalls, elapsed, worstStall * 1000
-        ))
-        stalls = 0
-        worstStall = 0
-        stallWindow = now
-    }
-
     private static func geometry(on screen: NotchGeometry.Screen, stage: NotchGeometry.Stage) -> NSRect {
         let frame = NotchGeometry.frame(on: screen, stage: stage)
         return NSRect(x: frame.originX, y: frame.originY,
@@ -364,27 +233,22 @@ final class NotchController {
     }
 
     private func face(on screen: NotchGeometry.Screen) -> NotchFace {
-        let recorder = state?.recorder
-        return NotchFace(
+        NotchFace(
             screen: screen,
             stage: stage,
             paused: state?.isRecordingPaused == true,
-            level: { [weak recorder] in
-                guard let recorder else { return 0 }
-                return max(recorder.micLevelHistory.last ?? 0,
-                           recorder.systemLevelHistory.last ?? 0)
-            },
-            onStall: { seconds in Self.noteStall(seconds) },
-            onNote: { [weak self] in self?.toggleNote() },
-            onCommit: { [weak self] text in self?.commitNote(text) },
-            onCancel: { [weak self] in self?.cancelNote() }
+            muted: state?.isMicMuted == true,
+            canMute: state?.canMuteMic == true,
+            onMute: { [weak self] in self?.toggleMute() },
+            onPause: { [weak self] in self?.togglePause() },
+            onStop: { [weak self] in self?.stop() }
         )
     }
 }
 
-/// Панель, которая умеет взять клавиатуру, не активируя приложение, — иначе
-/// первая же заметка выдернула бы человека из звонка.
+/// Панель, которая принимает клики, не активируя приложение: нажать паузу
+/// посреди звонка нельзя ценой выдёргивания человека из Zoom.
 private final class NotchPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
+    override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 }

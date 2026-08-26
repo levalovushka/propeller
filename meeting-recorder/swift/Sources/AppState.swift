@@ -821,6 +821,22 @@ class AppState: ObservableObject {
 
     var isRecordingPaused: Bool { isRecording && recorder.isPaused }
 
+    // MARK: - Микрофон
+
+    /// Микрофон выключен человеком: его голос в запись не идёт, всё остальное
+    /// идёт. Не пауза и не стоп — встреча продолжает записываться.
+    var isMicMuted: Bool { isRecording && recorder.isMicMuted }
+
+    /// На микрофонном пути глушить нечего: там микрофон и есть вся запись.
+    var canMuteMic: Bool { isRecording && recorder.canMuteMic }
+
+    func toggleMicMuted() {
+        guard isRecording, canMuteMic else { return }
+        recorder.setMicMuted(!recorder.isMicMuted)
+        NotchController.shared.refresh()
+        objectWillChange.send()
+    }
+
     /// Cancel the in-progress recording and discard it entirely (no transcript,
     /// no saved audio). Triggered by the "Don't record" notification action.
     func cancelRecording() {
@@ -926,7 +942,10 @@ class AppState: ObservableObject {
             // announce itself when it is done.
             awaitedRecordingIDs.insert(result.id)
 
-            // Keep for live detail of *this* stop; badge itself reads entry.micOnlyCaptured.
+            // Keep for live detail of *this* stop. The badge this once referred to
+            // does not exist: `entry.micOnlyCaptured` is written and read by nobody
+            // (checked 2026-08-22), so telemetry is the only place a mic-only meeting
+            // is visible at all — `STATE.md`, часть 0е.
             Analytics.recordingFinished(duration: result.duration, micOnly: micOnly)
 
             if runPipeline {

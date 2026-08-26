@@ -4,9 +4,9 @@ import AppKit
 import PropellerUI
 import PropellerPure
 
-/// A tool, not a test — same idea as `SettingsShotTests`: renders the notch surface
-/// onto a fake desktop so the silhouette can be looked at without starting a
-/// real recording. Skipped unless `NOTCH_SHOT` names a path.
+/// Scratch tool, same idea as `TempSettingsShotTests`: renders the notch surface
+/// onto a fake desktop so the silhouette can be compared with the Figma frame
+/// without starting a real recording. Skipped unless `NOTCH_SHOT` names a path.
 final class NotchShotTests: XCTestCase {
 
     @MainActor
@@ -16,16 +16,15 @@ final class NotchShotTests: XCTestCase {
             "NOTCH_SHOT is not set"
         )
         let output = ProcessInfo.processInfo.environment["NOTCH_SHOT"]!
-        let composing = ProcessInfo.processInfo.environment["NOTCH_SHOT_COMPOSING"] != nil
-        let stage: NotchGeometry.Stage = composing ? .composing : .resting
+        let paused = ProcessInfo.processInfo.environment["NOTCH_SHOT_PAUSED"] != nil
+        let muted = ProcessInfo.processInfo.environment["NOTCH_SHOT_MUTED"] != nil
 
-        // 14″ MacBook Pro, half scale across so the plate is not lost on the strip.
+        // 14″ MacBook Pro.
         let screen = try XCTUnwrap(NotchGeometry.screen(
             left: 0, width: 1512, top: 982, safeAreaTop: 32,
             auxiliaryLeftWidth: 663.5, auxiliaryRightWidth: 663.5
         ))
-        let draft = ProcessInfo.processInfo.environment["NOTCH_SHOT_TEXT"] ?? ""
-        let size = CGSize(width: 760, height: 220)
+        let size = CGSize(width: 700, height: 160)
 
         let root = ZStack(alignment: .top) {
             // Wallpaper stand-in: the plate has to read against something.
@@ -38,11 +37,11 @@ final class NotchShotTests: XCTestCase {
                 .frame(width: screen.notchWidth, height: screen.notchHeight)
             NotchFace(
                 screen: screen,
-                stage: stage,
-                paused: false,
-                noteDraft: draft,
-                level: { 0.3 },
-                onNote: {}, onCommit: { _ in }, onCancel: {}
+                stage: .open,
+                paused: paused,
+                muted: muted,
+                canMute: true,
+                onMute: {}, onPause: {}, onStop: {}
             )
         }
         .frame(width: size.width, height: size.height)
@@ -55,7 +54,7 @@ final class NotchShotTests: XCTestCase {
         let hosting = NSHostingView(rootView: root)
         window.contentView = hosting
         hosting.layoutSubtreeIfNeeded()
-        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
 
         let rep = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
         hosting.cacheDisplay(in: hosting.bounds, to: rep)

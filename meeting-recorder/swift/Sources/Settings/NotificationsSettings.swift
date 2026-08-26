@@ -27,8 +27,8 @@ struct NotificationsSettingsPage: View {
                 SettingsCell(
                     "Индикация записи в\u{00A0}чёлке",
                     subtitle: NotchController.hardwareHasNotch
-                        ? "Заметка по\u{00A0}⌃⌥N"
-                        : "На этом маке нет выреза — заметки живут в\u{00A0}окне встречи"
+                        ? "Микрофон, пауза и\u{00A0}стоп в\u{00A0}вырезе"
+                        : "На этом маке нет выреза — управление записью живёт в\u{00A0}окне"
                 ) {
                     SettingsSwitch(
                         isOn: $notchIndicator,

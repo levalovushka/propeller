@@ -204,6 +204,7 @@ final class ProcessTapCapture {
     /// Запись на паузе — кадры не берутся. Под тем же замком, что и курсор:
     /// читается на очереди захвата, ставится с главного актора.
     private var isPaused = false
+    private var micMuted = false
 
     /// Что пишем на диск: 16 кГц моно — форма, которую ждёт весь конвейер.
     private static let stemSampleRate: Double = 16_000
@@ -343,6 +344,19 @@ final class ProcessTapCapture {
     var capturesSystemAudio: Bool {
         lock.lock(); defer { lock.unlock() }
         return channelMap.hasSystemAudio
+    }
+
+    /// Микрофон выключен: кадры берутся, но микрофонная дорожка в них — тишина.
+    ///
+    /// Не остановка захвата и не пауза: системный звук продолжает писаться, обе
+    /// дорожки остаются кадр в кадр, длительность не едет. Заглушается именно
+    /// то, что человек и имел в виду, нажав микрофон, — его собственный голос,
+    /// и заглушается до того, как с дорожки снимут уровень, чтобы прибор не
+    /// показывал звук, которого в файле нет.
+    func setMicMuted(_ muted: Bool) {
+        lock.lock()
+        micMuted = muted
+        lock.unlock()
     }
 
     /// Пауза: кадры перестают браться, устройство остаётся поднятым.
@@ -653,6 +667,13 @@ final class ProcessTapCapture {
 
         let sampleTime = (inputTime.pointee.mFlags.contains(.sampleTimeValid))
             ? inputTime.pointee.mSampleTime : .nan
+
+        lock.lock()
+        let muted = micMuted
+        lock.unlock()
+        if muted {
+            for i in 0..<frames { scratchMic[i] = 0 }
+        }
 
         let micPeak = CaptureBuffers.peak(scratchMic, frames: frames)
         let systemPeak = CaptureBuffers.peak(scratchSystem, frames: frames)
