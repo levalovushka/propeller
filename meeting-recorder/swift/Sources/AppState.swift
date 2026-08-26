@@ -11,7 +11,14 @@ import SwiftUI
 /// встреча всё ещё выбрана» — состояние, которого не должно быть выразимо.
 enum PaneRoute: Equatable {
     case meeting
-    case settings
+    /// Раздел настроек живёт в самом маршруте, а не отдельным полем рядом:
+    /// иначе «настройки открыты, но раздела нет» стало бы выразимым.
+    case settings(SettingsSection)
+
+    var isSettings: Bool {
+        if case .settings = self { return true }
+        return false
+    }
 }
 
 @MainActor
@@ -982,8 +989,17 @@ class AppState: ObservableObject {
 
     /// Настройки в панель. Выбранную встречу не трогаем: она под ними, и
     /// вернуться к ней можно тем же кликом, которым её выбирали.
-    func openSettings() {
-        paneRoute = .settings
+    ///
+    /// Раздел по умолчанию — первый, а не последний открытый: запомненный
+    /// раздел переживает перезапуск и ничем его не объясняет.
+    func openSettings(_ section: SettingsSection = .entry) {
+        paneRoute = .settings(section)
+    }
+
+    /// «Назад» из раздела. Возвращает туда же, откуда ушли: выбранную встречу
+    /// настройки не трогали, и она всё это время была под ними.
+    func leaveSettings() {
+        paneRoute = .meeting
     }
 
     func selectRecording(_ entry: RecordingEntry) {

@@ -1215,152 +1215,155 @@ public enum Tokens {
 
     /// Настройки — состояние правой панели, а не отдельное окно.
     ///
-    /// Ширина у них саммарийная, и это не совпадение: это та же колонка панели,
-    /// просто с другим содержимым, — те же поля, тот же потолок измерения и то
-    /// же центрирование в остатке. Число здесь ровно одно (`editorMinHeight`),
-    /// всё остальное — псевдонимы к уже нарисованному.
+    /// Разделы — Figma `settings` (254:3399), девять экранов одной формы: слева
+    /// колонка рельса с шестью разделами, справа страница.
     ///
-    /// Группа устроена как день в рельсе: тихий заголовок 11 / 14 и ряд ячеек
-    /// под ним. Плашки нет намеренно — иерархия расстоянием и типографикой, а не
-    /// рамками (`design/principles.md` §5, PR-005).
+    /// Страница устроена из трёх вещей и больше ни из чего: заголовок раздела,
+    /// тихий заголовок группы и карточка с ячейками. Плашка вернулась — до
+    /// 2026-08-26 её не было принципиально (иерархия расстоянием, PR-005), но
+    /// с разделами страница коротка, а ячейки в ней разнородны, и без карточки
+    /// «Ваше имя» и «Тема приложения» читались одним списком без границы.
     public enum Settings {
 
-        // MARK: Column — мерка саммари
+        // MARK: Страница — 254:1412
 
-        public static let hPadding = Pane.summaryHPadding
-        public static let topPadding = Pane.summaryVPadding
-        public static let bottomPadding = Pane.summaryBottomPadding
+        /// Потолок ширины страницы. Тот же, что у колонки саммари: это она и
+        /// есть, только с другим содержимым.
         public static let maxWidth = Pane.summaryMaxWidth
-        /// Тот же пол, что у саммари. Ниже него колонка не сжимается — панель
-        /// отдаёт свой минимум (`Window.contentPaneMinWidth`), а не текст.
-        public static let minWidth = Pane.summaryMinWidth
+        public static let pageHPadding: CGFloat = 36
+        public static let pageVPadding = Space.s28
+        /// Между заголовком, группами и карточками — один шаг на всё.
+        public static let blockGap = Space.s20
 
-        // MARK: Groups
+        // MARK: Группа
 
-        /// Между группами.
-        public static let groupGap = Space.s24
-        /// Заголовок группы → её плашка.
-        ///
-        /// Было выведено из блока даты в рельсе. Развязано 2026-08-26: у рельса
-        /// этот блок стал 18 (`nav-title`, `pb-4`), а у настроек зазор до
-        /// карточки — 8 (254:1989). Одно число перестало обслуживать оба.
+        /// Заголовок группы → её карточка.
         public static let headerBottomGap = Space.s8
-        /// Отступ заголовка слева. Чуть меньше внутреннего отступа плашки (14):
-        /// заголовок стоит *над* ней, а не в ней, и совпадение до пикселя
-        /// склеило бы их в один блок.
-        public static let headerLeadingInset = Space.s12
+        /// Отступ заголовка слева. Меньше внутреннего отступа карточки (14):
+        /// заголовок стоит *над* ней, а не в ней.
+        public static let headerLeadingInset = Space.s8
 
-        /// Плашка группы — буквально строка встречи под ховером: тот же оттенок,
-        /// то же скругление, тот же горизонтальный отступ. Не «похожая», а та же:
-        /// список настроек и список встреч живут в одном окне, и две разные
-        /// плашки в нём читались бы как два разных приложения.
-        /// Развязано 2026-08-26 вместе с `headerBottomGap`: строка встречи
-        /// стала 32 pt с радиусом 8, карточка настроек — радиус 14. Пока экран
-        /// не переписан, значения стоят те, что были у рельса до редизайна.
-        public static let plateFill = Primitive.ink(dark: Primitive.AlphaWhite.a3,
-                                                    light: Primitive.AlphaBlack.a3)
-        public static let plateRadius = Radius.md
-        public static let plateHPadding: CGFloat = 14
-        /// Волосяная линия между ячейками. Собственного вертикального отступа у
-        /// плашки нет — его несут сами ячейки, поэтому от края плашки до первой
-        /// строки ровно столько же, сколько у строки встречи.
-        public static let divider = Sidebar.border
+        /// Карточка группы — `Settings Section` (254:1925).
+        public static let cardFill = Primitive.ink(dark: Primitive.AlphaWhite.a7,
+                                                   light: Primitive.AlphaBlack.a7)
+        public static let cardRadius = Radius.lg
+        public static let cardHPadding: CGFloat = 14
+        /// Собственного вертикального отступа у карточки почти нет — его несут
+        /// сами ячейки, и от края карточки до первой строки ровно столько же,
+        /// сколько между двумя строками внутри.
+        public static let cardVPadding = Space.s2
+        public static let divider = Primitive.ink(dark: Primitive.AlphaWhite.a7,
+                                                  light: Primitive.AlphaBlack.a7)
 
-        // MARK: Cells
+        // MARK: Ячейка
 
-        public static let cellVPadding = Space.s12
+        public static let cellVPadding = Space.s10
         /// Между тем, что настраивается, и тем, чем это делают.
-        public static let cellGap = Space.s16
+        public static let cellGap = Space.s8
         /// Заголовок ячейки → его тихая вторая строка.
         public static let cellLineGap = Space.s2
-        /// Заголовок → элемент, который стоит **под** ним: поле, редактор, путь.
+        /// Ячейка во всю ширину (промпт, теги): заголовок → содержимое.
         public static let stackGap = Space.s8
-        /// Столбец управления: выключатель и всплывающий список обязаны стоять
-        /// на одной высоте, иначе строки настроек шатаются друг относительно друга.
+
+        // MARK: Контролы правого слота
+
+        /// Одна высота на все: выключатель, выбор, поле и кнопка обязаны стоять
+        /// на одной линии, иначе строки настроек шатаются друг относительно друга.
         public static let controlHeight = Space.s32
+        public static let controlRadius = Radius.xxs
+        public static let controlHPadding = Space.s10
+        public static let controlGap = Space.s8
+        /// Поле и поле-команда — 164 в макете (254:1931). Не «сколько влезет»:
+        /// правый край группы обязан остаться прямым, что бы в поле ни лежало.
+        public static let fieldWidth: CGFloat = 164
+        public static let fieldFill = Primitive.ink(dark: Primitive.AlphaWhite.a7,
+                                                    light: Primitive.AlphaBlack.a7)
+        public static let fieldBorder = Primitive.ink(dark: Primitive.AlphaWhite.a7,
+                                                      light: Primitive.AlphaBlack.a7)
+        /// Кнопка — заливка вдвое тише поля: у поля есть содержимое, у кнопки
+        /// только слово (254:2156).
+        public static let buttonFill = Primitive.ink(dark: Primitive.AlphaWhite.a5,
+                                                     light: Primitive.AlphaBlack.a5)
+        public static let buttonHoverFill = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                          light: Primitive.AlphaBlack.a10)
 
-        // MARK: Fields
+        /// Выключатель — 40 × 24, бегунок 20 (254:1998).
+        public enum Switch {
+            public static let width: CGFloat = 40
+            public static let height = Space.s24
+            public static let knob = Space.s20
+            public static let padding = Space.s2
+            public static let radius = Radius.full
+            public static let offFill = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                      light: Primitive.AlphaBlack.a15)
+            public static let onFill = Paint.Status.accent
+            public static let knobFill = Primitive.AlphaWhite.color(Primitive.AlphaWhite.a100)
+        }
 
-        public static let fieldHeight = Space.s32
-        public static let fieldRadius = Radius.xxs
-        public static let fieldHPadding = Space.s10
-        public static let fieldFill = Paint.Bg.surface
-        public static let fieldBorder = Sidebar.border
-        /// Промпт — единственное поле, которое читают целиком, а не правят
-        /// одним словом. Высота фиксирована, а не растёт по содержимому: промпт
-        /// длиной в экран утащил бы вниз всё, что под ним, а дальше он всё
-        /// равно скроллится внутри себя.
-        ///
-        /// 80, а не 260 и не 400 (решение владельца 2026-08-20): тот же довод,
-        /// доведённый до конца. На 400 не была видна строка под полем, на 260 —
-        /// следующая группа; на 80 за промптом сразу начинается «Хранилище».
-        /// Видно три строки и половину четвёртой — и эта половинка работает: она
-        /// и есть знак, что текст продолжается.
-        public static let editorHeight: CGFloat = 80
-
-        /// Поле, которому не нужна вся колонка: имя человека короче любого пути
-        /// и любой модели. Не новое число, а шаг сетки: `s40 * 4`.
-        public static let fieldNarrowWidth = Space.s40 * 4
-
-        // MARK: Command — поле с готовой командой
-
-        /// Ширина выведена, а не выбрана: столько же, сколько занимает самая
-        /// длинная кнопка группы плюс место под глиф. Команда всё равно длиннее
-        /// любого разумного поля, поэтому ширина отвечает не за читаемость, а за
-        /// то, чтобы правый край группы остался прямым.
-        public static let commandWidth: CGFloat = 220
-        public static let commandGlyphSize: CGFloat = 11
-        public static let commandGlyphGap = Space.s8
-        /// Галочка «скопировано» — тем же цветом, что и галочка «подключено»:
-        /// подтверждение в этой группе выглядит одинаково, чем бы ни было.
-        public static let commandCopied = Paint.Status.accent
-
-        // MARK: Buttons — пилюля установочной плашки, та же самая
-
-        public static let buttonHeight = Setup.controlHeight
-        public static let buttonRadius = Setup.controlRadius
-        public static let buttonHPadding = Setup.controlHPadding
-        public static let buttonFill = Setup.controlFill
-        public static let buttonHoverFill = Setup.controlHoverFill
-        public static let buttonLabel = Setup.controlLabel
+        /// Тег личного словаря — 254:2173.
+        public enum Tag {
+            public static let height = Space.s24
+            public static let radius = Radius.xxs
+            public static let hPadding = Space.s6
+            public static let gap = Space.s2
+            public static let listGap = Space.s4
+            public static let fill = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                   light: Primitive.AlphaBlack.a10)
+            public static let addBorder = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                        light: Primitive.AlphaBlack.a10)
+        }
 
         // MARK: Paint
 
-        public static let header = Sidebar.sectionHeader
-        public static let title = Sidebar.meetingTitle
-        public static let subtitle = Setup.cellSubtitle
-        /// Вторая строка бывает четырёх родов, и до 2026-08-20 все четыре
-        /// красились одним цветом — поэтому «Не запущен» читалось как справка.
-        /// Пояснение остаётся тихим (`subtitle`), остальные три — нет.
-        public static let subtitleValue = Sidebar.meetingMeta
+        public static let header = Primitive.ink(dark: Primitive.AlphaWhite.a30,
+                                                 light: Primitive.AlphaBlack.a42)
+        public static let title = Paint.Text.primary
+        public static let subtitle = Primitive.ink(dark: Primitive.AlphaWhite.a40,
+                                                   light: Primitive.AlphaBlack.a48)
+        /// Вторая строка бывает пяти родов, и до 2026-08-20 все пять красились
+        /// одним цветом — поэтому «Не запущен» читалось как справка.
+        public static let subtitleValue = subtitle
         public static let subtitleProgress = Paint.Text.secondary
         public static let subtitleWarning = Paint.Status.warning
         public static let subtitleFailure = Paint.Status.record
-        /// Галочка «сделано» — тихая. Акцент принадлежит несделанному: до
-        /// инверсии подсвечено было ровно то, что трогать не надо.
-        public static let check = Paint.Text.tertiary
-        /// Единственная кнопка строки, без которой настройка не работает:
-        /// «Разрешить», «Подключить». Заливка — акцент, подпись — белая в обеих
-        /// темах, потому что акцент в обеих один.
+        /// Галочка «сделано» — тихая. Акцент принадлежит несделанному.
+        public static let check = subtitle
+        public static let value = Paint.Text.primary
+        /// Подсказка в поле и хвостовой глиф: крестик, шеврон, копирование.
+        public static let controlHint = subtitle
+        public static let buttonLabel = Paint.Text.primary
+        /// Единственная кнопка строки, без которой настройка не работает.
         public static let buttonAccentFill = Paint.Status.accent
         public static let buttonAccentLabel = Primitive.AlphaWhite.color(Primitive.AlphaWhite.a100)
-        /// То, что настройка сообщает, а не спрашивает: версия, движок, объём.
-        public static let value = Sidebar.meetingMeta
+        /// «Очистить» — единственное необратимое действие на этих экранах.
+        public static let destructive = Paint.Status.destructive
 
         // MARK: Type
 
         public enum Typo {
+            /// 17 / 24 — заголовок раздела.
+            public static let page = Typography.Style(
+                size: 17, lineHeight: 24, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
             /// 11 / 14 — заголовок группы. Тот же, что у даты в рельсе.
             public static let header = Sidebar.Typo.sectionHeader
-            /// 14 / 18 — то, что настраивается.
+            /// 13 / 16 — то, что настраивается.
             public static let title = Sidebar.Typo.navLabel
-            /// 13 / 16 — тихая вторая строка ячейки.
-            public static let subtitle = Setup.Typo.cell
-            /// 14 / 18 — показание справа и текст в поле: и то и другое читают
-            /// в паре с заголовком слева, значит кегль у них общий.
-            public static let value = Sidebar.Typo.navLabel
-            public static let field = Sidebar.Typo.navLabel
-            public static let button = Setup.Typo.grant
+            /// 12 / 14 — тихая вторая строка ячейки.
+            public static let subtitle = Typography.Style(
+                size: 12, lineHeight: 14, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
+            /// 12 / 16 — всё, что стоит в правом слоте: значение, поле, кнопка.
+            /// Один кегль, потому что читают их в паре с заголовком слева, а не
+            /// друг с другом.
+            public static let control = Typography.Style(
+                size: 12, lineHeight: 16, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
+            /// 13 / 16 — длинный текст в ячейке во всю ширину (промпт).
+            public static let body = Sidebar.Typo.navLabel
         }
     }
 

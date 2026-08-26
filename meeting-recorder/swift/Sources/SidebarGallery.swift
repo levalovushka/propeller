@@ -207,10 +207,10 @@ enum SidebarGallery {
         static let model = SidebarModel(
             nav: [
                 .init(id: "record", symbol: SidebarNavItem.propellerMarkSymbol, title: "Новая запись", hint: .shortcut("⌘R")),
+                .init(id: "projects", symbol: "folder.fill", title: "Проекты", isEnabled: false),
                 .init(id: "settings", symbol: "gearshape.fill", title: "Настройки"),
-                .init(id: "feedback", symbol: "ladybug.fill", title: "Сообщить о проблеме", hint: .opensBrowser),
             ],
-            groups: [
+            body: .archive(groups: [
                 .init(id: "today", header: nil, rows: [
                     row("1", "17:30 · 45 мин", "PG x VK Музыка",
                         state: .init(activity: .processing)),
@@ -233,7 +233,7 @@ enum SidebarGallery {
                     row("7", "09:15 · 28 мин", "Дизайн-ревью",
                         state: .init(activity: .rests)),
                 ]),
-            ]
+            ])
         )
 
         static func row(

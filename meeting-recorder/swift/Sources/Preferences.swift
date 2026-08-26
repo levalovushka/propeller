@@ -14,8 +14,13 @@ class Preferences {
     }
 
     /// `domainTerms` parsed into individual phrases for gigastt's hotwords file.
-    var domainTermsList: [String] {
-        domainTerms
+    var domainTermsList: [String] { Preferences.domainTermsList(from: domainTerms) }
+
+    /// То же разбиение, но от строки: экран настроек показывает словарь тегами
+    /// и обязан резать его ровно так же, как режет сайдкар. Два разных разбора
+    /// одной строки — два разных словаря, и разошлись бы они молча.
+    static func domainTermsList(from raw: String) -> [String] {
+        raw
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
@@ -316,6 +321,46 @@ class Preferences {
     var analyticsEnabled: Bool {
         get { defaults.object(forKey: "analyticsEnabled") as? Bool ?? true }
         set { defaults.set(newValue, forKey: "analyticsEnabled") }
+    }
+
+    // MARK: - Оформление и язык — НАРИСОВАНО, НО НИЧЕГО НЕ ДЕЛАЕТ
+
+    // TODO(redesign): четыре ключа ниже помнят выбор и ни на что не влияют.
+    //
+    // Так решено сознательно (владелец, 2026-08-26): строки нужны в локальной
+    // сборке как напоминание, что за ними стоит работа. Цена названа вслух —
+    // это ровно тот тупик, который запрещает `design/no-dead-ends.md`:
+    // контрол, который двигается и ничего не меняет, врёт не хуже кнопки,
+    // которая не нажимается.
+    //
+    // **Ни одна из них не уезжает в релиз, пока за ней нет поведения.**
+    // Открытая дыра записана в `STATE.md`.
+    //
+    // Что за каждой стоит:
+    // - `appTheme` — `NSApp.appearance`; светлые значения токенов уже выведены
+    //   (`Tokens.dual`), так что это самая дешёвая из четырёх;
+    // - `summaryTextSize` — множитель кегля в `Tokens.Pane.Typo`;
+    // - `windowTranslucency` — `SystemGlass`, материал окна;
+    // - `appLanguage` — полная локализация интерфейса, отдельный проект.
+
+    var appTheme: String {
+        get { defaults.string(forKey: "appTheme") ?? "system" }
+        set { defaults.set(newValue, forKey: "appTheme") }
+    }
+
+    var summaryTextSize: String {
+        get { defaults.string(forKey: "summaryTextSize") ?? "standard" }
+        set { defaults.set(newValue, forKey: "summaryTextSize") }
+    }
+
+    var windowTranslucency: Bool {
+        get { defaults.object(forKey: "windowTranslucency") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "windowTranslucency") }
+    }
+
+    var appLanguage: String {
+        get { defaults.string(forKey: "appLanguage") ?? "ru" }
+        set { defaults.set(newValue, forKey: "appLanguage") }
     }
 
     // MARK: - Меню-бар

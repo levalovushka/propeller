@@ -51,7 +51,7 @@ final class AshFilmTests: XCTestCase {
         }
         let model = SidebarModel(
             nav: [SidebarNavItem(id: "new", symbol: SidebarNavItem.propellerMarkSymbol, title: "Новая запись")],
-            groups: [
+            body: .archive(groups: [
                 SidebarMeetingGroup(id: "today", header: nil, rows: [
                     row("1", "Первая в списке.", "Её и жжём в одном из прогонов"),
                     row("2", "Вторая.", "Остаётся на месте и служит меткой"),
@@ -62,7 +62,7 @@ final class AshFilmTests: XCTestCase {
                     row("5", "Пятая.", "Метка ниже места удаления"),
                     row("6", "Шестая.", "И ещё одна метка"),
                 ]),
-            ]
+            ])
         )
 
         let burn = Burn()

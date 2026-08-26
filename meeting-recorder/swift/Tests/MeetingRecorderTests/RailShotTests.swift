@@ -28,10 +28,10 @@ final class RailShotTests: XCTestCase {
         let model = SidebarModel(
             nav: [
                 SidebarNavItem(id: "new", symbol: SidebarNavItem.propellerMarkSymbol, title: "Новая запись"),
+                SidebarNavItem(id: "projects", symbol: "folder.fill", title: "Проекты", isEnabled: false),
                 SidebarNavItem(id: "settings", symbol: "gearshape.fill", title: "Настройки", isHovered: true),
-                SidebarNavItem(id: "bug", symbol: "ladybug.fill", title: "Сообщить о проблеме", hint: .opensBrowser),
             ],
-            groups: [
+            body: .archive(groups: [
                 // Все четыре движущиеся иконки в одном кадре: только рядом
                 // видно, что они различимы, а ради этого они и заведены.
                 SidebarMeetingGroup(id: "g0", header: nil, rows: [
@@ -78,7 +78,7 @@ final class RailShotTests: XCTestCase {
                         state: SidebarRowState(isHovered: true)
                     ),
                 ]),
-            ]
+            ])
         )
 
         // No `NSApp` here: there is no NSApplication in a test process, and the

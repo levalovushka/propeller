@@ -318,6 +318,8 @@ struct MainView: View {
                 showSearchPalette = true
                 Analytics.signal("Search.opened")
             },
+            onBack: { state.leaveSettings() },
+            onFooterAction: { NSWorkspace.shared.open(Self.issuesURL) },
             onPromptAction: { id in
                 // The id comes back so the window is not guessing which question
                 // it just answered — two of the three steps wear a button.
@@ -424,6 +426,12 @@ struct MainView: View {
     }
 
     private func performNav(_ id: String) {
+        // Разделы настроек и действия делят один `onNav`, но не пространство
+        // имён: у раздела ид с приставкой.
+        if let section = SidebarPresenter.section(fromNavID: id) {
+            state.openSettings(section)
+            return
+        }
         switch SidebarPresenter.NavAction(rawValue: id) {
         case .record:
             // Stop lives in the recording pane (and ⌘.). This row only starts.
@@ -435,6 +443,10 @@ struct MainView: View {
             NSWorkspace.shared.open(Self.issuesURL)
         case .micAccess:
             state.openMicrophoneSettings()
+        case .projects:
+            // Строка выключена в презентере, поэтому сюда не приходит. Ветка —
+            // не защита, а место, где раздел появится.
+            break
         case nil:
             break
         }
@@ -503,7 +515,7 @@ struct MainView: View {
     /// рельс. Идущая запись и та же встреча после стопа — разные предметы: между
     /// ними в панели не остаётся ничего общего.
     private var paneSubject: String {
-        if state.paneRoute == .settings { return "settings" }
+        if case .settings(let section) = state.paneRoute { return "settings-" + section.rawValue }
         guard let entry = state.selectedRecording else { return "empty" }
         return isBeingRecorded(entry) ? "recording-\(entry.id)" : "meeting-\(entry.id)"
     }
@@ -519,12 +531,15 @@ struct MainView: View {
     /// navigation bar it already had.
     @ViewBuilder
     private var topBar: some View {
-        if state.paneRoute == .settings {
+        if state.paneRoute.isSettings {
+            // Заголовка у настроек здесь больше нет: раздел называет себя сам,
+            // 17 pt над своим содержимым (`SettingsPage`). Строка остаётся —
+            // ей всё ещё принадлежит светофор, когда рельс убран.
             HStack(spacing: 0) {
                 if !sidebarVisible {
                     collapsedChrome
                 }
-                SettingsPaneHeader()
+                Spacer(minLength: 0)
             }
             .frame(height: Tokens.Sidebar.headerHeight)
         } else if let entry = state.selectedRecording, isBeingRecorded(entry) {
@@ -620,15 +635,23 @@ struct MainView: View {
     /// The one rail toggle. Not in the rail and not in the pane's header: it is the
     /// window's, so the rail slides out from under it and the button neither moves
     /// nor loses the hover it is under at the moment you press it.
+    ///
+    /// **Кроме разделов настроек.** Там этот же слот занимает «Назад»
+    /// (`SidebarBackButton`) — по макету и по смыслу: сворачивать в разделе
+    /// нечего, списка нет. Без этой ветки две кнопки рисовались одна поверх
+    /// другой, и видно было нижнюю.
+    @ViewBuilder
     private var windowChrome: some View {
-        SidebarChromeButton(
-            symbol: "sidebar.left",
-            help: sidebarVisible ? "Скрыть список" : "Показать список"
-        ) {
-            sidebarVisible.toggle()
+        if !state.paneRoute.isSettings || !sidebarVisible {
+            SidebarChromeButton(
+                symbol: "sidebar.left",
+                help: sidebarVisible ? "Скрыть список" : "Показать список"
+            ) {
+                sidebarVisible.toggle()
+            }
+            .padding(.leading, Tokens.Window.chromeToggleLeading)
+            .padding(.top, Tokens.Window.chromeToggleTop)
         }
-        .padding(.leading, Tokens.Window.chromeToggleLeading)
-        .padding(.top, Tokens.Window.chromeToggleTop)
     }
 
     private var listTopBar: some View {
@@ -754,10 +777,9 @@ struct MainView: View {
     /// an archive with nothing in it yet.
     @ViewBuilder
     private var mainArea: some View {
-        if state.paneRoute == .settings {
+        if case .settings(let section) = state.paneRoute {
             // Настройки занимают всю панель: заметок у них нет, делить не с чем.
-            // Ширина — саммарийная, её держит `SettingsColumn`.
-            SettingsPane(state: state)
+            SettingsPane(state: state, section: section)
                 .frame(maxWidth: .infinity)
         } else if let entry = state.selectedRecording, isBeingRecorded(entry) {
             RecordingPaneView(

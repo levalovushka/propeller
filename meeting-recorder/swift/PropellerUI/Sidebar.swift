@@ -127,11 +127,39 @@ public struct SidebarMeetingGroup: Identifiable, Equatable, Sendable {
     }
 }
 
+/// Подвал второго вида рельса — Figma `App Info Section` (307:6678).
+public struct SidebarFooterModel: Equatable, Sendable {
+    public let name: String
+    public let version: String
+    /// Две строки под версией. Не «о программе», а приглашение написать: это
+    /// единственное место, откуда из приложения уходят наружу.
+    public let invitation: String
+    public let actionTitle: String
+
+    public init(name: String, version: String, invitation: String, actionTitle: String) {
+        self.name = name
+        self.version = version
+        self.invitation = invitation
+        self.actionTitle = actionTitle
+    }
+}
+
+/// Что рельс держит под навигацией — и, значит, какой он.
+///
+/// Два случая, а не флаг с четырьмя необязательными полями: «архив с кнопкой
+/// «Назад»» и «раздел со списком встреч» — состояния, которых не бывает, и
+/// выразить их нельзя. Тот же приём, что у `AppState.PaneRoute`.
+public enum SidebarBody: Equatable, Sendable {
+    /// `Type=Primary` (307:6495): встречи по дням.
+    case archive(groups: [SidebarMeetingGroup], emptyMessage: String? = nil)
+    /// `Type=Secondary` (307:6497): «← Назад» в шапке вместо кнопки рельса и
+    /// подвал внизу вместо списка.
+    case section(back: String, footer: SidebarFooterModel)
+}
+
 public struct SidebarModel: Equatable, Sendable {
     public var nav: [SidebarNavItem]
-    public var groups: [SidebarMeetingGroup]
-    /// Shown in place of the list when there is nothing to show.
-    public var emptyMessage: String?
+    public var body: SidebarBody
     /// The one question setup did not ask on its own screen — the calendar, then
     /// the name. Nil once both are settled, which for most of the app's life is
     /// always. See `SetupPromptMachine`.
@@ -139,14 +167,19 @@ public struct SidebarModel: Equatable, Sendable {
 
     public init(
         nav: [SidebarNavItem],
-        groups: [SidebarMeetingGroup],
-        emptyMessage: String? = nil,
+        body: SidebarBody,
         prompt: SidebarPromptModel? = nil
     ) {
         self.nav = nav
-        self.groups = groups
-        self.emptyMessage = emptyMessage
+        self.body = body
         self.prompt = prompt
+    }
+
+    /// Группы, если рельс их сейчас показывает. Читают её те, кому нужен список
+    /// как список, а не как вид, — переключатель по ⌥Tab и тесты.
+    public var groups: [SidebarMeetingGroup] {
+        if case .archive(let groups, _) = body { return groups }
+        return []
     }
 }
 
@@ -175,8 +208,10 @@ public struct PropellerSidebar: View {
     /// toggle beside it, and a row that opens a palette was the one nav item that
     /// did not lead anywhere in the rail. Absent means no button.
     private let onSearch: (() -> Void)?
-    /// Bring back a meeting whose deletion is still undoable. Absent means the
-    /// rows don't offer it.
+    /// Уйти из раздела обратно в архив. Есть только у `SidebarBody.section`.
+    private let onBack: (() -> Void)?
+    /// «Помощь ↗» в подвале раздела.
+    private let onFooterAction: (() -> Void)?
     /// Right-click actions, by meeting id. Absent means that item is omitted.
     private let onCopySummary: ((String) -> Void)?
     private let onShareMeeting: ((String) -> Void)?
@@ -203,6 +238,8 @@ public struct PropellerSidebar: View {
         onDissolveFinished: (() -> Void)? = nil,
         onToggle: (() -> Void)? = nil,
         onSearch: (() -> Void)? = nil,
+        onBack: (() -> Void)? = nil,
+        onFooterAction: (() -> Void)? = nil,
         onPromptAction: @escaping (String) -> Void = { _ in },
         onPromptSubmit: @escaping (String, String) -> Void = { _, _ in }
     ) {
@@ -218,6 +255,8 @@ public struct PropellerSidebar: View {
         self.onDissolveFinished = onDissolveFinished
         self.onToggle = onToggle
         self.onSearch = onSearch
+        self.onBack = onBack
+        self.onFooterAction = onFooterAction
         self.onPromptAction = onPromptAction
         self.onPromptSubmit = onPromptSubmit
     }
@@ -270,7 +309,12 @@ public struct PropellerSidebar: View {
     private var header: some View {
         HStack(spacing: 0) {
             trafficLightSlot
-            if let onToggle {
+            // Кнопка рельса и «Назад» делят один слот намеренно: в разделе
+            // сворачивать нечего — там нет списка, — а «Назад» некуда деть в
+            // архиве, потому что из него не выходят.
+            if case .section(let back, _) = model.body, let onBack {
+                SidebarBackButton(title: back, action: onBack)
+            } else if let onToggle {
                 SidebarChromeButton(symbol: "sidebar.left", help: "Скрыть список", action: onToggle)
             } else {
                 Color.clear.frame(width: Tokens.Sidebar.toggleSide, height: Tokens.Sidebar.toggleSide)
@@ -333,7 +377,14 @@ public struct PropellerSidebar: View {
         VStack(alignment: .leading, spacing: Tokens.Sidebar.blockGap) {
             navBlock
                 .padding(.horizontal, Tokens.Sidebar.bodyHPadding)
-            meetingList
+            switch model.body {
+            case .archive:
+                meetingList
+            case .section(_, let footer):
+                Spacer(minLength: 0)
+                SidebarFooter(model: footer, action: onFooterAction)
+                    .padding(.horizontal, Tokens.Sidebar.bodyHPadding)
+            }
         }
         // Top only: the meeting list owns the bottom of the rail and scrolls
         // flush to the window edge.
@@ -386,7 +437,12 @@ public struct PropellerSidebar: View {
 
     @ViewBuilder
     private var meetingList: some View {
-        if model.groups.isEmpty, let message = model.emptyMessage {
+        let groups = model.groups
+        let emptyMessage: String? = {
+            if case .archive(_, let message) = model.body { return message }
+            return nil
+        }()
+        if groups.isEmpty, let message = emptyMessage {
             Text(message)
                 .typoBlock(Tokens.Sidebar.Typo.meetingTitle)
                 .foregroundStyle(Tokens.Sidebar.sectionHeader)
@@ -395,7 +451,7 @@ public struct PropellerSidebar: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             SidebarMeetingScroll(
-                groups: model.groups,
+                groups: groups,
                 bottomClear: promptHeight,
                 dissolvingMeetingID: dissolvingMeetingID,
                 onDissolveFinished: onDissolveFinished,
@@ -721,7 +777,9 @@ public struct SidebarNavRow: View {
         self.action = action
     }
 
-    private var isHovered: Bool { hovering || item.isHovered }
+    /// Выключенная строка не подсвечивается под курсором: подсветка — обещание
+    /// клика, а клика у неё нет.
+    private var isHovered: Bool { item.isEnabled && (hovering || item.isHovered) }
 
     private var foreground: Color {
         // One ink for every state but disabled (Figma 307:6735). The wash behind
@@ -738,6 +796,7 @@ public struct SidebarNavRow: View {
     public var body: some View {
         Button(action: action) { label }
             .buttonStyle(.plain)
+            .disabled(!item.isEnabled)
             .onHover { hovering = $0 }
             .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
             .animation(.easeOut(duration: Tokens.Motion.hover), value: item.isSelected)
@@ -1084,6 +1143,100 @@ public struct SidebarMeetingRow: View {
     }
 }
 
+
+/// «← Назад» — Figma 307:6505.
+///
+/// Не иконка: путь назад из раздела — единственная навигация в этом рельсе, и
+/// стрелка без слова в ряду со светофором читается как ещё одна кнопка окна.
+struct SidebarBackButton: View {
+    let title: String
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: Tokens.Sidebar.backGap) {
+                Image(systemName: "arrow.left")
+                    .font(.system(size: Tokens.Sidebar.chromeIconSize, weight: .regular))
+                Text(title)
+                    .typo(Tokens.Sidebar.Typo.navLabel)
+            }
+            .foregroundStyle(hovering ? Tokens.Paint.Text.primary : Tokens.Sidebar.chromeIcon)
+            .padding(.horizontal, Tokens.Sidebar.backHPadding)
+            .frame(height: Tokens.Sidebar.toggleSide)
+            .background(
+                hovering ? Tokens.Sidebar.rowHover : .clear,
+                in: RoundedRectangle(cornerRadius: Tokens.Sidebar.chromeRadius, style: .continuous)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: Tokens.Sidebar.chromeRadius, style: .continuous))
+        }
+        .buttonStyle(.press)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+    }
+}
+
+/// Подвал раздела — Figma `App Info Section` (307:6678).
+///
+/// Марка, имя с версией, приглашение написать и одна кнопка наружу. Версия
+/// стоит здесь, а не строкой настроек, потому что рядом с ней есть действие —
+/// то самое правило, по которому показания прибора вообще остаются на экране
+/// (`design/settings.md` §3.5). Здесь действие — «Помощь».
+struct SidebarFooter: View {
+    let model: SidebarFooterModel
+    let action: (() -> Void)?
+
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Tokens.Sidebar.Footer.blockGap) {
+            PropellerMark()
+                .frame(width: Tokens.Sidebar.Footer.markSide, height: Tokens.Sidebar.Footer.markSide)
+            VStack(alignment: .leading, spacing: Tokens.Sidebar.Footer.textGap) {
+                HStack(spacing: Tokens.Space.s8) {
+                    Text(model.name)
+                        .foregroundStyle(Tokens.Sidebar.navLabel)
+                    Text(model.version)
+                        .foregroundStyle(Tokens.Sidebar.sectionHeader)
+                }
+                Text(model.invitation)
+                    .foregroundStyle(Tokens.Sidebar.sectionHeader)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .typoBlock(Tokens.Sidebar.Typo.navLabel)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if let action {
+                Button(action: action) {
+                    HStack(spacing: Tokens.Sidebar.Footer.buttonGap) {
+                        Text(model.actionTitle)
+                            .foregroundStyle(Tokens.Sidebar.navLabel)
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: Tokens.Sidebar.Typo.meta.size, weight: .regular))
+                            .foregroundStyle(Tokens.Sidebar.navShortcut)
+                    }
+                    .typo(Tokens.Sidebar.Typo.meta)
+                    .padding(.horizontal, Tokens.Sidebar.Footer.buttonHPadding)
+                    .frame(height: Tokens.Sidebar.Footer.buttonHeight)
+                    .background(
+                        hovering ? Tokens.Sidebar.rowSelected : Tokens.Sidebar.rowHover,
+                        in: RoundedRectangle(
+                            cornerRadius: Tokens.Sidebar.Footer.buttonRadius, style: .continuous
+                        )
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.press)
+                .onHover { hovering = $0 }
+                .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+            }
+        }
+        .padding(.horizontal, Tokens.Sidebar.Footer.hPadding)
+        .padding(.top, Tokens.Sidebar.Footer.topPadding)
+        .padding(.bottom, Tokens.Sidebar.Footer.bottomPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
 
 /// Where the rail's header row sits, in window coordinates.
 ///

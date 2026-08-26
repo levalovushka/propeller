@@ -458,11 +458,11 @@ final class SidebarTests: XCTestCase {
 
     private static let railModel = SidebarModel(
         nav: [.init(id: "record", symbol: SidebarNavItem.propellerMarkSymbol, title: "Новая запись", hint: .shortcut("⌘R"))],
-        groups: [.init(id: "today", header: nil, rows: [
+        body: .archive(groups: [.init(id: "today", header: nil, rows: [
             SidebarMeetingRowModel(
-                id: "1", meta: "17:30 · 45 мин", title: "Тактика.", preview: "", state: .rest
+                id: "1", meta: "17:30 · 45 мин", title: "Тактика", preview: "", state: .rest
             ),
-        ])]
+        ])])
     )
 
     // MARK: - The sweep

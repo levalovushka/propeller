@@ -16,6 +16,8 @@ enum SidebarPresenter {
     /// Where the fixed rows go. Ids rather than closures so the view stays
     /// value-typed and the window keeps the actions.
     enum NavAction: String {
+        /// Ещё не ведёт никуда — см. `nav(state:)`.
+        case projects
         case record, settings, feedback
         /// The record row when the microphone is not ours: same slot, different
         /// job — it goes to the permission instead of starting a recording.
@@ -27,9 +29,17 @@ enum SidebarPresenter {
         store: RecordingStore,
         now: Date = Date()
     ) -> SidebarModel {
-        SidebarModel(
+        // Настройки занимают рельс целиком: их разделы стоят там, где обычно
+        // список встреч. Архив при этом никуда не девается — из раздела в него
+        // возвращает «Назад», и выбранная встреча ждёт там же, где была.
+        if case .settings(let section) = state.paneRoute {
+            return SidebarModel(
+                nav: sectionNav(current: section),
+                body: .section(back: "Назад", footer: footer())
+            )
+        }
+        return SidebarModel(
             nav: nav(state: state),
-            groups: groups(state: state, store: store, now: now),
             // Пустому рельсу сказать нечего, и это не забывчивость.
             //
             // Дойти до него можно единственным путём: пустой архив и открытые
@@ -40,8 +50,46 @@ enum SidebarPresenter {
             //
             // Пустым рельс при этом не выглядит — нав-блок («Новая запись»,
             // поиск, настройки) на месте, потому что он не часть списка.
-            emptyMessage: nil,
+            body: .archive(groups: groups(state: state, store: store, now: now)),
             prompt: prompt(state.setupPrompt, offering: MCPConnector.clientToOffer)
+        )
+    }
+
+    // MARK: - Настройки
+
+    /// Идентификатор строки раздела в рельсе. С приставкой, чтобы разделы и
+    /// действия не делили пространство имён: одна строка `onNav` на всё.
+    static func navID(for section: SettingsSection) -> String {
+        "settings." + section.rawValue
+    }
+
+    static func section(fromNavID id: String) -> SettingsSection? {
+        guard id.hasPrefix("settings.") else { return nil }
+        return SettingsSection(rawValue: String(id.dropFirst("settings.".count)))
+    }
+
+    private static func sectionNav(current: SettingsSection) -> [SidebarNavItem] {
+        SettingsSection.allCases.map { section in
+            SidebarNavItem(
+                id: navID(for: section),
+                symbol: section.symbol,
+                title: section.title,
+                isSelected: section == current
+            )
+        }
+    }
+
+    /// Марка, версия и единственная дверь наружу.
+    ///
+    /// «Сообщить о проблеме» стояло строкой рельса — единственной, которая
+    /// уводила из приложения, среди строк, обещающих место внутри. Здесь она
+    /// рядом с версией, которую в письме всё равно спросят.
+    private static func footer() -> SidebarFooterModel {
+        SidebarFooterModel(
+            name: "Propeller Beta",
+            version: LoginItem.appVersionString,
+            invitation: "Что-то сломалось? Напишите,\nразберёмся и починим",
+            actionTitle: "Помощь"
         )
     }
 
@@ -79,6 +127,17 @@ enum SidebarPresenter {
     private static func nav(state: AppState) -> [SidebarNavItem] {
         [
             recordRow(state: state),
+            // Раздела ещё нет — строка стоит выключенной, а не кликабельной в
+            // никуда. Выключенная говорит «сюда будет», кликабельная обещает
+            // место и не приводит в него; из двух неправд первая честнее
+            // (`design/no-dead-ends.md`). Решение владельца 2026-08-26: строку
+            // видеть хочется до того, как за ней что-то появится.
+            SidebarNavItem(
+                id: NavAction.projects.rawValue,
+                symbol: "folder.fill",
+                title: "Проекты",
+                isEnabled: false
+            ),
             // Поиска здесь нет: он стал кнопкой в шапке рельса, рядом с
             // тумблером. Строка списка обещает место, куда ведёт, а палитра —
             // не место.
@@ -90,17 +149,12 @@ enum SidebarPresenter {
                 // окно, и открывает их клик, а не `SettingsLink`. Пока они
                 // открыты, строка выбрана — ровно как выбрана строка встречи,
                 // которую панель показывает.
-                isSelected: state.paneRoute == .settings
+                isSelected: state.paneRoute.isSettings
             ),
-            SidebarNavItem(
-                id: NavAction.feedback.rawValue,
-                symbol: "ladybug.fill",
-                title: "Сообщить о проблеме",
-                // Единственная строка, которая уводит из приложения. Стрелка в
-                // слоте шортката говорит это до клика — там, где у остальных
-                // написано, какой клавишей то же самое.
-                hint: .opensBrowser
-            ),
+            // «Сообщить о проблеме» здесь больше нет: единственная строка,
+            // уводившая из приложения, стояла в списке мест внутри него.
+            // Уехала в подвал раздела настроек, к версии, которую в письме всё
+            // равно спросят (`footer()`).
         ]
     }
 
