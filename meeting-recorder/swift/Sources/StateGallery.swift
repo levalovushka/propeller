@@ -149,7 +149,7 @@ enum GalleryScreenFactory {
             // шесть одинаковых шапок «Основное». Тот же приём, что у рельса:
             // компонент показывается целиком, в тёмной и светлой сразу.
             SidebarGallery.Board {
-                ClaudeSettingsGroup(state: state)
+                MCPClientsCard(state: state)
                     .frame(width: Tokens.Settings.maxWidth)
             }
         } else if UIStateCatalog.meetingStates.contains(where: { $0.id == id })

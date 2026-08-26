@@ -222,7 +222,7 @@ enum GalleryFixture {
         state.galleryPoseDeletion(nil)
         state.galleryPoseMicDenied(false)
         state.galleryPoseSetupPrompt(nil)
-        state.galleryClaudeCellOverride = nil
+        state.galleryMCPCellOverride = nil
         // Панель помнит, куда её переключили, — как и вкладку карточки. Кадр,
         // который про настройки не просил, обязан просить встречу явно.
         state.paneRoute = .meeting
