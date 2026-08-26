@@ -81,7 +81,7 @@ enum SidebarGallery {
             .background(Tokens.Sidebar.surface)
             .background(GalleryBackdrop())
             .environment(\.colorScheme, scheme)
-            .environment(\.sidebarSweepFrozen, true)
+            .environment(\.railMotionFrozen, true)
         }
     }
 
@@ -116,7 +116,7 @@ enum SidebarGallery {
                         // «Вернуть»: absent handler, absent offer.
                         SidebarMeetingRow(
                             row: Self.sample(item.state),
-                            action: {}, onDelete: {}, onRestore: {}
+                            action: {}, onDelete: {}
                         )
                         .frame(width: Tokens.Sidebar.width - Tokens.Sidebar.bodyHPadding * 2)
                     }
@@ -128,7 +128,7 @@ enum SidebarGallery {
         /// actually wraps, and the failure badge only fits if the meta line is
         /// the length it will be.
         static func sample(_ state: SidebarRowState) -> SidebarMeetingRowModel {
-            let title = SidebarTitleText.terminated("Воркшоп по VK Музыке")
+            let title = "Воркшоп по VK Музыке"
             let preview = SidebarRowMachine.preview(
                 activity: state.activity,
                 phaseMessage: PipelineActivity.Phase.transcribing.defaultMessage,
@@ -201,7 +201,7 @@ enum SidebarGallery {
                 .frame(height: 640)
                 .background(GalleryBackdrop())
                 .environment(\.colorScheme, scheme)
-                .environment(\.sidebarSweepFrozen, true)
+                .environment(\.railMotionFrozen, true)
         }
 
         static let model = SidebarModel(
@@ -243,7 +243,7 @@ enum SidebarGallery {
             SidebarMeetingRowModel(
                 id: id,
                 meta: meta,
-                title: SidebarTitleText.terminated(title),
+                title: title,
                 preview: SidebarRowMachine.preview(
                     activity: state.activity,
                     phaseMessage: PipelineActivity.Phase.transcribing.defaultMessage,

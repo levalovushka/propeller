@@ -32,31 +32,45 @@ final class RailShotTests: XCTestCase {
                 SidebarNavItem(id: "bug", symbol: "ladybug.fill", title: "Сообщить о проблеме", hint: .opensBrowser),
             ],
             groups: [
-                SidebarMeetingGroup(id: "g0", header: "Вчера, 3 августа", rows: [
+                // Все четыре движущиеся иконки в одном кадре: только рядом
+                // видно, что они различимы, а ради этого они и заведены.
+                SidebarMeetingGroup(id: "g0", header: nil, rows: [
+                    SidebarMeetingRowModel(
+                        id: "0", meta: "19:30",
+                        title: "Идёт прямо сейчас",
+                        preview: "",
+                        state: SidebarRowState(activity: .recording)
+                    ),
                     SidebarMeetingRowModel(
                         id: "1", meta: "18:01 · 1 ч 24 мин",
-                        title: "Агентный дизайн с Женей.",
-                        preview: "Отказ от дизайн-системы, сетап из макетов и правил",
-                        state: SidebarRowState(isSelected: true)
+                        title: "Агентный дизайн с Женей",
+                        preview: "",
+                        state: SidebarRowState(isSelected: true, activity: .processing)
                     ),
                     SidebarMeetingRowModel(
                         id: "2", meta: "16:22 · 34 мин",
-                        title: "VK Камуфляжные приложения.",
-                        preview: "Единые токены Video и Музыки, бриф: overview и design-fact",
-                        state: SidebarRowState(isHovered: true)
+                        title: "VK Камуфляжные приложения, длинное название на обрезку",
+                        preview: "",
+                        state: SidebarRowState(isHovered: true, activity: .queued)
                     ),
                     SidebarMeetingRowModel(
                         id: "3", meta: "15:00 · 56 мин",
-                        title: "PG x VK Музыка.",
-                        preview: "Пересборка главной под Rich Text, VK Микс уступает место кластерам",
-                        state: .rest
+                        title: "PG x VK Музыка",
+                        preview: "",
+                        state: SidebarRowState(activity: .stalled)
                     ),
                 ]),
                 SidebarMeetingGroup(id: "g1", header: "Четверг, 31 июля", rows: [
                     SidebarMeetingRowModel(
+                        id: "5", meta: "12:00 · 3 мин",
+                        title: "Никто ничего не сказал",
+                        preview: "",
+                        state: SidebarRowState(activity: .rests)
+                    ),
+                    SidebarMeetingRowModel(
                         id: "4", meta: "11:00 · 21 мин",
-                        title: "Один в своём дне.",
-                        preview: "Единственная встреча под этой датой",
+                        title: "Один в своём дне",
+                        preview: "",
                         // Hovered on purpose: deletion is done from the row's own
                         // menu, so the plate under the letters is there — and it is
                         // the only part of the ash a test process can see, Metal

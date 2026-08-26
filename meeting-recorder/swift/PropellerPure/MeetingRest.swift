@@ -80,11 +80,18 @@ public enum MeetingRest: Equatable, Sendable {
         }
     }
 
-    /// Причитается ли этой встрече ещё работа.
-    public var owesWork: Bool {
-        if case .waiting = self { return true }
-        return false
+    /// Чего именно ждём, если ждём. Nil — работы больше не причитается.
+    ///
+    /// Рельс спрашивает именно это, а не «причитается ли»: с тех пор как строка
+    /// стала однострочной, «в очереди» и «ждём модель» различает только иконка,
+    /// и различить их она может только по причине.
+    public var waitReason: WaitReason? {
+        if case .waiting(let reason) = self { return reason }
+        return nil
     }
+
+    /// Причитается ли этой встрече ещё работа.
+    public var owesWork: Bool { waitReason != nil }
 }
 
 // MARK: - Как это выводится

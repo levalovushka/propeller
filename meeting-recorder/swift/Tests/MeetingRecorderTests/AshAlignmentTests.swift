@@ -16,13 +16,15 @@ import PropellerPure
 /// там же обязана начинаться у другой.
 final class AshAlignmentTests: XCTestCase {
 
-    /// Ширина строки в рельсе — от неё зависят переносы, а значит и высота.
+    /// Ширина строки в рельсе.
     private var rowWidth: CGFloat {
         Tokens.Sidebar.width - Tokens.Sidebar.bodyHPadding * 2
     }
 
     private let title = "Агентный дизайн."
-    private let preview = "Выравнивание панели инструментов, удаление кнопок Enter из текста"
+    /// Описания в строке рельса больше нет (2026-08-26), и растеризатор строка
+    /// вызывает с пустым — иначе гореть будет не то, что стояло.
+    private let preview = ""
 
     @MainActor
     func testТушьПеплаНачинаетсяТамЖеГдеТушьСтроки() throws {

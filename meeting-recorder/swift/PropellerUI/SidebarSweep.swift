@@ -1,19 +1,23 @@
 import SwiftUI
 
 extension EnvironmentValues {
-    /// Park the processing sweep at the pose the comps drew instead of running it.
+    /// Park whatever is moving in the rail at a fixed pose instead of running it.
     ///
     /// Only the state gallery sets this. A screenshot of a moving gradient
     /// catches it wherever the pass happened to be, so the same board exported
     /// twice differs — which is exactly the "is this a real change?" question
     /// the gallery exists to answer, asked of the gallery itself.
-    public var sidebarSweepFrozen: Bool {
-        get { self[SidebarSweepFrozenKey.self] }
-        set { self[SidebarSweepFrozenKey.self] = newValue }
+    ///
+    /// Назывался `sidebarSweepFrozen`, пока движение в рельсе было одно. С
+    /// 2026-08-26 их два — шиммер саммари и статусная иконка, — и имя,
+    /// называющее одно из них, отвечало бы за оба молча.
+    public var railMotionFrozen: Bool {
+        get { self[RailMotionFrozenKey.self] }
+        set { self[RailMotionFrozenKey.self] = newValue }
     }
 }
 
-private struct SidebarSweepFrozenKey: EnvironmentKey {
+private struct RailMotionFrozenKey: EnvironmentKey {
     static let defaultValue = false
 }
 
@@ -93,7 +97,7 @@ public struct SidebarSweep: ViewModifier {
     @State private var travel: Double
     @State private var pulse: Double = 1
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.sidebarSweepFrozen) private var frozen
+    @Environment(\.railMotionFrozen) private var frozen
 
     public init(
         mode: SidebarSweepMode = .brighten,

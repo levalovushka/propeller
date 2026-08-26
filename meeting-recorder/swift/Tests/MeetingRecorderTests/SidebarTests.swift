@@ -179,6 +179,15 @@ final class SidebarTests: XCTestCase {
         XCTAssertEqual(SidebarTitleText.terminated(""), "")
     }
 
+    func testTheRailShowsTheTitleTheMeetingActuallyHas() {
+        // Точку приписывает склейка двух половин, а не название. В рельсе
+        // половина одна, и точка в ней — след от вёрстки, которой там нет.
+        let model = SidebarMeetingRowModel(
+            id: "x", meta: "", title: "Воркшоп по VK Музыке", preview: "", state: .rest
+        )
+        XCTAssertEqual(model.title, "Воркшоп по VK Музыке")
+    }
+
     // MARK: - Days and durations
 
     func testTodayHasNoHeaderBecauseNobodyReadsIt() {
@@ -230,16 +239,17 @@ final class SidebarTests: XCTestCase {
     // MARK: - Geometry
 
     @MainActor
-    func testAMeetingRowIsTheHeightItsTokensAddUpTo() {
-        // 42 / 60 / 78 for one, two and three title lines: 2×12 padding + 18
-        // per title line. The meta line (14) and the 4 pt gap under the title
-        // are built but currently hidden — add them back if that row returns.
-        let cases: [(String, CGFloat)] = [
-            ("Тактика.", 42),
-            ("Тактика | Лиды. Обсудили ошибки и предложили пути.", 60),
-            ("Воркшоп по VK Музыке. Обсудили этапы, выявили препятствия, наметили следующие шаги.", 78),
+    func testAMeetingRowIsAlwaysTheSameHeight() {
+        // Строка встречи — 32 pt, какой бы длины ни было название: оно живёт в
+        // одну строку и обрезается многоточием (Figma 307:7177). До 2026-08-26
+        // высота считалась «отступы плюс сколько строк вышло», и список ехал
+        // вниз каждый раз, когда у встречи появлялось название подлиннее.
+        let titles = [
+            "Тактика.",
+            "Тактика | Лиды. Обсудили ошибки и предложили пути.",
+            "Воркшоп по VK Музыке. Обсудили этапы, выявили препятствия, наметили следующие шаги.",
         ]
-        for (text, expected) in cases {
+        for text in titles {
             let height = measure(
                 SidebarMeetingRow(
                     row: SidebarMeetingRowModel(
@@ -250,8 +260,35 @@ final class SidebarTests: XCTestCase {
                 width: Tokens.Sidebar.width - Tokens.Sidebar.bodyHPadding * 2
             )
             XCTAssertEqual(
-                height, expected, accuracy: 0.6,
-                "«\(text.prefix(20))…» should be \(expected) pt tall, measured \(height)"
+                height, Tokens.Sidebar.meetingRowHeight, accuracy: 0.6,
+                "«\(text.prefix(20))…» вышла \(height) pt вместо \(Tokens.Sidebar.meetingRowHeight)"
+            )
+        }
+    }
+
+    @MainActor
+    func testAWorkingRowIsTheSameHeightAsAQuietOne() {
+        // У работающей встречи впереди названия стоит анимированная иконка. Она
+        // 16 pt в строке с боксом текста 16 — и обязана оставаться ровно такой:
+        // `HStack` берёт высоту самого высокого ребёнка, и иконка на точку выше
+        // двигала бы список каждый раз, когда встреча уходит в работу.
+        let width = Tokens.Sidebar.width - Tokens.Sidebar.bodyHPadding * 2
+        func height(_ activity: SidebarRowActivity) -> CGFloat {
+            measure(
+                SidebarMeetingRow(
+                    row: SidebarMeetingRowModel(
+                        id: "x", meta: "", title: "Тактика | Лиды", preview: "",
+                        state: SidebarRowState(activity: activity)
+                    ),
+                    action: {}
+                ),
+                width: width
+            )
+        }
+        for activity in SidebarRowActivity.allCases {
+            XCTAssertEqual(
+                height(activity), Tokens.Sidebar.meetingRowHeight, accuracy: 0.6,
+                "\(activity.rawValue) вышла другой высоты"
             )
         }
     }
@@ -282,17 +319,14 @@ final class SidebarTests: XCTestCase {
         }
     }
 
-    func testTheTextMarginSurvivesTheRailGivingRoomToItsRows() {
-        // The rail's margin is split between the body inset and each row's own
-        // padding, and only the split moved (2026-08-04): 12 + 12 became
-        // 10 + 14, so titles still start 24 pt in while a hovered or selected
-        // fill reaches 2 pt closer to both bezels. Changing one side alone is
-        // the mistake this catches — it slides every line in the rail sideways
-        // against the header above it.
-        XCTAssertEqual(Tokens.Sidebar.bodyHPadding + Tokens.Sidebar.meetingHPadding, 24)
-        // Nav labels sit a point tighter for the glyph's own inset — see the
-        // token. What matters is that the two blocks keep their relationship.
-        XCTAssertEqual(Tokens.Sidebar.bodyHPadding + Tokens.Sidebar.navRowHPadding, 23)
+    func testNavRowsAndMeetingRowsStartOnOneMargin() {
+        // Отступ рельса делится между полем списка и собственным отступом ряда,
+        // и до 2026-08-26 деление было разным у двух блоков: 10 + 14 у встреч и
+        // 10 + 13 у навигации, чтобы *глифы* встали на одну линию. В редизайне
+        // у обоих рядов один отступ и один кегль, поэтому и линия одна.
+        // Разъедутся — весь рельс поедет вбок относительно шапки над ним.
+        XCTAssertEqual(Tokens.Sidebar.meetingHPadding, Tokens.Sidebar.navRowHPadding)
+        XCTAssertEqual(Tokens.Sidebar.bodyHPadding + Tokens.Sidebar.meetingHPadding, 18)
     }
 
     func testTheDateHeaderBlockStaysTwentyPointsWhateverTheTypeDoes() {
@@ -307,10 +341,8 @@ final class SidebarTests: XCTestCase {
 
     @MainActor
     func testHoveringARowDoesNotResizeIt() {
-        // `state=rest` and `state=hover` are both the same height. They have
-        // to be: an `HStack` takes the height of its tallest child, so 16 pt
-        // action icons in a 14 pt time line grow the row — and a list that
-        // shifts under the pointer as it travels is unusable.
+        // `State=Rest` и `State=Hover` — одной высоты. Список, который ездит
+        // под курсором, пока тот идёт по нему, невозможно использовать.
         let width = Tokens.Sidebar.width - Tokens.Sidebar.bodyHPadding * 2
         let title = "Воркшоп по VK Музыке. Обсудили этапы, выявили препятствия, наметили следующие шаги."
         func height(hovered: Bool) -> CGFloat {
@@ -326,7 +358,7 @@ final class SidebarTests: XCTestCase {
             )
         }
         XCTAssertEqual(height(hovered: true), height(hovered: false), accuracy: 0.1)
-        XCTAssertEqual(height(hovered: true), 78, accuracy: 0.6)
+        XCTAssertEqual(height(hovered: true), Tokens.Sidebar.meetingRowHeight, accuracy: 0.6)
     }
 
     @MainActor

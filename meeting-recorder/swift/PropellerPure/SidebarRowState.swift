@@ -24,9 +24,10 @@ import Foundation
 
 /// What is happening to a meeting, from the rail's point of view.
 ///
-/// Four cases, not eleven. The pipeline distinguishes queued-for-ASR from
-/// queued-for-summary; a 276 pt row cannot, and pretending otherwise would put
-/// two identical pixels in the state gallery under two different names.
+/// Fewer cases than the pipeline has states. The pipeline distinguishes
+/// queued-for-ASR from queued-for-summary; a 264 pt row cannot, and pretending
+/// otherwise would put two identical pixels in the state gallery under two
+/// different names.
 public enum SidebarRowActivity: String, CaseIterable, Equatable, Sendable {
     /// Nothing is owed and nothing is running: the meeting is done, and the quiet
     /// line is free for its topics.
@@ -36,18 +37,34 @@ public enum SidebarRowActivity: String, CaseIterable, Equatable, Sendable {
     /// It used to look identical to «done» — `queuedIsQuiet`, on the grounds that
     /// the comps drew one meeting in motion and the rest flat. That made a waiting
     /// meeting indistinguishable from a finished one, which is the same lie as
-    /// hiding the backlog: the row says «В очереди» now, and shimmers, because it
-    /// *is* in progress — it is just not its turn.
+    /// hiding the backlog: the row has said so ever since — first in words, now
+    /// with the status icon, because it *is* in progress; it is just not its turn.
     case queued
+    /// Owed work that is waiting on something outside the app: the summary model
+    /// is still downloading, or the service has not answered yet
+    /// (`MeetingRest.waiting(.model)` / `.waiting(.network)`).
+    ///
+    /// **Not an error and not a request.** There is no «needs a human» branch in
+    /// this project and there is not going to be one (`MeetingRest`,
+    /// `design/no-dead-ends.md`); this is «стоим и ждём», and it resolves itself.
+    ///
+    /// It exists because the row lost its second line. Those two waits used to
+    /// speak for themselves there («Саммари появится, когда докачается модель»,
+    /// «Ждём ответа сервиса») while collapsing into `.queued` for every other
+    /// purpose. With the words gone, folding them back into `.queued` would have
+    /// dropped the distinction silently — so the icon carries it instead.
+    case stalled
     /// Audio is arriving right now.
     case recording
     /// The worker is on this meeting: ASR, diarization, saving or summarising.
     case processing
-    /// Nothing further will happen: the audio is gone, or there was no speech in
-    /// it. **Not an error and not a request** — the row says what it is
-    /// («Аудио удалено», «Речи не найдено») and offers nothing, because there is
-    /// nothing to offer (`design/no-dead-ends.md`). The mark next to it is the
-    /// same weight as the recording dot: a state, not an alarm.
+    /// Nothing further will happen: there was no speech in it, or summaries are
+    /// off. **Not an error and not a request** — the row says what it is, in the
+    /// words of `MeetingRest.disclosure` («Никто ничего не сказал», «Саммари
+    /// выключено в настройках»), and offers nothing, because there is nothing to
+    /// offer (`design/no-dead-ends.md`). «Аудио удалено» is deliberately *not*
+    /// among them: the transcript and summary live on as usual
+    /// (`design/state-gallery.md`).
     case rests
     /// Deleted, and still bringable back.
     ///
@@ -56,14 +73,45 @@ public enum SidebarRowActivity: String, CaseIterable, Equatable, Sendable {
     /// the place the eye went to, and a row that says «Удалена · Вернуть» cannot
     /// be missed the way a bar in the corner can. It is also the only way the
     /// offer survives a collapsed rail — there is nowhere else for a bar to go.
+    ///
+    /// **No door in the app since d31045d (2026-08-06):** `SidebarPresenter`
+    /// passes `isDeletedUndoable: false`, `MainView` passes no
+    /// `onRestoreMeeting`, and the meta line that carried «Вернуть» is compiled
+    /// out (`if false { metaLine }`) while its fate is decided. Restore today is
+    /// ⌘Z — `AppState.removeRecording(_:undoManager:)`. Only the gallery draws
+    /// this case, and it draws «Удалена» without the control.
     case deletedUndoable
 }
 
 extension SidebarRowActivity {
-    /// Rows that shimmer: work is happening to this meeting, whether or not it is
-    /// its turn this second. A queued meeting shimmers too — it is in the pipeline,
-    /// and a still row would say «finished» about something that is not.
-    public var isInFlight: Bool { self == .processing || self == .queued }
+    /// Rows the pipeline still owes something: work is happening to this
+    /// meeting, whether or not it is its turn this second. A queued meeting
+    /// counts too — it is in the pipeline, and a still row would say «finished»
+    /// about something that is not.
+    public var isInFlight: Bool {
+        self == .processing || self == .queued || self == .stalled
+    }
+
+    /// Какой фигурой строка это показывает. Nil — иконки нет вовсе, и строка
+    /// начинается прямо с названия.
+    ///
+    /// Правило, а не отрисовка, поэтому живёт здесь: это единственное место, где
+    /// решается, что в рельсе различимо. `.rests` и `.none` намеренно
+    /// неразличимы — обе означают «больше ничего не произойдёт», и рисовать
+    /// «дальше нечего делать» значком значило бы вернуть ту самую метку
+    /// «нужен человек», которой в проекте нет (`MeetingRest`).
+    ///
+    /// `.deletedUndoable` без значка по той же причине, по какой у него нет и
+    /// меню: строка уже горит.
+    public var statusIcon: PropellerStatus? {
+        switch self {
+        case .recording: return .recording
+        case .queued: return .queued
+        case .processing: return .processing
+        case .stalled: return .problem
+        case .none, .rests, .deletedUndoable: return nil
+        }
+    }
 }
 
 // MARK: - Row state
@@ -105,9 +153,11 @@ public enum SidebarRowMachine {
     ///   meeting, and this row must look untouched — that regression (every row
     ///   spinning because the app was busy) is state `10-other-busy` in the
     ///   catalogue.
-    /// - **Queued is last**, because it is the weakest claim: everything above it
-    ///   is a fact about this meeting right now, while «в очереди» only says the
-    ///   worker has not got here yet.
+    /// - **Waiting is last**, because it is the weakest claim: everything above
+    ///   it is a fact about this meeting right now, while «в очереди» only says
+    ///   the worker has not got here yet. What it is waiting *for* splits the
+    ///   last branch in two — a queue moves on its own, a download and a silent
+    ///   service move on somebody else's clock.
     /// - **Deleted wins over everything.** The entry is out of the index; there
     ///   is no work the pipeline could still be doing on it, and the only thing
     ///   the row is for now is the few seconds in which it can come back.
@@ -116,13 +166,20 @@ public enum SidebarRowMachine {
         involvement: UIStateCatalog.Involvement,
         isTerminal: Bool,
         isDeletedUndoable: Bool = false,
-        isQueued: Bool = false
+        waiting: MeetingRest.WaitReason? = nil
     ) -> SidebarRowActivity {
         if isDeletedUndoable { return .deletedUndoable }
         if stage == .recording { return .recording }
         if isTerminal { return .rests }
         if case .working = involvement { return .processing }
-        return isQueued ? .queued : .none
+        switch waiting {
+        case .model, .network: return .stalled
+        // `.working` can only arrive here if the rest and the worker disagree
+        // about who is busy. That is a scheduler bug, not an appearance: the row
+        // says «в очереди», which is the truthful half of the contradiction.
+        case .queued, .working: return .queued
+        case nil: return .none
+        }
     }
 
     /// The full row state. Selection and hover come from the window and are
@@ -134,7 +191,7 @@ public enum SidebarRowMachine {
         isSelected: Bool,
         isHovered: Bool,
         isDeletedUndoable: Bool = false,
-        isQueued: Bool = false
+        waiting: MeetingRest.WaitReason? = nil
     ) -> SidebarRowState {
         SidebarRowState(
             // A deleted meeting is not the one you are looking at, whatever the
@@ -147,7 +204,7 @@ public enum SidebarRowMachine {
                 involvement: involvement,
                 isTerminal: isTerminal,
                 isDeletedUndoable: isDeletedUndoable,
-                isQueued: isQueued
+                waiting: waiting
             )
         )
     }
@@ -159,6 +216,10 @@ public enum SidebarRowMachine {
     /// summary produces — so the row would show a bare title and nothing else
     /// for the whole minute the work takes. Spending that line on the phase is
     /// the difference between "it is stuck" and "it is thinking".
+    ///
+    /// `elapsed` is supported but not fed: `SidebarPresenter` passes nil, so the
+    /// rail says a bare «Идёт запись» — the timer lives in the pane header
+    /// (`RecordingPaneHeader`), not in the row.
     public static func preview(
         activity: SidebarRowActivity,
         phaseMessage: String?,
@@ -178,6 +239,10 @@ public enum SidebarRowMachine {
             return phaseMessage.flatMap { $0.isEmpty ? nil : $0 } ?? "Обрабатываем…"
         case .queued:
             return "В очереди"
+        case .stalled:
+            // Своими словами причина названа в `MeetingRest.disclosure`; сюда
+            // она приезжает тем же путём, что и причина покоя.
+            return restingReason ?? "Ждём" 
         case .rests:
             // The words come from the meeting's own resting reason
             // (`MeetingRest.disclosure`); this is the fallback for a row whose
@@ -209,6 +274,13 @@ extension PipelineActivity {
 /// The comps write «Воркшоп по VK Музыке. Обсудили этапы…» as one sentence and
 /// one paragraph; real titles arrive without the full stop, and without it the
 /// two halves collide into «Воркшоп по VK Музыке Обсудили этапы».
+///
+/// **Точку ставит тот, кто склеивает половины, а не тот, кто отдаёт название.**
+/// До 2026-08-26 её приписывал презентер, и это было незаметно, пока обе
+/// половины стояли в одной строке. Когда рельс стал однострочным, в нём
+/// остались названия с точкой, которой ни в макете, ни в самом названии нет —
+/// а взялась она из склейки, которой на этой поверхности больше не бывает.
+/// Сейчас её ставит `SidebarMeetingParagraph`, и ровно тогда, когда склеивает.
 public enum SidebarTitleText {
     public static func terminated(_ title: String) -> String {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -268,6 +340,7 @@ public enum SidebarStateCatalog {
         switch activity {
         case .none:            return "Готова, ничего не происходит"
         case .queued:          return "В очереди"
+        case .stalled:         return "Ждём снаружи: модель или сервис"
         case .recording:       return "Идёт запись"
         case .processing:      return "Обработка записи"
         case .rests:           return "Дальше нечего делать"

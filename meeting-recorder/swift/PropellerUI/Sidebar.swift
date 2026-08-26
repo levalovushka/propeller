@@ -2,10 +2,13 @@ import SwiftUI
 import AppKit
 import PropellerPure
 
-/// # The left rail — Figma `sidebar / Frame 127` (31:4581)
+/// # The left rail — Figma `sidebar new` (308:8446)
 ///
-/// A 300 pt column: the window's titlebar row, a short list of things the app
-/// can do, a rule, then every meeting you have, newest first, grouped by day.
+/// A 264 pt column: the window's titlebar row, a short list of things the app
+/// can do, then every meeting you have, newest first, grouped by day. Every row
+/// in it — nav or meeting — is the same 32 pt line, and the only thing that
+/// separates a meeting the pipeline is busy with from one that is done is a
+/// 16 pt animated glyph at its head (`PropellerStatusIcon`).
 ///
 /// It is deliberately **pure presentation**. It takes a `SidebarModel` and hands
 /// back ids; it never sees `AppState`, a `RecordingEntry` or the pipeline. That
@@ -49,6 +52,10 @@ public struct SidebarNavItem: Identifiable, Equatable, Sendable {
     /// hovered" flag inside the view would let the gallery draw something the
     /// app cannot produce.
     public let isHovered: Bool
+    /// `State=Disabled` (307:6733) — the row is present and says so, but the
+    /// click does nothing. Enabled unless someone says otherwise: a row that has
+    /// no reason to be off should not have to declare it.
+    public let isEnabled: Bool
 
     /// Reserved `symbol` for the Propeller mark in the record row.
     public static let propellerMarkSymbol = "propeller.mark"
@@ -59,7 +66,8 @@ public struct SidebarNavItem: Identifiable, Equatable, Sendable {
         title: String,
         hint: Hint? = nil,
         isSelected: Bool = false,
-        isHovered: Bool = false
+        isHovered: Bool = false,
+        isEnabled: Bool = true
     ) {
         self.id = id
         self.symbol = symbol
@@ -67,16 +75,19 @@ public struct SidebarNavItem: Identifiable, Equatable, Sendable {
         self.hint = hint
         self.isSelected = isSelected
         self.isHovered = isHovered
+        self.isEnabled = isEnabled
     }
 }
 
 public struct SidebarMeetingRowModel: Identifiable, Equatable, Sendable {
     public let id: String
-    /// «17:30 · 45 мин».
+    /// «17:30 · 45 мин». Не рисуется в рельсе с 2026-08-26 — строка стала
+    /// однострочной; читает его переключатель по ⌥Tab.
     public let meta: String
-    /// The meeting's name — the loud half of the title line.
+    /// The meeting's name. In the rail it is the whole row.
     public let title: String
-    /// What it was about, or what is being done to it — the quiet half.
+    /// What it was about, or what is being done to it. Второй голос строки —
+    /// тоже не в рельсе, а в переключателе (`SidebarMeetingParagraph`).
     public let preview: String
     /// Selection and activity from `SidebarRowMachine`. Its `isHovered` is a
     /// *forced* pose for the gallery; the live pointer is tracked by the view
@@ -166,7 +177,6 @@ public struct PropellerSidebar: View {
     private let onSearch: (() -> Void)?
     /// Bring back a meeting whose deletion is still undoable. Absent means the
     /// rows don't offer it.
-    private let onRestoreMeeting: ((String) -> Void)?
     /// Right-click actions, by meeting id. Absent means that item is omitted.
     private let onCopySummary: ((String) -> Void)?
     private let onShareMeeting: ((String) -> Void)?
@@ -186,7 +196,6 @@ public struct PropellerSidebar: View {
         onNav: @escaping (String) -> Void = { _ in },
         onSelectMeeting: @escaping (String) -> Void = { _ in },
         onDeleteMeeting: ((String) -> Void)? = nil,
-        onRestoreMeeting: ((String) -> Void)? = nil,
         onCopySummary: ((String) -> Void)? = nil,
         onShareMeeting: ((String) -> Void)? = nil,
         onRevealMeeting: ((String) -> Void)? = nil,
@@ -202,7 +211,6 @@ public struct PropellerSidebar: View {
         self.onNav = onNav
         self.onSelectMeeting = onSelectMeeting
         self.onDeleteMeeting = onDeleteMeeting
-        self.onRestoreMeeting = onRestoreMeeting
         self.onCopySummary = onCopySummary
         self.onShareMeeting = onShareMeeting
         self.onRevealMeeting = onRevealMeeting
@@ -393,7 +401,6 @@ public struct PropellerSidebar: View {
                 onDissolveFinished: onDissolveFinished,
                 onSelectMeeting: onSelectMeeting,
                 onDeleteMeeting: onDeleteMeeting,
-                onRestoreMeeting: onRestoreMeeting,
                 onCopySummary: onCopySummary,
                 onShareMeeting: onShareMeeting,
                 onRevealMeeting: onRevealMeeting
@@ -410,7 +417,6 @@ private struct SidebarMeetingScroll: View {
     let onDissolveFinished: (() -> Void)?
     let onSelectMeeting: (String) -> Void
     let onDeleteMeeting: ((String) -> Void)?
-    let onRestoreMeeting: ((String) -> Void)?
     let onCopySummary: ((String) -> Void)?
     let onShareMeeting: ((String) -> Void)?
     let onRevealMeeting: ((String) -> Void)?
@@ -491,7 +497,6 @@ private struct SidebarMeetingScroll: View {
                     row: row,
                     action: { onSelectMeeting(row.id) },
                     onDelete: onDeleteMeeting.map { delete in { delete(row.id) } },
-                    onRestore: onRestoreMeeting.map { restore in { restore(row.id) } },
                     onCopySummary: onCopySummary.map { copy in { copy(row.id) } },
                     onShare: onShareMeeting.map { share in { share(row.id) } },
                     onRevealInFinder: onRevealMeeting.map { reveal in { reveal(row.id) } },
@@ -701,9 +706,10 @@ private struct SidebarScrollOffsetReader: NSViewRepresentable {
 
 // MARK: - Nav row (list-item)
 
-/// h 32, rounded 8, px 11 — icon 16, label, then the shortcut slot the comps
-/// reserve. Icon and label are one colour and always move together: an icon that
-/// stays dim next to a bright label reads as disabled.
+/// `nav-item` (307:6735): h 32, rounded 8, px 8 — a 16 pt glyph box, the label,
+/// then the shortcut slot the comps reserve. Icon and label are one colour and
+/// always move together: an icon that stays dim next to a bright label reads as
+/// disabled.
 public struct SidebarNavRow: View {
     let item: SidebarNavItem
     let action: () -> Void
@@ -718,9 +724,10 @@ public struct SidebarNavRow: View {
     private var isHovered: Bool { hovering || item.isHovered }
 
     private var foreground: Color {
-        // Selected and hovered both take the 95 % ink — the icon and label
-        // move together. The shortcut keeps its own quieter colour below.
-        (item.isSelected || isHovered) ? Tokens.Sidebar.navLabelSelected : Tokens.Sidebar.navLabel
+        // One ink for every state but disabled (Figma 307:6735). The wash behind
+        // the row says which one is chosen; saying it a second time in the label
+        // made an unselected rail read as half switched off.
+        item.isEnabled ? Tokens.Sidebar.navLabel : Tokens.Sidebar.navLabelDisabled
     }
 
     private var fill: Color {
@@ -744,7 +751,6 @@ public struct SidebarNavRow: View {
             Text(item.title)
                 .typo(Tokens.Sidebar.Typo.navLabel)
                 .lineLimit(1)
-                .padding(.horizontal, Tokens.Sidebar.navLabelInset)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if let hint = item.hint {
@@ -771,17 +777,19 @@ public struct SidebarNavRow: View {
         .contentShape(RoundedRectangle(cornerRadius: Tokens.Sidebar.rowRadius, style: .continuous))
     }
 
-    /// Both tenants of the slot draw at the meta size, so the arrow sits on the
-    /// same optical line as a «⌘R» and the slot never changes width between rows.
+    /// Both tenants of the slot draw at the row's own size, so the arrow sits on
+    /// the same optical line as a «⌘R» and the slot never changes width between
+    /// rows. The comps set it at 13 like everything else in the rail; only the
+    /// colour separates it from the label.
     @ViewBuilder
     private func hintView(_ hint: SidebarNavItem.Hint) -> some View {
         switch hint {
         case .shortcut(let keys):
             Text(keys)
-                .typo(Tokens.Sidebar.Typo.meta)
+                .typo(Tokens.Sidebar.Typo.navLabel)
         case .opensBrowser:
             Image(systemName: "arrow.up.right")
-                .font(.system(size: Tokens.Sidebar.Typo.meta.size, weight: .regular))
+                .font(.system(size: Tokens.Sidebar.navIconSize, weight: .regular))
         }
     }
 
@@ -798,21 +806,31 @@ public struct SidebarNavRow: View {
 
 // MARK: - Meeting row (meetingitem)
 
-/// px 14 / py 11, rounded 8: the title and its preview as one wrapping
-/// paragraph. The time line (and the hover / restore slot it carried) is built
-/// below but not shown — still deciding whether that row belongs here.
+/// `meeting-item` (307:7177): h 32, px 8, rounded 8 — an optional 16 pt status
+/// glyph and the meeting's name on one line, clipped with an ellipsis.
 ///
-/// The two halves of that paragraph carry the state:
+/// **A fixed height, and one ink.** Until 2026-08-26 the row was a wrapping
+/// paragraph of two voices — the name, then either its topics or the phase the
+/// pipeline was on — the whole thing shimmering while work was owed
+/// (`SidebarSweep`) and the phase half arriving letter by letter
+/// (`SoftTypewriter`). All of that is gone from the rail: the state is the glyph
+/// now.
 ///
-/// | | title | preview |
-/// |---|---|---|
-/// | rest | 95 % | 55 % |
-/// | open | 95 % | 95 % |
-/// | working | 55 % + sweep | 55 % + sweep |
+/// What that bought:
 ///
-/// Selecting lifts the preview to the title's weight; working drops the title to
-/// the preview's and sets the whole line moving. Both are one change to one
-/// paragraph, which is why the row never has to re-flow between states.
+/// - the row cannot change height, so nothing below it moves — not on hover, not
+///   when a title arrives, not when a phase name is longer than the last;
+/// - «в очереди», «ждём модель» and «идёт обработка» stopped being three
+///   sentences in the same colour and became three different movements. Three
+///   queue states used to export pixel-for-pixel identical to the gallery
+///   (`design/state-gallery.md`);
+/// - the list holds about twice as many meetings.
+///
+/// What it cost, named out loud: `.rests` — «Никто ничего не сказал», «Саммари
+/// выключено в настройках» — has no glyph and no line, so a meeting that ends
+/// early is now indistinguishable in the rail from one that ended whole. Those
+/// words live on in the pane and in the ⌥Tab switcher; whether the rail owes
+/// them anything is an open question, not an oversight.
 public struct SidebarMeetingRow: View {
     let row: SidebarMeetingRowModel
     let action: () -> Void
@@ -823,8 +841,6 @@ public struct SidebarMeetingRow: View {
     /// not as hover icons. Two glyphs under the pointer made the quiet slot busy
     /// for things that are not routine; the card's «ещё» still has them too.
     let onDelete: (() -> Void)?
-    /// Present only while the deletion can still be taken back.
-    let onRestore: (() -> Void)?
     let onCopySummary: (() -> Void)?
     let onShare: (() -> Void)?
     let onRevealInFinder: (() -> Void)?
@@ -848,17 +864,13 @@ public struct SidebarMeetingRow: View {
     /// different object than the one that clears `isDissolving`, and a frame
     /// rendered between those two updates was the row blinking back into place.
     @State private var burnedOut = false
-    /// Phase line typewriter — «Расшифровываем…» → «Суммируем…».
-    @StateObject private var statusTypewriter = SoftTypewriterSession()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.sidebarSweepFrozen) private var sweepFrozen
     @Environment(\.sidebarDeletionInFlight) private var deletionInFlight
 
     public init(
         row: SidebarMeetingRowModel,
         action: @escaping () -> Void,
         onDelete: (() -> Void)? = nil,
-        onRestore: (() -> Void)? = nil,
         onCopySummary: (() -> Void)? = nil,
         onShare: (() -> Void)? = nil,
         onRevealInFinder: (() -> Void)? = nil,
@@ -868,7 +880,6 @@ public struct SidebarMeetingRow: View {
         self.row = row
         self.action = action
         self.onDelete = onDelete
-        self.onRestore = onRestore
         self.onCopySummary = onCopySummary
         self.onShare = onShare
         self.onRevealInFinder = onRevealInFinder
@@ -877,40 +888,37 @@ public struct SidebarMeetingRow: View {
     }
 
     private var isHovered: Bool { hovering || row.state.isHovered }
-    /// Both «being worked on» and «waiting its turn» shimmer: the sweep says
-    /// «this meeting is in the pipeline», not «this second is spent on it».
-    private var isWorking: Bool { row.state.activity.isInFlight }
     private var isDeleted: Bool { row.state.activity == .deletedUndoable }
     /// Ash is playing, or already has. Either way the row itself paints nothing.
     private var isVanishing: Bool { isDissolving || burnedOut }
-    private var statusAnimated: Bool { !reduceMotion && !sweepFrozen }
 
     private var fill: Color {
         if row.state.isSelected { return Tokens.Sidebar.rowSelected }
         return isHovered ? Tokens.Sidebar.rowHover : .clear
     }
 
-    private var titleColor: Color {
-        SidebarMeetingParagraph.inks(for: row.state).title
-    }
-
-    private var previewColor: Color {
-        SidebarMeetingParagraph.inks(for: row.state).preview
-    }
-
     public var body: some View {
         // Keep the real row for layout. Ash is an overlay only — a ZStack/stand-in
         // that grew with the particle canvas was blowing the rail open.
         Button(action: isDeleted || isVanishing ? {} : action) {
-            VStack(alignment: .leading, spacing: Tokens.Sidebar.meetingLineGap) {
-                titleLine
-                // Hidden for now — time, duration, hover trash / «Вернуть» /
-                // recording badge. Logic stays compiled below; still thinking
-                // whether this row belongs on the meeting item at all.
-                if false { metaLine }
+            HStack(spacing: Tokens.Sidebar.navRowGap) {
+                if let status = row.state.activity.statusIcon {
+                    // Никакой собственной краски: иконка живёт в чернилах
+                    // строки, на которой стоит, — как SF Symbol.
+                    PropellerStatusIcon(status: status)
+                }
+                Text(row.title)
+                    .typo(Tokens.Sidebar.Typo.meetingTitle)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .foregroundStyle(Tokens.Sidebar.meetingTitle)
             .padding(.horizontal, Tokens.Sidebar.meetingHPadding)
-            .padding(.vertical, Tokens.Sidebar.meetingVPadding)
+            // Высота названа, а не сложена из отступов: в макете у ряда стоит
+            // и `h-32`, и `py-6`, и первое старше второго. Сложенная высота
+            // дала бы 28 — и список поехал бы на четыре точки на строку.
+            .frame(height: Tokens.Sidebar.meetingRowHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 fill,
@@ -974,7 +982,9 @@ public struct SidebarMeetingRow: View {
                         .opacity(plateInk)
                     MeetingRowAshView(
                         title: row.title,
-                        preview: row.preview,
+                        // В рельсе описания больше нет — гореть должно ровно то,
+                        // что стояло на строке.
+                        preview: "",
                         onFinished: {
                             burnedOut = true
                             onDissolveFinished?()
@@ -993,18 +1003,7 @@ public struct SidebarMeetingRow: View {
         .onAppear {
             // Ghost rows are born already dissolving — `onChange` will not fire.
             if isDissolving { startSlotCollapse() }
-            syncStatusTypewriter(animated: false)
         }
-        .onChange(of: row.preview) { _, _ in syncStatusTypewriter(animated: isWorking) }
-        .onChange(of: isWorking) { _, working in
-            // Leaving the pipeline — snap to topics; no dismiss of «Суммируем».
-            if !working { statusTypewriter.snap(to: row.preview) }
-            else { syncStatusTypewriter(animated: true) }
-        }
-    }
-
-    private func syncStatusTypewriter(animated: Bool) {
-        statusTypewriter.play(to: row.preview, animated: animated && statusAnimated)
     }
 
     /// The row's own height, delivered on every layout pass until the ash freezes
@@ -1059,10 +1058,11 @@ public struct SidebarMeetingRow: View {
     /// The system menu for a meeting — right-click, not hover chrome.
     @ViewBuilder
     private var meetingMenu: some View {
+        // Удалённая строка не предлагает ничего: вернуть можно ⌘Z, и это
+        // единственная дверь с d31045d. Сама `.deletedUndoable` из приложения
+        // недостижима — её рисует только галерея.
         if isDeleted {
-            if let onRestore {
-                Button("Вернуть", action: onRestore)
-            }
+            EmptyView()
         } else {
             if let onCopySummary {
                 Button("Копировать саммари", action: onCopySummary)
@@ -1082,175 +1082,8 @@ public struct SidebarMeetingRow: View {
             }
         }
     }
-
-    /// The time, and then the slot the comps keep to its right.
-    ///
-    /// That slot has two tenants and they never overlap. Under the pointer it
-    /// holds the row's micro-actions — reveal and delete, exactly the pair drawn
-    /// in `state=hover`. The rest of the time it is where a meeting says
-    /// something the text cannot: that it is recording, or that it has stopped
-    /// and needs a person. Sharing one slot is why neither has to find room.
-    private var metaLine: some View {
-        HStack(spacing: Tokens.Sidebar.rowActionGap) {
-            Text(row.meta)
-                .typoBlock(Tokens.Sidebar.Typo.meta, monospacedDigit: true)
-                .foregroundStyle(Tokens.Sidebar.meetingMeta)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            Group {
-                if isDeleted, let onRestore {
-                    // The third tenant of the slot, and the only one that is a
-                    // word rather than a glyph: an icon-only undo is a puzzle,
-                    // and this one has eight seconds to be understood.
-                    SidebarRowRestore(action: onRestore)
-                } else if isHovered {
-                    microActions
-                } else {
-                    badge
-                }
-            }
-            // Pinned to the time line's own height, ink allowed to overflow it.
-            //
-            // The comps draw `state=rest` and `state=hover` at the same 84 pt,
-            // so the 16 pt icon slots cannot be allowed to set the row's height
-            // — an `HStack` takes the tallest child, and a row that grows two
-            // points under the pointer shoves everything below it down as the
-            // mouse travels the list.
-            .frame(height: Tokens.Sidebar.Typo.meta.lineHeight)
-        }
-    }
-
-    @ViewBuilder
-    private var microActions: some View {
-        HStack(spacing: Tokens.Sidebar.rowActionGap) {
-            if let onDelete {
-                SidebarRowAction(symbol: "trash", help: "Удалить", action: onDelete)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var badge: some View {
-        switch row.state.activity {
-        case .recording:
-            Circle()
-                .fill(Tokens.Paint.Status.record)
-                .frame(width: Tokens.Space.s6, height: Tokens.Space.s6)
-                .accessibilityLabel("Идёт запись")
-        case .rests:
-            // Nothing at all. There was a ⚠ here, then a ring — and a ring is a
-            // stroked shape sitting in the slot the row's *buttons* live in, which
-            // is the interface lying about what can be pressed (PR-013). Then the
-            // simpler question: take the mark away, does the row lose anything?
-            // It does not — the quiet line already says «Аудио удалено» in words
-            // (PR-005). The badge slot is for what the text *cannot* say.
-            EmptyView()
-        case .none, .processing, .queued, .deletedUndoable:
-            // Working already says so, in words and in motion; a deleted row
-            // spends the slot on «Вернуть». Queued is the same quiet — the
-            // subtitle carries the wait, the badge slot stays empty.
-            EmptyView()
-        }
-    }
-
-    private var titleLine: some View {
-        // Working: shimmer on the whole line + typewriter on the phase half.
-        // Metal colorEffect on `Text` is a no-op — `sidebarSweep` keeps the
-        // gradient path for the rail.
-        Group {
-            if isWorking {
-                workingParagraph.sidebarSweep()
-            } else {
-                paragraph
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var paragraph: some View {
-        SidebarMeetingParagraph(row: row)
-    }
-
-    private var workingParagraph: some View {
-        Text(workingAttributed)
-            .typoBlock(Tokens.Sidebar.Typo.meetingTitle)
-            .multilineTextAlignment(.leading)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    /// Title static; phase line soft-typewritten so a new status arrives.
-    private var workingAttributed: AttributedString {
-        var title = AttributedString(row.title)
-        title.foregroundColor = titleColor
-        let status = statusTypewriter.displayed
-        guard !status.isEmpty else { return title }
-        if !row.title.isEmpty {
-            var space = AttributedString(" ")
-            space.foregroundColor = previewColor
-            title.append(space)
-        }
-        title.append(SoftTypewriter.paint(
-            status,
-            color: previewColor,
-            progress: statusTypewriter.progress,
-            softness: Tokens.Sidebar.StatusReveal.softChars
-        ))
-        return title
-    }
 }
 
-/// One of the two icons a meeting row reveals under the pointer.
-///
-/// No fill and no frame of its own — the row is already washed, and a button
-/// chrome inside a hovered row makes two rectangles where the comps draw one.
-struct SidebarRowAction: View {
-    let symbol: String
-    let help: String
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: Tokens.Sidebar.rowActionIconSize, weight: .regular))
-                .foregroundStyle(hovering ? Tokens.Sidebar.meetingTitle : Tokens.Sidebar.chromeIcon)
-                .frame(width: Tokens.Sidebar.rowActionSlot, height: Tokens.Sidebar.rowActionSlot)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.press)
-        .onHover { hovering = $0 }
-        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
-        .help(help)
-        .accessibilityLabel(help)
-    }
-}
-
-/// «Вернуть» on a row whose deletion has not landed yet.
-///
-/// A word, in the meta line's own 11 pt, weighted up so it out-reads the time
-/// beside it. Deliberately not a filled pill: the offer belongs to this row, and
-/// a button with its own background inside a list row reads as a second list.
-struct SidebarRowRestore: View {
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Text("Вернуть")
-                .typo(Tokens.Sidebar.Typo.meta)
-                .foregroundStyle(hovering ? Tokens.Sidebar.meetingTitle : Tokens.Sidebar.navLabelSelected)
-                .padding(.horizontal, Tokens.Space.s4)
-                .frame(height: Tokens.Sidebar.rowActionSlot)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.press)
-        .onHover { hovering = $0 }
-        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
-        .help("Вернуть удалённую запись")
-        .accessibilityLabel("Вернуть удалённую запись")
-    }
-}
 
 /// Where the rail's header row sits, in window coordinates.
 ///
@@ -1353,9 +1186,13 @@ public struct SidebarMeetingParagraph: View {
 
     private var attributed: AttributedString {
         let inks = Self.inks(for: row.state)
-        var title = AttributedString(row.title)
+        guard !row.preview.isEmpty else {
+            var bare = AttributedString(row.title)
+            bare.foregroundColor = inks.title
+            return bare
+        }
+        var title = AttributedString(SidebarTitleText.terminated(row.title))
         title.foregroundColor = inks.title
-        guard !row.preview.isEmpty else { return title }
         var preview = AttributedString((row.title.isEmpty ? "" : " ") + row.preview)
         preview.foregroundColor = inks.preview
         title.append(preview)
@@ -1391,17 +1228,16 @@ public struct SidebarChromeButton: View {
     public var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                // 12, not 13: the comps' `sidebar.left` inks 14 × 11, which is
-                // what this size draws. 13 is a point taller and reads as a
-                // second button next to the traffic lights.
                 .font(.system(size: Tokens.Sidebar.chromeIconSize, weight: .regular))
                 .foregroundStyle(hovering ? Tokens.Paint.Text.primary : Tokens.Sidebar.chromeIcon)
                 .frame(width: Tokens.Sidebar.toggleSide, height: Tokens.Sidebar.toggleSide)
+                // Свой радиус, на шаг мельче рядов: кнопка шапки — контрол, а не
+                // строка списка (`Icon Background`, 307:6571).
                 .background(
                     hovering ? Tokens.Sidebar.rowHover : .clear,
-                    in: RoundedRectangle(cornerRadius: Tokens.Sidebar.rowRadius, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: Tokens.Sidebar.chromeRadius, style: .continuous)
                 )
-                .contentShape(RoundedRectangle(cornerRadius: Tokens.Sidebar.rowRadius, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: Tokens.Sidebar.chromeRadius, style: .continuous))
         }
         .buttonStyle(.press)
         .onHover { hovering = $0 }

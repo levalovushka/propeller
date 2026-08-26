@@ -184,8 +184,11 @@ private struct MeetingSwitcherRow: View {
         // 0,18 с. Теперь выделение чернил не трогает вовсе — его говорит плашка,
         // и щёлкать стало нечему.
         SidebarMeetingParagraph(row: row)
-            .padding(.horizontal, Tokens.Sidebar.meetingHPadding)
-            .padding(.vertical, Tokens.Sidebar.meetingVPadding)
+            // Свои отступы, а не рельсовые. Рельс стал однострочным
+            // (2026-08-26), переключатель — нет: он показывает и описание, и
+            // абзац в нём по-прежнему переносится.
+            .padding(.horizontal, Tokens.Pane.Switcher.rowHPadding)
+            .padding(.vertical, Tokens.Pane.Switcher.rowVPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

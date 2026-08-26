@@ -9,7 +9,7 @@ import PropellerPure
 /// Разъедется что-то одно — список дёрнется в первый же кадр.
 final class SidebarSlotHeightTests: XCTestCase {
 
-    /// Ширина, которую рельс отдаёт строке: 300 минус поля списка.
+    /// Ширина, которую рельс отдаёт строке: рельс минус поля списка.
     private var rowWidth: CGFloat {
         Tokens.Sidebar.width - Tokens.Sidebar.bodyHPadding * 2
     }
@@ -40,11 +40,13 @@ final class SidebarSlotHeightTests: XCTestCase {
     /// Пепел встаёт ровно на буквы, а не рядом с ними. Растр и строка обязаны
     /// быть одной высоты — иначе поле частиц смещено на разницу.
     ///
-    /// Проверяется на переносе: реальные строки в рельсе живут в две-три строки,
-    /// и именно там формула растра расходилась с вёрсткой.
+    /// Проверяется на длинном названии: в рельсе оно теперь обрезается в одну
+    /// строку, и высота растра обязана следовать за названной высотой ряда, а
+    /// не за тем, во сколько строк текст лёг бы сам.
     func testTheAshRasterIsExactlyAsTallAsTheRowItStandsIn() {
         let title = "Разбор джобы про онбординг и первые семь дней"
-        let preview = "найм, онбординг, метрики удержания, следующий шаг"
+        // Так его зовёт сама строка: описания в рельсе нет.
+        let preview = ""
         let row = measuredRowHeight(title: title, preview: preview)
         let raster = rasterHeight(title: title, preview: preview)
         XCTAssertEqual(
@@ -58,11 +60,11 @@ final class SidebarSlotHeightTests: XCTestCase {
     /// скачком, и список под ней подпрыгивает, прежде чем поехать плавно.
     func testSelectionDoesNotChangeTheHeightOfARow() {
         let plain = measuredRowHeight(
-            title: "Синк по найму", preview: "команда, оффер",
+            title: "Синк по найму", preview: "",
             state: SidebarRowState(isSelected: false)
         )
         let selected = measuredRowHeight(
-            title: "Синк по найму", preview: "команда, оффер",
+            title: "Синк по найму", preview: "",
             state: SidebarRowState(isSelected: true)
         )
         XCTAssertEqual(

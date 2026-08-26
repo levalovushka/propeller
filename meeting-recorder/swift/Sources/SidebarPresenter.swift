@@ -178,14 +178,16 @@ enum SidebarPresenter {
             isSelected: state.paneRoute == .meeting && state.selectedRecordingID == entry.id,
             isHovered: false,      // the view tracks the live pointer itself
             isDeletedUndoable: false,
-            // «В очереди» comes from the one place that knows whether work is
-            // still owed — the same answer the card reads (`MeetingRest`).
-            isQueued: rest.owesWork && !state.activity.concerns(entry.id)
+            // Ожидание приходит из того же места, что и ответ карточки
+            // (`MeetingRest`), и приходит причиной, а не флагом: «в очереди» и
+            // «ждём модель» рисуются разными иконками. Пока воркер стоит на
+            // этой встрече, ждать нечего — она и есть текущая работа.
+            waiting: state.activity.concerns(entry.id) ? nil : rest.waitReason
         )
         return SidebarMeetingRowModel(
             id: entry.id,
             meta: SidebarMeta.line(start: entry.date, duration: entry.duration),
-            title: SidebarTitleText.terminated(entry.title.isEmpty ? "Без названия" : entry.title),
+            title: entry.title.isEmpty ? "Без названия" : entry.title,
             preview: SidebarRowMachine.preview(
                 activity: rowState.activity,
                 phaseMessage: state.activity.concerns(entry.id) ? state.activity.sidebarMessage : nil,

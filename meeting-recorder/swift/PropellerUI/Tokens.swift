@@ -54,6 +54,9 @@ public enum Tokens {
             public static let a55: Double = 0.55
             public static let a70: Double = 0.70
             public static let a75: Double = 0.75
+            /// The redesign's one loud ink: `rgba(255,255,255,0.9)` on nav
+            /// labels and meeting titles alike (Figma 308:8446).
+            public static let a90: Double = 0.90
             public static let a95: Double = 0.95
             public static let a100: Double = 1.0
 
@@ -84,6 +87,9 @@ public enum Tokens {
             public static let a68: Double = 0.68
             public static let a70: Double = 0.70
             public static let a80: Double = 0.80 // glass wash
+            /// Light twin of `AlphaWhite.a90` — a shade less, per the note on
+            /// `Primitive.ink`: black at the loud end outweighs white.
+            public static let a88: Double = 0.88
             public static let a92: Double = 0.92
             public static let a95: Double = 0.95
             public static let a100: Double = 1.0
@@ -246,6 +252,13 @@ public enum Tokens {
             public static let record = SwiftUI.Color(nsColor: .systemRed)
             public static let warning = SwiftUI.Color(nsColor: .systemOrange)
             public static let accent = SwiftUI.Color.accentColor
+            /// The one red that is a *choice*, not a recording light: «Очистить»
+            /// (Figma 284:16769, `#FF4B59`). Stated as sRGB because it was read
+            /// off a hex; the light twin is a step darker so it survives white.
+            public static let destructive = Tokens.dual(
+                dark: NSColor(srgbRed: 1.0, green: 0.294, blue: 0.349, alpha: 1),
+                light: NSColor(srgbRed: 0.839, green: 0.157, blue: 0.216, alpha: 1)
+            )
         }
     }
 
@@ -541,17 +554,41 @@ public enum Tokens {
         public static let updatePillHPadding: CGFloat = Space.s10
     }
 
-    /// The left rail — Figma `sidebar / Frame 127` (31:4581).
+    /// Анимированная иконка статуса встречи (`PropellerStatusIcon`).
+    ///
+    /// Своя группа, а не часть `Sidebar`: та же фигура тем же приводом просится
+    /// в меню-бар и в чёлку, а туда рельс с собой не возьмёшь.
+    public enum StatusIcon {
+        /// Сторона квадрата. Совпадает с глифом нав-строки — работающая встреча
+        /// и пункт меню начинают текст на одном отступе.
+        public static let side = Space.s16
+        /// 30 кадров в секунду. Не 60: фигура из двенадцати кружков на 16 pt
+        /// движется медленно, и половина кадров уходит в одни и те же пиксели —
+        /// а платит за них главный поток, который в этот момент расшифровывает.
+        public static let frameInterval: Double = 1.0 / 30.0
+        /// Ниже этого точку не рисуем вовсе: на 16 pt она всё равно не видна, а
+        /// заливка стоит столько же, сколько видимая.
+        public static let alphaFloor: CGFloat = 0.01
+        /// Покой — состояние без движения, поэтому и без веса.
+        public static let idleOpacity: Double = 0.4
+    }
+
+    /// The left rail — Figma `sidebar new` (308:8446), component `Sidebar`
+    /// with its two types: `Primary` (307:6495) and `Secondary` (307:6497).
     ///
     /// Every number here was measured off that frame; the comment on each says
-    /// where it comes from, because "300" and "11" are the kind of value that
+    /// where it comes from, because "264" and "11" are the kind of value that
     /// gets rounded to something tidier by the next person who reads it.
     public enum Sidebar {
 
         // MARK: Layout
 
         /// Rail width. The content pane is whatever is left.
-        public static let width: CGFloat = 300
+        ///
+        /// 300 → 264 with the redesign: the rows lost their second line, so the
+        /// rail no longer has to hold two sentences side by side — one title and
+        /// a 16 pt status icon fit in less.
+        public static let width: CGFloat = 264
         public static let minWidth: CGFloat = 240
         public static let maxWidth: CGFloat = 420
         /// Titlebar row: traffic lights and the collapse toggle on the left, search
@@ -560,7 +597,11 @@ public enum Tokens {
         /// Inset of that row. Read by the window too, which draws the toggle at
         /// `Tokens.Window.chromeToggleLeading` — one number, so the button cannot
         /// land beside the slot instead of after it.
-        public static let headerPadding = Space.s12
+        ///
+        /// 12 → 8 with the redesign. The traffic lights did **not** move with it
+        /// (`trafficLightLeading` below): those are real window buttons, and
+        /// macOS puts them where macOS puts them.
+        public static let headerPadding = Space.s8
         /// Body inset — `py-10` on Frame 123, but 10 across rather than the
         /// comps' 12.
         ///
@@ -577,8 +618,8 @@ public enum Tokens {
         /// the gap grew to carry the separation on its own. Brought back from
         /// 28 → 20 — eight points of air the list did not need.
         public static let blockGap = Space.s20
-        /// Between dated meeting groups (`gap-24`).
-        public static let groupGap = Space.s24
+        /// Between dated meeting groups (`gap-20` on 307:6510).
+        public static let groupGap = Space.s20
         /// Soft alpha fade at the top of the meeting list once scrolled — mask
         /// height, not a painted wash. Zero while parked at the top.
         public static let listTopFade = Space.s24
@@ -589,40 +630,34 @@ public enum Tokens {
 
         /// Nav rows — `list-item`, h-32 rounded-8.
         public static let navRowHeight = Space.s32
-        /// One point less than the meeting rows': the SF Symbol sits about a
-        /// point inside its 16 pt box, so 13 puts the *glyph* on the same
-        /// margin as the meeting titles below. Snapping this to a round number
-        /// of the scale visibly stairsteps the two blocks against each other.
-        public static let navRowHPadding: CGFloat = 13
-        public static let navRowGap = Space.s4
+        /// `px-8` on `nav-item` (307:6735) — and the same number on the
+        /// meeting rows below, which is new: the old rail split its margin
+        /// 13/14 so the two blocks' *glyphs* lined up at different paddings.
+        /// The redesign gives both rows one padding and lines them up by it.
+        public static let navRowHPadding = Space.s8
+        public static let navRowGap = Space.s8
         public static let navIconSide = Space.s16
         /// Point size of the SF Symbol inside that 16 pt box — the *ink*, not
-        /// the box. Measured against the comps: 12 puts the magnifier at 12 × 12.
-        public static let navIconSize: CGFloat = 12
-        /// Same, for the collapse toggle (`sidebar.left` inks 14 × 11).
-        public static let chromeIconSize: CGFloat = 12
-        /// `Button text` wrapper — px-2 inside the row.
-        public static let navLabelInset = Space.s2
+        /// the box. The comps set every glyph in the rail at the body size.
+        public static let navIconSize: CGFloat = 13
+        /// Same, for the header's chrome glyphs (collapse, search, back).
+        public static let chromeIconSize: CGFloat = 13
 
-        /// Micro-actions revealed on a meeting row's hover — `state=hover`
-        /// (14:3174). Two 16 pt slots, 8 apart, at the trailing end of the time
-        /// line. The comps drew `square.and.arrow.down` and `trash`; only the
-        /// trash is left — revealing a file is not a routine act on a row.
-        public static let rowActionSlot = Space.s16
-        public static let rowActionGap = Space.s8
-        public static let rowActionIconSize: CGFloat = 12
-
-        /// Meeting rows — `meetingitem`, py-10 rounded-8, 4 pt between lines.
+        /// Meeting rows — `meeting-item` (307:7177): h-32, px-8 py-6,
+        /// rounded-8, one line and an optional 16 pt status icon.
         ///
-        /// 14 across, against the comps' 12, for the reason on `bodyHPadding`:
-        /// the row keeps the text where it was and takes the two points the
-        /// rail's margin gave up, so its fill is wider than its type.
-        public static let meetingHPadding: CGFloat = 14
-        public static let meetingVPadding = Space.s12
-        public static let meetingLineGap = Space.s4
-        /// Date header block — inset with the rows it heads, 22 pt from the top
-        /// of the date to the top of the first meeting under it.
-        public static let sectionHeaderBlockHeight: CGFloat = 22
+        /// The row is a **fixed height** now, not padding around a paragraph:
+        /// the title is one line with an ellipsis, so nothing under the pointer
+        /// can change how tall the list is.
+        public static let meetingRowHeight = Space.s32
+        public static let meetingHPadding = Space.s8
+        /// Leading slot for the animated status icon (`PropellerStatusIcon`).
+        /// Sized like the nav glyph box, so a working meeting and a nav row
+        /// start their text on the same margin.
+        public static let meetingIconSide = Space.s16
+        /// Date header block — `nav-title` (307:7146): a 14 pt line box and
+        /// `pb-4` under it.
+        public static let sectionHeaderBlockHeight: CGFloat = 18
         /// What is left of that block once the line has taken its share.
         ///
         /// Derived rather than stated as 8, so changing the header's type moves
@@ -633,12 +668,19 @@ public enum Tokens {
         }
 
         public static let rowRadius = Radius.xs
-        /// Meeting rows keep a fuller corner than nav / chrome — one step above
-        /// `rowRadius`, so the list item reads softer than the controls around it.
-        public static let meetingRadius = Radius.md
-        /// Collapse toggle — 32×32 rounded-8, icon 16.
+        /// Meeting rows share the nav rows' corner now. They used to be a step
+        /// softer, when a meeting was a three-line card and a nav row was a
+        /// control; both are 32 pt rows today, and two corners on one list read
+        /// as two lists.
+        public static let meetingRadius = Radius.xs
+        /// Header chrome — 32×32 rounded-6 (`Icon Background`, 307:6571).
         public static let toggleSide = Space.s32
         public static let toggleIconSide = Space.s16
+        public static let chromeRadius = Radius.xxs
+        /// «← Назад» in the Secondary header (307:6505): the same 32 pt block as
+        /// the icon buttons, widened by its label.
+        public static let backGap = Space.s4
+        public static let backHPadding = Space.s8
 
         /// Traffic-light slot: 76×32 at (12, 8); discs Ø12 at x 24/44/64,
         /// centred on y 24. `SceneWindowChrome` moves the real window buttons here.
@@ -648,6 +690,26 @@ public enum Tokens {
         public static let trafficLightDiameter = Space.s12
         /// Top of the discs, from the top of the window.
         public static let trafficLightTop: CGFloat = 18
+
+        /// Foot of the Secondary rail — mark, name, version, the sentence that
+        /// invites a bug report, and «Помощь ↗» (307:6678).
+        ///
+        /// It carries what the Primary rail used to carry as a nav row
+        /// («Сообщить о проблеме»). A row in a list of destinations that opened
+        /// a browser was the odd one out; at the foot of settings, under the
+        /// version it needs anyway, it is the same offer in the right place.
+        public enum Footer {
+            public static let markSide = Space.s32
+            public static let blockGap = Space.s16
+            public static let textGap = Space.s6
+            public static let hPadding = Space.s8
+            public static let topPadding = Space.s8
+            public static let bottomPadding = Space.s16
+            public static let buttonHeight = Space.s32
+            public static let buttonRadius = Radius.xs
+            public static let buttonHPadding = Space.s8
+            public static let buttonGap = Space.s4
+        }
 
         // MARK: Paint
 
@@ -667,35 +729,41 @@ public enum Tokens {
         /// Hairline on the trailing edge, and the rule under the nav block.
         public static let border = Primitive.ink(dark: Primitive.AlphaWhite.a7,
                                                  light: Primitive.AlphaBlack.a9)
-        /// Selected row wash — white 5 % in Figma.
-        public static let rowSelected = Primitive.ink(dark: Primitive.AlphaWhite.a5,
-                                                      light: Primitive.AlphaBlack.a5)
-        /// Hover. Not in the comps — half of `rowSelected`, so that pointing at a
-        /// row can never be mistaken for having chosen it.
-        public static let rowHover = Primitive.ink(dark: Primitive.AlphaWhite.a3,
-                                                   light: Primitive.AlphaBlack.a3)
+        /// Selected row wash — white 10 % (`State=Active`, 307:6731).
+        public static let rowSelected = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                      light: Primitive.AlphaBlack.a10)
+        /// Hover — white 5 % (`State=Hover`, 307:6732), half of `rowSelected`,
+        /// so that pointing at a row can never be mistaken for having chosen it.
+        public static let rowHover = Primitive.ink(dark: Primitive.AlphaWhite.a5,
+                                                   light: Primitive.AlphaBlack.a5)
 
         /// Nav label and its icon — one colour, they always move together.
-        public static let navLabel = Primitive.ink(dark: Primitive.AlphaWhite.a55,
-                                                   light: Primitive.AlphaBlack.a58)
-        public static let navLabelSelected = Primitive.ink(dark: Primitive.AlphaWhite.a95,
-                                                           light: Primitive.AlphaBlack.a92)
-        /// Shortcut hint, revealed on hover.
-        public static let navShortcut = Primitive.ink(dark: Primitive.AlphaWhite.a30,
-                                                      light: Primitive.AlphaBlack.a42)
+        ///
+        /// **One colour for every state but disabled**, which is the redesign's
+        /// change: the label no longer dims when the row is not selected. The
+        /// wash behind the row says which one is chosen, and saying it twice
+        /// made an unselected rail look half switched off.
+        public static let navLabel = Primitive.ink(dark: Primitive.AlphaWhite.a90,
+                                                   light: Primitive.AlphaBlack.a88)
+        /// `State=Disabled` (307:6733) — label and glyph together.
+        public static let navLabelDisabled = Paint.Text.disabled
+        /// Shortcut hint and the hover-only quick action, white 40 %.
+        public static let navShortcut = Primitive.ink(dark: Primitive.AlphaWhite.a40,
+                                                      light: Primitive.AlphaBlack.a48)
 
         /// «17:30 · 45 мин».
         public static let meetingMeta = Primitive.ink(dark: Primitive.AlphaWhite.a55,
                                                       light: Primitive.AlphaBlack.a55)
-        /// The meeting's name — the loud half of the title line.
-        public static let meetingTitle = Primitive.ink(dark: Primitive.AlphaWhite.a95,
-                                                       light: Primitive.AlphaBlack.a92)
+        /// The meeting's name. The only ink on the row now — white 90 %,
+        /// the same as a nav label, because they are the same kind of line.
+        public static let meetingTitle = Primitive.ink(dark: Primitive.AlphaWhite.a90,
+                                                       light: Primitive.AlphaBlack.a88)
         /// What it was about — the quiet half.
         public static let meetingPreview = Primitive.ink(dark: Primitive.AlphaWhite.a55,
                                                          light: Primitive.AlphaBlack.a55)
-        /// «Вчера, 24 августа».
-        public static let sectionHeader = Primitive.ink(dark: Primitive.AlphaWhite.a30,
-                                                        light: Primitive.AlphaBlack.a42)
+        /// «Вчера, 24 августа» — white 40 % on `nav-title` (307:6966).
+        public static let sectionHeader = Primitive.ink(dark: Primitive.AlphaWhite.a40,
+                                                        light: Primitive.AlphaBlack.a48)
         /// Collapse toggle glyph.
         public static let chromeIcon = Primitive.ink(dark: Primitive.AlphaWhite.a40,
                                                      light: Primitive.AlphaBlack.a48)
@@ -707,12 +775,15 @@ public enum Tokens {
 
         /// Not `Type` — that spelling collides with metatype syntax at every use site.
         public enum Typo {
-            /// 14 / 18 regular — nav row label.
+            /// 13 / 16 regular — nav row label.
             ///
             /// Same face as the meeting title below it. The rail therefore has
             /// one text size and one weight, and everything is said with colour.
+            ///
+            /// 14 → 13 with the redesign, and the line box 18 → 16: a row is a
+            /// fixed 32 pt now, and 16 is what leaves 8 above and below it.
             public static let navLabel = Typography.Style(
-                size: 14, lineHeight: 18, weight: .regular,
+                size: 13, lineHeight: 16, weight: .regular,
                 weightTrim: Typography.railWeightTrim
             )
             /// 11 / 14 regular — time line, shortcut hint.
@@ -725,10 +796,9 @@ public enum Tokens {
                 size: 11, lineHeight: 14, weight: .regular,
                 weightTrim: Typography.railWeightTrim
             )
-            /// 14 / 18 regular — meeting title + preview, wraps to three lines.
+            /// 13 / 16 regular — the meeting title, one line.
             ///
-            /// Same Style as `navLabel`: one face for the whole rail. The line
-            /// box is what the rows are built on (padding + N × 18).
+            /// Same Style as `navLabel`: one face for the whole rail.
             public static let meetingTitle = navLabel
             /// 11 / 14 regular — date header. The same face and size as the
             /// time line; only the colour separates them (30 % against 55 %).
@@ -746,8 +816,9 @@ public enum Tokens {
         public static let shimmerHalfWidth: Double = 0.14232
         public static let shimmerCenter: Double = 0.43876
 
-        /// Soft typewriter on the phase line («Расшифровываем…» → «Суммируем…»).
-        /// Shorter than the summary column — statuses are a few words.
+        /// Soft typewriter on a status line. Не в рельсе с 2026-08-26 — там
+        /// строки статуса больше нет; числа остались для живого транскрипта
+        /// (`RecordingPane`), который читает их через `SoftTypewriter`.
         public enum StatusReveal {
             public static let softChars: Double = 16
             public static let appearSecondsPerChar: Double = 0.028
@@ -936,9 +1007,9 @@ public enum Tokens {
 
         // MARK: Paint
 
-        public static let title = Sidebar.navLabelSelected
+        public static let title = Paint.Text.primary
         public static let meta = Sidebar.meetingMeta
-        public static let body = Sidebar.navLabelSelected
+        public static let body = Paint.Text.primary
         public static let placeholder = Sidebar.sectionHeader
         public static let buttonIcon = Sidebar.chromeIcon
 
@@ -999,7 +1070,7 @@ public enum Tokens {
             /// 95 % white at rest — the bar is a tool over dark glass, and 55 %
             /// reads as disabled. Hover keeps the same ink; the pill fill is
             /// what moves.
-            public static let label = Sidebar.navLabelSelected
+            public static let label = Paint.Text.primary
             /// White 7 % over the bar — the «Подробнее» pill the comp draws.
             public static let itemHoverFill = Primitive.ink(dark: Primitive.AlphaWhite.a7,
                                                             light: Primitive.AlphaBlack.a7)
@@ -1034,10 +1105,16 @@ public enum Tokens {
         // MARK: Meeting switcher (⌥Tab)
 
         /// The panel is the action bar's brother: same plate (`SummonedPlate`),
-        /// same corner, same drop, and the rows are the rail's own rows at the
-        /// rail's own width. So there are only three numbers here — the ones that
-        /// are about walking a list rather than about being a summoned tool.
+        /// same corner, same drop, and the rows are the rail's rows at the rail's
+        /// width.
+        ///
+        /// **Its own paddings since 2026-08-26.** The rail's row became one
+        /// clipped line 32 pt tall; the switcher's is still a wrapping paragraph
+        /// of two voices, and it has to stay one until that surface is redesigned
+        /// too. These are the numbers the rail had before it moved.
         public enum Switcher {
+            public static let rowHPadding: CGFloat = 14
+            public static let rowVPadding = Space.s12
             /// The list is *whole*, so it has to stop somewhere. Six or seven rows
             /// at the rail's line height: enough that the walk has visible context
             /// below it, short enough that the panel stays a HUD and not a second
@@ -1160,13 +1237,14 @@ public enum Tokens {
 
         // MARK: Groups
 
-        /// Между группами — тот же шаг, что между днями в рельсе.
-        public static let groupGap = Sidebar.groupGap
-        /// Заголовок группы → её плашка. Выведен, а не назван: правка кегля
-        /// заголовка двигает зазор, а не растит группу.
-        public static var headerBottomGap: CGFloat {
-            max(0, Sidebar.sectionHeaderBlockHeight - Typo.header.lineHeight)
-        }
+        /// Между группами.
+        public static let groupGap = Space.s24
+        /// Заголовок группы → её плашка.
+        ///
+        /// Было выведено из блока даты в рельсе. Развязано 2026-08-26: у рельса
+        /// этот блок стал 18 (`nav-title`, `pb-4`), а у настроек зазор до
+        /// карточки — 8 (254:1989). Одно число перестало обслуживать оба.
+        public static let headerBottomGap = Space.s8
         /// Отступ заголовка слева. Чуть меньше внутреннего отступа плашки (14):
         /// заголовок стоит *над* ней, а не в ней, и совпадение до пикселя
         /// склеило бы их в один блок.
@@ -1176,9 +1254,13 @@ public enum Tokens {
         /// то же скругление, тот же горизонтальный отступ. Не «похожая», а та же:
         /// список настроек и список встреч живут в одном окне, и две разные
         /// плашки в нём читались бы как два разных приложения.
-        public static let plateFill = Sidebar.rowHover
-        public static let plateRadius = Sidebar.meetingRadius
-        public static let plateHPadding = Sidebar.meetingHPadding
+        /// Развязано 2026-08-26 вместе с `headerBottomGap`: строка встречи
+        /// стала 32 pt с радиусом 8, карточка настроек — радиус 14. Пока экран
+        /// не переписан, значения стоят те, что были у рельса до редизайна.
+        public static let plateFill = Primitive.ink(dark: Primitive.AlphaWhite.a3,
+                                                    light: Primitive.AlphaBlack.a3)
+        public static let plateRadius = Radius.md
+        public static let plateHPadding: CGFloat = 14
         /// Волосяная линия между ячейками. Собственного вертикального отступа у
         /// плашки нет — его несут сами ячейки, поэтому от края плашки до первой
         /// строки ровно столько же, сколько у строки встречи.
@@ -1186,7 +1268,7 @@ public enum Tokens {
 
         // MARK: Cells
 
-        public static let cellVPadding = Sidebar.meetingVPadding
+        public static let cellVPadding = Space.s12
         /// Между тем, что настраивается, и тем, чем это делают.
         public static let cellGap = Space.s16
         /// Заголовок ячейки → его тихая вторая строка.

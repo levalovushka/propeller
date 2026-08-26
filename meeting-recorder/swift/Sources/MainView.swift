@@ -298,7 +298,6 @@ struct MainView: View {
                     state.removeRecording(entry, undoManager: undoManager)
                 }
             },
-            onRestoreMeeting: nil,
             onCopySummary: { id in
                 guard let entry = recordingStore.recordings.first(where: { $0.id == id }) else { return }
                 copySummary(entry)

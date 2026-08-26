@@ -44,17 +44,23 @@ enum AshField {
         text.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: text.length))
 
         let padX = Tokens.Sidebar.meetingHPadding
-        let padY = Tokens.Sidebar.meetingVPadding + half
         let textWidth = max(40, width - padX * 2)
         let bounds = text.boundingRect(
             with: CGSize(width: textWidth, height: 10_000),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             context: nil
         )
+        // Строка встречи — названная высота, а текст в ней по центру, а не
+        // «текст плюс отступ сверху и снизу» (`Tokens.Sidebar.meetingRowHeight`).
+        // Пепел встаёт ровно на её буквы, значит и считать высоту он обязан тем
+        // же способом: посчитай он по-старому — растр вышел бы на четыре точки
+        // ниже строки, и буквы прыгнули бы в кадр поджига.
+        let contentHeight = ceil(bounds.height)
         let viewSize = CGSize(
             width: width,
-            height: ceil(bounds.height) + padY * 2
+            height: max(Tokens.Sidebar.meetingRowHeight, contentHeight + half * 2)
         )
+        let padY = (viewSize.height - contentHeight) / 2
         let px = max(1, Int(ceil(viewSize.width * scale)))
         let py = max(1, Int(ceil(viewSize.height * scale)))
 
