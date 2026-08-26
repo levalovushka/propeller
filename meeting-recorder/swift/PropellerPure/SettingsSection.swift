@@ -40,14 +40,22 @@ public enum SettingsSection: String, CaseIterable, Equatable, Sendable {
     }
 
     /// SF Symbol строки рельса.
+    ///
+    /// Имена сняты с самого макета, а не подобраны на глаз: в экспорте Figma
+    /// иконки лежат глифами приватной области (`\u{1008CC}` и т.п.), имён в
+    /// шрифте нет, таблицы «кодпойнт → имя» в системе тоже. Разобрано
+    /// сопоставлением растров — каждый кодпойнт отрисован из SF Pro и сравнён
+    /// со всеми 8302 символами из `symbol_order.plist`. Три из шести до этого
+    /// были другие и весили в строке иначе: колокол без метки, коробка вместо
+    /// дисковода, незалитый граф.
     public var symbol: String {
         switch self {
-        case .general:       return "gearshape.fill"
-        case .notifications: return "bell.fill"
-        case .storage:       return "archivebox.fill"
-        case .transcript:    return "text.bubble.fill"
-        case .models:        return "sparkle"
-        case .mcp:           return "point.3.connected.trianglepath.dotted"
+        case .general:       return "gearshape.fill"                                  // U+1008CC
+        case .notifications: return "bell.badge.fill"                                 // U+100757
+        case .storage:       return "opticaldiscdrive.fill"                           // U+100905
+        case .transcript:    return "text.bubble.fill"                                // U+100333
+        case .models:        return "sparkle"                                         // U+100AF8
+        case .mcp:           return "point.3.filled.connected.trianglepath.dotted"    // U+101165
         }
     }
 

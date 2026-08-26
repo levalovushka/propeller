@@ -721,7 +721,20 @@ public enum Tokens {
         /// a browser was the odd one out; at the foot of settings, under the
         /// version it needs anyway, it is the same offer in the right place.
         public enum Footer {
+            /// Плита иконки приложения — 32 со скруглением 8 (307:6679).
             public static let markSide = Space.s32
+            public static let markRadius = Radius.xs
+            /// Высота самой марки внутри плиты. Снято с экспорта иконки:
+            /// рисунок занимает 16.63 × 18.40 в квадрате 32 и стоит по центру.
+            /// Не «плита минус отступ»: у марки своя пропорция, и подгонять её
+            /// под квадрат — терять ту симметрию, на которой держится вращение.
+            public static let markGlyph: CGFloat = 18.4
+            /// Плита и рисунок — свои краски, не из пары «тёмная / светлая»:
+            /// это иконка приложения, и она одна в обеих темах.
+            public static let markPlate = Primitive.AlphaWhite.color(Primitive.AlphaWhite.a100)
+            public static let markInk = SwiftUI.Color(
+                .sRGB, red: 3.0 / 255, green: 3.0 / 255, blue: 3.0 / 255, opacity: 1
+            )
             public static let blockGap = Space.s16
             public static let textGap = Space.s6
             public static let hPadding = Space.s8
@@ -737,6 +750,15 @@ public enum Tokens {
                 size: 12, lineHeight: 16, weight: .regular,
                 weightTrim: Typography.railWeightTrim
             )
+            /// `bg-white/10` в покое (307:6686) — не 5 %, как у строк списка:
+            /// это кнопка, а не ряд, и в покое она видна.
+            public static let buttonFill = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                         light: Primitive.AlphaBlack.a10)
+            public static let buttonHoverFill = Primitive.ink(dark: Primitive.AlphaWhite.a15,
+                                                              light: Primitive.AlphaBlack.a15)
+            /// Стрелка «наружу» — 70 %, тише подписи, но громче даты (307:6689).
+            public static let buttonGlyph = Primitive.ink(dark: Primitive.AlphaWhite.a70,
+                                                          light: Primitive.AlphaBlack.a70)
         }
 
         // MARK: Paint
@@ -1282,6 +1304,8 @@ public enum Tokens {
         public static let cardVPadding = Space.s2
         public static let divider = Primitive.ink(dark: Primitive.AlphaWhite.a7,
                                                   light: Primitive.AlphaBlack.a7)
+        /// `h-px` макета (254:1935) — точка, а не волосок в полточки.
+        public static let dividerHeight: CGFloat = 1
 
         // MARK: Ячейка
 

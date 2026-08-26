@@ -171,20 +171,6 @@ private struct LaunchSettingsGroup: View {
 
     var body: some View {
         SettingsGroup("Запуск") {
-            // Zoom назван поимённо: у Толка сигнала «идёт звонок» нет вовсе, и
-            // обещать здесь «звонок» вообще значило бы обещать старт, который
-            // не наступит.
-            SettingsCell(
-                "Автоматическая запись",
-                subtitle: "Вместе со звонком в\u{00A0}Zoom"
-            ) {
-                SettingsSwitch(isOn: autoRecord)
-            }
-            .onChange(of: autoRecordMode) { _, val in
-                Preferences.shared.autoRecordMode = AutoRecordMode(rawValue: val) ?? .auto
-                state.applyAutoRecordMode()
-            }
-
             SettingsCell(
                 "Запуск Propeller при\u{00A0}входе",
                 // Единственная строка, которая здесь появляется: отказ системы.
@@ -206,6 +192,19 @@ private struct LaunchSettingsGroup: View {
                 }
             }
 
+            // Zoom назван поимённо: у Толка сигнала «идёт звонок» нет вовсе, и
+            // обещать здесь «звонок» вообще значило бы обещать старт, который
+            // не наступит.
+            SettingsCell(
+                "Автоматическая запись",
+                subtitle: "Вместе со звонком в\u{00A0}Zoom"
+            ) {
+                SettingsSwitch(isOn: autoRecord)
+            }
+            .onChange(of: autoRecordMode) { _, val in
+                Preferences.shared.autoRecordMode = AutoRecordMode(rawValue: val) ?? .auto
+                state.applyAutoRecordMode()
+            }
         }
         .onAppear {
             launchAtLogin = LoginItem.isEnabled

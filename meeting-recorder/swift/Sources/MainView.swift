@@ -532,16 +532,18 @@ struct MainView: View {
     @ViewBuilder
     private var topBar: some View {
         if state.paneRoute.isSettings {
-            // Заголовка у настроек здесь больше нет: раздел называет себя сам,
-            // 17 pt над своим содержимым (`SettingsPage`). Строка остаётся —
-            // ей всё ещё принадлежит светофор, когда рельс убран.
-            HStack(spacing: 0) {
-                if !sidebarVisible {
+            // Полосы у раздела нет вовсе, пока рельс на месте: в макете страница
+            // начинается от верха окна (254:1412 — `size-full` с полем 28), и
+            // пустые 48 pt над ней опускали заголовок раздела ровно на эти 48.
+            // Полоса возвращается только с убранным рельсом — светофору надо
+            // куда-то встать.
+            if !sidebarVisible {
+                HStack(spacing: 0) {
                     collapsedChrome
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
+                .frame(height: Tokens.Sidebar.headerHeight)
             }
-            .frame(height: Tokens.Sidebar.headerHeight)
         } else if let entry = state.selectedRecording, isBeingRecorded(entry) {
             HStack(spacing: 0) {
                 if !sidebarVisible {

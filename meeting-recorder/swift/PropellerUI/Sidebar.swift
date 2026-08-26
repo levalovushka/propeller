@@ -1202,8 +1202,21 @@ struct SidebarFooter: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Sidebar.Footer.blockGap) {
-            PropellerMark()
-                .frame(width: Tokens.Sidebar.Footer.markSide, height: Tokens.Sidebar.Footer.markSide)
+            // Иконка приложения, а не голая марка: белая плита со скруглением
+            // и чёрный рисунок внутри — то же, что лежит в доке. Тему она не
+            // слушает намеренно, как не слушает её иконка в доке.
+            PropellerMark(size: Tokens.Sidebar.Footer.markGlyph)
+                .foregroundStyle(Tokens.Sidebar.Footer.markInk)
+                .frame(
+                    width: Tokens.Sidebar.Footer.markSide,
+                    height: Tokens.Sidebar.Footer.markSide
+                )
+                .background(
+                    Tokens.Sidebar.Footer.markPlate,
+                    in: RoundedRectangle(
+                        cornerRadius: Tokens.Sidebar.Footer.markRadius, style: .continuous
+                    )
+                )
             VStack(alignment: .leading, spacing: Tokens.Sidebar.Footer.textGap) {
                 HStack(spacing: Tokens.Space.s8) {
                     Text(model.name)
@@ -1224,13 +1237,15 @@ struct SidebarFooter: View {
                             .foregroundStyle(Tokens.Sidebar.navLabel)
                         Image(systemName: "arrow.up.right")
                             .font(.system(size: Tokens.Sidebar.Footer.buttonLabel.size, weight: .regular))
-                            .foregroundStyle(Tokens.Sidebar.navShortcut)
+                            .foregroundStyle(Tokens.Sidebar.Footer.buttonGlyph)
                     }
                     .typo(Tokens.Sidebar.Footer.buttonLabel)
                     .padding(.horizontal, Tokens.Sidebar.Footer.buttonHPadding)
                     .frame(height: Tokens.Sidebar.Footer.buttonHeight)
                     .background(
-                        hovering ? Tokens.Sidebar.rowSelected : Tokens.Sidebar.rowHover,
+                        hovering
+                            ? Tokens.Sidebar.Footer.buttonHoverFill
+                            : Tokens.Sidebar.Footer.buttonFill,
                         in: RoundedRectangle(
                             cornerRadius: Tokens.Sidebar.Footer.buttonRadius, style: .continuous
                         )

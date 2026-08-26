@@ -197,8 +197,12 @@ struct SettingsDivider: View {
     var body: some View {
         Rectangle()
             .fill(Tokens.Settings.divider)
-            // Волосяная: на 2× это один пиксель, что и есть `1px` макета.
-            .frame(height: 0.5)
+            // Честная точка, а не волосок. В рельсе граница — 0.5 (там линия
+            // отделяет две поверхности, и волоска хватает); здесь линия делит
+            // строки внутри одной карточки, макет даёт ей `h-px` (254:1935), и
+            // на волоске карточка читалась сплошным полем. Решение владельца
+            // 2026-08-26.
+            .frame(height: Tokens.Settings.dividerHeight)
             .frame(maxWidth: .infinity)
     }
 }
