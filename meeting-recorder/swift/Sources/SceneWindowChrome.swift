@@ -191,6 +191,7 @@ struct SceneWindowChrome: NSViewRepresentable {
             let origin = SidebarTrafficLightLayout.origin(
                 index: index,
                 containerHeight: container.bounds.height,
+                buttonWidth: button.bounds.width,
                 buttonHeight: button.bounds.height
             )
             // Only when it is actually elsewhere. This runs after every update of

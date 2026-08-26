@@ -48,15 +48,24 @@ public struct SettingsPage<Content: View>: View {
                 Text(title)
                     .typo(Tokens.Settings.Typo.page)
                     .foregroundStyle(Tokens.Settings.title)
+                    // Высота названа, а не выведена из шрифта. Макет даёт
+                    // заголовку бокс 24 (254:1413); `typoBlock` на этом кегле
+                    // отдаёт 23 — `renderedLineHeight` считает по потолкам
+                    // асцендера и десцендера отдельно и на 17 pt промахивается
+                    // на точку. Замерено, не оценено: тест стилей.
+                    .frame(height: Tokens.Settings.Typo.page.lineHeight, alignment: .leading)
                 content()
             }
+            // Потолок стоит на **содержимом**, а поля снаружи него. Если
+            // накрыть потолком уже отступленный блок, то на ширине макета (649)
+            // 640 меньше 649 — потолок срабатывает, блок центрируется, и
+            // карточка садится на 40.5 вместо 36. Проверено пиксельно.
+            //
+            // Число саммарийное, и это не совпадение: настройки и саммари —
+            // одна и та же колонка панели с разным содержимым.
+            .frame(maxWidth: Tokens.Settings.maxWidth, alignment: .leading)
             .padding(.horizontal, Tokens.Settings.pageHPadding)
             .padding(.vertical, Tokens.Settings.pageVPadding)
-            // Потолок ширины — саммарийный, и это не совпадение: настройки и
-            // саммари — одна и та же колонка панели с разным содержимым. Без
-            // него карточка на широком окне растягивается на всю панель, и
-            // «Ваше имя» уезжает от своего поля на пол-экрана.
-            .frame(maxWidth: Tokens.Settings.maxWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
         .scrollBounceBehavior(.basedOnSize)

@@ -360,8 +360,13 @@ public struct PropellerSidebar: View {
                 height: Tokens.Sidebar.toggleSide,
                 alignment: .leading
             )
-            // Discs start at x 24 in the window; the slot itself starts at 12.
-            .padding(.leading, Tokens.Sidebar.trafficLightLeading - Tokens.Sidebar.headerPadding)
+            // Первый диск центрирован на 26 в окне, слот начинается на 8.
+            .padding(
+                .leading,
+                Tokens.Sidebar.trafficLightFirstCenterX
+                    - Tokens.Sidebar.trafficLightDiameter / 2
+                    - Tokens.Sidebar.headerPadding
+            )
         }
     }
 
@@ -428,7 +433,7 @@ public struct PropellerSidebar: View {
     }
 
     private var navBlock: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: Tokens.Sidebar.rowGap) {
             ForEach(model.nav) { item in
                 SidebarNavRow(item: item) { onNav(item.id) }
             }
@@ -620,7 +625,9 @@ private struct SidebarDayGroup<Rows: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // Шаг между строками — одна точка (`gap-px`, 307:6361). Он же ложится
+        // между датой и первой строкой под ней, поверх её `pb-4`.
+        VStack(alignment: .leading, spacing: Tokens.Sidebar.rowGap) {
             if let header {
                 Text(header)
                     .typoBlock(Tokens.Sidebar.Typo.sectionHeader)
@@ -640,9 +647,13 @@ private struct SidebarDayGroup<Rows: View>: View {
             rows()
             // The gap to the next group, as a view rather than as the stack's
             // spacing: spacing belongs to nobody, and this has to leave with the
-            // group it follows.
+            // group it follows. Минус шаг стопки — иначе к 20 макета добавилась
+            // бы ещё одна точка, которую стопка ставит после последней строки.
             Color.clear
-                .frame(height: Tokens.Sidebar.groupGap * (1 - collapsed))
+                .frame(
+                    height: max(0, Tokens.Sidebar.groupGap - Tokens.Sidebar.rowGap)
+                        * (1 - collapsed)
+                )
         }
         .onChange(of: vanishing) { _, going in
             if going { close() } else { reopen() }
@@ -1212,10 +1223,10 @@ struct SidebarFooter: View {
                         Text(model.actionTitle)
                             .foregroundStyle(Tokens.Sidebar.navLabel)
                         Image(systemName: "arrow.up.right")
-                            .font(.system(size: Tokens.Sidebar.Typo.meta.size, weight: .regular))
+                            .font(.system(size: Tokens.Sidebar.Footer.buttonLabel.size, weight: .regular))
                             .foregroundStyle(Tokens.Sidebar.navShortcut)
                     }
-                    .typo(Tokens.Sidebar.Typo.meta)
+                    .typo(Tokens.Sidebar.Footer.buttonLabel)
                     .padding(.horizontal, Tokens.Sidebar.Footer.buttonHPadding)
                     .frame(height: Tokens.Sidebar.Footer.buttonHeight)
                     .background(
@@ -1267,27 +1278,32 @@ public struct SidebarHeaderMidYKey: PreferenceKey {
 public enum SidebarTrafficLightLayout {
 
     /// Origin for the button at `index`, in its container's coordinates.
+    ///
+    /// Считается от **центра**, а не от угла: настоящая кнопка окна на этой
+    /// системе 14 pt, а нарисованный в макете диск — 12, и совмещение углов
+    /// увозит весь светофор на точку. Размер приходит снаружи, из
+    /// `button.bounds`, поэтому формула верна при любом, который отдаст AppKit.
     public static func origin(
         index: Int,
         containerHeight: CGFloat,
+        buttonWidth: CGFloat,
         buttonHeight: CGFloat,
-        leading: CGFloat = Tokens.Sidebar.trafficLightLeading,
+        firstCenterX: CGFloat = Tokens.Sidebar.trafficLightFirstCenterX,
         spacing: CGFloat = Tokens.Sidebar.trafficLightSpacing,
-        top: CGFloat = Tokens.Sidebar.trafficLightTop
+        centerY: CGFloat = Tokens.Sidebar.trafficLightCenterY
     ) -> CGPoint {
         CGPoint(
-            x: leading + CGFloat(index) * spacing,
-            y: containerHeight - top - buttonHeight
+            x: firstCenterX + CGFloat(index) * spacing - buttonWidth / 2,
+            y: containerHeight - centerY - buttonHeight / 2
         )
     }
 
     /// Where the discs end up measured from the top of the window — the number
     /// the comps actually state.
     public static func centerYFromWindowTop(
-        buttonHeight: CGFloat = Tokens.Sidebar.trafficLightDiameter,
-        top: CGFloat = Tokens.Sidebar.trafficLightTop
+        centerY: CGFloat = Tokens.Sidebar.trafficLightCenterY
     ) -> CGFloat {
-        top + buttonHeight / 2
+        centerY
     }
 }
 

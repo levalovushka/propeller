@@ -304,6 +304,14 @@ final class SidebarTests: XCTestCase {
             ("meta", Tokens.Sidebar.Typo.meta),
             ("meetingTitle", Tokens.Sidebar.Typo.meetingTitle),
             ("sectionHeader", Tokens.Sidebar.Typo.sectionHeader),
+            ("footerButton", Tokens.Sidebar.Footer.buttonLabel),
+            // `settings.page` здесь нет: 17 pt — единственный кегль, на котором
+            // `renderedLineHeight` промахивается (считает по потолкам асцендера
+            // и десцендера порознь и даёт 21 против настоящих 20), поэтому
+            // заголовок страницы держит бокс названной высотой, а не лидингом.
+            // Проверяет его `SettingsLayoutTests`.
+            ("settings.subtitle", Tokens.Settings.Typo.subtitle),
+            ("settings.control", Tokens.Settings.Typo.control),
         ]
         for (name, style) in styles {
             let height = measure(Text("Тактика").typoBlock(style), width: 240)
@@ -388,19 +396,27 @@ final class SidebarTests: XCTestCase {
     // MARK: - Traffic lights
 
     func testTheTrafficLightsSitInTheRailsHeader() {
-        // Figma 31:4584 — Ø12 discs at x 24 / 44 / 64, centred on y 24, which is
-        // the middle of the 48 pt header. They moved up four points when the
-        // header shrank from 56; the flip through container coordinates is the
-        // part that is easy to get wrong and impossible to see in a diff.
+        // Ø12 discs at x 20 / 40 / 60, centred on y 24 — the middle of the 48 pt
+        // header. Числа сняты с экспорта слота (76×32, центры 18 / 38 / 58) плюс
+        // поле шапки 8, а не с глаза: до 2026-08-26 здесь стояло 24 / 44 / 64 из
+        // старых макетов. Переворот через координаты контейнера — та часть,
+        // которую легко ошибить и невозможно увидеть в диффе.
         let container: CGFloat = 52          // AppKit's titlebar container
-        let button: CGFloat = 12
-        for (index, expectedX) in [(0, 24.0), (1, 44.0), (2, 64.0)] {
-            let origin = SidebarTrafficLightLayout.origin(
-                index: index, containerHeight: container, buttonHeight: button
-            )
-            XCTAssertEqual(origin.x, expectedX, accuracy: 0.01)
-            // 52 − 18 − 12 = 22 up from the container's bottom.
-            XCTAssertEqual(origin.y, container - 18 - button, accuracy: 0.01)
+        // Два размера кнопки: нарисованный в макете диск и настоящая кнопка
+        // macOS. Центры у них обязаны совпасть — угол не обязан ничем.
+        for button in [CGFloat(12), CGFloat(14)] {
+            for (index, expectedCenter) in [(0, 26.0), (1, 46.0), (2, 66.0)] {
+                let origin = SidebarTrafficLightLayout.origin(
+                    index: index, containerHeight: container,
+                    buttonWidth: button, buttonHeight: button
+                )
+                XCTAssertEqual(origin.x + button / 2, expectedCenter, accuracy: 0.01,
+                               "кнопка \(button): центр диска \(index)")
+                // Центр на 24 от верха окна, то есть container − 24 − половина
+                // кнопки от низа контейнера.
+                XCTAssertEqual(origin.y + button / 2, container - 24, accuracy: 0.01,
+                               "кнопка \(button): центр по вертикали")
+            }
         }
         XCTAssertEqual(
             SidebarTrafficLightLayout.centerYFromWindowTop(),

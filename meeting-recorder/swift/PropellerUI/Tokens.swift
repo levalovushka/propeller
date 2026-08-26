@@ -543,8 +543,10 @@ public enum Tokens {
         public static let chromeToggleTop = (Sidebar.headerHeight - Sidebar.toggleSide) / 2
         /// What a pane header has to leave clear for the two of them.
         public static let chromeReserve = chromeToggleLeading + Sidebar.toggleSide
-        public static let trafficLightLeading: CGFloat = Space.s24
-        public static let trafficLightSpacing: CGFloat = Space.s20
+        // `trafficLightLeading` / `trafficLightSpacing` жили и здесь, и в
+        // `Sidebar`, с разными значениями (24 против 20) и без единого читателя
+        // у этой пары. Сняты 2026-08-26: два имени с одним смыслом и разными
+        // числами — это способ однажды прочитать не то.
         public static let topBarHeight: CGFloat = 56
         public static let titleBlockHeight: CGFloat = 100
         public static let sectionStackGap: CGFloat = Space.s24
@@ -667,6 +669,11 @@ public enum Tokens {
             max(0, sectionHeaderBlockHeight - Typo.sectionHeader.lineHeight)
         }
 
+        /// Между строками — одна точка (`gap-px` на обоих контейнерах списка,
+        /// 307:6340 и 307:6361). Не ноль: на соседних строках под ховером и
+        /// выделением две плашки без зазора слипаются в одну.
+        public static let rowGap: CGFloat = 1
+
         public static let rowRadius = Radius.xs
         /// Meeting rows share the nav rows' corner now. They used to be a step
         /// softer, when a meeting was a three-line card and a nav row was a
@@ -682,14 +689,29 @@ public enum Tokens {
         public static let backGap = Space.s4
         public static let backHPadding = Space.s8
 
-        /// Traffic-light slot: 76×32 at (12, 8); discs Ø12 at x 24/44/64,
-        /// centred on y 24. `SceneWindowChrome` moves the real window buttons here.
+        /// Traffic-light slot: 76×32 after the header's 8 pt padding; discs Ø12
+        /// at x 20/40/60, centred on y 24. `SceneWindowChrome` moves the real
+        /// window buttons here.
+        ///
+        /// **Позиция названа центрами, а не углом.** Числа сняты с самого
+        /// экспорта слота (76×32, `circle cx=18/38/58 cy=16 r=6`) плюс поле
+        /// шапки 8: центры на 26 / 46 / 66 по горизонтали и на 24 по вертикали,
+        /// диаметр 12.
+        ///
+        /// Центрами — потому что кнопка окна не равна нарисованному диску: на
+        /// этой системе она **14 pt**, а не 12 (замерено на снимке окна). Ровняя
+        /// её угол по углу диска, весь светофор уезжает на точку вправо и вниз;
+        /// ровняя центр по центру — он стоит там, где нарисован, при любом
+        /// размере, который отдаст AppKit.
+        ///
+        /// До 2026-08-26 здесь стояли 24 / 44 / 64 из старых макетов.
         public static let trafficLightSlotWidth: CGFloat = 76
-        public static let trafficLightLeading = Space.s24
+        public static let trafficLightFirstCenterX: CGFloat = 26
         public static let trafficLightSpacing = Space.s20
+        public static let trafficLightCenterY: CGFloat = 24
+        /// Диаметр диска **в макете**. Рисует его только галерея
+        /// (`SidebarTrafficLights.drawn`) — настоящую кнопку рисует AppKit.
         public static let trafficLightDiameter = Space.s12
-        /// Top of the discs, from the top of the window.
-        public static let trafficLightTop: CGFloat = 18
 
         /// Foot of the Secondary rail — mark, name, version, the sentence that
         /// invites a bug report, and «Помощь ↗» (307:6678).
@@ -709,6 +731,12 @@ public enum Tokens {
             public static let buttonRadius = Radius.xs
             public static let buttonHPadding = Space.s8
             public static let buttonGap = Space.s4
+            /// 12 / 16 — подпись кнопки подвала (307:6688). Единственный кегль
+            /// в рельсе, отличный от 13: кнопка тише строки, на которой стоит.
+            public static let buttonLabel = Typography.Style(
+                size: 12, lineHeight: 16, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
         }
 
         // MARK: Paint
@@ -1350,9 +1378,16 @@ public enum Tokens {
             public static let header = Sidebar.Typo.sectionHeader
             /// 13 / 16 — то, что настраивается.
             public static let title = Sidebar.Typo.navLabel
-            /// 12 / 14 — тихая вторая строка ячейки.
+            /// 12 / **15** — тихая вторая строка ячейки.
+            ///
+            /// В макете 14 (254:1929), и это число, которого шрифт не умеет:
+            /// SF Pro на 12 pt рисует строку 15 (⌈11.60⌉ + ⌈2.53⌉), а 14.13 —
+            /// это его сырые метрики, которые Figma округляет вниз. Просить 14
+            /// значит просить бокс теснее, чем ложится начертание, — то самое,
+            /// что `testEveryRailStyleMeasuresTheLineHeightItDeclares` называет
+            /// ошибкой. Цена — одна точка на ячейку с подписью: 53 вместо 52.
             public static let subtitle = Typography.Style(
-                size: 12, lineHeight: 14, weight: .regular,
+                size: 12, lineHeight: 15, weight: .regular,
                 weightTrim: Typography.railWeightTrim
             )
             /// 12 / 16 — всё, что стоит в правом слоте: значение, поле, кнопка.

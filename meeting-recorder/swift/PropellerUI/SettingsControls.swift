@@ -305,7 +305,11 @@ public struct SettingsButton: View {
             }
             .typo(Tokens.Settings.Typo.control)
             .foregroundStyle(label)
-            .padding(.horizontal, Tokens.Settings.controlHPadding)
+            // Кнопка с иконкой поджата: у неё внутри уже есть воздух между
+            // глифом и словом (`p-[8px] gap-[6px]`, 284:16769).
+            .padding(.horizontal, symbol == nil
+                ? Tokens.Settings.controlHPadding
+                : Tokens.Settings.Tag.hPadding + Tokens.Space.s2)
             .frame(height: Tokens.Settings.controlHeight)
             .background(
                 fill,
