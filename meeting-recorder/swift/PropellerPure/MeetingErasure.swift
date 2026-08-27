@@ -86,7 +86,14 @@ public struct ArchiveLayout: Equatable, Sendable {
 
     public var indexURL: URL { recordings.appendingPathComponent(Self.indexName) }
     public var tombstonesURL: URL { recordings.appendingPathComponent(Self.tombstonesName) }
+    /// Связки, на которые сказали «нет» (`SilencedProjects`). Отдельно от
+    /// проектов: это не проекты, а память об отказе.
+    public static let silencedProjectsName = "projects-silenced.json"
+
     public var projectsURL: URL { recordings.appendingPathComponent(Self.projectsName) }
+    public var silencedProjectsURL: URL {
+        recordings.appendingPathComponent(Self.silencedProjectsName)
+    }
 
     /// Копия индекса — любой файл, чьё имя начинается с имени индекса и им не
     /// равен: `.bak`, `.corrupt-<stamp>`, `.pre-restore-<stamp>`. Правило по

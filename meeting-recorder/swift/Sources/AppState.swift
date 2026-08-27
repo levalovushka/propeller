@@ -1250,6 +1250,7 @@ class AppState: ObservableObject {
             .joined(separator: ",")
         if let cached = suggestionCache, cached.key == key { return cached.found }
         let found = ProjectCandidate.suggestions(
+            silenced: recordingStore.silencedProjects,
             for: rows.map {
                 ProjectCandidate.Meeting(
                     id: $0.id, title: $0.title, eventTitle: $0.calendarMeta?.title,
@@ -1265,6 +1266,12 @@ class AppState: ObservableObject {
     /// Предложение, в которое попала эта встреча, — или nil.
     func projectSuggestion(for id: String) -> ProjectCandidate.Suggestion? {
         projectSuggestions.first { $0.meetings.contains(id) }
+    }
+
+    /// Отказаться навсегда. Второй раз то же самое не спрашивают (§3, правило 3).
+    func silenceSuggestion(_ suggestion: ProjectCandidate.Suggestion) {
+        _ = recordingStore.silenceProject(suggestion.key)
+        suggestionCache = nil
     }
 
     /// Согласиться с предложением: завести проект и пометить им **все** встречи
@@ -1326,6 +1333,22 @@ class AppState: ObservableObject {
             calendarMeta: fresh.calendarMeta,
             projectNames: recordingStore.projectNames(for: fresh)
         )
+    }
+
+    /// Дописать пункт в раздел конспекта встречи.
+    ///
+    /// Тем же хирургическим путём, что и правка: в файл добавляется **одна
+    /// строка**, остальной документ не пересобирается. `false` — раздела в
+    /// конспекте нет; заводить его этот путь не берётся.
+    @discardableResult
+    func appendAtom(to entry: RecordingEntry, section: String, body: String) -> Bool {
+        guard let text = Self.loadRecapText(for: entry),
+              let edited = RecapItemEdit.appending(body, toSection: section, in: text),
+              saveSummary(edited, for: entry)
+        else { return false }
+        atomCache = nil
+        recapRevision &+= 1
+        return true
     }
 
     /// Завести проект. Возвращает его — вызывающему обычно нужно тут же

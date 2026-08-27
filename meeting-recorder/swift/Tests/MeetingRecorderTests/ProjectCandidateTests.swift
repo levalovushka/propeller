@@ -125,7 +125,7 @@ final class ProjectCandidateTests: XCTestCase {
             meeting("2", "PG x VK", series: "S-1", day: 8),
         ]
         let key = ProjectCandidate.suggestions(for: rows).first!.key
-        XCTAssertTrue(ProjectCandidate.suggestions(for: rows, silenced: [key]).isEmpty)
+        XCTAssertTrue(ProjectCandidate.suggestions(silenced: [key], for: rows).isEmpty)
     }
 
     /// Ключ устойчив между запусками: это серия или свёрнутое имя, а не место в

@@ -672,6 +672,68 @@ public struct ProjectAtomRow: View {
     }
 }
 
+/// Последняя строка карточки — Figma 297:25164 / 312:11329.
+///
+/// Плюс и «Добавить…», обе половины тихие. Поле появляется по нажатию и
+/// исчезает по `Esc` или по пустому вводу: строка ввода, стоящая всегда, — это
+/// приглашение, а карточка пунктов ничего не просит.
+public struct ProjectAtomAddRow: View {
+    private let add: (String) -> Void
+
+    @State private var typing = false
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    public init(add: @escaping (String) -> Void) {
+        self.add = add
+    }
+
+    public var body: some View {
+        HStack(alignment: .top, spacing: Tokens.Projects.Atom.addGap) {
+            Image(systemName: "plus")
+                .font(.system(size: Tokens.Projects.Typo.title.size, weight: .regular))
+                .foregroundStyle(Tokens.Settings.header)
+                .frame(width: Tokens.Projects.Atom.markerSide,
+                       height: Tokens.Projects.Typo.title.lineHeight)
+            if typing {
+                TextField("", text: $text)
+                    .textFieldStyle(.plain)
+                    .focused($focused)
+                    .onSubmit(commit)
+                    .onExitCommand(perform: dismiss)
+                    .typo(Tokens.Projects.Typo.title)
+                    .foregroundStyle(Tokens.Settings.title)
+            } else {
+                Text("Добавить…")
+                    .typo(Tokens.Projects.Typo.title)
+                    .foregroundStyle(Tokens.Projects.quiet)
+            }
+            Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard !typing else { return }
+            typing = true
+            focused = true
+        }
+    }
+
+    private func commit() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return dismiss() }
+        add(trimmed)
+        // Поле остаётся открытым и пустым: пункты добавляют пачкой, и закрывать
+        // его после каждого значило бы просить ещё один клик на каждую строку.
+        text = ""
+    }
+
+    private func dismiss() {
+        text = ""
+        typing = false
+        focused = false
+    }
+}
+
 /// Карточка пунктов одной встречи — Figma 297:25130.
 ///
 /// Строки разделены воздухом, а не линиями: пункт бывает в четыре строки, и

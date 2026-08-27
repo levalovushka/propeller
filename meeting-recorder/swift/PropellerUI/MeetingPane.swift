@@ -279,11 +279,15 @@ struct MeetingMetaRow: View {
                         Button("Снять метку") { projects.untag(project.id) }
                     }
                 }
-                // Тихий «плюс» вместо пустого слота: слот осуждает, а «плюс»
-                // просто стоит рядом. Компромисс назван в §4.1 как дефолт.
-                MetaMenuChip(symbol: "plus", text: nil) {
+                // Пустой слот — «плюс» и слово «Проект», оба тихие (312:11142).
+                // Не пустое место и не приглашение: чип стоит рядом с датой и
+                // составом ровно так же, как они, и молчит.
+                MetaMenuChip(symbol: "plus", text: "Проект", quiet: true) {
                     if let suggestion = projects.suggestion {
                         Button("Завести «\(suggestion.name)»", action: suggestion.accept)
+                        // Отказ — навсегда: второй раз то же самое не спросят
+                        // (`plan-projects.md` §3, правило 3).
+                        Button("Не предлагать", action: suggestion.dismiss)
                         Divider()
                     }
                     ForEach(projects.available, id: \.id) { project in
@@ -304,13 +308,16 @@ struct MeetingMetaRow: View {
 private struct MetaMenuChip<Content: View>: View {
     let symbol: String
     let text: String?
+    /// Надпись тем же тихим цветом, что и значок: так выглядит слот, в котором
+    /// ещё ничего нет.
+    var quiet: Bool = false
     @ViewBuilder var content: () -> Content
 
     var body: some View {
         Menu {
             content()
         } label: {
-            MetaChip(symbol: symbol, text: text)
+            MetaChip(symbol: symbol, text: text, quiet: quiet)
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -321,8 +328,10 @@ private struct MetaMenuChip<Content: View>: View {
 
 private struct MetaChip: View {
     let symbol: String
-    /// `nil` — чип из одного значка: «плюс», которым добавляют проект.
+    /// `nil` — чип из одного значка.
     let text: String?
+    /// Надпись тихая, как значок: пустой слот (312:11142) против факта.
+    var quiet: Bool = false
 
     @State private var hovering = false
 
@@ -334,7 +343,7 @@ private struct MetaChip: View {
             if let text {
                 Text(text)
                     .typo(Tokens.Pane.Typo.metaWide)
-                    .foregroundStyle(Tokens.Pane.Meta.label)
+                    .foregroundStyle(quiet ? Tokens.Pane.Meta.quiet : Tokens.Pane.Meta.label)
             }
         }
         .frame(height: Tokens.Pane.Meta.height)
@@ -900,7 +909,7 @@ public struct Meta {
         /// Пунктирного тега из спеки здесь пока нет: он ждёт макета. Пункт меню —
         /// то же предложение без новых пикселей, и он **тихий**, как и требует
         /// §3: не мигает, не считается, не подсвечивается.
-        public let suggestion: (name: String, accept: () -> Void)?
+        public let suggestion: (name: String, accept: () -> Void, dismiss: () -> Void)?
 
         public init(
             tagged: [(id: String, name: String)],
@@ -908,7 +917,7 @@ public struct Meta {
             tag: @escaping (String) -> Void,
             untag: @escaping (String) -> Void,
             create: @escaping () -> Void,
-            suggestion: (name: String, accept: () -> Void)? = nil
+            suggestion: (name: String, accept: () -> Void, dismiss: () -> Void)? = nil
         ) {
             self.tagged = tagged
             self.available = available

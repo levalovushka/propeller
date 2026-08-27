@@ -313,7 +313,11 @@ struct MainView: View {
             // помеченной уже спросили и ответили.
             suggestion: tagged.isEmpty
                 ? state.projectSuggestion(for: entry.id).map { found in
-                    (name: found.name, accept: { state.acceptSuggestion(found) })
+                    (
+                        name: found.name,
+                        accept: { state.acceptSuggestion(found) },
+                        dismiss: { state.silenceSuggestion(found) }
+                    )
                 }
                 : nil
         )

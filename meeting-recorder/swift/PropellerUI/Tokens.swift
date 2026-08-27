@@ -1737,6 +1737,9 @@ public enum Tokens {
             public static let textInset = Space.s12
             /// Между хвостовыми значками.
             public static let actionGap = Space.s8
+            /// Плюс → «Добавить…». Уже, чем у пункта: там между маркером и
+            /// текстом 10, здесь 6 (297:25164).
+            public static let addGap = Space.s6
             /// Заголовок группы → карточка; между группами.
             public static let groupHeaderGap = Space.s8
             public static let groupGap = Space.s24

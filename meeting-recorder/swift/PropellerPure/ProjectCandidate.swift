@@ -87,8 +87,8 @@ public enum ProjectCandidate {
     ///
     /// - Parameter silenced: ключи связок, на которых уже сказали «нет».
     public static func suggestions(
-        for meetings: [Meeting],
-        silenced: Set<String> = []
+        silenced: Set<String> = [],
+        for meetings: [Meeting]
     ) -> [Suggestion] {
         // Встреча, у которой проект уже есть, в поиске повторений не участвует
         // ни как повод, ни как добыча: у неё спросили и ответили.

@@ -90,6 +90,41 @@ public struct Project: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// Связки, на которые человек сказал «нет».
+///
+/// Живут рядом с проектами и **вне** их: заглушенная связка — это не проект и
+/// никогда им не станет, а помнить о ней надо ровно затем, чтобы больше не
+/// спрашивать (`plan-projects.md` §3, правило 3). Ключ — тот же, что у
+/// предложения (`ProjectCandidate.Suggestion.key`): серия календаря или
+/// свёрнутое имя, а не позиция в списке, — поэтому «навсегда» переживает
+/// перезапуск.
+public enum SilencedProjects {
+
+    public static func read(_ url: URL) -> Set<String> {
+        guard let data = try? Data(contentsOf: url),
+              let keys = try? JSONDecoder().decode([String].self, from: data)
+        else { return [] }
+        return Set(keys)
+    }
+
+    @discardableResult
+    public static func write(_ keys: Set<String>, to url: URL) -> Bool {
+        guard let data = try? JSONEncoder().encode(keys.sorted()) else { return false }
+        return (try? data.write(to: url, options: .atomic)) != nil
+    }
+
+    /// Больше не предлагать. Идемпотентно.
+    @discardableResult
+    public static func silence(_ key: String, in layout: ArchiveLayout) -> Bool {
+        var keys = read(layout.silencedProjectsURL)
+        guard keys.insert(key).inserted else { return true }
+        try? FileManager.default.createDirectory(
+            at: layout.recordings, withIntermediateDirectories: true
+        )
+        return write(keys, to: layout.silencedProjectsURL)
+    }
+}
+
 /// `recordings/projects.json`.
 ///
 /// Its own file, not a corner of the index: a project exists before it has any

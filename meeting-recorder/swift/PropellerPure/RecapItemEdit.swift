@@ -206,6 +206,44 @@ public enum RecapItemEdit {
         return lines.joined(separator: "\n")
     }
 
+    /// The document with one more item at the end of a section.
+    ///
+    /// `nil` when the section is not there. Creating the section instead would
+    /// be a bigger promise than «Добавить…» makes: where a missing `## Задачи`
+    /// belongs in a document, and whether it belongs at all, is a question about
+    /// the recap's shape, and this module only moves lines.
+    ///
+    /// The new line copies the **indent and marker of the section's last item**,
+    /// so a document written with `*` keeps its `*` and a nested list does not
+    /// suddenly grow a top-level entry. An empty section — heading present, no
+    /// bullets — gets the plain `- `.
+    public static func appending(
+        _ body: String, toSection section: String, in markdown: String
+    ) -> String? {
+        let trimmed = body.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty, !body.contains("\n") else { return nil }
+
+        let wanted = RecapDigest.foldTitle(section)
+        var lines = markdown.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+
+        // Первая секция с таким именем — та же, на которую смотрит
+        // `RecapDigest.section(named:)`; порядковый номер берётся один раз.
+        let all = locations(in: markdown)
+        if let ordinal = all.first(where: { RecapDigest.foldTitle($0.section) == wanted })?.sectionOrdinal,
+           let last = all.last(where: { $0.sectionOrdinal == ordinal }) {
+            lines.insert(last.indent + last.marker + trimmed, at: last.lines.upperBound + 1)
+            return lines.joined(separator: "\n")
+        }
+
+        // Секция есть, но пуста — встаём сразу под её заголовок.
+        guard let heading = lines.firstIndex(where: {
+            RecapDigest.headingTitle($0.trimmingCharacters(in: .whitespaces))
+                .map { RecapDigest.foldTitle($0) == wanted } ?? false
+        }) else { return nil }
+        lines.insert("- " + trimmed, at: heading + 1)
+        return lines.joined(separator: "\n")
+    }
+
     /// The document without this item. Only the item's own lines go; a blank
     /// line that happened to follow it belonged to the document, not to it.
     public static func removing(_ target: Target, from markdown: String) -> String? {

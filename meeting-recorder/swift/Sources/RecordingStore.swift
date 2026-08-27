@@ -62,6 +62,12 @@ class RecordingStore: ObservableObject {
     @discardableResult
     func removeProject(_ id: String) -> Bool { ProjectFile.remove(id, in: layout) }
 
+    /// Связки, на которые человек сказал «нет».
+    var silencedProjects: Set<String> { SilencedProjects.read(layout.silencedProjectsURL) }
+
+    @discardableResult
+    func silenceProject(_ key: String) -> Bool { SilencedProjects.silence(key, in: layout) }
+
     /// Имена проектов встречи. В индексе лежат id, в документе встречи — имена
     /// (`Project.plainHeaderLines`), и перевод нужен ровно здесь. Метка,
     /// указывающая на несуществующий проект, читается как отсутствие метки.

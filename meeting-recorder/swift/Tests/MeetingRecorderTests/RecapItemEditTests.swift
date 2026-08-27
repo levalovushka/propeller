@@ -179,6 +179,61 @@ final class RecapItemEditTests: XCTestCase {
         XCTAssertNil(RecapItemEdit.replacing(target, in: text, with: "две\nстроки"))
     }
 
+    // MARK: - Добавление
+
+    func testНовыйПунктВстаётПоследнимВСвоейСекции() throws {
+        let text = try fixture("traps.md")
+        let edited = try XCTUnwrap(
+            RecapItemEdit.appending("написать Дене", toSection: "Задачи", in: text)
+        )
+        let items = RecapDigest.parse(edited).tasks
+        XCTAssertEqual(items.last, "написать Дене")
+        // Соседняя секция не сдвинулась и не выросла.
+        XCTAssertEqual(RecapDigest.parse(edited).decisions,
+                       RecapDigest.parse(text).decisions)
+    }
+
+    /// Маркер и отступ берутся у последнего пункта секции: документ, написанный
+    /// звёздочками, остаётся со звёздочками.
+    func testНовыйПунктНаследуетМаркерПоследнего() {
+        let text = "## Решения\n* раз\n* два\n"
+        XCTAssertEqual(
+            RecapItemEdit.appending("три", toSection: "Решения", in: text),
+            "## Решения\n* раз\n* два\n* три\n"
+        )
+    }
+
+    func testВПустуюСекциюПунктВстаётПодЗаголовок() {
+        let text = "## Задачи\n\n## Открытые вопросы\n- кто владелец\n"
+        XCTAssertEqual(
+            RecapItemEdit.appending("первая задача", toSection: "Задачи", in: text),
+            "## Задачи\n- первая задача\n\n## Открытые вопросы\n- кто владелец\n"
+        )
+    }
+
+    /// Секции нет — и заводить её этот модуль не берётся: где в документе место
+    /// у `## Задачи` и есть ли оно вообще — вопрос про форму конспекта.
+    func testБезСекцииДобавитьНекуда() {
+        let text = "## Решения\n- раз\n"
+        XCTAssertNil(RecapItemEdit.appending("что-то", toSection: "Задачи", in: text))
+    }
+
+    func testПустоеИМногострочноеТелоНеДобавляется() {
+        let text = "## Задачи\n- раз\n"
+        XCTAssertNil(RecapItemEdit.appending("   ", toSection: "Задачи", in: text))
+        XCTAssertNil(RecapItemEdit.appending("две\nстроки", toSection: "Задачи", in: text))
+    }
+
+    /// Пункт добавляется в **первую** секцию с таким именем — туда же, куда
+    /// смотрит `RecapDigest.section(named:)`.
+    func testПриДвухОдноимённыхСекцияхПунктИдётВПервую() {
+        let text = "## Задачи\n- раз\n\n## Итог\nПроза.\n\n## Задачи\n- вторая\n"
+        XCTAssertEqual(
+            RecapItemEdit.appending("два", toSection: "Задачи", in: text),
+            "## Задачи\n- раз\n- два\n\n## Итог\nПроза.\n\n## Задачи\n- вторая\n"
+        )
+    }
+
     // MARK: - Зачем модуль существует
 
     /// The contrast the module was built for. Same file, same one-item change:

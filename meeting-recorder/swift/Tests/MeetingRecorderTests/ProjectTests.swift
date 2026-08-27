@@ -113,6 +113,34 @@ final class ProjectTests: XCTestCase {
         XCTAssertTrue(ProjectFile.read(layout.projectsURL).isEmpty)
     }
 
+    // MARK: - Заглушенные связки
+
+    func testОтказПереживаетКругЧерезДиск() {
+        let layout = makeLayout()
+        XCTAssertTrue(SilencedProjects.read(layout.silencedProjectsURL).isEmpty)
+        XCTAssertTrue(SilencedProjects.silence("series:S-1", in: layout))
+        XCTAssertEqual(SilencedProjects.read(layout.silencedProjectsURL), ["series:S-1"])
+        // Идемпотентно: второй крестик на той же связке ничего не меняет.
+        XCTAssertTrue(SilencedProjects.silence("series:S-1", in: layout))
+        XCTAssertEqual(SilencedProjects.read(layout.silencedProjectsURL).count, 1)
+    }
+
+    /// Отказы лежат **не** в `projects.json`: заглушенная связка не проект и
+    /// никогда им не станет, а список проектов читают все.
+    func testОтказыЛежатОтдельноОтПроектов() {
+        let layout = makeLayout()
+        SilencedProjects.silence("title:дейлик", in: layout)
+        XCTAssertNotEqual(layout.silencedProjectsURL, layout.projectsURL)
+        XCTAssertTrue(ProjectFile.read(layout.projectsURL).isEmpty)
+        XCTAssertFalse(ArchiveLayout.isIndexSnapshot(ArchiveLayout.silencedProjectsName))
+    }
+
+    func testПорченыйФайлОтказовЧитаетсяКакПустой() {
+        let layout = makeLayout()
+        try? Data("не json".utf8).write(to: layout.silencedProjectsURL)
+        XCTAssertTrue(SilencedProjects.read(layout.silencedProjectsURL).isEmpty)
+    }
+
     // MARK: - Копия в документе встречи
 
     func testСписокИмёнЧиститсяПередЗаписью() {

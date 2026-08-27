@@ -101,6 +101,11 @@ struct ProjectScreen: View {
                                 ForEach(group.items) { item in
                                     row(item, of: group.meeting, section: section)
                                 }
+                                ProjectAtomAddRow { body in
+                                    state.appendAtom(
+                                        to: group.meeting, section: section, body: body
+                                    )
+                                }
                             }
                         }
                     }
