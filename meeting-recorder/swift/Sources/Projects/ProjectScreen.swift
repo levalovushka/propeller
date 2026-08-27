@@ -18,10 +18,6 @@ struct ProjectScreen: View {
     let project: Project
     let tab: ProjectTab
 
-    /// Описание свёрнуто до трёх строк, пока не развернули. Состояние здесь, а
-    /// не в маршруте: это не место, куда возвращаются, а поза одного взгляда.
-    @State private var aboutExpanded = false
-
     private var meetings: [RecordingEntry] { state.meetings(of: project.id) }
 
     var body: some View {
@@ -54,23 +50,16 @@ struct ProjectScreen: View {
     @ViewBuilder
     private var header: some View {
         if !project.about.isEmpty {
-            VStack(alignment: .leading, spacing: Tokens.Projects.Screen.aboutGap) {
-                Text(project.about)
-                    .typo(Tokens.Projects.Typo.screenBody)
-                    .foregroundStyle(Tokens.Projects.title)
-                    .lineLimit(aboutExpanded ? nil : Tokens.Projects.Screen.aboutLines)
-                    .frame(maxWidth: Tokens.Projects.Screen.aboutMeasure, alignment: .topLeading)
-                // Кнопка стоит всегда, пока описание есть: узнать, обрезался ли
-                // текст, можно только измерив его, а измерение ради того, чтобы
-                // спрятать одну тихую строку, — плохая сделка.
-                Button { aboutExpanded.toggle() } label: {
-                    Text(aboutExpanded ? "Свернуть" : "Показать больше")
-                        .typo(Tokens.Projects.Typo.body)
-                        .foregroundStyle(Tokens.Projects.quiet)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.press)
-            }
+            // «Показать больше» здесь стояло и снято 2026-08-27 решением
+            // владельца. Кнопка стояла всегда, пока описание есть, — а описание
+            // почти всегда короче трёх строк, и нажатие тогда не делало ничего.
+            // Кнопка, у которой в обычном случае нет последствий, хуже, чем
+            // обрезанная третья строка (`design/no-dead-ends.md`).
+            Text(project.about)
+                .typo(Tokens.Projects.Typo.screenBody)
+                .foregroundStyle(Tokens.Projects.title)
+                .lineLimit(Tokens.Projects.Screen.aboutLines)
+                .frame(maxWidth: Tokens.Projects.Screen.aboutMeasure, alignment: .topLeading)
         }
     }
 
@@ -114,33 +103,53 @@ struct ProjectScreen: View {
         }
     }
 
+    /// Ответственный есть только у задачи.
+    ///
+    /// Решение не поручают — его принимают, и в макете решений (297:25206) чипа
+    /// нет ни у одной строки. Но модель регулярно пишет решение в форме задачи
+    /// («**Vlad** — зайдёт в Figma…»), и снять с него имя чипом значило бы
+    /// оставить на экране обрубок со строчной буквы. Поэтому у решения имя не
+    /// отрывается вовсе: строка показывается целиком, как в файле, — «Vlad —
+    /// зайдёт в Figma…». Разбор при этом тот же, разная только сборка на экран.
+    private var carriesAssignee: Bool { tab.itemsAreCheckable }
+
     private func row(
         _ item: AppState.AtomItem, of meeting: RecordingEntry, section: String
     ) -> some View {
-        ProjectAtomRow(
+        let atom = item.atom
+        let inlineOwner = atom.assignee.map { "\($0) — " } ?? ""
+        return ProjectAtomRow(
             checkbox: tab.itemsAreCheckable,
-            done: item.atom.isDone,
-            text: item.atom.body,
-            assignee: item.atom.assignee,
+            done: atom.isDone,
+            text: carriesAssignee ? atom.body : inlineOwner + atom.body,
+            assignee: carriesAssignee ? atom.assignee : nil,
             // Предлагаются те, кого проект знает по своим встречам, а не по этой
             // одной: задачу дают и тому, кого сегодня не было.
-            people: state.roster(of: project.id).map(\.name),
+            people: carriesAssignee ? state.roster(of: project.id).map(\.name) : [],
             toggle: tab.itemsAreCheckable ? {
-                write(item, of: meeting, section: section, to: item.atom.toggled().item)
+                write(item, of: meeting, section: section, to: atom.toggled().item)
             } : nil,
-            dropAssignee: item.atom.assignee == nil ? nil : {
-                write(item, of: meeting, section: section, to: item.atom.withoutAssignee().item)
-            },
-            // Ответственного предлагают только задаче. Решение не поручают —
-            // его принимают, и в макете решений (297:25206) чипа нет ни у одной
-            // строки. Уже стоящий в файле чип при этом показывается: он там
-            // есть, и прятать его значило бы прятать данные.
-            setAssignee: tab.itemsAreCheckable ? { name in
-                write(item, of: meeting, section: section,
-                      to: item.atom.with(assignee: name).item)
+            dropAssignee: carriesAssignee && atom.assignee != nil ? {
+                write(item, of: meeting, section: section, to: atom.withoutAssignee().item)
             } : nil,
+            setAssignee: carriesAssignee ? { name in
+                write(item, of: meeting, section: section, to: atom.with(assignee: name).item)
+            } : nil,
+            // Правка решения возвращает жирное имя в файл, **если человек его
+            // не тронул**: строку он видел слитой, и совпадение начала — не
+            // догадка, а факт. Тронул — значит имя теперь часть текста, и
+            // жирного в файле не остаётся: разрывать правленную строку обратно
+            // на «**имя** — тело» было бы уже догадкой.
             edit: { body in
-                write(item, of: meeting, section: section, to: item.atom.with(body: body).item)
+                let line: String
+                if carriesAssignee {
+                    line = atom.with(body: body).item
+                } else if !inlineOwner.isEmpty, body.hasPrefix(inlineOwner) {
+                    line = atom.with(body: String(body.dropFirst(inlineOwner.count))).item
+                } else {
+                    line = atom.withoutAssignee().with(body: body).item
+                }
+                write(item, of: meeting, section: section, to: line)
             },
             remove: { write(item, of: meeting, section: section, to: nil) }
         )
