@@ -207,9 +207,20 @@ public enum UIStateCatalog {
         .init(id: "lib-deleted",   label: "Список встреч — после удаления"),
     ]
 
+    /// Раздел «Проекты» — Figma `projects` (254:3400).
+    ///
+    /// Два кадра, а не десять: остальные экраны раздела (модалка, экран проекта,
+    /// его вкладки) в приложении ещё не построены, и кадр несуществующего экрана
+    /// был бы кадром макета, а не приложения.
+    public static let projects: [Screen] = [
+        .init(id: "projects-list",  label: "Проекты — сетка карточек"),
+        .init(id: "projects-empty", label: "Проекты — ни одного"),
+    ]
+
     /// Everything the gallery has to be able to show, in shooting order.
     public static var allScreenIDs: [String] {
         meetingStates.map(\.id)
-            + (recording + onboarding + railPrompt + settingsClaude + detailTabs + library).map(\.id)
+            + (recording + onboarding + railPrompt + settingsClaude
+               + detailTabs + library + projects).map(\.id)
     }
 }

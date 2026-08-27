@@ -1512,6 +1512,163 @@ public enum Tokens {
         }
     }
 
+    /// Раздел «Проекты» — Figma `projects` (254:3400).
+    ///
+    /// Хром страницы у него настроечный (`Settings.pageHPadding` и соседи): это
+    /// одна и та же колонка панели, и заголовок 17 / 24 в ней стоит на том же
+    /// месте. Своё здесь — сетка карточек, кнопка с белой заливкой и модалка;
+    /// ни того, ни другого, ни третьего в приложении до сих пор не было.
+    public enum Projects {
+
+        // MARK: Сетка — 255:5081
+
+        public static let columns = 2
+        public static let gridGap = Space.s10
+        /// Панель навигации → сетка.
+        public static let barGap = Space.s16
+
+        // MARK: Карточка — 255:5082
+
+        /// Высота названа, а не выведена из содержимого: карточки стоят сеткой,
+        /// и ряд, у которого высота от текста, ломает строй на первом же
+        /// проекте без описания.
+        public static let cardHeight: CGFloat = 156
+        public static let cardRadius = Radius.md
+        public static let cardHPadding = Space.s16
+        public static let cardVPadding = Space.s12
+        /// Заголовок → описание.
+        public static let cardGap = Space.s8
+        /// Сколько строк описания видно. Макет отводит ему 42 pt при строке 14
+        /// (255:5089) — три строки, и обрезка тут не жадность, а строй: подпись
+        /// внизу карточки обязана стоять на одной высоте у всех восьми.
+        public static let aboutLines = 3
+        /// «Вчера» · «12 встреч».
+        public static let footerGap = Space.s4
+        public static let cardFill = Primitive.ink(dark: Primitive.AlphaWhite.a7,
+                                                   light: Primitive.AlphaBlack.a7)
+        public static let cardHoverFill = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                        light: Primitive.AlphaBlack.a10)
+        public static let title = Primitive.ink(dark: Primitive.AlphaWhite.a90,
+                                                light: Primitive.AlphaBlack.a88)
+        /// Описание и подпись — один тихий цвет на оба.
+        public static let quiet = Primitive.ink(dark: Primitive.AlphaWhite.a40,
+                                                light: Primitive.AlphaBlack.a48)
+
+        // MARK: Кнопка действия — 255:5078
+
+        /// Скругление 8, а не настроечные 6: у кнопок этого экрана свой размер
+        /// (255:5078), и рядом с карточкой в 12 шесть читается как обрубок.
+        public static let actionRadius = Radius.xs
+        public static let actionHeight = Space.s32
+        public static let actionHPadding = Space.s10
+        /// Внутренний воздух вокруг надписи — макетный `px-[2px]`.
+        public static let actionLabelInset = Space.s2
+        /// Единственная заливка в приложении, которая инвертирует фон целиком.
+        /// Акцентная (`Settings.buttonAccentFill`) здесь не подходит: на этом
+        /// экране акцент один — «Новый проект», и синий он делит с тумблерами.
+        public static let actionFill = Tokens.dual(dark: .white, light: .black)
+        public static let actionLabel = Paint.Text.primaryInverse
+        public static let quietActionLabel = quiet
+        /// Заливка меню сортировки — тише кнопки, но не пустая: это выбор, а не
+        /// действие (255:5132).
+        public static let sortFill = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                   light: Primitive.AlphaBlack.a10)
+
+        // MARK: Пусто — 255:5215
+
+        public enum Empty {
+            /// 36 pt — знак стоит один посреди панели, и это его размер, а не
+            /// размер иконки в строке.
+            public static let markSize: CGFloat = 36
+            /// Знак → блок текста, блок текста → кнопка.
+            public static let gap = Space.s24
+            /// Заголовок → объяснение.
+            public static let textGap = Space.s12
+            /// Мера текста — 417 в макете (255:5215) при панели 577. Без неё
+            /// объяснение растягивается во всю колонку и перестаёт читаться
+            /// тремя короткими строками, ради которых его так и написали.
+            public static let measure: CGFloat = 417
+        }
+
+        // MARK: Модалка — 261:9361
+
+        public enum Modal {
+            public static let width: CGFloat = 360
+            /// 20 (261:9361). Числа нет в шкале скруглений, и это не описка
+            /// макета: у плиты, которая накрывает окно, скругление окна, а не
+            /// карточки. Стоит литералом, а не подгонкой из шкалы, чтобы шкала
+            /// не выросла ради одного места.
+            public static let radius: CGFloat = 20
+            public static let padding = Space.s20
+            /// Между шапкой, полями и подвалом — один шаг.
+            public static let blockGap = Space.s20
+            /// Подпись поля → само поле.
+            public static let labelGap = Space.s6
+            public static let fieldHeight = Space.s32
+            public static let fieldRadius = Radius.xs
+            public static let fieldHPadding = Space.s10
+            public static let fieldVPadding = Space.s8
+            /// Внутреннее поле `TextEditor`, которое он ставит сам.
+            public static let editorInset: CGFloat = 5
+            /// Высота поля описания названа макетом (261:10120).
+            public static let editorHeight: CGFloat = 135
+            /// Сколько знаков влезает в описание. Число из макета («0/200»);
+            /// оно же и предел, а не только подсказка.
+            public static let aboutLimit = 200
+            public static let fill = Primitive.ink(dark: Primitive.AlphaWhite.a7,
+                                                   light: Primitive.AlphaBlack.a7)
+            public static let border = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                     light: Primitive.AlphaBlack.a10)
+            public static let plate = Tokens.dual(
+                dark: NSColor(srgbRed: 16 / 255, green: 16 / 255, blue: 16 / 255, alpha: 0.96),
+                light: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.96)
+            )
+            public static let label = Primitive.ink(dark: Primitive.AlphaWhite.a30,
+                                                    light: Primitive.AlphaBlack.a42)
+            /// Тень плиты — два слоя из макета (261:9361): широкий ореол и
+            /// смещённый вниз. SwiftUI кладёт по одной тени на модификатор,
+            /// поэтому их два и здесь.
+            public static let haloRadius: CGFloat = 24
+            public static let dropRadius: CGFloat = 16
+            public static let dropY: CGFloat = 4
+            public static let shadow = Tokens.dual(
+                dark: NSColor(srgbRed: 18 / 255, green: 18 / 255, blue: 18 / 255, alpha: 0.25),
+                light: NSColor(calibratedWhite: 0, alpha: 0.18)
+            )
+            /// Затемнение под плитой. Плотнее, чем кажется нужным: фон здесь
+            /// почти чёрный, и слабая вуаль на нём не читается вовсе — в макете
+            /// за плитой карточки едва различимы.
+            public static let scrim = Tokens.dual(
+                dark: NSColor(calibratedWhite: 0, alpha: 0.6),
+                light: NSColor(calibratedWhite: 0, alpha: 0.3)
+            )
+        }
+
+        // MARK: Type
+
+        public enum Typo {
+            /// 13 / 16 — имя проекта. Тот же кегль, что у названия встречи в
+            /// рельсе: это то же самое — имя вещи, на которую нажимают.
+            public static let title = Sidebar.Typo.navLabel
+            /// 12 / **15** — описание и подпись карточки.
+            ///
+            /// В макете 14, и это то же число, которого шрифт не умеет, что и в
+            /// настройках: SF Pro на 12 pt рисует строку 15. Просить 14 — просить
+            /// бокс теснее начертания.
+            public static let body = Settings.Typo.subtitle
+            /// 12 / 16 — надписи кнопок и меню сортировки.
+            public static let action = Settings.Typo.control
+            /// 15 / 20 — заголовок модалки. Между заголовком раздела (17) и
+            /// строкой (13): плита меньше страницы.
+            public static let modalTitle = Typography.Style(
+                size: 15, lineHeight: 20, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
+            /// 11 / 14 — подпись над полем и счётчик знаков.
+            public static let label = Sidebar.Typo.meta
+        }
+    }
+
     /// The one plate the app opens with — Figma `setup` (50:1223).
     ///
     /// It replaced six. What is left is what macOS itself has to be asked, and

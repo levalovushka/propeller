@@ -32,8 +32,13 @@ import AppKit
 
 // MARK: - Страница
 
-/// Раздел настроек целиком: заголовок и всё, что под ним.
-public struct SettingsPage<Content: View>: View {
+/// Страница правой панели: заголовок и всё, что под ним.
+///
+/// Заведена не ради обобщения — ради того, чтобы второй такой экран не завёл
+/// вторых отступов. Раздел «Проекты» стоит в той же колонке, с тем же полем 36,
+/// тем же 28 сверху и тем же заголовком 17 / 24; разъехаться им можно только
+/// молча, и только если чисел два комплекта.
+public struct PanePage<Content: View>: View {
     private let title: String
     private let content: () -> Content
 
@@ -69,6 +74,22 @@ public struct SettingsPage<Content: View>: View {
             .frame(maxWidth: .infinity)
         }
         .scrollBounceBehavior(.basedOnSize)
+    }
+}
+
+/// Раздел настроек целиком. Имя оставлено: на него ссылается словарь в шапке
+/// файла и семь страниц в `Sources/Settings/`.
+public struct SettingsPage<Content: View>: View {
+    private let title: String
+    private let content: () -> Content
+
+    public init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.content = content
+    }
+
+    public var body: some View {
+        PanePage(title) { content() }
     }
 }
 

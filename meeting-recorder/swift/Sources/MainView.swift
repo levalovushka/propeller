@@ -110,6 +110,10 @@ struct MainView: View {
         // docked: it is not part of either column, and with the rail away there
         // is no column it could belong to.
         .overlay { switcherPanel }
+        // По той же причине, что и переключатель: плита проекта накрывает окно
+        // целиком, а не колонку. В макете она 360 pt по центру 913 (261:9361),
+        // то есть стоит над рельсом, а не рядом с ним.
+        .overlay { projectComposer }
         // Both columns start at the top of the window, not under the titlebar.
         // This has to be here rather than on the pane alone: the traffic lights
         // are AppKit's and sit where we put them regardless, so a rail that
@@ -275,6 +279,33 @@ struct MainView: View {
         #else
         return .system
         #endif
+    }
+
+    /// Плита создания и правки проекта.
+    @ViewBuilder
+    private var projectComposer: some View {
+        if let draft = state.projectDraft {
+            ZStack {
+                Tokens.Projects.Modal.scrim
+                    .ignoresSafeArea()
+                    .onTapGesture { state.projectDraft = nil }
+                ProjectComposer(
+                    title: draft.isEditing ? "Проект" : "Создайте проект",
+                    confirm: draft.isEditing ? "Сохранить" : "Создать",
+                    name: Binding(
+                        get: { state.projectDraft?.name ?? "" },
+                        set: { state.projectDraft?.name = $0 }
+                    ),
+                    about: Binding(
+                        get: { state.projectDraft?.about ?? "" },
+                        set: { state.projectDraft?.about = $0 }
+                    ),
+                    submit: { state.commitProjectDraft() },
+                    cancel: { state.projectDraft = nil }
+                )
+            }
+            .transition(.opacity)
+        }
     }
 
     private var sidebar: some View {
@@ -444,9 +475,7 @@ struct MainView: View {
         case .micAccess:
             state.openMicrophoneSettings()
         case .projects:
-            // Раздела ещё нет. Ветка — место, где он появится; до тех пор клик
-            // не делает ничего, и это временно по решению владельца.
-            break
+            state.openProjects()
         case nil:
             break
         }
@@ -516,6 +545,7 @@ struct MainView: View {
     /// ними в панели не остаётся ничего общего.
     private var paneSubject: String {
         if case .settings(let section) = state.paneRoute { return "settings-" + section.rawValue }
+        if state.paneRoute.isProjects { return "projects" }
         guard let entry = state.selectedRecording else { return "empty" }
         return isBeingRecorded(entry) ? "recording-\(entry.id)" : "meeting-\(entry.id)"
     }
@@ -531,7 +561,7 @@ struct MainView: View {
     /// navigation bar it already had.
     @ViewBuilder
     private var topBar: some View {
-        if state.paneRoute.isSettings {
+        if state.paneRoute.isSection {
             // Полосы у раздела нет вовсе, пока рельс на месте: в макете страница
             // начинается от верха окна (254:1412 — `size-full` с полем 28), и
             // пустые 48 pt над ней опускали заголовок раздела ровно на эти 48.
@@ -621,7 +651,7 @@ struct MainView: View {
     /// другой, и видно было нижнюю.
     @ViewBuilder
     private var windowChrome: some View {
-        if !state.paneRoute.isSettings || !sidebarVisible {
+        if !state.paneRoute.isSection || !sidebarVisible {
             SidebarChromeButton(
                 symbol: "sidebar.left",
                 help: sidebarVisible ? "Скрыть список" : "Показать список"
@@ -759,6 +789,9 @@ struct MainView: View {
         if case .settings(let section) = state.paneRoute {
             // Настройки занимают всю панель: заметок у них нет, делить не с чем.
             SettingsPane(state: state, section: section)
+                .frame(maxWidth: .infinity)
+        } else if state.paneRoute.isProjects {
+            ProjectsPane(state: state)
                 .frame(maxWidth: .infinity)
         } else if let entry = state.selectedRecording, isBeingRecorded(entry) {
             RecordingPaneView(

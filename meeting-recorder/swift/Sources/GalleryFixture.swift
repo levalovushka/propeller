@@ -188,6 +188,16 @@ enum GalleryFixture {
             return
         }
         switch id {
+        case "projects-list", "projects-empty":
+            // Встреча выбирается **до** маршрута и не через `selectRecording`:
+            // `MainView.selectNewestIfNothingChosen` на появлении окна выбирает
+            // самую свежую, если не выбрано ничего, а `selectRecording` уводит
+            // панель обратно во встречу — и кадр раздела оказывался кадром
+            // саммари. Один раз уже оказался.
+            state.recordingStore.recordings = id == "projects-list" ? tagged(library) : library
+            state.selectedRecordingID = state.recordingStore.recordings.first?.id
+            state.projects = id == "projects-list" ? projects : []
+            state.paneRoute = .projects
         case "lib-empty":
             state.recordingStore.recordings = []
         case "lib-deleted":
@@ -226,6 +236,7 @@ enum GalleryFixture {
         // Панель помнит, куда её переключили, — как и вкладку карточки. Кадр,
         // который про настройки не просил, обязан просить встречу явно.
         state.paneRoute = .meeting
+        state.projects = []
         state.recordingStore.recordings = library
     }
 
@@ -345,6 +356,50 @@ enum GalleryFixture {
                  at: daysAgo(3, 16, 0), duration: 2_700, stage: .summarized,
                  topics: ["каноны", "примеры"], segments: true),
         ]
+    }
+
+    /// Проекты для кадров раздела — выдуманные целиком, как и встречи вокруг.
+    /// Галерея не касается настоящего архива: приватные названия однажды уже
+    /// уехали в общий файл Figma.
+    ///
+    /// `createdAt` расставлен вручную и в прошлом: порядок «сначала актуальные»
+    /// у проекта без встреч падает на дату создания, и без неё карточки в кадре
+    /// перетасовывались бы от съёмки к съёмке.
+    static var projects: [Project] {
+        [
+            Project(id: "gal-proj-design", name: "Агентный дизайн",
+                    about: "Дизайн-язык вместо дизайн-системы: чем описывать интерфейс, "
+                        + "который собирает не человек.",
+                    createdAt: daysAgo(30, 10, 0)),
+            Project(id: "gal-proj-release", name: "Релизы",
+                    about: "Что уезжает в сборку и что из этого потом чинят.",
+                    createdAt: daysAgo(60, 10, 0)),
+            Project(id: "gal-proj-hiring", name: "Найм продуктового дизайнера",
+                    about: "",
+                    createdAt: daysAgo(12, 10, 0)),
+            Project(id: "gal-proj-1on1", name: "1×1 с командой",
+                    about: "Регулярные разговоры один на один — нагрузка, планы, что мешает.",
+                    createdAt: daysAgo(90, 10, 0)),
+        ]
+    }
+
+    /// Те же встречи, но с метками проектов: подпись карточки («Вчера · 3
+    /// встречи») считается по индексу, и без меток каждый кадр говорил бы
+    /// «Пока нет встреч».
+    private static func tagged(_ rows: [RecordingEntry]) -> [RecordingEntry] {
+        let byID: [String: [String]] = [
+            contentID:        ["gal-proj-design"],
+            "gal-sync":       ["gal-proj-release"],
+            "gal-interview":  ["gal-proj-hiring"],
+            "gal-1on1":       ["gal-proj-1on1"],
+            "gal-quarter":    ["gal-proj-1on1"],
+            "gal-review":     ["gal-proj-design"],
+        ]
+        return rows.map { row in
+            var copy = row
+            copy.projects = byID[row.id]
+            return copy
+        }
     }
 
     /// The meeting the pipeline states are about. Newest, so it sits at the top

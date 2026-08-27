@@ -16,8 +16,6 @@ enum SidebarPresenter {
     /// Where the fixed rows go. Ids rather than closures so the view stays
     /// value-typed and the window keeps the actions.
     enum NavAction: String {
-        /// Строка есть, раздела за ней пока нет — клик не делает ничего
-        /// (`MainView.performNav`). Живёт так ровно до того, как раздел появится.
         case projects
         case record, settings, feedback
         /// The record row when the microphone is not ours: same slot, different
@@ -131,7 +129,8 @@ enum SidebarPresenter {
             SidebarNavItem(
                 id: NavAction.projects.rawValue,
                 symbol: "folder.fill",
-                title: "Проекты"
+                title: "Проекты",
+                isSelected: state.paneRoute.isProjects
             ),
             // Поиска здесь нет: он стал кнопкой в шапке рельса, рядом с
             // тумблером. Строка списка обещает место, куда ведёт, а палитра —

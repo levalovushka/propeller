@@ -14,11 +14,33 @@ enum PaneRoute: Equatable {
     /// Раздел настроек живёт в самом маршруте, а не отдельным полем рядом:
     /// иначе «настройки открыты, но раздела нет» стало бы выразимым.
     case settings(SettingsSection)
+    /// Список проектов.
+    case projects
 
     var isSettings: Bool {
         if case .settings = self { return true }
         return false
     }
+
+    var isProjects: Bool {
+        if case .projects = self { return true }
+        return false
+    }
+
+    /// Панель занята не встречей. Ровно то, что нужно знать хрому окна и шапке:
+    /// им безразлично, настройки это или проекты, — им важно, что встречи под
+    /// ними сейчас не видно.
+    var isSection: Bool { isSettings || isProjects }
+}
+
+/// Что набрано в плите проекта. `editing` — id того, кого правят; nil значит,
+/// что проекта ещё нет.
+struct ProjectDraft: Equatable {
+    var editing: String?
+    var name: String = ""
+    var about: String = ""
+
+    var isEditing: Bool { editing != nil }
 }
 
 @MainActor
@@ -143,6 +165,15 @@ class AppState: ObservableObject {
     /// Живёт здесь, а не во вью, потому что открыть настройки просят снаружи
     /// окна — из меню-бара и с ⌘, (`SettingsOpener`).
     @Published var paneRoute: PaneRoute = .meeting
+    /// Проекты, прочитанные с диска. Пусто до первого захода в раздел: список
+    /// нужен только ему, и читать `projects.json` на старте не за чем.
+    @Published var projects: [Project] = []
+    /// Открытая плита создания или правки проекта.
+    ///
+    /// Живёт в состоянии, а не в панели: плита накрывает **окно целиком**,
+    /// включая рельс (261:9361 — 360 pt по центру 913), а окно принадлежит
+    /// `MainView`. Та же причина, по которой там же живёт переключатель встреч.
+    @Published var projectDraft: ProjectDraft?
 
     /// Recording was asked for and the microphone is not ours to open.
     ///
@@ -1019,6 +1050,110 @@ class AppState: ObservableObject {
     /// настройки не трогали, и она всё это время была под ними.
     func leaveSettings() {
         paneRoute = .meeting
+    }
+
+    /// Проекты в панель. Так же, как настройки: выбранная встреча остаётся под
+    /// разделом и возвращается тем же кликом, которым её выбирали.
+    func openProjects() {
+        paneRoute = .projects
+        reloadProjects()
+    }
+
+    // MARK: - Проекты
+
+    /// Проекты, как их видит экран. Держатся в памяти, потому что это
+    /// `@Published` для вида; правда при этом на диске (`projects.json`), и
+    /// каждая правка идёт туда, а сюда возвращается перечитыванием.
+    func reloadProjects() {
+#if GALLERY
+        // Галерея ставит проекты сама и настоящего архива не касается: имена
+        // встреч однажды уже уехали в общий файл Figma.
+        if galleryFrozen { return }
+#endif
+        projects = recordingStore.projects
+    }
+
+    /// Карточки: проект плюс то, что о нём знают встречи. Считается по индексу
+    /// в памяти — тот же массив, который рисует рельс, второго прохода по диску
+    /// здесь нет.
+    var projectSummaries: [ProjectSummary] {
+        var counts: [String: Int] = [:]
+        var last: [String: Date] = [:]
+        for entry in recordingStore.recordings {
+            for id in entry.projects ?? [] {
+                counts[id, default: 0] += 1
+                if let seen = last[id] { last[id] = max(seen, entry.date) } else { last[id] = entry.date }
+            }
+        }
+        return projects.map {
+            ProjectSummary(project: $0, meetings: counts[$0.id] ?? 0, last: last[$0.id])
+        }
+    }
+
+    /// Завести проект. Возвращает его — вызывающему обычно нужно тут же
+    /// открыть его экран.
+    @discardableResult
+    func createProject(name: String, about: String) -> Project? {
+        let project = Project(name: name, about: about)
+        guard !project.isEmpty, recordingStore.saveProject(project) else { return nil }
+        reloadProjects()
+        return project
+    }
+
+    func renameProject(_ id: String, name: String, about: String) {
+        guard var project = projects.first(where: { $0.id == id }) else { return }
+        let renamed = Project(
+            id: project.id, name: name, about: about,
+            archived: project.archived, createdAt: project.createdAt
+        )
+        guard !renamed.isEmpty else { return }
+        project = renamed
+        guard recordingStore.saveProject(project) else { return }
+        reloadProjects()
+        // Имя проекта лежит и в документах встреч — вторая копия, переживающая
+        // откат сборки (`Project.plainHeaderLines`). Переписывать их все здесь
+        // не за чем: документ перезаписывается вместе со встречей, и до тех пор
+        // в нём стоит прежнее имя. Это осознанный долг, а не недосмотр.
+    }
+
+    func setProject(_ id: String, archived: Bool) {
+        guard var project = projects.first(where: { $0.id == id }) else { return }
+        project.archived = archived
+        guard recordingStore.saveProject(project) else { return }
+        reloadProjects()
+    }
+
+    /// Удалить проект. Метки со встреч снимаются — иначе они указывали бы в
+    /// пустоту; сами встречи и их содержимое не трогаются (`plan-projects.md` §8).
+    /// Открыть плиту: пустую для нового проекта, заполненную для правки.
+    func composeProject(editing project: Project? = nil) {
+        projectDraft = ProjectDraft(
+            editing: project?.id, name: project?.name ?? "", about: project?.about ?? ""
+        )
+    }
+
+    /// Применить набранное. Возвращает `false`, если применять нечего, —
+    /// вызывающий тогда плиту не закрывает.
+    @discardableResult
+    func commitProjectDraft() -> Bool {
+        guard let draft = projectDraft else { return false }
+        if let id = draft.editing {
+            renameProject(id, name: draft.name, about: draft.about)
+        } else {
+            guard createProject(name: draft.name, about: draft.about) != nil else { return false }
+        }
+        projectDraft = nil
+        return true
+    }
+
+    func deleteProject(_ id: String) {
+        for entry in recordingStore.recordings where (entry.projects ?? []).contains(id) {
+            let left = (entry.projects ?? []).filter { $0 != id }
+            recordingStore.update(id: entry.id, projects: .some(left.isEmpty ? nil : left))
+        }
+        _ = recordingStore.removeProject(id)
+        reloadProjects()
+        if paneRoute == .projects { objectWillChange.send() }
     }
 
     func selectRecording(_ entry: RecordingEntry) {
