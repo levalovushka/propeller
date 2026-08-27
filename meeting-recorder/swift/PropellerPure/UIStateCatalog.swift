@@ -240,6 +240,6 @@ public enum UIStateCatalog {
     public static var allScreenIDs: [String] {
         meetingStates.map(\.id)
             + (recording + onboarding + railPrompt + settingsClaude
-               + detailTabs + library + projects + projectTabs).map(\.id)
+               + detailTabs + library + projects + projectTabs + meetingProjects).map(\.id)
     }
 }
