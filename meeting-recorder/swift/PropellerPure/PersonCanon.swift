@@ -89,20 +89,40 @@ public enum PersonCanon {
         }
         // Отдельные слова — «Марина» в тексте против «Marina Primer» в
         // составе. Только если слово принадлежит ровно одному участнику.
-        var owners: [String: Set<String>] = [:]
+        let owners = soleOwners(roster: roster)
         for name in roster {
-            for word in name.components(separatedBy: CharacterSet.letters.inverted) where word.count >= 3 {
-                owners[fold(word), default: []].insert(name)
-            }
-        }
-        for name in roster {
-            for word in name.components(separatedBy: CharacterSet.letters.inverted) where word.count >= 3 {
-                let key = fold(word)
-                guard owners[key]?.count == 1 else { continue }
-                offer(key, word)
+            for word in words(of: name) where owners[fold(word)] != nil {
+                offer(fold(word), word)
             }
         }
         return out
+    }
+
+    /// Слова имени, годные в ключ. Короче трёх букв не считается: «Ян» как
+    /// отдельное слово встречается в тексте по другим поводам — та же граница,
+    /// что у `PersonName.minStandaloneForm`.
+    static func words(of name: String) -> [String] {
+        name.components(separatedBy: CharacterSet.letters.inverted).filter { $0.count >= 3 }
+    }
+
+    /// Свёртка слова → участник состава, которому это слово принадлежит, —
+    /// только там, где владелец **один**.
+    ///
+    /// Вынесено из `table`, потому что у правила два читателя: канон имён в
+    /// конспекте и сборка рядов встречи (`MeetingRoster`), где «Полина» из ленты
+    /// должна сойтись с «Polina Kremenets» из плитки. Два выражения одного
+    /// правила в этом коде уже стоили инертного ростера в промпте (2026-08-20),
+    /// и второй раз их разводить не за чем.
+    ///
+    /// Спорное слово выпадает целиком: у «Александра Яшина» и «Александра
+    /// Образцова» общее первое слово, и голое «Александр» не значит ни того, ни
+    /// другого. Промолчать здесь дешевле, чем угадать.
+    static func soleOwners(roster: [String]) -> [String: String] {
+        var owners: [String: Set<String>] = [:]
+        for name in roster {
+            for word in words(of: name) { owners[fold(word), default: []].insert(name) }
+        }
+        return owners.compactMapValues { $0.count == 1 ? $0.first : nil }
     }
 
     /// Слово с заглавной, до трёх слов подряд — кандидат на имя.
