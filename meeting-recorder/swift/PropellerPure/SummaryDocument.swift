@@ -126,6 +126,16 @@ public struct SummaryDocument: Equatable, Sendable {
     /// У съехавшего конспекта решётки пропали, а слова остались, и за «Итогом»
     /// идёт *абзац*, а не пункт списка — правило «дальше список» его не спасает.
     /// Узнавать словарь, заданный самим промптом, — не гадание.
+    /// Раздел, который писал человек, а не модель.
+    ///
+    /// `RecapDocument` обещает не переписывать написанное человеком, и до
+    /// 2026-08-27 обещание нарушалось молча: две строки заметки, набранные с
+    /// переносом, разбор склеивал в один абзац, а первая же правка конспекта
+    /// записывала склейку в файл — перенос терялся навсегда. Ценой стала
+    /// пустая строка между заметками в файле: разделять абзацы приложение
+    /// умеет только так, и это несопоставимо дешевле склейки.
+    static let notesTitle = "заметки"
+
     private static let knownHeadings: Set<String> = [
         "итог", "итоги", "решения", "задачи", "открытые вопросы",
         "ход обсуждения", "прочее", "заметки", "summary",
@@ -158,7 +168,8 @@ public struct SummaryDocument: Equatable, Sendable {
 
         for section in sections {
             let isLeadSection = section.title.map { leadHeadings.contains($0.lowercased()) } ?? true
-            var body = blocks(section.lines, nextID: nextID)
+            let isNotes = section.title?.lowercased() == notesTitle
+            var body = blocks(section.lines, joiningLines: !isNotes, nextID: nextID)
             guard !body.isEmpty else { continue }   // заголовок ни над чем не рисуем
 
             if isLeadSection, !leadTaken {
@@ -278,7 +289,15 @@ public struct SummaryDocument: Equatable, Sendable {
     private static let headingMaxLength = 40
 
     /// Строки одного раздела в абзацы и пункты.
-    static func blocks(_ lines: [String], nextID: () -> String) -> [Block] {
+    /// Строки раздела в блоки.
+    ///
+    /// `joiningLines` — про то, чей это перенос строки. У модели он означает
+    /// ширину строки и ничего больше, поэтому соседние строки склеиваются в
+    /// абзац. В заметках его поставил человек, и там он значит ровно то, что
+    /// значит: каждая строка — свой блок. См. `notesTitle`.
+    static func blocks(
+        _ lines: [String], joiningLines: Bool = true, nextID: () -> String
+    ) -> [Block] {
         var out: [Block] = []
         var prose: [String] = []
 
@@ -298,6 +317,7 @@ public struct SummaryDocument: Equatable, Sendable {
                 flush()
             } else {
                 prose.append(line)
+                if !joiningLines { flush() }
             }
         }
         flush()

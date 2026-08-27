@@ -378,6 +378,55 @@ final class SummaryDocumentTests: XCTestCase {
     /// `---`, то есть с середины документа. А на диске у большинства людей
     /// лежит `RecapDocument.wrapped(format: .simple)` — и он начинается со
     /// строки `# Название — рекап`.
+    // MARK: - Заметки
+
+    /// Перевод строки в заметке поставил человек, и он значит ровно то, что
+    /// значит. Всё остальное в конспекте написала модель — там перенос строки
+    /// это ширина окна, и склеивать его правильно.
+    func testEachLineOfANoteStaysItsOwnLine() {
+        let markdown = """
+        ## Итог
+        Разбирали агентный дизайн.
+
+        ## Заметки
+
+        14:20 — проверить, сколько итераций уходит на один блок
+        51:05 — вопрос Марине: кто вычитывает то, что агент нарисовал
+
+        ## Решения
+        - Отказались от общей дизайн-системы.
+        """
+        let document = SummaryDocument.parse(markdown: markdown)
+        let notes = document.blocks
+            .drop(while: { $0.text != "Заметки" })
+            .dropFirst()
+            .prefix(while: { $0.kind == .body })
+            .map(\.text)
+        XCTAssertEqual(notes, [
+            "14:20 — проверить, сколько итераций уходит на один блок",
+            "51:05 — вопрос Марине: кто вычитывает то, что агент нарисовал",
+        ])
+    }
+
+    /// И переживает круг: правка конспекта не должна склеивать чужой текст.
+    func testANoteSurvivesTheRoundTrip() {
+        let markdown = """
+        ## Итог
+        Разбирали агентный дизайн.
+
+        ## Заметки
+
+        14:20 — первая
+        51:05 — вторая
+        """
+        let once = SummaryDocument.parse(markdown: markdown).markdown
+        XCTAssertTrue(once.contains("14:20 — первая"))
+        XCTAssertTrue(once.contains("51:05 — вторая"))
+        XCTAssertFalse(once.contains("14:20 — первая 51:05 — вторая"))
+        let twice = SummaryDocument.parse(markdown: once).markdown
+        XCTAssertEqual(once, twice)
+    }
+
     func testПростойЗаголовокФайлаПереживаетПравку() {
         let file = RecapDocument.wrapped(
             title: "Синк по найму",
