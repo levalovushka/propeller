@@ -312,6 +312,11 @@ struct MeetingMetaRow: View {
             }
         }
         .frame(height: Tokens.Pane.Meta.height)
+        // Курсор ловит вся строка, а не буквы в ней. Без своей формы `HStack`
+        // отдаёт наведение детям: зазоры между чипами и — главное — место
+        // невидимого «плюса» курсора не замечали вовсе, и он гас ровно тогда,
+        // когда мышь шла к нему от помеченного проекта.
+        .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
     }
