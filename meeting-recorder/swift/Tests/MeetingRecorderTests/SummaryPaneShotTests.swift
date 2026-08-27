@@ -9,6 +9,7 @@ import PropellerUI
 /// `SUMMARY_SHOT` не назовёт путь.
 ///
 ///     SUMMARY_SHOT=/tmp/summary.png swift test --filter SummaryPaneShot
+///     SUMMARY_SHOT=/tmp/wide.png SUMMARY_SHOT_WIDTH=1400 swift test --filter SummaryPaneShot
 ///
 /// Живое окно для замеров не годится — под прозрачным фоном дизеринг рабочего
 /// стола, — а `Sources/` тестам недоступен. Здесь рисуется `MeetingPaneBody`
@@ -23,7 +24,16 @@ final class SummaryPaneShotTests: XCTestCase {
         )
         let output = ProcessInfo.processInfo.environment["SUMMARY_SHOT"]!
 
-        let size = CGSize(width: 649, height: 760)
+        // Ширина — ручка, а не константа: на мере макета угол блока и угол окна
+        // совпадают, и снимок в 649 не может показать, к чему прижаты кнопки.
+        //
+        //     SUMMARY_SHOT=/tmp/wide.png SUMMARY_SHOT_WIDTH=1400 swift test --filter SummaryPaneShot
+        var width = Tokens.Pane.paneMeasure
+        if let raw = ProcessInfo.processInfo.environment["SUMMARY_SHOT_WIDTH"],
+           let asked = Double(raw) {
+            width = CGFloat(asked)
+        }
+        let size = CGSize(width: width, height: 760)
         let root = MeetingPaneBody(
             identity: .init(
                 meetingID: "shot",

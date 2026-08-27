@@ -58,26 +58,36 @@ final class SummaryPaneLayoutTests: XCTestCase {
         XCTAssertEqual(actions.height, Tokens.Pane.headerButtonSide + Tokens.Pane.paneActionsInset * 2, accuracy: 0.5)
     }
 
-    /// Кнопки принадлежат блоку, а не окну.
+    /// Кнопки принадлежат **окну**, а не блоку текста — решение владельца
+    /// 2026-08-27, перевернувшее решение ревью того же дня.
     ///
-    /// На мере макета это одно и то же, поэтому проверка выше ничего не ловит:
-    /// оверлеем во всю ширину «Поделиться» уезжало на две сотни точек вправо от
-    /// имени встречи, которое оно шерит. Ширина взята заведомо больше меры.
+    /// На мере макета угол блока и угол окна — одна линия, поэтому проверка
+    /// выше ничего здесь не ловит: ширина взята заведомо больше меры. Красный
+    /// тест означает, что кнопки снова поехали к центру вместе с текстом.
     @MainActor
-    func testTheButtonsStayWithTheBlockInAWideWindow() throws {
+    func testTheButtonsHugTheWindowsCornerHoweverWideItGets() throws {
+        for wide: CGFloat in [Tokens.Pane.paneMeasure, 1200, 2400] {
+            let probes = probe(width: wide)
+            let actions = try XCTUnwrap(probes[PaneProbe.actions], "кнопки не измерены")
+            XCTAssertEqual(
+                wide - actions.maxX, 0, accuracy: 0.5,
+                "на ширине \(wide) кнопки отклеились от правой кромки"
+            )
+            XCTAssertEqual(actions.minY, 0, accuracy: 0.5, "на ширине \(wide) кнопки уехали вниз")
+        }
+    }
+
+    /// Цена этого решения, названная вслух: на широком окне между именем
+    /// встречи и кнопками, которые её шерят, лежит уже не мера колонки, а
+    /// полокна. Тест не запрещает этого — он не даёт забыть, что так решили.
+    @MainActor
+    func testTheGapToTheTitleGrowsWithTheWindowAndThatIsTheDeal() throws {
         let wide: CGFloat = 1200
         let probes = probe(width: wide)
-        let actions = try XCTUnwrap(probes[PaneProbe.actions], "кнопки не измерены")
-        let title = try XCTUnwrap(probes[PaneProbe.title], "имя встречи не измерено")
+        let actions = try XCTUnwrap(probes[PaneProbe.actions])
+        let title = try XCTUnwrap(probes[PaneProbe.title])
         let blockRight = (wide + Tokens.Pane.paneMeasure) / 2
-        XCTAssertEqual(actions.maxX, blockRight, accuracy: 0.5)
-        // И то же самое с другой стороны: между именем и кнопками — ровно мера
-        // колонки, а не полокна.
-        XCTAssertEqual(
-            actions.maxX - title.minX,
-            Tokens.Pane.paneMeasure - Tokens.Pane.summaryHPadding,
-            accuracy: 0.5
-        )
+        XCTAssertGreaterThan(actions.maxX, blockRight)
     }
 
     // MARK: - Тело

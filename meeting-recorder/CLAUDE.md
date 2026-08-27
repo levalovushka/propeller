@@ -88,7 +88,16 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full table. Coordinator
   встать. Имя встречи живёт **в теле** (`MeetingPaneIdentity` с `Look.body`, 22/24,
   бокс назван макетом, а не выведен из шрифта), над ним строка атрибутов
   (`MeetingMetaRow`; правила текста — `PropellerPure/MeetingMeta.swift`), в правом
-  верхнем углу блока — «…» и «Поделиться» (`SharePill`), оба снаружи скролла.
+  верхнем углу **окна** — «…» и «Поделиться» (`SharePill`), оба снаружи скролла.
+  Угол окна, а не блока текста: макет спор не решает (в 312:11129 блок 649
+  стоит впритык к правой кромке, 264 + 649 = 913, то есть обе кромки — одна
+  линия), ревью 27 авг выбрало блок, владелец в тот же день выбрал окно.
+  Цена принята вслух: на широком окне между именем встречи и кнопками, которые
+  её шерят, лежит полокна. Стерегут два теста —
+  `testTheButtonsHugTheWindowsCornerHoweverWideItGets` (проверен мутацией: на
+  1200 кнопки отставали от кромки на 275,5 pt) и
+  `testTheGapToTheTitleGrowsWithTheWindowAndThatIsTheDeal`. Посмотреть глазами:
+  `SUMMARY_SHOT=/tmp/w.png SUMMARY_SHOT_WIDTH=1400 swift test --filter SummaryPaneShot`.
   `MeetingPaneHeader` удалён: после переезда его не звал никто.
   **Мера текста 569** (= 649 − 40·2); `Tokens.Settings.maxWidth` больше её не
   одалживает — до 2026-08-27 это был один и тот же токен.
