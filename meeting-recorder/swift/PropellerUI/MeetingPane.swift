@@ -248,6 +248,53 @@ struct PaneIconLabel: View {
     }
 }
 
+/// Дата, число участников, слот проекта — 312:11129.
+///
+/// Чип, а не строка через точку: каждый факт — свой предмет, и по каждому
+/// однажды можно будет щёлкнуть. Пока щёлкать не по чему, и ховер это
+/// единственное, что об этом говорит.
+struct MeetingMetaRow: View {
+    let meta: MeetingPane.Meta
+
+    var body: some View {
+        HStack(spacing: Tokens.Pane.Meta.gap) {
+            if let date = meta.date {
+                MetaChip(symbol: "calendar", text: MeetingMeta.when(date))
+            }
+            if let people = MeetingMeta.people(meta.people) {
+                MetaChip(symbol: "person.2.fill", text: people)
+            }
+        }
+        .frame(height: Tokens.Pane.Meta.height)
+    }
+}
+
+private struct MetaChip: View {
+    let symbol: String
+    let text: String
+
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: Tokens.Pane.Meta.iconGap) {
+            Image(systemName: symbol)
+                .font(.system(size: Tokens.Pane.Meta.iconSize, weight: .regular))
+                .foregroundStyle(Tokens.Pane.Meta.quiet)
+            Text(text)
+                .typo(Tokens.Pane.Typo.metaWide)
+                .foregroundStyle(Tokens.Pane.Meta.label)
+        }
+        .padding(.horizontal, Tokens.Pane.Meta.hPadding)
+        .frame(height: Tokens.Pane.Meta.height)
+        .background(
+            hovering ? Tokens.Pane.Meta.hoverFill : .clear,
+            in: RoundedRectangle(cornerRadius: Tokens.Pane.Meta.radius, style: .continuous)
+        )
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+    }
+}
+
 /// «Поделиться» — сплошная белая пилюля, 312:11129.
 ///
 /// Единственная заливка на всей панели, и это сказано осознанно: остальные
@@ -662,8 +709,9 @@ extension MeetingPaneBody where MoreMenu == EmptyView {
     /// Панель без меню «ещё» — доска галереи и всё, что показывает саммари
     /// само по себе.
     public init(
-        identity: Identity? = nil,
-        share: Share? = nil,
+        identity: MeetingPane.Identity? = nil,
+        meta: MeetingPane.Meta? = nil,
+        share: MeetingPane.Share? = nil,
         mode: MeetingPaneMode = .summary,
         summary: MeetingSummary,
         turns: [MeetingTranscriptColumn.Turn] = [],
@@ -677,6 +725,7 @@ extension MeetingPaneBody where MoreMenu == EmptyView {
     ) {
         self.init(
             identity: identity,
+            meta: meta,
             share: share,
             hasMoreMenu: false,
             mode: mode,
@@ -694,6 +743,56 @@ extension MeetingPaneBody where MoreMenu == EmptyView {
     }
 }
 
+/// Что панель встречи показывает о встрече помимо её текста.
+///
+/// Отдельным пространством имён, а не вложенными типами: `MeetingPaneBody`
+/// параметризована меню «ещё», и вложенный тип у неё был бы разным для панели
+/// с меню и без — то есть вызывающему пришлось бы знать generic, чтобы назвать
+/// дату встречи.
+public enum MeetingPane {
+
+/// Встреча, чьё имя стоит над саммари.
+///
+/// По id, а не по всей записи: переименование, приехавшее при переключении
+/// встреч посреди правки, принадлежит той встрече, в которую его печатали,
+/// а она к тому моменту уже не выбрана.
+public struct Identity {
+    public let meetingID: String
+    public let title: String
+    public let onRename: ((_ meetingID: String, _ newTitle: String) -> Void)?
+    public init(
+        meetingID: String,
+        title: String,
+        onRename: ((_ meetingID: String, _ newTitle: String) -> Void)? = nil
+    ) {
+        self.meetingID = meetingID
+        self.title = title
+        self.onRename = onRename
+    }
+}
+
+/// Факты о встрече над её именем — 312:11129.
+public struct Meta {
+    public let date: Date?
+    /// Сколько человек было. 0 — чипа нет.
+    public let people: Int
+    public init(date: Date?, people: Int) {
+        self.date = date
+        self.people = people
+    }
+}
+
+/// Поднимает системный шер из угла панели.
+public struct Share {
+    public let title: String
+    public let handler: () -> Void
+    public init(_ title: String, handler: @escaping () -> Void) {
+        self.title = title
+        self.handler = handler
+    }
+}
+}
+
 /// Панель готовой встречи: одна колонка, и в ней всё, что о встрече известно.
 ///
 /// Колонки заметок здесь больше нет. Заметка во время встречи стоит в ленте
@@ -703,8 +802,9 @@ extension MeetingPaneBody where MoreMenu == EmptyView {
 public struct MeetingPaneBody<MoreMenu: View>: View {
     /// Имя встречи и то, как её переименовать. `nil` — доска галереи и всё,
     /// что показывает саммари без встречи за ним.
-    private let identity: Identity?
-    private let share: Share?
+    private let identity: MeetingPane.Identity?
+    private let meta: MeetingPane.Meta?
+    private let share: MeetingPane.Share?
     /// Троеточие — *меню*, а не кнопка: у «ещё» нет одного действия, и
     /// замыкание умело бы открыть его только где-то в другом месте.
     private let moreMenu: () -> MoreMenu
@@ -730,36 +830,6 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
     private let onSummaryChange: ((MeetingSummary) -> Void)?
     private let onSummaryRewrite: ((SummaryRewrite, String) -> Void)?
 
-    /// Встреча, чьё имя стоит над саммари.
-    ///
-    /// По id, а не по всей записи: переименование, приехавшее при переключении
-    /// встреч посреди правки, принадлежит той встрече, в которую его печатали,
-    /// а она к тому моменту уже не выбрана.
-    public struct Identity {
-        public let meetingID: String
-        public let title: String
-        public let onRename: ((_ meetingID: String, _ newTitle: String) -> Void)?
-        public init(
-            meetingID: String,
-            title: String,
-            onRename: ((_ meetingID: String, _ newTitle: String) -> Void)? = nil
-        ) {
-            self.meetingID = meetingID
-            self.title = title
-            self.onRename = onRename
-        }
-    }
-
-    /// Поднимает системный шер из угла панели.
-    public struct Share {
-        public let title: String
-        public let handler: () -> Void
-        public init(_ title: String, handler: @escaping () -> Void) {
-            self.title = title
-            self.handler = handler
-        }
-    }
-
     /// Чей текст сейчас в колонке транскрипта.
     public enum TranscriptSource: String, Equatable, Sendable {
         /// Встреча идёт или только что кончилась: то, что услышал живой слой.
@@ -769,8 +839,9 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
     }
 
     public init(
-        identity: Identity? = nil,
-        share: Share? = nil,
+        identity: MeetingPane.Identity? = nil,
+        meta: MeetingPane.Meta? = nil,
+        share: MeetingPane.Share? = nil,
         hasMoreMenu: Bool = true,
         mode: MeetingPaneMode = .summary,
         summary: MeetingSummary,
@@ -785,6 +856,7 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
         @ViewBuilder moreMenu: @escaping () -> MoreMenu
     ) {
         self.identity = identity
+        self.meta = meta
         self.share = share
         self.hasMoreMenu = hasMoreMenu
         self.moreMenu = moreMenu
@@ -806,7 +878,11 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
                 head
                 columns
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // Потолок стоит на содержимом, а `.infinity` под ним центрирует
+            // получившийся блок. Наоборот — потолок поверх отступов — уже
+            // однажды посадил карточку настроек не туда, где её нарисовали.
+            .frame(maxWidth: Tokens.Pane.paneMeasure, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
         // Снаружи скролла: угол принадлежит панели, а не тексту в ней, и
@@ -823,12 +899,17 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
     @ViewBuilder
     private var head: some View {
         if let identity {
-            MeetingPaneIdentity(
-                meetingID: identity.meetingID,
-                title: identity.title,
-                onRename: identity.onRename,
-                look: .body
-            )
+            VStack(alignment: .leading, spacing: Tokens.Pane.titleGap) {
+                if let meta {
+                    MeetingMetaRow(meta: meta)
+                }
+                MeetingPaneIdentity(
+                    meetingID: identity.meetingID,
+                    title: identity.title,
+                    onRename: identity.onRename,
+                    look: .body
+                )
+            }
             .padding(.horizontal, Tokens.Pane.summaryHPadding)
             .padding(.top, Tokens.Pane.paneTopPadding)
         }

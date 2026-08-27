@@ -944,6 +944,24 @@ public enum Tokens {
         /// Кнопки в правом верхнем углу панели — единственное место, где
         /// горизонтальное поле не 40: они прижаты к кромке блока.
         public static let paneActionsInset = Space.s8
+        // MARK: Строка атрибутов — 312:11129
+
+        public enum Meta {
+            public static let height = Space.s24
+            public static let radius = Radius.xxs
+            /// Между чипами.
+            public static let gap = Space.s8
+            public static let hPadding = Space.s6
+            /// Между иконкой и словом внутри чипа.
+            public static let iconGap = Space.s2
+            public static let iconSize: CGFloat = 12
+            /// Ховер. В макете залит чип «6 человек» — это и есть его ховер,
+            /// а не отличие людей от даты (подтверждено владельцем 2026-08-27).
+            public static let hoverFill = Sidebar.rowSelected
+            public static let label = Paint.Text.primary
+            public static let quiet = Sidebar.chromeIcon
+        }
+
         /// «Поделиться» — 312:11129. Первая сплошная кнопка в приложении:
         /// выход наружу конституционен (`VISION.md` §4), и это единственное
         /// действие панели, которое зовут, а не находят.
@@ -958,9 +976,12 @@ public enum Tokens {
         /// A section heading to the first item under it — 312:11129.
         public static let summaryHeadingGap = Space.s8
         public static let summaryMinWidth: CGFloat = 520
-        /// A measure, not a container: past ~640 pt a 14 pt line stops being
-        /// comfortable to read, however much room the window has.
-        public static let summaryMaxWidth: CGFloat = 640
+        /// Мера, а не контейнер. 569 = 649 − 40·2, то есть ровно столько текста
+        /// в строке, сколько в макете 312:11129. Прежние 640 были правдой для
+        /// 14 pt; на 13 pt это уже слишком длинная строка.
+        public static let summaryMaxWidth: CGFloat = 569
+        /// Мера вместе с полями — ширина блока панели в макете, 649.
+        public static let paneMeasure = summaryMaxWidth + summaryHPadding * 2
         /// Bullet indent and the space between items — a paragraph and a list
         /// item are the same item in the comps, so it is one number.
         public static let bulletIndent: CGFloat = 21

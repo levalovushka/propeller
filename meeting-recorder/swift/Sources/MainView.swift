@@ -788,6 +788,13 @@ struct MainView: View {
                     // typed into, which by then is no longer the selected one.
                     onRename: { id, newTitle in state.renameRecording(id: id, to: newTitle) }
                 ),
+                meta: .init(
+                    date: entry.date,
+                    people: MeetingMeta.count(
+                        speakers: turns.map(\.speaker),
+                        invited: entry.calendarMeta?.attendees ?? []
+                    )
+                ),
                 share: .init("Поделиться") { showShareSheet = true },
                 mode: paneMode,
                 summary: document,
