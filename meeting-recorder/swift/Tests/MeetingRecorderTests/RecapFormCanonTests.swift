@@ -3,12 +3,12 @@ import XCTest
 
 /// Каждая строка ниже — из живого архива (замер 2026-08-27, 73 конспекта):
 /// разметка, в которой имя человека стоит, а разбор его не достаёт.
-final class RecapAtomCanonTests: XCTestCase {
+final class RecapFormCanonTests: XCTestCase {
 
     private let roster = ["Левон", "Вячеслав Киржаев", "Владислав Шукуров", "Marina Primer"]
 
     private func canon(_ recap: String, roster: [String]? = nil) -> String {
-        RecapAtomCanon.canonical(recap, roster: roster ?? self.roster).recap
+        RecapFormCanon.canonical(recap, roster: roster ?? self.roster).recap
     }
 
     // MARK: - Ответственный
@@ -77,6 +77,73 @@ final class RecapAtomCanonTests: XCTestCase {
     func testДвоеточиеИзСерединыФразыНеСтановитсяИменем() {
         let line = "## Задачи\n- Собрать смету — учесть скидку: она уже согласована.\n"
         XCTAssertEqual(canon(line), line)
+    }
+
+    // MARK: - «Итог» одним абзацем
+
+    /// Решение владельца 2026-08-27: описание встречи под её названием — ровно
+    /// один абзац. В живом архиве их больше одного у 17 конспектов из 139.
+    func testДваАбзацаИтогаСклеиваютсяВОдин() {
+        let recap = """
+        ## Итог
+
+        Левон и Владислав обсудили передачу работы разработчикам.
+
+        Они уточнили формат взаимодействия с клиентами.
+
+        ## Решения
+        - Отказались от диплинков.
+        """
+        let out = canon(recap)
+        XCTAssertTrue(out.contains(
+            "Левон и Владислав обсудили передачу работы разработчикам. Они уточнили формат взаимодействия с клиентами."
+        ))
+        // Ни одного слова не потеряно, и следующий раздел на месте.
+        XCTAssertTrue(out.contains("## Решения"))
+        XCTAssertTrue(out.contains("- Отказались от диплинков."))
+    }
+
+    func testОдинАбзацИтогаНеТрогается() {
+        let recap = "## Итог\n\nВстреча про смету.\n\n## Решения\n- Отказались от диплинков.\n"
+        XCTAssertEqual(canon(recap), recap)
+    }
+
+    /// Четыре абзаца — тоже живой случай архива.
+    func testЧетыреАбзацаТожеСклеиваются() {
+        let recap = "## Итог\n\nРаз.\n\nДва.\n\nТри.\n\nЧетыре.\n"
+        XCTAssertEqual(canon(recap), "## Итог\n\nРаз. Два. Три. Четыре.\n")
+    }
+
+    /// Список внутри «Итога» останавливает правило: склеить пункты в абзац —
+    /// это переписывание, а не форматирование.
+    func testСписокВИтогеОстанавливаетСклейку() {
+        let recap = "## Итог\n\nВстреча про смету.\n\n- Первый пункт.\n- Второй пункт.\n"
+        XCTAssertEqual(canon(recap), recap)
+    }
+
+    /// Заголовок ведущего раздела бывает и «Итоги», и «Summary» — те же имена,
+    /// что знает `SummaryDocument.leadHeadings`.
+    func testИтогиИSummaryТожеВедущийРаздел() {
+        XCTAssertEqual(canon("## Итоги\n\nРаз.\n\nДва.\n"), "## Итоги\n\nРаз. Два.\n")
+        XCTAssertEqual(canon("## Summary\n\nOne.\n\nTwo.\n"), "## Summary\n\nOne. Two.\n")
+    }
+
+    /// Абзацы «Решений» и «Хода обсуждения» — не наше дело: там их сколько
+    /// написано, столько и надо.
+    func testАбзацыДругихРазделовНеСклеиваются() {
+        let recap = "## Ход обсуждения\n\nПервая тема.\n\nВторая тема.\n"
+        XCTAssertEqual(canon(recap), recap)
+    }
+
+    /// Склейка и починка имени в одном проходе, и обе цитаты уходят наружу.
+    func testСклейкаИИмяЧинятсяВместе() {
+        let result = RecapFormCanon.canonical(
+            "## Итог\n\nРаз.\n\nДва.\n\n## Задачи\n- Левон: прислать доки.\n",
+            roster: roster
+        )
+        XCTAssertTrue(result.recap.contains("## Итог\n\nРаз. Два."))
+        XCTAssertTrue(result.recap.contains("- **Левон** — прислать доки."))
+        XCTAssertEqual(result.fixed, ["«Итог» из 2 абзацев", "Левон: "])
     }
 
     // MARK: - Чекбокс
@@ -167,7 +234,7 @@ final class RecapAtomCanonTests: XCTestCase {
 
     /// Что переписали — говорится вслух, как у `RecapLint.Grounding.removed`.
     func testЦитатыПравокВозвращаются() {
-        let result = RecapAtomCanon.canonical(
+        let result = RecapFormCanon.canonical(
             "## Задачи\n- Левон: прислать доки.\n- обсудить flow\n", roster: roster
         )
         XCTAssertEqual(result.fixed, ["Левон: "])

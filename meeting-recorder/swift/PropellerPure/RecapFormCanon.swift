@@ -1,6 +1,8 @@
 import Foundation
 
-/// # Разметка задачи приводится к канону кодом, а не просьбой к модели
+/// # Форма конспекта приводится к канону кодом, а не просьбой к модели
+///
+/// Два правила: разметка ответственного в «Задачах» и «Итог» одним абзацем.
 ///
 /// Канон — `plan-projects.md` §4.1, решение владельца 2026-08-27:
 ///
@@ -59,7 +61,7 @@ import Foundation
 ///
 /// **Не трогает секцию «Решения».** У решения нет ни ответственного, ни
 /// чекбокса — их там не появляется (`ProjectTab.itemsAreCheckable`).
-public enum RecapAtomCanon {
+public enum RecapFormCanon {
 
     public struct Result: Equatable {
         public let recap: String
@@ -75,15 +77,25 @@ public enum RecapAtomCanon {
         }
     }
 
-    /// Привести ответственного в секции «Задачи» к канону разметки.
+    /// Привести конспект к канону формы: ответственный в «Задачах» и «Итог»
+    /// одним абзацем.
     ///
     /// `roster` — подписи ленты (`RecapDocument.participants`), те же, что
     /// уходят в промпт и в `PersonCanon`.
     public static func canonical(_ recap: String, roster: [String]) -> Result {
         guard !recap.isEmpty else { return Result(recap: recap, fixed: []) }
+        let joined = joiningSummary(recap)
+        return owners(in: joined.recap, roster: roster, fixed: joined.fixed)
+    }
+
+    // MARK: - Ответственный
+
+    private static func owners(
+        in recap: String, roster: [String], fixed carried: [String]
+    ) -> Result {
 
         let names = PersonCanon.table(roster: roster)
-        var fixed: [String] = []
+        var fixed = carried
         var lines = recap.components(separatedBy: "\n")
         var inTasks = false
 
@@ -108,6 +120,78 @@ public enum RecapAtomCanon {
             lines[index] = split.prefix + owner.body + (carriage ? "\r" : "")
         }
         return Result(recap: lines.joined(separator: "\n"), fixed: fixed)
+    }
+
+    // MARK: - «Итог» одним абзацем
+
+    /// Ведущий раздел — это **описание встречи под её названием**, а не первая
+    /// глава конспекта: панель саммари заголовок «## Итог» не рисует вовсе
+    /// (`SummaryDocument.leadHeading`), и второй абзац читается как оборванное
+    /// начало текста, которого дальше нет.
+    ///
+    /// Решение владельца 2026-08-27: ровно один абзац. В живом архиве их больше
+    /// одного у 17 конспектов из 139, а у одного — четыре.
+    ///
+    /// Склейка, а не обрезка: **ни одного слова не теряется**, абзацы
+    /// соединяются пробелом. Просить об этом модель мало — она слушается
+    /// непоследовательно, и то же правило уже стоит в промпте; здесь оно
+    /// гарантируется.
+    ///
+    /// Список внутри «Итога» останавливает правило целиком: склеить пункты в
+    /// абзац — это уже переписывание, а не форматирование.
+    private static func joiningSummary(_ recap: String) -> Result {
+        var lines = recap.components(separatedBy: "\n")
+        guard let section = summarySection(in: lines) else { return Result(recap: recap, fixed: []) }
+
+        var paragraphs: [String] = []
+        var current: [String] = []
+        for index in section {
+            let carriage = lines[index].hasSuffix("\r")
+            let line = (carriage ? String(lines[index].dropLast()) : lines[index])
+                .trimmingCharacters(in: .whitespaces)
+            if line.isEmpty {
+                if !current.isEmpty { paragraphs.append(current.joined(separator: " ")); current = [] }
+                continue
+            }
+            // Пункт списка или вложенный заголовок — не наш случай.
+            if bullet(line) != nil || line.hasPrefix("#") { return Result(recap: recap, fixed: []) }
+            current.append(line)
+        }
+        if !current.isEmpty { paragraphs.append(current.joined(separator: " ")) }
+        guard paragraphs.count > 1 else { return Result(recap: recap, fixed: []) }
+
+        // Заменяется только то, на чём стоит текст: пустые строки до первого
+        // абзаца и после последнего остаются на месте. Иначе документ терял бы
+        // то пустую строку под заголовком, то перевод строки в конце файла —
+        // и вторая правка чужого файла была бы платой за первую.
+        guard let first = section.first(where: { !isBlank(lines[$0]) }),
+              let last = section.reversed().first(where: { !isBlank(lines[$0]) })
+        else { return Result(recap: recap, fixed: []) }
+        let carriage = lines[first].hasSuffix("\r") ? "\r" : ""
+        lines.replaceSubrange(first...last, with: [paragraphs.joined(separator: " ") + carriage])
+        return Result(
+            recap: lines.joined(separator: "\n"),
+            fixed: ["«Итог» из \(paragraphs.count) абзацев"]
+        )
+    }
+
+    private static func isBlank(_ line: String) -> Bool {
+        line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Строки ведущего раздела — от строки под его заголовком до следующего
+    /// `##` или конца. Имена — те же, что у `SummaryDocument.leadHeadings`.
+    private static func summarySection(in lines: [String]) -> Range<Int>? {
+        var start: Int?
+        for (index, raw) in lines.enumerated() {
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let heading = RecapDigest.headingTitle(line) else { continue }
+            if start != nil { return start! ..< index }
+            let folded = RecapDigest.foldTitle(heading)
+            if ["итог", "итоги", "summary"].contains(folded) { start = index + 1 }
+        }
+        guard let start, start < lines.count else { return nil }
+        return start ..< lines.count
     }
 
     // MARK: - Ответственный

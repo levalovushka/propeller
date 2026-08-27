@@ -98,6 +98,14 @@ DECISION_TOPIC = [
     re.compile(r"^\s*-\s+\*\*([^*\n]{1,60})\*\*\s*:", re.M),   # **Сроки**: к сентябрю
 ]
 
+# Задача, рассказанная как сделанное. Найдено живым прогоном 2026-08-27: три
+# задачи из трёх приехали в прошедшем времени, и вместе с временем строка теряет
+# разделитель, так что ответственный не разбирается. Зеркало RecapLint.tasksInPast.
+TASK_IN_PAST = re.compile(
+    r"^\s*-\s+(?:\[[ xX]\]\s*)?(?:\*\*[^*\n]{1,60}\*\*\s*[—–]\s*)?"
+    r"(?:[А-ЯЁ][а-яё]+\s+){0,2}"
+    r"([А-ЯЁа-яё]{3,}(?:л|ла|ли|лся|лась|лись|лось))\b", re.M)
+
 # Ответственный в канонической разметке §4.1: разбор достаёт его именно так
 # (RecapAtom.parse). Считается статистикой, а не находкой: задача без имени —
 # правда, а не дефект.
@@ -256,6 +264,8 @@ def lint(recap: str, transcript: str | None, meeting: str) -> Report:
         for i, line in enumerate(tasks.group(1).split("\n"), 1):
             if FAKE_OWNER.search(line):
                 rep.add("ответственный-призрак", i, line)
+        for m in TASK_IN_PAST.finditer(tasks.group(1)):
+            rep.add("задача в прошедшем времени", 0, m.group(1))
     if transcript:
         haystack = transcript.lower().replace("ё", "е")
         for i, line in enumerate(lines, 1):
@@ -302,6 +312,11 @@ def lint(recap: str, transcript: str | None, meeting: str) -> Report:
         "ход/всего": round(discussion / rep.words, 2) if rep.words else 0,
         "решений": len(re.findall(r"^\s*-\s", sections.get("Решения", ""), re.M)),
         "задач": len(re.findall(r"^\s*-\s", sections.get("Задачи", ""), re.M)),
+        "итог/абз": max(
+            (len([p for p in re.split(r"\n\s*\n", sections.get(name, "").strip()) if p.strip()])
+             for name in ("Итог", "Итоги", "Summary") if name in sections),
+            default=0,
+        ),
         "зад/имя": len(TASK_OWNER.findall(sections.get("Задачи", ""))),
         "зад/бокс": len(TASK_CHECKBOX.findall(sections.get("Задачи", ""))),
         "ср.предл": round(sum(len(s.split()) for s in sentences) / len(sentences), 1) if sentences else 0,
@@ -315,7 +330,7 @@ def lint(recap: str, transcript: str | None, meeting: str) -> Report:
 
 
 CHECKS = [
-    "решение в форме задачи", "решение темой-ярлыком",
+    "решение в форме задачи", "решение темой-ярлыком", "задача в прошедшем времени",
     "срок не из транскрипта", "посчитанный срок", "выдуманный участник", "повелительное наклонение", "ответственный-призрак", "имя не из транскрипта", "число не из транскрипта", "латиница не из транскрипта", "таймкод за пределами встречи",
     "пассив", "канцелярит", "вода", "длинное предложение",
     "буллет * вместо -", "нумерованный список", "секция вне шаблона",
@@ -323,7 +338,7 @@ CHECKS = [
     "пустая секция вместо пропуска",
 ]
 SHORT = {
-    "решение в форме задачи": "реш→з", "решение темой-ярлыком": "реш:",
+    "решение в форме задачи": "реш→з", "решение темой-ярлыком": "реш:", "задача в прошедшем времени": "зад~",
     "срок не из транскрипта": "срок!", "посчитанный срок": "срок~",
     "выдуманный участник": "кто!?", "повелительное наклонение": "приказ", "ответственный-призрак": "кто?",
     "имя не из транскрипта": "имена", "число не из транскрипта": "числа",
@@ -382,24 +397,24 @@ def main() -> int:
                 print(f"  {f.check:32} стр.{f.line:<4} {f.text}")
         return 0
 
-    head = f"{'встреча':30}{'слов':>6}{'сжат':>7}{'обр':>4}{'ход':>5}{'реш':>4}{'зад':>4}{'имя':>4}{'бокс':>5}"
+    head = f"{'встреча':30}{'слов':>6}{'сжат':>7}{'обр':>4}{'ход':>5}{'реш':>4}{'зад':>4}{'имя':>4}{'бокс':>5}{'абз':>4}"
     head += "".join(f"{SHORT[c]:>6}" for c in CHECKS)
     print(head)
     print("-" * len(head))
     totals = {c: 0 for c in CHECKS}
     for rep in reports:
         row = f"{rep.meeting[:28]:30}{rep.stats['слов']:6}{rep.stats.get('сжатие','—'):>7}"
-        row += f"{rep.stats.get('обрезан',''):>4}{rep.stats['ход/всего']:>5}{rep.stats['решений']:>4}{rep.stats['задач']:>4}{rep.stats['зад/имя']:>4}{rep.stats['зад/бокс']:>5}"
+        row += f"{rep.stats.get('обрезан',''):>4}{rep.stats['ход/всего']:>5}{rep.stats['решений']:>4}{rep.stats['задач']:>4}{rep.stats['зад/имя']:>4}{rep.stats['зад/бокс']:>5}{rep.stats['итог/абз']:>4}"
         for c in CHECKS:
             n = rep.count(c)
             totals[c] += n
             row += f"{n if n else '·':>6}"
         print(row)
     print("-" * len(head))
-    total_row = f"{'ИТОГО ' + str(len(reports)) + ' встреч':30}{'':6}{'':7}{'':4}{'':5}{'':4}{'':4}{'':4}{'':5}"
+    total_row = f"{'ИТОГО ' + str(len(reports)) + ' встреч':30}{'':6}{'':7}{'':4}{'':5}{'':4}{'':4}{'':4}{'':5}{'':4}"
     total_row += "".join(f"{totals[c]:>6}" for c in CHECKS)
     print(total_row)
-    per = f"{'на встречу':30}{'':6}{'':7}{'':4}{'':5}{'':4}{'':4}{'':4}{'':5}"
+    per = f"{'на встречу':30}{'':6}{'':7}{'':4}{'':5}{'':4}{'':4}{'':4}{'':5}{'':4}"
     per += "".join(f"{totals[c]/max(1,len(reports)):>6.1f}" for c in CHECKS)
     print(per)
     return 0
