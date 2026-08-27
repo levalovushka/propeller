@@ -52,6 +52,13 @@ struct MainView: View {
     @State private var draftNote = ""
     /// Raised by «Поделиться»; the anchor lowers it once the sheet is up.
     @State private var showShareSheet = false
+    /// Плита публикации по ссылке. Открыта — значит человек нажал «Поделиться»
+    /// у этой встречи; закрывается по ✕, по Escape и по клику мимо.
+    @State private var sharingMeetingID: String?
+    @State private var shareLifetime = ShareService.Lifetime.month.rawValue
+    @State private var shareBusy = false
+    /// То, что нельзя было увидеть заранее: ответ сервера, оборванная сеть.
+    @State private var shareFailure: String?
     /// Записываемая встреча, которую попросили удалить. Спрашиваем один раз —
     /// это удаление необратимо, в отличие от всех остальных.
     @State private var discardConfirmation: RecordingEntry?
@@ -114,6 +121,7 @@ struct MainView: View {
         // целиком, а не колонку. В макете она 360 pt по центру 913 (261:9361),
         // то есть стоит над рельсом, а не рядом с ним.
         .overlay { projectComposer }
+        .overlay { sharePlate }
         // Both columns start at the top of the window, not under the titlebar.
         // This has to be here rather than on the pane alone: the traffic lights
         // are AppKit's and sit where we put them regardless, so a rail that
@@ -321,6 +329,114 @@ struct MainView: View {
                 }
                 : nil
         )
+    }
+
+    /// Плита публикации по ссылке.
+    ///
+    /// Накрывает окно целиком, как и плита проекта: ссылка — решение про всю
+    /// встречу, а не про колонку, и разговор об этом не должен идти сбоку.
+    @ViewBuilder
+    private var sharePlate: some View {
+        if let id = sharingMeetingID,
+           let entry = state.recordingStore.recordings.first(where: { $0.id == id }) {
+            let document = summaryDocument(for: entry)
+            ZStack {
+                Tokens.Share.scrim
+                    .ignoresSafeArea()
+                    .onTapGesture { sharingMeetingID = nil }
+                SharePlate(
+                    mode: ShareService.shared.link(for: id).map { .published($0) } ?? .compose,
+                    lifetime: $shareLifetime,
+                    lifetimes: ShareService.Lifetime.allCases.map {
+                        .init(id: $0.rawValue, title: $0.title)
+                    },
+                    obstacle: SharePlateState.obstacle(
+                        hasSummary: !document.isEmpty,
+                        isOnline: NetworkWatch.shared.isOnline
+                    ),
+                    isBusy: shareBusy,
+                    failure: shareFailure,
+                    preview: sharePreview(for: entry, document: document),
+                    onPublish: { publishShare(of: entry, document: document) },
+                    onCopy: { copyShareLink(of: entry) },
+                    onOpen: { openShareLink(of: entry) },
+                    onUnpublish: { unpublishShare(of: entry) },
+                    onClose: { sharingMeetingID = nil }
+                )
+            }
+            .transition(.opacity)
+        }
+    }
+
+    /// Начало саммари — то же, что увидит открывший ссылку.
+    private func sharePreview(
+        for entry: RecordingEntry, document: SummaryDocument
+    ) -> SharedSummaryPreview.Model {
+        let people = MeetingMeta.count(
+            speakers: transcriptTurns(for: entry).map(\.speaker),
+            invited: entry.calendarMeta?.attendees ?? []
+        )
+        let meta = [MeetingMeta.when(entry.date), MeetingMeta.people(people)]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+        return .init(
+            title: entry.title,
+            meta: meta,
+            lines: document.blocks.filter { $0.kind != .heading }.prefix(3).map(\.text)
+        )
+    }
+
+    private func publishShare(of entry: RecordingEntry, document: SummaryDocument) {
+        guard !shareBusy else { return }
+        shareBusy = true
+        shareFailure = nil
+        let lifetime = ShareService.Lifetime(rawValue: shareLifetime) ?? .month
+        let people = MeetingMeta.count(
+            speakers: transcriptTurns(for: entry).map(\.speaker),
+            invited: entry.calendarMeta?.attendees ?? []
+        )
+        Task {
+            do {
+                _ = try await ShareService.shared.publish(
+                    meetingID: entry.id,
+                    title: entry.title,
+                    date: entry.date,
+                    peopleCount: people,
+                    document: document,
+                    lifetime: lifetime
+                )
+            } catch {
+                shareFailure = (error as? LocalizedError)?.errorDescription
+                    ?? error.localizedDescription
+            }
+            shareBusy = false
+        }
+    }
+
+    private func unpublishShare(of entry: RecordingEntry) {
+        guard !shareBusy else { return }
+        shareBusy = true
+        shareFailure = nil
+        Task {
+            do {
+                try await ShareService.shared.unpublish(meetingID: entry.id)
+            } catch {
+                shareFailure = (error as? LocalizedError)?.errorDescription
+                    ?? error.localizedDescription
+            }
+            shareBusy = false
+        }
+    }
+
+    private func copyShareLink(of entry: RecordingEntry) {
+        guard let url = ShareService.shared.link(for: entry.id) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
+    }
+
+    private func openShareLink(of entry: RecordingEntry) {
+        guard let url = ShareService.shared.link(for: entry.id) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     /// Плита создания и правки проекта.
@@ -886,7 +1002,11 @@ struct MainView: View {
                     ),
                     projects: projectSlot(for: entry)
                 ),
-                share: .init("Поделиться") { showShareSheet = true },
+                share: .init("Поделиться") {
+                    shareFailure = nil
+                    NetworkWatch.shared.start()
+                    sharingMeetingID = entry.id
+                },
                 mode: paneMode,
                 summary: document,
                 turns: turns,

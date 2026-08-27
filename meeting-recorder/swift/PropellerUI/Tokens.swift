@@ -84,6 +84,7 @@ public enum Tokens {
             public static let a50: Double = 0.50
             public static let a55: Double = 0.55
             public static let a58: Double = 0.58
+            public static let a60: Double = 0.60 // скрим модалки (298:26274)
             public static let a68: Double = 0.68
             public static let a70: Double = 0.70
             public static let a80: Double = 0.80 // glass wash
@@ -1361,6 +1362,105 @@ public enum Tokens {
                 size: 14, lineHeight: 22, weight: .regular,
                 weightTrim: Typography.railWeightTrim
             )
+        }
+    }
+
+    /// Модалка публикации по ссылке — Figma `summary/share-link`
+    /// (298:26607 — публикация, 298:26275 — опубликовано).
+    ///
+    /// Плита здесь та же, что у модалки создания проекта (`Projects.Modal`):
+    /// 360, скругление 20, стекло `rgba(16,16,16,0.96)`, рамка в 10 %. Числа
+    /// повторены, а не одолжены: «токены шеринга берут ширину у проектов» —
+    /// связь, которой в макете нет, и она уже однажды стоила страницы настроек,
+    /// одолжившей меру у саммари. Заводить общий блок под две модалки рано;
+    /// появится третья — вынести.
+    public enum Share {
+
+        // MARK: Плита
+
+        public static let width = Projects.Modal.width
+        public static let radius: CGFloat = 20
+        public static let padding = Space.s20
+        /// Между шапкой и телом.
+        public static let blockGap = Space.s20
+        /// Внутри тела: превью → строка срока → подвал.
+        public static let bodyGap = Space.s12
+        /// Между кнопкой и подписью под ней; в опубликованном — между кнопками.
+        public static let footerGap = Space.s8
+        public static let blur: CGFloat = 16
+        public static let scrimBlur: CGFloat = 6
+
+        // MARK: Части
+
+        /// Превью саммари — то, что увидит открывший ссылку.
+        public static let previewHeight: CGFloat = 200
+        public static let previewRadius = Radius.xs
+        /// Строка «Срок жизни ссылки»: содержимое 32 в поле 52 (298:26618).
+        public static let rowHeight = Space.s32
+        public static let rowVPadding = Space.s10
+        public static let rowGap = Space.s8
+        public static let rowLineGap = Space.s2
+        /// Кнопка и поле ссылки.
+        public static let controlHeight = Space.s32
+        public static let controlRadius = Radius.xs
+        public static let controlHPadding = Space.s10
+        public static let linkVPadding = Space.s4
+        public static let linkIconWidth = Space.s16
+        public static let iconSize: CGFloat = 13
+
+        /// Подпись под кнопкой — две строки по 14 (298:26631). Названа
+        /// числом, а не выведена из шрифта: SF на 12 pt рисует 15, и высота
+        /// плиты уехала бы на три точки. Плита от этого не прыгает, когда
+        /// вместо обещания встаёт причина в одну строку.
+        public static let footnoteHeight: CGFloat = 28
+
+        /// Затухание длинной ссылки — доля ширины, как в строке рельса.
+        /// В макете градиент начинается на 67,391 % и уходит в ноль к краю.
+        public static let linkFadeStart = 0.67391
+
+        // MARK: Краски
+
+        public static let plate = Projects.Modal.plate
+        public static let plateBorder = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                      light: Primitive.AlphaBlack.a10)
+        /// Скрим под плитой — 60 % с размытием 6.
+        public static let scrim = Tokens.dual(
+            dark: Primitive.AlphaBlack.nsColor(Primitive.AlphaBlack.a60),
+            light: Primitive.AlphaBlack.nsColor(Primitive.AlphaBlack.a60)
+        )
+        public static let title = Paint.Text.primary
+        public static let quiet = Sidebar.chromeIcon
+        public static let rowTitle = Paint.Text.primary
+        public static let linkFill = Primitive.ink(dark: Primitive.AlphaWhite.a7,
+                                                   light: Primitive.AlphaBlack.a7)
+        public static let linkText = Primitive.ink(dark: Primitive.AlphaWhite.a90,
+                                                   light: Primitive.AlphaBlack.a88)
+        /// Заливка главной кнопки — `#e5e5e5`, а не чистый белый: пилюля
+        /// «Поделиться» в панели белая, а кнопка в модалке на стекле чуть
+        /// глуше, и в макете это два разных значения.
+        public static let actionFill = Tokens.dual(
+            dark: NSColor(srgbRed: 229 / 255, green: 229 / 255, blue: 229 / 255, alpha: 1),
+            light: NSColor(srgbRed: 26 / 255, green: 26 / 255, blue: 26 / 255, alpha: 1)
+        )
+        public static let actionLabel = Paint.Text.primaryInverse
+        public static let actionDisabledFill = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                             light: Primitive.AlphaBlack.a10)
+        public static let actionDisabledLabel = Sidebar.chromeIcon
+
+        // MARK: Тип
+
+        public enum Typo {
+            /// 15 / 20 — заголовок модалки.
+            public static let title = Typography.Style(
+                size: 15, lineHeight: 20, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
+            /// 13 / 16 — название строки и текст ссылки.
+            public static let row = Pane.Typo.body.lineHeight(16)
+            /// 12 / 14 — вторая строка и подпись под кнопкой.
+            public static let quiet = Settings.Typo.subtitle
+            /// 12 / 16 — надписи кнопок.
+            public static let action = Pane.Typo.metaWide
         }
     }
 
