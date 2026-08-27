@@ -73,15 +73,16 @@ public struct SidebarNavItem: Identifiable, Equatable, Sendable {
     /// hovered" flag inside the view would let the gallery draw something the
     /// app cannot produce.
     public let isHovered: Bool
-    /// `State=Disabled` (307:6733) — the row is present and says so, but the
-    /// click does nothing. Enabled unless someone says otherwise: a row that has
-    /// no reason to be off should not have to declare it.
-    ///
-    /// **Никто не передаёт `false` с 2026-08-26**: «Проекты» стояли выключенными
-    /// ровно до того дня, когда за них взялись. Состояние в макете есть, поэтому
-    /// и здесь остаётся — но пока это возможность, а не то, что видно в
-    /// приложении, и говорить обратное нельзя.
-    public let isEnabled: Bool
+    // Выключенной строки здесь нет.
+    //
+    // Была — `isEnabled`, снятая с `State=Disabled` (307:6733). Её строили
+    // ровно для «Проектов», пока раздела не существовало; раздел открылся
+    // 2026-08-27, и с того дня ложным её не строил никто — ни презентер, ни
+    // галерея. Тип при этом продолжал обещать состояние, которого приложение
+    // не умеет, а на обещании висели четыре ветки в `SidebarNavRow`. Снята
+    // 2026-08-27 по решению владельца: вернуть восемь строк дешевле, чем
+    // помнить, что они врут. Вместе с ней уехал `Sidebar.navLabelDisabled` —
+    // читателей у него больше не было.
 
     /// Reserved `symbol` for the Propeller mark in the record row.
     public static let propellerMarkSymbol = "propeller.mark"
@@ -93,8 +94,7 @@ public struct SidebarNavItem: Identifiable, Equatable, Sendable {
         hint: Hint? = nil,
         quickAction: QuickAction? = nil,
         isSelected: Bool = false,
-        isHovered: Bool = false,
-        isEnabled: Bool = true
+        isHovered: Bool = false
     ) {
         self.id = id
         self.symbol = symbol
@@ -103,7 +103,6 @@ public struct SidebarNavItem: Identifiable, Equatable, Sendable {
         self.quickAction = quickAction
         self.isSelected = isSelected
         self.isHovered = isHovered
-        self.isEnabled = isEnabled
     }
 }
 
@@ -836,20 +835,13 @@ public struct SidebarNavRow: View {
 
     /// Плюс рисуется, только если он и объявлен строкой, и кому-то нужен.
     private var quickAction: SidebarNavItem.QuickAction? {
-        guard onQuickAction != nil, item.isEnabled else { return nil }
+        guard onQuickAction != nil else { return nil }
         return item.quickAction
     }
 
-    /// Выключенная строка не подсвечивается под курсором: подсветка — обещание
-    /// клика, а клика у неё нет.
-    private var isHovered: Bool { item.isEnabled && (hovering || item.isHovered) }
-
-    private var foreground: Color {
-        // One ink for every state but disabled (Figma 307:6735). The wash behind
-        // the row says which one is chosen; saying it a second time in the label
-        // made an unselected rail read as half switched off.
-        item.isEnabled ? Tokens.Sidebar.navLabel : Tokens.Sidebar.navLabelDisabled
-    }
+    /// Наведение — своё и навязанное галереей, ИЛИ-ом: у неподвижного кадра
+    /// курсора нет.
+    private var isHovered: Bool { hovering || item.isHovered }
 
     private var fill: Color {
         if item.isSelected { return Tokens.Sidebar.rowSelected }
@@ -865,7 +857,6 @@ public struct SidebarNavRow: View {
         ZStack(alignment: .trailing) {
             Button(action: action) { label }
                 .buttonStyle(.plain)
-                .disabled(!item.isEnabled)
 
             if let quickAction {
                 SidebarNavQuickActionButton(
@@ -916,7 +907,10 @@ public struct SidebarNavRow: View {
                            height: Tokens.Sidebar.navQuickActionPlate)
             }
         }
-        .foregroundStyle(foreground)
+        // One ink for every state (Figma 307:6735). The wash behind the row
+        // says which one is chosen; saying it a second time in the label made
+        // an unselected rail read as half switched off.
+        .foregroundStyle(Tokens.Sidebar.navLabel)
         .padding(.horizontal, Tokens.Sidebar.navRowHPadding)
         .frame(height: Tokens.Sidebar.navRowHeight)
         .frame(maxWidth: .infinity)

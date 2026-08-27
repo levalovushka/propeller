@@ -823,8 +823,6 @@ public enum Tokens {
         /// made an unselected rail look half switched off.
         public static let navLabel = Primitive.ink(dark: Primitive.AlphaWhite.a90,
                                                    light: Primitive.AlphaBlack.a88)
-        /// `State=Disabled` (307:6733) — label and glyph together.
-        public static let navLabelDisabled = Paint.Text.disabled
         /// Shortcut hint, white 40 %.
         public static let navShortcut = Primitive.ink(dark: Primitive.AlphaWhite.a40,
                                                       light: Primitive.AlphaBlack.a48)
