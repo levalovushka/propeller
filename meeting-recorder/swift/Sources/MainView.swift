@@ -321,14 +321,14 @@ struct MainView: View {
                 .map { (id: $0.id, name: $0.name) },
             tag: { state.tagMeeting(entry.id, with: $0) },
             untag: { state.untagMeeting(entry.id, from: $0) },
-            create: { state.composeProject(taggingMeeting: entry.id) },
+            create: { state.composeProject(tagging: [entry.id]) },
             // Предложение показывается только непомеченной встрече: у
             // помеченной уже спросили и ответили.
             suggestion: tagged.isEmpty
                 ? state.projectSuggestion(for: entry.id).map { found in
                     (
                         name: found.name,
-                        accept: { state.acceptSuggestion(found) },
+                        accept: { state.composeSuggestion(found) },
                         dismiss: { state.silenceSuggestion(found) }
                     )
                 }

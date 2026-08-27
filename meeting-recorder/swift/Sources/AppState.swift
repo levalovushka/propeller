@@ -53,8 +53,10 @@ struct ProjectDraft: Equatable {
     var editing: String?
     var name: String = ""
     var about: String = ""
-    /// Встреча, которую нужно пометить, как только проект появится.
-    var taggingMeeting: String?
+    /// Встречи, которые нужно пометить, как только проект появится. Одна —
+    /// плиту открыли из строки атрибутов; несколько — согласились с кандидатом,
+    /// и вся связка уходит в проект вместе с ним (`plan-projects.md` §3).
+    var taggingMeetings: [String] = []
 
     var isEditing: Bool { editing != nil }
 }
@@ -1279,15 +1281,21 @@ class AppState: ObservableObject {
         suggestionCache = nil
     }
 
-    /// Согласиться с предложением: завести проект и пометить им **все** встречи
-    /// связки. Ретро-привязка — не отдельный шаг, а тот же список, которым
-    /// предложение обосновано (§3).
-    @discardableResult
-    func acceptSuggestion(_ suggestion: ProjectCandidate.Suggestion) -> Project? {
-        guard let made = createProject(name: suggestion.name, about: "") else { return nil }
-        for id in suggestion.meetings { tagMeeting(id, with: made.id) }
-        suggestionCache = nil
-        return made
+    /// Согласиться с предложением: открыть плиту с уже набранным именем.
+    ///
+    /// Имя приезжает из названия встречи как есть, и последнее слово о нём —
+    /// человека (решение владельца 2026-08-27, `plan-projects.md` §3): «Дейлик
+    /// ВК Камуфляж» законное название встречи и плохое имя проекта, а угадывать,
+    /// где кончается имя и начинается повод, приложение не берётся. Один раз на
+    /// проект — приемлемая цена за то, что имя всегда чистое.
+    ///
+    /// Ретро-привязка не отдельный шаг: в плиту уходит весь список встреч,
+    /// которым предложение обосновано, и «Создать» помечает их все (§3).
+    func composeSuggestion(_ suggestion: ProjectCandidate.Suggestion) {
+        projectDraft = ProjectDraft(
+            editing: nil, name: suggestion.name, about: "",
+            taggingMeetings: suggestion.meetings
+        )
     }
 
     // MARK: - Метка проекта на встрече
@@ -1406,13 +1414,13 @@ class AppState: ObservableObject {
 
     /// Открыть плиту: пустую для нового проекта, заполненную для правки.
     ///
-    /// `taggingMeeting` — встреча, которая ждёт метки: плиту нередко открывают
-    /// прямо из её строки атрибутов, и тогда «Создать» обязано и завести
-    /// проект, и пометить им ту встречу, ради которой всё началось.
-    func composeProject(editing project: Project? = nil, taggingMeeting meetingID: String? = nil) {
+    /// `tagging` — встречи, которые ждут метки: плиту нередко открывают прямо
+    /// из строки атрибутов, и тогда «Создать» обязано и завести проект, и
+    /// пометить им то, ради чего всё началось.
+    func composeProject(editing project: Project? = nil, tagging meetings: [String] = []) {
         projectDraft = ProjectDraft(
             editing: project?.id, name: project?.name ?? "", about: project?.about ?? "",
-            taggingMeeting: meetingID
+            taggingMeetings: meetings
         )
     }
 
@@ -1427,7 +1435,7 @@ class AppState: ObservableObject {
             guard renameProject(id, name: draft.name, about: draft.about) else { return false }
         } else {
             guard let made = createProject(name: draft.name, about: draft.about) else { return false }
-            if let meeting = draft.taggingMeeting { tagMeeting(meeting, with: made.id) }
+            for meeting in draft.taggingMeetings { tagMeeting(meeting, with: made.id) }
         }
         projectDraft = nil
         return true
