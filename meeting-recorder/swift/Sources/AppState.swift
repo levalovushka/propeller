@@ -322,6 +322,7 @@ class AppState: ObservableObject {
 
         recordingStore.load()
         reloadProjects()
+        backfillCallRosters()
         // Interrupted recordings are repaired silently. The count used to be
         // announced — a modal, then a floating bar — and it told the user that *their*
         // recordings had been interrupted, about a crash that was ours, with
@@ -1131,6 +1132,79 @@ class AppState: ObservableObject {
         recordingStore.recordings
             .filter { ($0.projects ?? []).contains(projectID) }
             .sorted { $0.date > $1.date }
+    }
+
+    /// Досчёт состава по трассам, которые уже лежат на диске.
+    ///
+    /// Поле `callRoster` появилось 2026-08-27, а трассы окна пишутся с 20 августа:
+    /// у встреч между этими датами состав лежит рядом с записью и не прочитан
+    /// никем. Без досчёта список участников на всём накопленном архиве собирался
+    /// бы только из подписей ленты, где 34 % — плейсхолдеры.
+    ///
+    /// Разбор — несколько мегабайт JSON на встречу, поэтому не на главном
+    /// потоке и не при отрисовке. У кого трасс нет (нет права «Универсального
+    /// доступа», не Zoom — 96 % встреч по телеметрии), цикл упирается в
+    /// `fileExists` и кончается.
+    ///
+    /// Флага «уже досчитано» нет намеренно: у встречи с прочитанной трассой поле
+    /// непусто и она отсеивается сама, а встреча без трассы будет проверяться
+    /// каждый запуск — одним `fileExists`. Флаг однажды разошёлся бы с диском,
+    /// это дороже.
+    func backfillCallRosters() {
+        let pending = recordingStore.recordings.filter { $0.callRoster == nil }
+        guard !pending.isEmpty else { return }
+        let directory = URL(fileURLWithPath: Preferences.shared.recordingsPath)
+        Task {
+            // Разбор — в отдельной задаче и статикой: мегабайты JSON на
+            // главном потоке это кадры, а мутабельный аккумулятор, захваченный
+            // в конкурентный контекст, в Swift 6 уже ошибка. Запись — обратно
+            // здесь, где актор главный.
+            let found = await Task.detached(priority: .utility) {
+                AppState.callRosters(of: pending, in: directory)
+            }.value
+            guard !found.isEmpty else { return }
+            for row in found { recordingStore.setCallRoster(row.names, for: row.id) }
+            NSLog("[People] состав досчитан по трассам: %d встреч", found.count)
+        }
+    }
+
+    nonisolated private static func callRosters(
+        of entries: [RecordingEntry], in directory: URL
+    ) -> [(id: String, names: [String])] {
+        var found: [(id: String, names: [String])] = []
+        for entry in entries {
+            let audio = directory.appendingPathComponent(entry.filename)
+            let trace = audio.deletingPathExtension()
+                .appendingPathExtension("calltrace.jsonl")
+            guard FileManager.default.fileExists(atPath: trace.path) else { continue }
+            let names = TranscriptionService.callRoster(for: audio)
+            guard !names.isEmpty else { continue }
+            found.append((entry.id, names))
+        }
+        return found
+    }
+
+    /// Состав одной встречи рядами — то, что откроется под чипом «6 человек».
+    ///
+    /// Собирает `MeetingRoster`; здесь только сбор входа из полей встречи и
+    /// префов. `speakers` передаётся, а не считается: подписи ленты уже есть у
+    /// того, кто рисует панель, и **вместе с плейсхолдерами** —
+    /// `RecapDocument.participants` их выбрасывает, а ряду `Speaker 2` в списке
+    /// место есть.
+    func meetingRoster(for entry: RecordingEntry, speakers: [String]) -> [MeetingRoster.Row] {
+        MeetingRoster.rows(rosterInput(for: entry, speakers: speakers))
+    }
+
+    func rosterInput(for entry: RecordingEntry, speakers: [String]) -> MeetingRoster.Input {
+        MeetingRoster.Input(
+            call: entry.callRoster ?? [],
+            spoken: speakers,
+            invited: entry.calendarMeta?.attendees ?? [],
+            ownerName: Preferences.shared.ownerName,
+            ownerZoomName: Preferences.shared.ownerZoomName,
+            added: entry.peopleAdded ?? [],
+            removed: entry.peopleRemoved ?? []
+        )
     }
 
     /// Состав проекта. Считается по расшифровкам, а это регулярка по всему
@@ -2584,6 +2658,9 @@ class AppState: ObservableObject {
                 mergedSegmentsJSON: .some(encodePersistedSegments(result.mergedSegments)),
                 speakerAttribution: result.attribution
             )
+            // Состав из окна звонилки — сюда и только сюда: после встречи окна
+            // нет, а трассу забирает retention.
+            recordingStore.setCallRoster(result.callRoster, for: recordingID)
             if selectedRecordingID == recordingID {
                 transcript = result.transcript
                 pipelineError = nil

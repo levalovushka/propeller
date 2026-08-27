@@ -160,7 +160,16 @@ public enum MeetingRoster {
     }
 
     /// Состав встречи рядами.
+    ///
+    /// Пусто, когда о встрече не известно вообще ничего: ни плиток, ни подписей,
+    /// ни приглашённых, ни добавленных. Владелец — единственный ряд, который
+    /// берётся не из данных, и без этой отсечки он появлялся бы у встречи,
+    /// которая ещё расшифровывается, — чип «1 человек» на пустой панели.
     public static func rows(_ input: Input) -> [Row] {
+        guard !input.call.isEmpty || !input.spoken.isEmpty
+                || !input.invited.isEmpty || !input.added.isEmpty
+        else { return [] }
+
         var out: [Row] = []
         var index: [String: Int] = [:]
 

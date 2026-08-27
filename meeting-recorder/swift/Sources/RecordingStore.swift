@@ -277,6 +277,32 @@ class RecordingStore: ObservableObject {
         scheduleSave()
     }
 
+    /// Состав, снятый из окна звонилки за встречу.
+    ///
+    /// Отдельным методом по той же причине, что и `setLiveSegmentsJSON` ниже:
+    /// пишется ровно из одного места и ровно один раз за встречу, а `update`
+    /// принимает уже пятнадцать параметров. Пустой состав не пишется: «журнал
+    /// молчал» и «поля не было» читаются одинаково, и nil честнее пустого
+    /// массива, который выглядит как измеренный ноль.
+    func setCallRoster(_ names: [String], for id: String) {
+        guard !names.isEmpty, let idx = recordings.firstIndex(where: { $0.id == id })
+        else { return }
+        recordings[idx].callRoster = names
+        scheduleSave()
+    }
+
+    /// Правка состава человеком: кого он добавил и кого убрал.
+    ///
+    /// Оба списка пишутся вместе, потому что приезжают вместе — из одного
+    /// поповера, одним движением. Пустые ложатся как nil: «правок не было» — это
+    /// отсутствие записи, а не запись о пустоте.
+    func setPeopleEdits(added: [String], removed: [String], for id: String) {
+        guard let idx = recordings.firstIndex(where: { $0.id == id }) else { return }
+        recordings[idx].peopleAdded = added.isEmpty ? nil : added
+        recordings[idx].peopleRemoved = removed.isEmpty ? nil : removed
+        scheduleSave()
+    }
+
     /// Черновик живого текста, снятый в момент остановки.
     ///
     /// Отдельным методом, а не полем в `update`: тот принимает пятнадцать

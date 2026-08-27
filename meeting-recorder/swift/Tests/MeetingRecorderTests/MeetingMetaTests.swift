@@ -70,47 +70,42 @@ final class MeetingMetaTests: XCTestCase {
         XCTAssertNil(MeetingMeta.people(0))
     }
 
-    /// Календарь знает состав, диаризация знает только тех, кто говорил, — и
-    /// один человек приходит из них под разными именами. Складывать нельзя.
-    func testTheTwoRostersAreNeverAdded() {
-        let count = MeetingMeta.count(
-            speakers: ["Левон", "Собеседник"],
-            invited: ["Levon Lobanov", "Ilyas Aitkulov", "Полина"]
-        )
-        XCTAssertEqual(count, 3)
+    /// Число в чипе — длина списка, который под ним откроется. Одно правило на
+    /// оба, потому что чип нажимается: посчитанное отдельно от рядов разошлось
+    /// бы с ними в первый же день.
+    func testTheNumberIsTheLengthOfTheListThatOpens() {
+        let rows = MeetingRoster.rows(.init(
+            spoken: ["Левон", "Speaker 2", "Speaker 3"], ownerName: "Левон"
+        ))
+        XCTAssertEqual(MeetingMeta.count(rows), rows.count)
+        XCTAssertEqual(MeetingMeta.people(MeetingMeta.count(rows)), "3 человека")
     }
 
-    /// И не суммой, и не только календарём.
-    ///
-    /// `CalendarService` складывает имена как `attendees.compactMap { $0.name }`,
-    /// а у гостя без карточки в контактах имени нет — он выпадает молча. Взяв
-    /// календарь единственной правдой, мы отвечали бы «2 человека» на встрече,
-    /// где слышно шестерых.
-    func testTheCalendarDoesNotLowerWhatWasActuallyHeard() {
-        let count = MeetingMeta.count(
-            speakers: ["Левон", "Speaker 2", "Speaker 3", "Speaker 4", "Speaker 5", "Speaker 6"],
-            invited: ["Levon Lobanov", "Полина"]
-        )
-        XCTAssertEqual(count, 6)
-    }
-
-    func testWithoutACalendarTheSpeakersAreTheAnswer() {
-        XCTAssertEqual(MeetingMeta.count(speakers: ["Левон", "Speaker 2"], invited: []), 2)
+    /// Приглашённые в состав не входят. До 2026-08-27 здесь стоял максимум из
+    /// двух списков, и на живом архиве он завышал число на 50 встречах из 149.
+    func testInvitedDoNotSwellTheNumber() {
+        let rows = MeetingRoster.rows(.init(
+            spoken: ["Левон", "Собеседник"],
+            invited: ["Levon Lobanov", "Ilyas Aitkulov", "Полина"],
+            ownerName: "Левон"
+        ))
+        XCTAssertEqual(MeetingMeta.count(rows), 2)
     }
 
     /// Метка спикера повторяется в каждой реплике — считаются люди, а не реплики.
     func testTheSameSpeakerCountsOnce() {
-        let speakers = ["Левон", "Собеседник", "Левон", " левон ", "Собеседник"]
-        XCTAssertEqual(MeetingMeta.count(speakers: speakers, invited: []), 2)
+        let rows = MeetingRoster.rows(.init(
+            spoken: ["Левон", "Собеседник", "Левон", " левон ", "Собеседник"],
+            ownerName: "Левон"
+        ))
+        XCTAssertEqual(MeetingMeta.count(rows), 2)
     }
 
-    /// `Speaker 2` — живой человек, чьего имени мы не знаем. Спросили «сколько»,
-    /// а не «кто», поэтому он считается.
-    func testAnUnnamedSpeakerIsStillAPerson() {
-        XCTAssertEqual(MeetingMeta.count(speakers: ["Speaker 1", "Speaker 2"], invited: []), 2)
-    }
-
-    func testAnEmptyMeetingCountsNobody() {
-        XCTAssertEqual(MeetingMeta.count(speakers: ["", "  "], invited: []), 0)
+    /// О встрече не известно ничего — чипа нет вовсе, а не «1 человек».
+    /// Владелец единственный ряд не из данных, и на нерасшифрованной встрече он
+    /// обещал бы состав там, где его ещё не считали.
+    func testAMeetingNothingIsKnownAboutHasNoChip() {
+        XCTAssertEqual(MeetingMeta.count(MeetingRoster.rows(.init(ownerName: "Левон"))), 0)
+        XCTAssertNil(MeetingMeta.people(0))
     }
 }

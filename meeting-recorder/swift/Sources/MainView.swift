@@ -378,8 +378,7 @@ struct MainView: View {
         for entry: RecordingEntry, document: SummaryDocument
     ) -> SharedSummaryPreview.Model {
         let people = MeetingMeta.count(
-            speakers: transcriptTurns(for: entry).map(\.speaker),
-            invited: entry.calendarMeta?.attendees ?? []
+            state.meetingRoster(for: entry, speakers: transcriptTurns(for: entry).map(\.speaker))
         )
         let meta = [MeetingMeta.when(entry.date), MeetingMeta.people(people)]
             .compactMap { $0 }
@@ -397,8 +396,7 @@ struct MainView: View {
         shareFailure = nil
         let lifetime = ShareService.Lifetime(rawValue: shareLifetime) ?? .month
         let people = MeetingMeta.count(
-            speakers: transcriptTurns(for: entry).map(\.speaker),
-            invited: entry.calendarMeta?.attendees ?? []
+            state.meetingRoster(for: entry, speakers: transcriptTurns(for: entry).map(\.speaker))
         )
         Task {
             do {
@@ -1014,8 +1012,7 @@ struct MainView: View {
                 meta: .init(
                     date: entry.date,
                     people: MeetingMeta.count(
-                        speakers: turns.map(\.speaker),
-                        invited: entry.calendarMeta?.attendees ?? []
+                        state.meetingRoster(for: entry, speakers: turns.map(\.speaker))
                     ),
                     projects: projectSlot(for: entry)
                 ),

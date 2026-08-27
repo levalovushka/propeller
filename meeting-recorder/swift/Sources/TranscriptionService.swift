@@ -14,6 +14,10 @@ struct MeetingTranscriptionResult {
     /// How those names were arrived at — clustered, or the stems alone.
     /// Persisted with the meeting so its card can disclose the difference.
     var attribution: SpeakerAttribution = .diarized
+    /// Кого показывала звонилка (`CallWindowJournal.roster`) — состав встречи,
+    /// а не подписи реплик. Едет отсюда потому, что трасса читается здесь и
+    /// после встречи её уже не будет; пусто у всего, что без трассы.
+    var callRoster: [String] = []
 }
 
 /// Intermediate result after the ASR pass but before diarization.
@@ -470,7 +474,14 @@ class TranscriptionService {
         return MeetingTranscriptionResult(
             transcript: transcript,
             mergedSegments: persisted,
-            attribution: attribution
+            attribution: attribution,
+            // Трасса читается и на этом пути, хотя журнал здесь не применяется:
+            // «кого показывала звонилка» и «кто говорил» — разные вопросы, и на
+            // микрофонном захвате первый по-прежнему имеет ответ. Иначе состав
+            // был бы у встречи с дорожками и пропадал у соседней без них.
+            callRoster: CallWindowJournal.roster(
+                from: Self.loadCallPolls(for: audioURL)
+            ).map(\.name)
         )
     }
 
@@ -593,7 +604,8 @@ class TranscriptionService {
         return MeetingTranscriptionResult(
             transcript: TranscriptionService.formatTranscriptText(from: persisted),
             mergedSegments: persisted,
-            attribution: attribution
+            attribution: attribution,
+            callRoster: CallWindowJournal.roster(from: callPolls).map(\.name)
         )
     }
 
@@ -603,11 +615,20 @@ class TranscriptionService {
     /// поэтому машинка отвечает сразу на часах транскрипта, без подгонки
     /// сдвига. Нет файла — нет журнала, и это законное состояние: запись шла
     /// без разрешения, не в Zoom, или наблюдатель не застал плиток.
-    private static func loadCallPolls(for audioURL: URL) -> [CallWindowJournal.Poll] {
+    static func loadCallPolls(for audioURL: URL) -> [CallWindowJournal.Poll] {
         let traceURL = audioURL.deletingPathExtension()
             .appendingPathExtension("calltrace.jsonl")
         guard let data = try? Data(contentsOf: traceURL) else { return [] }
         return CallWindowJournal.polls(fromJSONL: data)
+    }
+
+    /// Состав из уже лежащей трассы — для встреч, расшифрованных до того, как
+    /// состав начали сохранять (`AppState.backfillCallRosters`).
+    ///
+    /// Не приватная и не в `AppState`, потому что «где лежит трасса» уже знает
+    /// это место, и второй ответ на тот же вопрос разошёлся бы с первым.
+    static func callRoster(for audioURL: URL) -> [String] {
+        CallWindowJournal.roster(from: loadCallPolls(for: audioURL)).map(\.name)
     }
 
     private static func hasUsableStems(for finalAudioURL: URL) -> Bool {
