@@ -148,6 +148,16 @@ struct MainView: View {
             state.isWindowOpen = false
             NSApp.setActivationPolicy(.accessory)
         }
+        // Уход из встречи в раздел — тот же случай, что и переход к другой
+        // встрече: отложенная запись принадлежит панели, которой на экране уже
+        // нет, и через 0,8 с она легла бы поверх правки, сделанной в разделе.
+        .onChange(of: state.paneRoute) { _, _ in flushSummarySave() }
+        // Файл конспекта правят и мимо редактора — галочкой на экране проекта.
+        // Своё разобранное саммари панель после этого обязана выбросить.
+        .onChange(of: state.recapRevision) { _, _ in
+            summaryOf = nil
+            loadSummary()
+        }
         .onChange(of: state.selectedRecordingID) { _, newID in
             // Before the switch, not after: the pending write belongs to the
             // meeting that was open, and a moment later there is no way to
@@ -279,6 +289,27 @@ struct MainView: View {
         #else
         return .system
         #endif
+    }
+
+    /// Проекты встречи для строки атрибутов — Figma 312:11129, `plan-projects.md` §4.1.
+    ///
+    /// Список проектов читается на старте (`AppState.bootstrap`) именно ради
+    /// этого места: без него чип не знал бы своего имени, а «плюс» — что
+    /// предложить.
+    private func projectSlot(for entry: RecordingEntry) -> MeetingPane.Meta.Projects {
+        let tagged = entry.projects ?? []
+        let known = state.projects
+        return .init(
+            tagged: tagged.compactMap { id in
+                known.first { $0.id == id }.map { (id: $0.id, name: $0.name) }
+            },
+            available: known
+                .filter { !$0.archived && !tagged.contains($0.id) }
+                .map { (id: $0.id, name: $0.name) },
+            tag: { state.tagMeeting(entry.id, with: $0) },
+            untag: { state.untagMeeting(entry.id, from: $0) },
+            create: { state.composeProject(taggingMeeting: entry.id) }
+        )
     }
 
     /// Плита создания и правки проекта.
@@ -841,7 +872,8 @@ struct MainView: View {
                     people: MeetingMeta.count(
                         speakers: turns.map(\.speaker),
                         invited: entry.calendarMeta?.attendees ?? []
-                    )
+                    ),
+                    projects: projectSlot(for: entry)
                 ),
                 share: .init("Поделиться") { showShareSheet = true },
                 mode: paneMode,

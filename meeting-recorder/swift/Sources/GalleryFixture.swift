@@ -187,6 +187,12 @@ enum GalleryFixture {
             state.galleryPoseSetupPrompt(prompt)
             return
         }
+        if id == "meeting-projects" {
+            state.recordingStore.recordings = tagged(library)
+            state.projects = projects
+            state.selectedRecordingID = contentID
+            return
+        }
         if let tab = ProjectTab.allCases.first(where: { id == "project-\($0.rawValue)" }) {
             state.recordingStore.recordings = tagged(library)
             state.selectedRecordingID = state.recordingStore.recordings.first?.id

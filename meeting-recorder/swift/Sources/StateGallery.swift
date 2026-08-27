@@ -58,7 +58,8 @@ struct StateGallery: View {
                 section("Вкладки карточки", UIStateCatalog.detailTabs.map { ($0.id, $0.label, $0.id) })
                 section("Библиотека", UIStateCatalog.library.map { ($0.id, $0.label, $0.id) })
                 section("Проекты",
-                        (UIStateCatalog.projects + UIStateCatalog.projectTabs)
+                        (UIStateCatalog.projects + UIStateCatalog.projectTabs
+                            + UIStateCatalog.meetingProjects)
                             .map { ($0.id, $0.label, $0.id) })
             }
             .navigationSplitViewColumnWidth(min: 280, ideal: 320)
@@ -158,7 +159,7 @@ enum GalleryScreenFactory {
         } else if UIStateCatalog.meetingStates.contains(where: { $0.id == id })
                     || id.hasPrefix("tab-") || id.hasPrefix("lib-")
                     || id.hasPrefix("rec-") || id.hasPrefix("rail-prompt-")
-                    || id.hasPrefix("project") {
+                    || id.hasPrefix("project") || id == "meeting-projects" {
             // Pipeline states are rows in the list; tab states are the detail
             // inside the same chrome. Both are `MainView` deciding what to show
             // from the posed state — photographing `RecordingDetailView` on its

@@ -53,6 +53,8 @@ struct ProjectDraft: Equatable {
     var editing: String?
     var name: String = ""
     var about: String = ""
+    /// Встреча, которую нужно пометить, как только проект появится.
+    var taggingMeeting: String?
 
     var isEditing: Bool { editing != nil }
 }
@@ -179,8 +181,11 @@ class AppState: ObservableObject {
     /// Живёт здесь, а не во вью, потому что открыть настройки просят снаружи
     /// окна — из меню-бара и с ⌘, (`SettingsOpener`).
     @Published var paneRoute: PaneRoute = .meeting
-    /// Проекты, прочитанные с диска. Пусто до первого захода в раздел: список
-    /// нужен только ему, и читать `projects.json` на старте не за чем.
+    /// Проекты, прочитанные с диска.
+    ///
+    /// Читаются на старте, а не при заходе в раздел: метка проекта стоит в
+    /// строке атрибутов каждой встречи, и без списка чип не знал бы своего
+    /// имени, а «плюс» — что предложить. Файл на несколько сотен байт.
     @Published var projects: [Project] = []
     /// Открытая плита создания или правки проекта.
     ///
@@ -192,6 +197,14 @@ class AppState: ObservableObject {
     private var rosterCache: (key: String, people: [ProjectRoster.Person])?
     /// Последние разобранные атомы — см. `atoms(of:section:)`.
     private var atomCache: (key: String, groups: [AtomGroup])?
+    /// Счётчик правок файлов конспектов **мимо редактора саммари**.
+    ///
+    /// Панель встречи держит разобранный документ в своём `@State` и второй раз
+    /// файл не читает — иначе она перечитывала бы его на каждый удар пульса
+    /// пайплайна. Галочка на экране проекта правит тот же файл со стороны, и без
+    /// этого счётчика панель показывала бы прежний текст, а её следующая правка
+    /// записала бы его поверх моей.
+    @Published private(set) var recapRevision: Int = 0
 
     /// Recording was asked for and the microphone is not ours to open.
     ///
@@ -304,6 +317,7 @@ class AppState: ObservableObject {
         // covers launches that read the pref before bootstrap runs)
 
         recordingStore.load()
+        reloadProjects()
         // Interrupted recordings are repaired silently. The count used to be
         // announced — a modal, then a floating bar — and it told the user that *their*
         // recordings had been interrupted, about a crash that was ours, with
@@ -1215,9 +1229,52 @@ class AppState: ObservableObject {
             ?? RecapItemEdit.removing(target, from: text)
         guard let edited, saveSummary(edited, for: entry) else { return false }
         atomCache = nil
-        // Открытая панель этой же встречи читает файл сама и о правке не знает.
-        if selectedRecordingID == entry.id { objectWillChange.send() }
+        recapRevision &+= 1
         return true
+    }
+
+    // MARK: - Метка проекта на встрече
+
+    /// Пометить встречу проектом. Повторная метка тем же проектом — ничего.
+    func tagMeeting(_ id: String, with projectID: String) {
+        guard let entry = recordingStore.recording(for: id) else { return }
+        var ids = entry.projects ?? []
+        guard !ids.contains(projectID) else { return }
+        ids.append(projectID)
+        applyProjects(ids, to: entry)
+    }
+
+    /// Снять метку. Встречу и её содержимое это не трогает.
+    func untagMeeting(_ id: String, from projectID: String) {
+        guard let entry = recordingStore.recording(for: id) else { return }
+        let ids = (entry.projects ?? []).filter { $0 != projectID }
+        guard ids.count != (entry.projects ?? []).count else { return }
+        applyProjects(ids, to: entry)
+    }
+
+    /// Записать метки в индекс **и в документ встречи**.
+    ///
+    /// Вторая запись не дублирование: `RecordingEntry` — синтезированный
+    /// `Codable`, и старая сборка молча роняет незнакомое поле при своей записи
+    /// индекса. Конспект вернёт следующий прогон, тег, поставленный руками, —
+    /// никто (`Project.plainHeaderLines`).
+    private func applyProjects(_ ids: [String], to entry: RecordingEntry) {
+        recordingStore.update(id: entry.id, projects: .some(ids.isEmpty ? nil : ids))
+        atomCache = nil
+        rosterCache = nil
+        guard let fresh = recordingStore.recording(for: entry.id),
+              let text = fresh.transcript, !text.isEmpty
+        else { return }
+        _ = try? MarkdownWriter.save(
+            title: fresh.title,
+            transcript: text,
+            recordingID: fresh.id,
+            duration: fresh.duration,
+            speakers: MeetingMarkdown.extractSpeakers(from: text),
+            notes: fresh.notes,
+            calendarMeta: fresh.calendarMeta,
+            projectNames: recordingStore.projectNames(for: fresh)
+        )
     }
 
     /// Завести проект. Возвращает его — вызывающему обычно нужно тут же
@@ -1269,9 +1326,14 @@ class AppState: ObservableObject {
     }
 
     /// Открыть плиту: пустую для нового проекта, заполненную для правки.
-    func composeProject(editing project: Project? = nil) {
+    ///
+    /// `taggingMeeting` — встреча, которая ждёт метки: плиту нередко открывают
+    /// прямо из её строки атрибутов, и тогда «Создать» обязано и завести
+    /// проект, и пометить им ту встречу, ради которой всё началось.
+    func composeProject(editing project: Project? = nil, taggingMeeting meetingID: String? = nil) {
         projectDraft = ProjectDraft(
-            editing: project?.id, name: project?.name ?? "", about: project?.about ?? ""
+            editing: project?.id, name: project?.name ?? "", about: project?.about ?? "",
+            taggingMeeting: meetingID
         )
     }
 
@@ -1285,7 +1347,8 @@ class AppState: ObservableObject {
             // сказать «сохранено» про правку, которой не случилось.
             guard renameProject(id, name: draft.name, about: draft.about) else { return false }
         } else {
-            guard createProject(name: draft.name, about: draft.about) != nil else { return false }
+            guard let made = createProject(name: draft.name, about: draft.about) else { return false }
+            if let meeting = draft.taggingMeeting { tagMeeting(meeting, with: made.id) }
         }
         projectDraft = nil
         return true

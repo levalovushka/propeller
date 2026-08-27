@@ -228,6 +228,14 @@ public enum UIStateCatalog {
         }
     }
 
+    /// Строка атрибутов встречи с меткой проекта — Figma 312:11129.
+    ///
+    /// Отдельным кадром, а не вариантом `tab-summary-content`: метка появляется
+    /// в шапке, и вопрос кадра — не спорит ли она с датой и составом рядом.
+    public static let meetingProjects: [Screen] = [
+        .init(id: "meeting-projects", label: "Встреча — метка проекта в шапке"),
+    ]
+
     /// Everything the gallery has to be able to show, in shooting order.
     public static var allScreenIDs: [String] {
         meetingStates.map(\.id)

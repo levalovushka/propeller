@@ -273,14 +273,52 @@ struct MeetingMetaRow: View {
             if let people = MeetingMeta.people(meta.people) {
                 MetaChip(symbol: "person.2.fill", text: people)
             }
+            if let projects = meta.projects {
+                ForEach(projects.tagged, id: \.id) { project in
+                    MetaMenuChip(symbol: "folder.fill", text: project.name) {
+                        Button("Снять метку") { projects.untag(project.id) }
+                    }
+                }
+                // Тихий «плюс» вместо пустого слота: слот осуждает, а «плюс»
+                // просто стоит рядом. Компромисс назван в §4.1 как дефолт.
+                MetaMenuChip(symbol: "plus", text: nil) {
+                    ForEach(projects.available, id: \.id) { project in
+                        Button(project.name) { projects.tag(project.id) }
+                    }
+                    if !projects.available.isEmpty { Divider() }
+                    Button("Новый проект…") { projects.create() }
+                }
+                .accessibilityLabel("Добавить проект")
+            }
         }
         .frame(height: Tokens.Pane.Meta.height)
     }
 }
 
+/// Чип, по которому есть что нажать. Форма — `MetaChip`, поведение — меню:
+/// «щёлкнуть по факту» из 312:11129 наконец что-то значит.
+private struct MetaMenuChip<Content: View>: View {
+    let symbol: String
+    let text: String?
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        Menu {
+            content()
+        } label: {
+            MetaChip(symbol: symbol, text: text)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+}
+
 private struct MetaChip: View {
     let symbol: String
-    let text: String
+    /// `nil` — чип из одного значка: «плюс», которым добавляют проект.
+    let text: String?
 
     @State private var hovering = false
 
@@ -289,9 +327,11 @@ private struct MetaChip: View {
             Image(systemName: symbol)
                 .font(.system(size: Tokens.Pane.Meta.iconSize, weight: .regular))
                 .foregroundStyle(Tokens.Pane.Meta.quiet)
-            Text(text)
-                .typo(Tokens.Pane.Typo.metaWide)
-                .foregroundStyle(Tokens.Pane.Meta.label)
+            if let text {
+                Text(text)
+                    .typo(Tokens.Pane.Typo.metaWide)
+                    .foregroundStyle(Tokens.Pane.Meta.label)
+            }
         }
         .frame(height: Tokens.Pane.Meta.height)
         // Поле не у содержимого, а у плиты: иконка даты обязана встать ровно
@@ -827,9 +867,42 @@ public struct Meta {
     public let date: Date?
     /// Сколько человек было. 0 — чипа нет.
     public let people: Int
-    public init(date: Date?, people: Int) {
+    /// К каким проектам встреча относится и что с этим можно сделать.
+    public let projects: Projects?
+    public init(date: Date?, people: Int, projects: Projects? = nil) {
         self.date = date
         self.people = people
+        self.projects = projects
+    }
+
+    /// Проекты встречи: чем помечена и чем можно пометить.
+    ///
+    /// Тег — атрибут встречи, родственный названию (`plan-projects.md` §4.1), и
+    /// живёт он в той же строке, что дата и состав. Встреча без проекта — норма:
+    /// интерфейс не осуждает и ничего не предлагает, кроме тихого «плюса».
+    public struct Projects {
+        /// Помеченные — `(id, имя)`, в порядке метки.
+        public let tagged: [(id: String, name: String)]
+        /// Чем ещё можно пометить — то, чего на встрече ещё нет.
+        public let available: [(id: String, name: String)]
+        public let tag: (String) -> Void
+        public let untag: (String) -> Void
+        /// Завести проект и сразу пометить им эту встречу.
+        public let create: () -> Void
+
+        public init(
+            tagged: [(id: String, name: String)],
+            available: [(id: String, name: String)],
+            tag: @escaping (String) -> Void,
+            untag: @escaping (String) -> Void,
+            create: @escaping () -> Void
+        ) {
+            self.tagged = tagged
+            self.available = available
+            self.tag = tag
+            self.untag = untag
+            self.create = create
+        }
     }
 }
 
