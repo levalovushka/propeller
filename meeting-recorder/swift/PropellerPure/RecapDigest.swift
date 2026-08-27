@@ -90,8 +90,15 @@ public struct RecapDigest: Equatable, Sendable {
             sections.append(Section(title: title, items: items, prose: prose))
         }
 
-        for raw in markdown.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = String(raw).trimmingCharacters(in: .whitespaces)
+        // `components`, а не `split(separator: "\n")`. В Swift «\r\n» — **один**
+        // Character, и он не равен «\n»: файл с виндовыми окончаниями строк не
+        // резался вовсе, весь конспект приезжал одной строкой, и секций в нём не
+        // находилось ни одной. Замерено, а не выведено: `split` на таком тексте
+        // отдаёт массив из одного элемента.
+        for raw in markdown.components(separatedBy: "\n") {
+            // Возврат каретки снимается здесь: пробелом он не считается, и
+            // заголовок иначе читается как «Решения\r».
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
 
             if let heading = headingTitle(line) {
                 flushSection()

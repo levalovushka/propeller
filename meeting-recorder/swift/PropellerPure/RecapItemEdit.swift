@@ -19,11 +19,16 @@ import Foundation
 /// same rule for continuation lines — and rewrites only the lines that item
 /// occupies. Every other byte comes back unchanged.
 ///
-/// A document with Windows line endings is not edited at all, and that is the
-/// right answer rather than an oversight: `RecapDigest`, which this module is
-/// bound to agree with, does not strip the carriage return, so a heading there
-/// reads as `Решения\r` and `section(named:)` finds nothing. If the caller could
-/// not have got an item out, there is no item to put back.
+/// A document with Windows line endings is read like any other, and the endings
+/// it comes with are the endings it goes back with — the trailing `\r` rides
+/// along on the line it belongs to.
+///
+/// This used to be a refusal, and the reason written down for it was wrong. The
+/// story was «`RecapDigest` does not strip the carriage return, so the heading
+/// reads as `Решения\r`». The truth is a layer below: in Swift `\r\n` is a
+/// single `Character` and it is not `\n`, so `split(separator: "\n")` did not
+/// split such a file **at all** — the whole document arrived as one line. Both
+/// modules now cut with `components(separatedBy:)` and trim the carriage return.
 ///
 /// Nothing here decides *what* an item means. The checkbox and the owner chip
 /// are markup inside the item's text (`plan-projects.md` §4.1), and parsing
@@ -126,9 +131,13 @@ public enum RecapItemEdit {
             ordinal += 1
         }
 
-        let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false)
+        // Режется и читается ровно как в `RecapDigest` — `components`, потому
+        // что «\r\n» это один Character и `split(separator: "\n")` его не видит,
+        // и с тем же снятием возврата каретки. Разойдись они здесь, и в
+        // CRLF-документе один нашёл бы пункт, которого второй не видит.
+        let lines = markdown.components(separatedBy: "\n")
         for (number, raw) in lines.enumerated() {
-            let line = String(raw).trimmingCharacters(in: .whitespaces)
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
 
             if let heading = RecapDigest.headingTitle(line) {
                 flushSection()
@@ -198,7 +207,7 @@ public enum RecapItemEdit {
         let trimmed = body.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return nil }
 
-        var lines = markdown.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var lines = markdown.components(separatedBy: "\n")
         // Возврат каретки — часть строки, а не разделитель: файл, пришедший с
         // CRLF, не должен получить одну строку из двадцати с другим окончанием.
         let carriage = lines[found.lines.upperBound].hasSuffix("\r") ? "\r" : ""
@@ -224,7 +233,7 @@ public enum RecapItemEdit {
         guard !trimmed.isEmpty, !body.contains("\n") else { return nil }
 
         let wanted = RecapDigest.foldTitle(section)
-        var lines = markdown.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var lines = markdown.components(separatedBy: "\n")
 
         // Первая секция с таким именем — та же, на которую смотрит
         // `RecapDigest.section(named:)`; порядковый номер берётся один раз.
@@ -237,7 +246,7 @@ public enum RecapItemEdit {
 
         // Секция есть, но пуста — встаём сразу под её заголовок.
         guard let heading = lines.firstIndex(where: {
-            RecapDigest.headingTitle($0.trimmingCharacters(in: .whitespaces))
+            RecapDigest.headingTitle($0.trimmingCharacters(in: .whitespacesAndNewlines))
                 .map { RecapDigest.foldTitle($0) == wanted } ?? false
         }) else { return nil }
         lines.insert("- " + trimmed, at: heading + 1)
@@ -248,7 +257,7 @@ public enum RecapItemEdit {
     /// line that happened to follow it belonged to the document, not to it.
     public static func removing(_ target: Target, from markdown: String) -> String? {
         guard let found = locate(target, in: markdown), found.contiguous else { return nil }
-        var lines = markdown.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var lines = markdown.components(separatedBy: "\n")
         lines.removeSubrange(found.lines)
         return lines.joined(separator: "\n")
     }
