@@ -57,6 +57,11 @@ struct MainView: View {
     @State private var sharingMeetingID: String?
     @State private var shareLifetime = ShareService.Lifetime.month.rawValue
     @State private var shareBusy = false
+    /// Список публикаций. Подписка настоящая, а не декоративная: плита читает
+    /// `link(for:)`, и без неё вид зависел бы от того, что `shareBusy`
+    /// **случайно** дёргается в той же задаче. Работало — и перестало бы
+    /// работать молча от любой правки, которая эту случайность уберёт.
+    @ObservedObject private var shares = ShareService.shared
     /// То, что нельзя было увидеть заранее: ответ сервера, оборванная сеть.
     @State private var shareFailure: String?
     /// Записываемая встреча, которую попросили удалить. Спрашиваем один раз —
@@ -345,7 +350,7 @@ struct MainView: View {
                     .ignoresSafeArea()
                     .onTapGesture { sharingMeetingID = nil }
                 SharePlate(
-                    mode: ShareService.shared.link(for: id).map { .published($0) } ?? .compose,
+                    mode: shares.link(for: id).map { .published($0) } ?? .compose,
                     lifetime: $shareLifetime,
                     lifetimes: ShareService.Lifetime.allCases.map {
                         .init(id: $0.rawValue, title: $0.title)
@@ -429,13 +434,13 @@ struct MainView: View {
     }
 
     private func copyShareLink(of entry: RecordingEntry) {
-        guard let url = ShareService.shared.link(for: entry.id) else { return }
+        guard let url = shares.link(for: entry.id) else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url.absoluteString, forType: .string)
     }
 
     private func openShareLink(of entry: RecordingEntry) {
-        guard let url = ShareService.shared.link(for: entry.id) else { return }
+        guard let url = shares.link(for: entry.id) else { return }
         NSWorkspace.shared.open(url)
     }
 
