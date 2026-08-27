@@ -342,4 +342,78 @@ final class RecapLintTests: XCTestCase {
         XCTAssertEqual(found.filter { $0.kind == .assigneeOutsideRoster }.map(\.text),
                        ["Оля Петрова"])
     }
+
+    // MARK: - Решение, написанное не как решение
+
+    /// 51 пункт из 311 в живом архиве. Разбор достаёт из такого решения
+    /// ответственного, которого у решения быть не может.
+    func testРешениеВРазметкеПоручения() {
+        let recap = """
+        ## Решения
+        - **Ирина** — убрать слайд про Discovery из презентации.
+        - Отказались от диплинков: возврат в приложение по ним ломается.
+        """
+        XCTAssertEqual(kinds(recap).filter { $0 == .decisionAsTask }.count, 1)
+    }
+
+    /// Самая частая форма решения в архиве — 158 пунктов из 311: жирным
+    /// выделена рубрика, а не то, о чём договорились.
+    func testЖирнаяТемаЯрлыкВРешении() {
+        let recap = """
+        ## Решения
+        - **Сроки:** ориентир — середина сентября.
+        - Каталог остаётся единым до конца года.
+        """
+        let found = RecapLint.findings(recap: recap, transcript: "")
+        XCTAssertEqual(found.filter { $0.kind == .decisionTopicLabel }.map(\.text), ["Сроки"])
+        // Одна ошибка — одна находка: тема-ярлык не приезжает ещё и поручением.
+        XCTAssertTrue(found.filter { $0.kind == .decisionAsTask }.isEmpty)
+    }
+
+    /// Чекбокса у решения не бывает — это тот же дефект вида.
+    func testЧекбоксВРешенияхЭтоДефект() {
+        let recap = "## Решения\n- [ ] Отказались от диплинков.\n"
+        XCTAssertEqual(kinds(recap).filter { $0 == .decisionAsTask }.count, 1)
+    }
+
+    /// Обе формы, которые владелец разрешил (2026-08-27): прошедшее
+    /// коллективное и констатация установленного. Находок быть не должно.
+    func testРазрешённыеФормыРешенияЧисты() {
+        let recap = """
+        ## Решения
+        - Отказались от диплинков: возврат в приложение по ним ломается.
+        - Каталог остаётся единым до конца года.
+        - Левон утвердил новую структуру главной страницы.
+        """
+        let found = RecapLint.findings(recap: recap, transcript: "")
+        XCTAssertTrue(found.filter { $0.kind == .decisionAsTask }.isEmpty)
+        XCTAssertTrue(found.filter { $0.kind == .decisionTopicLabel }.isEmpty)
+    }
+
+    /// Разметка задачи в «Задачах» — канон, а не находка.
+    func testВЗадачахТаЖеРазметкаЧиста() {
+        let recap = "## Задачи\n- [ ] **Ирина** — убрать слайд про Discovery.\n"
+        let found = RecapLint.findings(recap: recap, transcript: "")
+        XCTAssertTrue(found.filter { $0.kind == .decisionAsTask }.isEmpty)
+    }
+
+    // MARK: - Канон разметки не выключает вырезку
+
+    /// Промпт просит `- [ ] **Кто** — …` с 2026-08-27, и до этой правки
+    /// `ghostOwnerHead` не знал о чекбоксе: вырезка выдуманного исполнителя
+    /// молча перестала работать ровно на той разметке, которую просит промпт.
+    func testВыдуманныйИсполнительВырезаетсяИЗПодЧекбокса() {
+        XCTAssertEqual(
+            grounded("## Задачи\n- [ ] **Система** — подготовить документы.\n", transcript: ""),
+            "## Задачи\n- [ ] Подготовить документы.\n"
+        )
+    }
+
+    func testИмяИзСкобкиВыживаетПодЧекбоксом() {
+        XCTAssertEqual(
+            grounded("## Задачи\n- [x] **Система аналитики (Левон)** — посчитать смету.\n",
+                     transcript: ""),
+            "## Задачи\n- [x] **Левон** — посчитать смету.\n"
+        )
+    }
 }

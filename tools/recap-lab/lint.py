@@ -88,6 +88,22 @@ COMPUTED_DEADLINE = re.compile(
     r"срок:?\s*~?\s*\d+\s*(?:дн|недел|месяц)\w*|в течение\s+\d+\s*(?:дн|недел|месяц)\w*"
 )
 
+# Решение, записанное не как решение. Обе формы — самые частые в архиве
+# (замер 2026-08-27, 73 конспекта, 311 решений): тема-ярлык 158, разметка
+# поручения 51, собственно решение 27. Зеркало RecapLint.decisionForm в Swift.
+DECISION_AS_TASK = re.compile(r"^\s*-\s+(?:\[[ xX]\]\s*)?\*\*([^*\n]{1,60})\*\*\s*[—–]\s", re.M)
+DECISION_CHECKBOX = re.compile(r"^\s*-\s+(\[[ xX]\])(?!\s*\*\*[^*\n]{1,60}\*\*\s*[—–])", re.M)
+DECISION_TOPIC = [
+    re.compile(r"^\s*-\s+\*\*([^*\n]{1,60}):\s*\*\*", re.M),   # **Сроки:** к сентябрю
+    re.compile(r"^\s*-\s+\*\*([^*\n]{1,60})\*\*\s*:", re.M),   # **Сроки**: к сентябрю
+]
+
+# Ответственный в канонической разметке §4.1: разбор достаёт его именно так
+# (RecapAtom.parse). Считается статистикой, а не находкой: задача без имени —
+# правда, а не дефект.
+TASK_OWNER = re.compile(r"^\s*-\s+(?:\[[ xX]\]\s*)?\*\*([^*\n]{1,60})\*\*\s*[—–]\s", re.M)
+TASK_CHECKBOX = re.compile(r"^\s*-\s+\[[ xX]\]", re.M)
+
 # Who a task can belong to. A placeholder owner is worse than none: it reads like
 # an assignment and names nobody. All three shapes are from real recaps.
 FAKE_OWNER = re.compile(
@@ -224,6 +240,17 @@ def lint(recap: str, transcript: str | None, meeting: str) -> Report:
                     rep.add("число не из транскрипта", i, n)
 
     # --- invented deadlines and owners -----------------------------------
+    decisions = re.search(r"^##\s*\**Решения\**\s*$\n(.*?)(?=^##\s|\Z)", body, re.M | re.S)
+    if decisions:
+        for pattern in DECISION_TOPIC:
+            for m in pattern.finditer(decisions.group(1)):
+                rep.add("решение темой-ярлыком", 0, m.group(1))
+        for m in DECISION_AS_TASK.finditer(decisions.group(1)):
+            if not m.group(1).rstrip().endswith(":"):
+                rep.add("решение в форме задачи", 0, m.group(1))
+        for m in DECISION_CHECKBOX.finditer(decisions.group(1)):
+            rep.add("решение в форме задачи", 0, m.group(1))
+
     tasks = re.search(r"^##\s+Задачи\s*$\n(.*?)(?=^##\s|\Z)", body, re.M | re.S)
     if tasks:
         for i, line in enumerate(tasks.group(1).split("\n"), 1):
@@ -275,6 +302,8 @@ def lint(recap: str, transcript: str | None, meeting: str) -> Report:
         "ход/всего": round(discussion / rep.words, 2) if rep.words else 0,
         "решений": len(re.findall(r"^\s*-\s", sections.get("Решения", ""), re.M)),
         "задач": len(re.findall(r"^\s*-\s", sections.get("Задачи", ""), re.M)),
+        "зад/имя": len(TASK_OWNER.findall(sections.get("Задачи", ""))),
+        "зад/бокс": len(TASK_CHECKBOX.findall(sections.get("Задачи", ""))),
         "ср.предл": round(sum(len(s.split()) for s in sentences) / len(sentences), 1) if sentences else 0,
     }
     if transcript:
@@ -286,6 +315,7 @@ def lint(recap: str, transcript: str | None, meeting: str) -> Report:
 
 
 CHECKS = [
+    "решение в форме задачи", "решение темой-ярлыком",
     "срок не из транскрипта", "посчитанный срок", "выдуманный участник", "повелительное наклонение", "ответственный-призрак", "имя не из транскрипта", "число не из транскрипта", "латиница не из транскрипта", "таймкод за пределами встречи",
     "пассив", "канцелярит", "вода", "длинное предложение",
     "буллет * вместо -", "нумерованный список", "секция вне шаблона",
@@ -293,6 +323,7 @@ CHECKS = [
     "пустая секция вместо пропуска",
 ]
 SHORT = {
+    "решение в форме задачи": "реш→з", "решение темой-ярлыком": "реш:",
     "срок не из транскрипта": "срок!", "посчитанный срок": "срок~",
     "выдуманный участник": "кто!?", "повелительное наклонение": "приказ", "ответственный-призрак": "кто?",
     "имя не из транскрипта": "имена", "число не из транскрипта": "числа",
@@ -351,24 +382,24 @@ def main() -> int:
                 print(f"  {f.check:32} стр.{f.line:<4} {f.text}")
         return 0
 
-    head = f"{'встреча':30}{'слов':>6}{'сжат':>7}{'обр':>4}{'ход':>5}{'реш':>4}{'зад':>4}"
+    head = f"{'встреча':30}{'слов':>6}{'сжат':>7}{'обр':>4}{'ход':>5}{'реш':>4}{'зад':>4}{'имя':>4}{'бокс':>5}"
     head += "".join(f"{SHORT[c]:>6}" for c in CHECKS)
     print(head)
     print("-" * len(head))
     totals = {c: 0 for c in CHECKS}
     for rep in reports:
         row = f"{rep.meeting[:28]:30}{rep.stats['слов']:6}{rep.stats.get('сжатие','—'):>7}"
-        row += f"{rep.stats.get('обрезан',''):>4}{rep.stats['ход/всего']:>5}{rep.stats['решений']:>4}{rep.stats['задач']:>4}"
+        row += f"{rep.stats.get('обрезан',''):>4}{rep.stats['ход/всего']:>5}{rep.stats['решений']:>4}{rep.stats['задач']:>4}{rep.stats['зад/имя']:>4}{rep.stats['зад/бокс']:>5}"
         for c in CHECKS:
             n = rep.count(c)
             totals[c] += n
             row += f"{n if n else '·':>6}"
         print(row)
     print("-" * len(head))
-    total_row = f"{'ИТОГО ' + str(len(reports)) + ' встреч':30}{'':6}{'':7}{'':4}{'':5}{'':4}{'':4}"
+    total_row = f"{'ИТОГО ' + str(len(reports)) + ' встреч':30}{'':6}{'':7}{'':4}{'':5}{'':4}{'':4}{'':4}{'':5}"
     total_row += "".join(f"{totals[c]:>6}" for c in CHECKS)
     print(total_row)
-    per = f"{'на встречу':30}{'':6}{'':7}{'':4}{'':5}{'':4}{'':4}"
+    per = f"{'на встречу':30}{'':6}{'':7}{'':4}{'':5}{'':4}{'':4}{'':4}{'':5}"
     per += "".join(f"{totals[c]/max(1,len(reports)):>6.1f}" for c in CHECKS)
     print(per)
     return 0

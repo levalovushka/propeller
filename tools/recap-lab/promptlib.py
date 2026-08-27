@@ -64,9 +64,44 @@ def system_prompt(variant: str | None = None) -> str:
     return body + language_lock()
 
 
+# Кто был на встрече — по подписям самой ленты. Зеркало
+# `RecapDocument.participants(fromTranscript:)`: две формы головы реплики
+# (в памяти и на диске) и список плейсхолдеров из `SourceAwareSpeaker`.
+HEAD_SHAPES = re.compile(
+    r"(?m)^(?:\[(.+?)\]\s*\[\d+:\d+(?::\d+)?\]"
+    r"|\*\*([^*\n]{1,60})\*\*\s*·\s*\d{1,3}:\d{2}(?::\d{2})?)\s*$"
+)
+PLACEHOLDER = re.compile(r"^(?:Speaker|Спикер)(?:\s*S?\d+)?$|^(?:Собеседник|Я)$", re.I)
+
+
+def participants(transcript_markdown: str) -> list[str]:
+    out: list[str] = []
+    for whole, disk in HEAD_SHAPES.findall(transcript_markdown):
+        label = (whole or disk).strip()
+        if not label or PLACEHOLDER.match(label) or label in out:
+            continue
+        out.append(label)
+    return out
+
+
 def build_user_message(title: str, transcript_markdown: str, notes: str | None = None) -> str:
-    """Mirror of `RecapService.buildUserMessage` (speakers/duration are unused there too)."""
+    """Mirror of `RecapDocument.userMessage`.
+
+    Состав здесь появился 2026-08-27, и это была не мелочь: сама функция
+    (`RecapDocument.userMessage`) добавляет строкой в промпт «Участники: …» и
+    правило «исполнителем может быть только участник из этого списка» с
+    2026-08-20, а лаборатория продолжала слать запрос без них. То есть замер
+    ответственного шёл по запросу, которого приложение не отправляет — ровно то,
+    от чего этот модуль обещает защищать в первой своей строке.
+    """
     parts = [f"Встреча: {title if title else 'без названия'}"]
+    people = participants(transcript_markdown)
+    if people:
+        parts.append("Участники: " + ", ".join(people) + ".")
+        parts.append(
+            "Исполнителем задачи может быть только участник из этого списка, "
+            "и только если поручение прозвучало вслух."
+        )
     trimmed_notes = (notes or "").strip()
     if trimmed_notes:
         parts += ["", "Заметки пользователя (якоря — приоритетнее болтовни в транскрипте):", trimmed_notes]
