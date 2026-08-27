@@ -936,6 +936,18 @@ public enum Tokens {
 
         public static let summaryHPadding = Space.s40
         public static let summaryVPadding = Space.s24
+        /// Верх панели — 312:11129. Полосы над встречей больше нет, и панель
+        /// начинается от кромки окна, как страница настроек.
+        public static let paneTopPadding = Space.s32
+        /// Строка атрибутов → имя встречи → первый абзац: один шаг на оба стыка.
+        public static let titleGap = Space.s16
+        /// Кнопки в правом верхнем углу панели — единственное место, где
+        /// горизонтальное поле не 40: они прижаты к кромке блока.
+        public static let paneActionsInset = Space.s8
+        /// «Поделиться» — 312:11129. Первая сплошная кнопка в приложении:
+        /// выход наружу конституционен (`VISION.md` §4), и это единственное
+        /// действие панели, которое зовут, а не находят.
+        public static let sharePillHPadding = Space.s10
         /// Room under the last line so a scrolled summary is not hard against
         /// the window edge.
         public static let summaryBottomPadding = Space.s40

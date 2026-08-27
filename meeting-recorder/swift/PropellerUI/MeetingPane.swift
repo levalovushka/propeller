@@ -24,92 +24,6 @@ private enum HeaderTitle {
     static let untitled = "Без названия"
 }
 
-/// The meeting's name and the actions you can take on it.
-///
-/// One line, 14 / 18 — the same face as a meeting row's title. Clicking the
-/// name places the caret where you clicked; Enter saves and leaves, Escape
-/// leaves the name as it was, clicking away saves. The date lives on the rail,
-/// so it is not repeated here.
-public struct MeetingPaneHeader<MoreMenu: View>: View {
-    /// Which meeting the name belongs to. The header outlives the meeting it is
-    /// showing — the pane keeps one of these and swaps the text underneath it —
-    /// so a rename has to name its own meeting rather than trust «the selected
-    /// one» to still be the one that was typed into.
-    private let meetingID: String
-    private let title: String
-    private let onRename: ((_ meetingID: String, _ newTitle: String) -> Void)?
-    private let share: Share?
-    /// The ellipsis is a *menu*, not a button — «ещё» has no single action, and
-    /// a closure would only be able to open one somewhere else.
-    private let moreMenu: () -> MoreMenu
-    private let hasMoreMenu: Bool
-
-    /// Opens the system share sheet from the header's quiet icon cluster.
-    public struct Share {
-        public let title: String
-        public let handler: () -> Void
-        public init(_ title: String, handler: @escaping () -> Void) {
-            self.title = title
-            self.handler = handler
-        }
-    }
-
-    public init(
-        meetingID: String,
-        title: String,
-        onRename: ((_ meetingID: String, _ newTitle: String) -> Void)? = nil,
-        share: Share? = nil,
-        hasMoreMenu: Bool = true,
-        @ViewBuilder moreMenu: @escaping () -> MoreMenu
-    ) {
-        self.meetingID = meetingID
-        self.title = title
-        self.onRename = onRename
-        self.share = share
-        self.moreMenu = moreMenu
-        self.hasMoreMenu = hasMoreMenu
-    }
-
-    public var body: some View {
-        HStack(spacing: 0) {
-            MeetingPaneIdentity(meetingID: meetingID, title: title, onRename: onRename)
-            Spacer(minLength: Tokens.Space.s8)
-            actions
-        }
-        .frame(height: Tokens.Pane.headerHeight)
-    }
-
-    private var actions: some View {
-        HStack(spacing: Tokens.Pane.headerActionsGap) {
-            if hasMoreMenu {
-                Menu {
-                    moreMenu()
-                } label: {
-                    PaneIconLabel(symbol: "ellipsis")
-                }
-                // `.borderlessButton` draws its own control over the label, so
-                // the hover chrome never showed and the ellipsis read as decoration
-                // beside a real button. `.button` + `.plain` hands the whole
-                // appearance back to the label.
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
-                .help("Ещё")
-            }
-            if let share {
-                PaneIconButton(
-                    symbol: "arrowshape.turn.up.right.fill",
-                    help: share.title,
-                    action: share.handler
-                )
-            }
-        }
-        .padding(.horizontal, Tokens.Pane.headerActionsPadding)
-        .frame(height: Tokens.Pane.headerHeight)
-        .fixedSize()
-    }
-}
-
 /// The meeting's name, editable in place.
 ///
 /// Its own view because two headers carry it: the one over a finished meeting
@@ -120,6 +34,32 @@ struct MeetingPaneIdentity: View {
     let meetingID: String
     let title: String
     let onRename: ((_ meetingID: String, _ newTitle: String) -> Void)?
+    /// Во что одето имя. Машина коммита у обоих одна — а она и есть всё
+    /// сложное здесь, — расходится только вёрстка: полоса над идущей записью
+    /// и тело панели готовой встречи.
+    var look: Look = .paneHeader
+
+    struct Look {
+        let typo: Tokens.Typography.Style
+        let maxWidth: CGFloat
+        let hPadding: CGFloat
+        let vPadding: CGFloat
+
+        /// Полоса 48 над идущей записью — 14/18 в поле 430.
+        static let paneHeader = Look(
+            typo: Tokens.Pane.Typo.headerTitle,
+            maxWidth: Tokens.Pane.headerTitleWidth,
+            hPadding: Tokens.Pane.headerHPadding,
+            vPadding: Tokens.Pane.headerVPadding
+        )
+        /// Имя в теле готовой встречи — 22/24 без полей: их уже дала колонка.
+        static let body = Look(
+            typo: Tokens.Pane.Typo.paneTitle,
+            maxWidth: .infinity,
+            hPadding: 0,
+            vPadding: 0
+        )
+    }
 
     /// A name being typed, and the meeting it is being typed into.
     ///
@@ -160,13 +100,13 @@ struct MeetingPaneIdentity: View {
             titleField
             editHint
         }
-        .padding(.horizontal, Tokens.Pane.headerHPadding)
-        .padding(.vertical, Tokens.Pane.headerVPadding)
+        .padding(.horizontal, look.hPadding)
+        .padding(.vertical, look.vPadding)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         // A cap, not a width — and minWidth 0 so the pane can go narrow without
         // the title claiming more room than the actions leave it.
-        .frame(minWidth: 0, maxWidth: Tokens.Pane.headerTitleWidth, alignment: .leading)
+        .frame(minWidth: 0, maxWidth: look.maxWidth, alignment: .leading)
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
         .animation(.easeOut(duration: Tokens.Motion.hover), value: focused)
     }
@@ -174,7 +114,7 @@ struct MeetingPaneIdentity: View {
     private var titleField: some View {
         TextField(HeaderTitle.untitled, text: text)
             .textFieldStyle(.plain)
-            .typoBlock(Tokens.Pane.Typo.headerTitle)
+            .typoBlock(look.typo)
             .foregroundStyle(Tokens.Pane.title)
             .lineLimit(1)
             .focused($focused)
@@ -236,7 +176,7 @@ struct MeetingPaneIdentity: View {
         let shown = edit?.draft ?? title
         let string = shown.isEmpty ? HeaderTitle.untitled : shown
         let width = (string as NSString).size(
-            withAttributes: [.font: Tokens.Pane.Typo.headerTitle.nsFont]
+            withAttributes: [.font: look.typo.nsFont]
         ).width
         return ceil(width) + HeaderTitle.caretRoom
     }
@@ -281,24 +221,6 @@ struct MeetingPaneIdentity: View {
     }
 }
 
-extension MeetingPaneHeader where MoreMenu == EmptyView {
-    /// A header with no «ещё» menu — the gallery, and any pane whose meeting
-    /// has nothing more to offer.
-    public init(
-        meetingID: String,
-        title: String,
-        onRename: ((_ meetingID: String, _ newTitle: String) -> Void)? = nil,
-        share: Share? = nil
-    ) {
-        self.init(
-            meetingID: meetingID, title: title,
-            onRename: onRename, share: share,
-            hasMoreMenu: false,
-            moreMenu: { EmptyView() }
-        )
-    }
-}
-
 /// The label of the ellipsis `Menu`.
 ///
 /// It carries the same hover chrome as `PaneIconButton` on purpose: it sits
@@ -323,6 +245,39 @@ struct PaneIconLabel: View {
             )
             .onHover { hovering = $0 }
             .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+    }
+}
+
+/// «Поделиться» — сплошная белая пилюля, 312:11129.
+///
+/// Единственная заливка на всей панели, и это сказано осознанно: остальные
+/// действия встречи человек находит, когда ищет, а этим он пользуется, когда
+/// разговор кончился и его надо кому-то отдать.
+struct SharePill: View {
+    let title: String
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .typo(Tokens.Pane.Typo.metaWide)
+                .foregroundStyle(Tokens.Paint.Text.primaryInverse)
+                .padding(.horizontal, Tokens.Pane.sharePillHPadding)
+                .frame(height: Tokens.Pane.headerButtonSide)
+                .background(
+                    hovering
+                        ? Tokens.Paint.Interactive.Primary.hover
+                        : Tokens.Paint.Interactive.Primary.rest,
+                    in: Capsule(style: .continuous)
+                )
+                .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+        .help(title)
     }
 }
 
@@ -441,7 +396,7 @@ public struct MeetingSummaryColumn: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, Tokens.Pane.summaryHPadding)
-        .padding(.top, Tokens.Pane.summaryVPadding)
+        .padding(.top, Tokens.Pane.titleGap)
         .padding(.bottom, Tokens.Pane.summaryBottomPadding)
         // The measure is capped for readability and then *centred* in whatever
         // room the column has. Pinned left, a wide window leaves the text
@@ -703,13 +658,57 @@ public enum MeetingPaneMode: String, CaseIterable, Equatable, Sendable {
     }
 }
 
+extension MeetingPaneBody where MoreMenu == EmptyView {
+    /// Панель без меню «ещё» — доска галереи и всё, что показывает саммари
+    /// само по себе.
+    public init(
+        identity: Identity? = nil,
+        share: Share? = nil,
+        mode: MeetingPaneMode = .summary,
+        summary: MeetingSummary,
+        turns: [MeetingTranscriptColumn.Turn] = [],
+        transcriptNotes: [TranscriptNote] = [],
+        summaryContent: SummaryColumnContent = .summary,
+        transcriptSource: TranscriptSource = .stored,
+        transcriptDisclosure: String? = nil,
+        summaryController: SummaryEditorController = SummaryEditorController(),
+        onSummaryChange: ((MeetingSummary) -> Void)? = nil,
+        onSummaryRewrite: ((SummaryRewrite, String) -> Void)? = nil
+    ) {
+        self.init(
+            identity: identity,
+            share: share,
+            hasMoreMenu: false,
+            mode: mode,
+            summary: summary,
+            turns: turns,
+            transcriptNotes: transcriptNotes,
+            summaryContent: summaryContent,
+            transcriptSource: transcriptSource,
+            transcriptDisclosure: transcriptDisclosure,
+            summaryController: summaryController,
+            onSummaryChange: onSummaryChange,
+            onSummaryRewrite: onSummaryRewrite,
+            moreMenu: { EmptyView() }
+        )
+    }
+}
+
 /// Панель готовой встречи: одна колонка, и в ней всё, что о встрече известно.
 ///
 /// Колонки заметок здесь больше нет. Заметка во время встречи стоит в ленте
 /// расшифровки на своей секунде, а после встречи — разделом в саммари, который
 /// правится как всё остальное в нём. Отдельный список рядом был третьим местом
 /// для одной и той же вещи и стоил трети окна.
-public struct MeetingPaneBody: View {
+public struct MeetingPaneBody<MoreMenu: View>: View {
+    /// Имя встречи и то, как её переименовать. `nil` — доска галереи и всё,
+    /// что показывает саммари без встречи за ним.
+    private let identity: Identity?
+    private let share: Share?
+    /// Троеточие — *меню*, а не кнопка: у «ещё» нет одного действия, и
+    /// замыкание умело бы открыть его только где-то в другом месте.
+    private let moreMenu: () -> MoreMenu
+    private let hasMoreMenu: Bool
     private let mode: MeetingPaneMode
     private let summary: MeetingSummary
     private let turns: [MeetingTranscriptColumn.Turn]
@@ -731,6 +730,36 @@ public struct MeetingPaneBody: View {
     private let onSummaryChange: ((MeetingSummary) -> Void)?
     private let onSummaryRewrite: ((SummaryRewrite, String) -> Void)?
 
+    /// Встреча, чьё имя стоит над саммари.
+    ///
+    /// По id, а не по всей записи: переименование, приехавшее при переключении
+    /// встреч посреди правки, принадлежит той встрече, в которую его печатали,
+    /// а она к тому моменту уже не выбрана.
+    public struct Identity {
+        public let meetingID: String
+        public let title: String
+        public let onRename: ((_ meetingID: String, _ newTitle: String) -> Void)?
+        public init(
+            meetingID: String,
+            title: String,
+            onRename: ((_ meetingID: String, _ newTitle: String) -> Void)? = nil
+        ) {
+            self.meetingID = meetingID
+            self.title = title
+            self.onRename = onRename
+        }
+    }
+
+    /// Поднимает системный шер из угла панели.
+    public struct Share {
+        public let title: String
+        public let handler: () -> Void
+        public init(_ title: String, handler: @escaping () -> Void) {
+            self.title = title
+            self.handler = handler
+        }
+    }
+
     /// Чей текст сейчас в колонке транскрипта.
     public enum TranscriptSource: String, Equatable, Sendable {
         /// Встреча идёт или только что кончилась: то, что услышал живой слой.
@@ -740,6 +769,9 @@ public struct MeetingPaneBody: View {
     }
 
     public init(
+        identity: Identity? = nil,
+        share: Share? = nil,
+        hasMoreMenu: Bool = true,
         mode: MeetingPaneMode = .summary,
         summary: MeetingSummary,
         turns: [MeetingTranscriptColumn.Turn] = [],
@@ -749,8 +781,13 @@ public struct MeetingPaneBody: View {
         transcriptDisclosure: String? = nil,
         summaryController: SummaryEditorController = SummaryEditorController(),
         onSummaryChange: ((MeetingSummary) -> Void)? = nil,
-        onSummaryRewrite: ((SummaryRewrite, String) -> Void)? = nil
+        onSummaryRewrite: ((SummaryRewrite, String) -> Void)? = nil,
+        @ViewBuilder moreMenu: @escaping () -> MoreMenu
     ) {
+        self.identity = identity
+        self.share = share
+        self.hasMoreMenu = hasMoreMenu
+        self.moreMenu = moreMenu
         self.mode = mode
         self.summary = summary
         self.turns = turns
@@ -765,6 +802,67 @@ public struct MeetingPaneBody: View {
 
     public var body: some View {
         ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 0) {
+                head
+                columns
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollIndicators(.hidden)
+        // Снаружи скролла: угол принадлежит панели, а не тексту в ней, и
+        // уезжать вверх вместе с ним ему незачем. Прижат к кромке блока, а не
+        // к центрированной мере колонки: на 649 это одно и то же, на широком
+        // окне кнопки остаются у края окна.
+        .overlay(alignment: .topTrailing) { actions }
+    }
+
+    /// Имя встречи над саммари — 312:11129. Живёт *выше* смены колонок:
+    /// внутри неё заголовок исчезал бы при переключении на транскрипт и мигал
+    /// на каждой смене содержания, то есть ровно в тот момент, когда доезжает
+    /// саммари.
+    @ViewBuilder
+    private var head: some View {
+        if let identity {
+            MeetingPaneIdentity(
+                meetingID: identity.meetingID,
+                title: identity.title,
+                onRename: identity.onRename,
+                look: .body
+            )
+            .padding(.horizontal, Tokens.Pane.summaryHPadding)
+            .padding(.top, Tokens.Pane.paneTopPadding)
+        }
+    }
+
+    @ViewBuilder
+    private var actions: some View {
+        if hasMoreMenu || share != nil {
+            HStack(spacing: Tokens.Pane.headerActionsGap) {
+                if hasMoreMenu {
+                    Menu {
+                        moreMenu()
+                    } label: {
+                        PaneIconLabel(symbol: "ellipsis")
+                    }
+                    // `.borderlessButton` draws its own control over the label,
+                    // so the hover chrome never showed and the ellipsis read as
+                    // decoration beside a real button. `.button` + `.plain`
+                    // hands the whole appearance back to the label.
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .help("Ещё")
+                }
+                if let share {
+                    SharePill(title: share.title, action: share.handler)
+                }
+            }
+            .padding(Tokens.Pane.paneActionsInset)
+            .fixedSize()
+        }
+    }
+
+    private var columns: some View {
             // Смена того, что стоит в колонке, — не перерисовка, а смена
             // содержания: старое уходит, новое приходит на его место. Ключ
             // описывает *что* показано, а не какая это встреча, — иначе колонка
@@ -790,8 +888,6 @@ public struct MeetingPaneBody: View {
             }
             .animation(.default, value: columnKey)
             .frame(maxWidth: .infinity)
-        }
-        .scrollIndicators(.hidden)
     }
 
     /// Что сейчас в левой колонке. Меняется — играет замена.

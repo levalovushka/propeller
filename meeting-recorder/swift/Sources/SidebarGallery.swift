@@ -286,16 +286,15 @@ enum SidebarGallery {
         /// something nobody looks at until a user resizes the window.
         private func pane(_ scheme: ColorScheme, width: CGFloat) -> some View {
             VStack(spacing: 0) {
-                MeetingPaneHeader(
-                    meetingID: "gallery",
-                    title: "Воркшоп по VK Музыке",
-                    onRename: { _, _ in },
-                    share: .init("Поделиться") {}
-                ) {
-                    Button("Показать в Finder") {}
-                    Button("Удалить встречу", role: .destructive) {}
-                }
-                MeetingPaneBody(summary: Self.summary)
+                MeetingPaneBody(
+                    identity: .init(
+                        meetingID: "gallery",
+                        title: "Воркшоп по VK Музыке",
+                        onRename: { _, _ in }
+                    ),
+                    share: .init("Поделиться") {},
+                    summary: Self.summary
+                )
             }
             .frame(width: width, height: 640)
             .background(GalleryBackdrop())

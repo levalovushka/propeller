@@ -566,40 +566,17 @@ struct MainView: View {
                 )
             }
             .frame(height: Tokens.Sidebar.headerHeight)
-        } else if let entry = state.selectedRecording {
-            HStack(spacing: 0) {
-                if !sidebarVisible {
+        } else if state.selectedRecording != nil {
+            // Готовая встреча носит своё имя в теле (312:11129), и полосы над
+            // ней нет — по той же причине, что у разделов: пустые 48 pt
+            // опускали бы заголовок ровно на эти 48. Со снятым рельсом полоса
+            // возвращается: иначе светофор лёг бы на имя встречи.
+            if !sidebarVisible {
+                HStack(spacing: 0) {
                     collapsedChrome
+                    Spacer(minLength: 0)
                 }
-                MeetingPaneHeader(
-                    meetingID: entry.id,
-                    title: entry.title,
-                    // By id, not by `entry`: the rename that arrives when you
-                    // switch meetings mid-edit belongs to the meeting it was
-                    // typed into, which by then is no longer the selected one.
-                    onRename: { id, newTitle in state.renameRecording(id: id, to: newTitle) },
-                    share: .init("Поделиться") { showShareSheet = true }
-                ) {
-                    Picker("Показать", selection: $paneMode) {
-                        ForEach(MeetingPaneMode.allCases, id: \.self) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    Divider()
-                    Button("Показать в Finder") { revealInFinder(entry) }
-                    Button("Удалить аудио") { state.deleteAudioFile(entry) }
-                        .disabled(!entry.audioFileExists)
-                    Divider()
-                    Button("Удалить встречу", role: .destructive) {
-                        state.removeRecording(entry, undoManager: undoManager)
-                    }
-                }
-            }
-            .frame(height: Tokens.Sidebar.headerHeight)
-            .overlay(alignment: .trailing) {
-                ShareAnchor(isPresented: $showShareSheet) { shareItems(for: entry) }
-                    .frame(width: 1, height: 1)
-                    .padding(.trailing, Tokens.Pane.headerActionsPadding)
+                .frame(height: Tokens.Sidebar.headerHeight)
             }
         } else {
             listTopBar
@@ -803,6 +780,15 @@ struct MainView: View {
             // разбор ради того же результата.
             let turns = transcriptTurns(for: entry)
             MeetingPaneBody(
+                identity: .init(
+                    meetingID: entry.id,
+                    title: entry.title,
+                    // By id, not by `entry`: the rename that arrives when you
+                    // switch meetings mid-edit belongs to the meeting it was
+                    // typed into, which by then is no longer the selected one.
+                    onRename: { id, newTitle in state.renameRecording(id: id, to: newTitle) }
+                ),
+                share: .init("Поделиться") { showShareSheet = true },
                 mode: paneMode,
                 summary: document,
                 turns: turns,
@@ -824,8 +810,31 @@ struct MainView: View {
                     : { document in scheduleSummarySave(document, for: entry) },
                 onSummaryRewrite: { rewrite, fragment in
                     runSummaryRewrite(rewrite, over: fragment, of: entry)
+                },
+                moreMenu: {
+                    Picker("Показать", selection: $paneMode) {
+                        ForEach(MeetingPaneMode.allCases, id: \.self) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    Divider()
+                    Button("Показать в Finder") { revealInFinder(entry) }
+                    Button("Удалить аудио") { state.deleteAudioFile(entry) }
+                        .disabled(!entry.audioFileExists)
+                    Divider()
+                    Button("Удалить встречу", role: .destructive) {
+                        state.removeRecording(entry, undoManager: undoManager)
+                    }
                 }
             )
+            // Якорь системного шера стоит там же, где кнопка: поднятый из
+            // левого верхнего угла окна, лист указывал бы в никуда.
+            .overlay(alignment: .topTrailing) {
+                ShareAnchor(isPresented: $showShareSheet) { shareItems(for: entry) }
+                    .frame(width: 1, height: 1)
+                    .padding(.trailing, Tokens.Pane.paneActionsInset)
+                    .padding(.top, Tokens.Pane.headerButtonSide)
+            }
             .frame(maxWidth: .infinity)
         } else {
             // Недостижимо, и поэтому пусто. Пока в архиве есть хоть одна
