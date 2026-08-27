@@ -35,9 +35,11 @@ final class NotchGeometryTests: XCTestCase {
 
     func testРаскрытаяЧёлкаЭтоВырезИДваКрыла() {
         let f = NotchGeometry.frame(on: mbp14, stage: .open)
-        XCTAssertEqual(f.width, 185 + 2 * 107.5)
+        // Крыло считается, а не задаётся: скос по высоте выреза плюс кнопки.
+        XCTAssertEqual(f.width, 185 + 2 * NotchGeometry.wingWidth(height: 32))
+        XCTAssertLessThan(f.width, 380, "чёлка стала уже: скос сжат вместе с высотой")
         XCTAssertEqual(f.height, 32, "чёлка растёт вширь, а не вниз: высота — её собственная")
-        XCTAssertEqual(f.wingWidth, 107.5)
+        XCTAssertEqual(f.wingWidth, NotchGeometry.wingWidth(height: 32))
     }
 
     func testСвёрнутаяПлитаЭтоРовноВырез() {
@@ -51,8 +53,9 @@ final class NotchGeometryTests: XCTestCase {
     func testКнопкиНеЛезутПодКамеруНиНаОднойГеометрии() {
         for s in [mbp14, mbp16] {
             let f = NotchGeometry.frame(on: s, stage: .open)
-            XCTAssertEqual(f.groupWidth, 66, "две кнопки 32 и зазор 2")
-            XCTAssertGreaterThan(f.groupClearance, 0, "между парой и вырезом остаётся чернота")
+            XCTAssertEqual(f.groupWidth, 58, "две кнопки 28 и зазор 2")
+            XCTAssertGreaterThanOrEqual(f.roomForButtons, f.groupWidth,
+                                        "пара помещается, не заезжая ни на скос, ни под камеру")
         }
     }
 
@@ -127,9 +130,9 @@ final class NotchGeometryTests: XCTestCase {
             }
             XCTAssertEqual(s.notchWidth, c.notch)
             let f = NotchGeometry.frame(on: s, stage: .open)
-            XCTAssertEqual(f.width, c.notch + 215)
-            XCTAssertEqual(f.wingWidth, 107.5, "крыло не зависит от того, какой ноутбук")
-            XCTAssertGreaterThan(f.groupClearance, 0)
+            XCTAssertEqual(f.width, c.notch + 2 * NotchGeometry.wingWidth(height: c.safeTop))
+            XCTAssertEqual(f.wingWidth, NotchGeometry.wingWidth(height: c.safeTop))
+            XCTAssertGreaterThanOrEqual(f.roomForButtons, f.groupWidth)
             XCTAssertEqual(f.originY + f.height, c.top, "и всегда стоит на кромке")
         }
     }

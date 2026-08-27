@@ -20,7 +20,7 @@ import PropellerPure
 public struct NotchShape: Shape {
     /// Точки левого крыла из макета, в его собственных координатах (47 pt по
     /// высоте). Правое — зеркало.
-    private static let designHeight: CGFloat = 47
+    private static var designHeight: CGFloat { NotchGeometry.designHeight }
     private static let topInset: CGFloat = 0.697479
     private static let c1 = CGPoint(x: 10.706, y: 0)
     private static let c2 = CGPoint(x: 19.5656, y: 6.47235)
@@ -33,24 +33,128 @@ public struct NotchShape: Shape {
     public init() {}
 
     public func path(in rect: CGRect) -> Path {
-        let w = rect.width, h = rect.height
-        let k = h / Self.designHeight
-        func left(_ p: CGPoint) -> CGPoint { CGPoint(x: rect.minX + p.x, y: rect.minY + p.y * k) }
-        func right(_ p: CGPoint) -> CGPoint { CGPoint(x: rect.maxX - p.x, y: rect.minY + p.y * k) }
+        // Скос сжимается по обеим осям сразу: растянутый только по горизонтали,
+        // он ложится плашмя и перестаёт быть тем скосом, что нарисован.
+        let k = rect.height / Self.designHeight
+        func left(_ p: CGPoint) -> CGPoint {
+            CGPoint(x: rect.minX + p.x * k, y: rect.minY + p.y * k)
+        }
+        func right(_ p: CGPoint) -> CGPoint {
+            CGPoint(x: rect.maxX - p.x * k, y: rect.minY + p.y * k)
+        }
 
         var path = Path()
-        path.move(to: CGPoint(x: rect.minX + Self.topInset, y: rect.minY))
+        path.move(to: CGPoint(x: rect.minX + Self.topInset * (rect.height / Self.designHeight),
+                              y: rect.minY))
         path.addCurve(to: left(Self.p1), control1: left(Self.c1), control2: left(Self.c2))
         path.addLine(to: left(Self.p2))
         path.addCurve(to: left(Self.p3), control1: left(Self.c3), control2: left(Self.c4))
         path.addLine(to: right(Self.p3))
         path.addCurve(to: right(Self.p2), control1: right(Self.c4), control2: right(Self.c3))
         path.addLine(to: right(Self.p1))
-        path.addCurve(to: CGPoint(x: rect.maxX - Self.topInset, y: rect.minY),
+        path.addCurve(to: CGPoint(x: rect.maxX - Self.topInset * (rect.height / Self.designHeight),
+                                  y: rect.minY),
                       control1: right(Self.c2), control2: right(Self.c1))
         path.closeSubpath()
-        _ = w
         return path
+    }
+}
+
+/// Плита — слой, а не SwiftUI-фигура.
+///
+/// Уход в вырез приходится ровно на самый занятый момент главного потока:
+/// «Стоп» останавливает запись, сводит микс и сохраняет архив, а `RecordingStore`
+/// кодирует его синхронно. Анимация, живущая в SwiftUI, в этот момент лагает —
+/// та же болезнь, от которой в своё время увезли лопасть. `CAShapeLayer`
+/// интерполирует `path` в рендер-сервере: главный поток может стоять, плита всё
+/// равно уедет ровно.
+///
+/// Оба пути строит один `NotchShape` и структура у них одинаковая (четыре кривые
+/// и три прямые) — иначе интерполяции не будет и плита прыгнет.
+public struct NotchPlate: NSViewRepresentable {
+    private let screen: NotchGeometry.Screen
+    private let stage: NotchGeometry.Stage
+
+    public init(screen: NotchGeometry.Screen, stage: NotchGeometry.Stage) {
+        self.screen = screen
+        self.stage = stage
+    }
+
+    public func makeNSView(context: Context) -> PlateView { PlateView() }
+
+    public func updateNSView(_ view: PlateView, context: Context) {
+        view.apply(screen: screen, stage: stage)
+    }
+}
+
+public final class PlateView: NSView {
+    private let shape = CAShapeLayer()
+    private var shown: NotchGeometry.Stage?
+    private var screen: NotchGeometry.Screen?
+
+    /// Ход плиты. Раскрытие чуть длиннее ухода: она вырастает при старте записи,
+    /// когда на неё смотрят краем глаза, и уходит на стопе, когда уже не смотрят.
+    private static let openDuration: CFTimeInterval = 0.5
+    private static let sealDuration: CFTimeInterval = 0.42
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.addSublayer(shape)
+        shape.fillColor = NSColor.black.cgColor
+        shape.fillRule = .nonZero
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    func apply(screen: NotchGeometry.Screen, stage: NotchGeometry.Stage) {
+        let geometryChanged = self.screen != screen
+        self.screen = screen
+        guard stage != shown || geometryChanged else { return }
+        let first = shown == nil
+        let sealing = stage == .sealed
+        shown = stage
+        shape.frame = bounds
+
+        let target = Self.path(on: screen, stage: stage, in: bounds)
+        // Первый показ и смена железа — без анимации: это не движение
+        // интерфейса, а то, из чего оно начинается.
+        guard !first, !geometryChanged else {
+            shape.path = target
+            return
+        }
+        let move = CABasicAnimation(keyPath: "path")
+        move.fromValue = shape.presentation()?.path ?? shape.path
+        move.toValue = target
+        move.duration = sealing ? Self.sealDuration : Self.openDuration
+        move.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
+        shape.path = target
+        shape.add(move, forKey: "plate")
+    }
+
+    public override func layout() {
+        super.layout()
+        shape.frame = bounds
+        guard let screen, let shown else { return }
+        shape.path = Self.path(on: screen, stage: shown, in: bounds)
+    }
+
+    /// Плита прижата к верхней кромке и стоит по центру выреза; окно под ней
+    /// всегда размером с раскрытую.
+    private static func path(
+        on screen: NotchGeometry.Screen, stage: NotchGeometry.Stage, in bounds: CGRect
+    ) -> CGPath {
+        let frame = NotchGeometry.frame(on: screen, stage: stage)
+        // Фигура рисуется сверху вниз (у `Shape` начало — верхний край), а
+        // слой живёт в координатах AppKit, где верх — это `maxY`. Отражаем
+        // готовый путь, а не перекладываем форму: форма одна и та же.
+        let box = CGRect(x: (bounds.width - frame.width) / 2, y: 0,
+                         width: frame.width, height: frame.height)
+        var flip = CGAffineTransform(scaleX: 1, y: -1)
+            .translatedBy(x: 0, y: -bounds.height)
+        let path = NotchShape().path(in: box).cgPath
+        return path.copy(using: &flip) ?? path
     }
 }
 
@@ -116,9 +220,7 @@ public struct NotchFace: View {
 
     public var body: some View {
         ZStack(alignment: .top) {
-            NotchShape()
-                .fill(Color.black)
-                .frame(width: frame.width, height: frame.height)
+            NotchPlate(screen: screen, stage: shownStage)
 
             HStack(spacing: 0) {
                 pair(
@@ -135,7 +237,7 @@ public struct NotchFace: View {
                     NotchButton(symbol: "stop.fill", enabled: true, action: onStop)
                 )
             }
-            .frame(width: frame.width - 2 * NotchGeometry.groupInset,
+            .frame(width: frame.width - 2 * (frame.slopeWidth + NotchGeometry.edgeGap),
                    height: frame.height)
             .opacity(open ? 1 : 0)
             .scaleEffect(open ? 1 : 0.8)
@@ -191,22 +293,28 @@ private struct NotchButton: View {
         return hovering ? 0.95 : 0.55
     }
 
+    /// Знак, который нарисован сейчас.
+    ///
+    /// Отдельный от входящего по той же причине, что и стадия у плиты: символ
+    /// приходит извне, заменой всего дерева, а такая замена не транзакция — и
+    /// `.transition` при ней просто не включается, знак моргает. Здесь смена
+    /// делается своей `withAnimation`, и тогда переход отрабатывает.
+    @State private var shown: String = ""
+
     private var glyph: some View {
-        // Знак сменяет знак не подстановкой, а уходом: старый уменьшается,
-        // размывается и гаснет, новый приходит тем же путём назад. Пауза,
-        // сменившаяся плеем щелчком, читается как подмена картинки, а не как
-        // ответ на нажатие. `.id` нужен, чтобы SwiftUI считал это двумя разными
-        // знаками и включил переход, а не переписал один системный символ.
         ZStack {
-            Image(systemName: symbol)
-                .font(.system(size: 16, weight: .regular))
+            Image(systemName: shown.isEmpty ? symbol : shown)
+                .font(.system(size: NotchGeometry.buttonSide - 13, weight: .regular))
                 .transition(.blurReplace)
-                .id(symbol)
+                .id(shown.isEmpty ? symbol : shown)
         }
         .foregroundStyle(.white.opacity(opacity))
         .frame(width: NotchGeometry.buttonSide, height: NotchGeometry.buttonSide)
         .animation(.easeOut(duration: 0.12), value: hovering)
-        .animation(.smooth(duration: 0.26), value: symbol)
+        .onAppear { shown = symbol }
+        .onChange(of: symbol) { _, new in
+            withAnimation(.smooth(duration: 0.26)) { shown = new }
+        }
     }
 
     var body: some View {
