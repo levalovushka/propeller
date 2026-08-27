@@ -282,6 +282,10 @@ struct MeetingMetaRow: View {
                 // Тихий «плюс» вместо пустого слота: слот осуждает, а «плюс»
                 // просто стоит рядом. Компромисс назван в §4.1 как дефолт.
                 MetaMenuChip(symbol: "plus", text: nil) {
+                    if let suggestion = projects.suggestion {
+                        Button("Завести «\(suggestion.name)»", action: suggestion.accept)
+                        Divider()
+                    }
                     ForEach(projects.available, id: \.id) { project in
                         Button(project.name) { projects.tag(project.id) }
                     }
@@ -889,19 +893,29 @@ public struct Meta {
         public let untag: (String) -> Void
         /// Завести проект и сразу пометить им эту встречу.
         public let create: () -> Void
+        /// Имя, которое приложение предложило бы завести по этой встрече
+        /// (`plan-projects.md` §3), и согласие с ним. `nil` — предлагать нечего,
+        /// и это нормальный ответ.
+        ///
+        /// Пунктирного тега из спеки здесь пока нет: он ждёт макета. Пункт меню —
+        /// то же предложение без новых пикселей, и он **тихий**, как и требует
+        /// §3: не мигает, не считается, не подсвечивается.
+        public let suggestion: (name: String, accept: () -> Void)?
 
         public init(
             tagged: [(id: String, name: String)],
             available: [(id: String, name: String)],
             tag: @escaping (String) -> Void,
             untag: @escaping (String) -> Void,
-            create: @escaping () -> Void
+            create: @escaping () -> Void,
+            suggestion: (name: String, accept: () -> Void)? = nil
         ) {
             self.tagged = tagged
             self.available = available
             self.tag = tag
             self.untag = untag
             self.create = create
+            self.suggestion = suggestion
         }
     }
 }

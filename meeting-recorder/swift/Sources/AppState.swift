@@ -195,6 +195,8 @@ class AppState: ObservableObject {
     @Published var projectDraft: ProjectDraft?
     /// Последний посчитанный состав проекта — см. `roster(of:)`.
     private var rosterCache: (key: String, people: [ProjectRoster.Person])?
+    /// Последние посчитанные предложения — см. `projectSuggestions`.
+    private var suggestionCache: (key: String, found: [ProjectCandidate.Suggestion])?
     /// Последние разобранные атомы — см. `atoms(of:section:)`.
     private var atomCache: (key: String, groups: [AtomGroup])?
     /// Счётчик правок файлов конспектов **мимо редактора саммари**.
@@ -1233,6 +1235,49 @@ class AppState: ObservableObject {
         return true
     }
 
+    // MARK: - Предложения проектов
+
+    /// Что приложение предложило бы завести проектом (`plan-projects.md` §3).
+    ///
+    /// Правило целиком в `ProjectCandidate`; здесь только сбор входа из архива.
+    /// Ответ запоминается: список встреч меняется редко, а спрашивают его на
+    /// каждую перерисовку строки атрибутов.
+    var projectSuggestions: [ProjectCandidate.Suggestion] {
+        let rows = recordingStore.recordings
+        // В ключе и название: имя предложения берётся из него, и переименование
+        // встречи обязано пересчитать предложение, а не показывать прежнее.
+        let key = rows.map { "\($0.id):\($0.title):\(($0.projects ?? []).joined(separator: "+"))" }
+            .joined(separator: ",")
+        if let cached = suggestionCache, cached.key == key { return cached.found }
+        let found = ProjectCandidate.suggestions(
+            for: rows.map {
+                ProjectCandidate.Meeting(
+                    id: $0.id, title: $0.title, eventTitle: $0.calendarMeta?.title,
+                    seriesID: $0.calendarMeta?.seriesID, projects: $0.projects ?? [],
+                    date: $0.date
+                )
+            }
+        )
+        suggestionCache = (key, found)
+        return found
+    }
+
+    /// Предложение, в которое попала эта встреча, — или nil.
+    func projectSuggestion(for id: String) -> ProjectCandidate.Suggestion? {
+        projectSuggestions.first { $0.meetings.contains(id) }
+    }
+
+    /// Согласиться с предложением: завести проект и пометить им **все** встречи
+    /// связки. Ретро-привязка — не отдельный шаг, а тот же список, которым
+    /// предложение обосновано (§3).
+    @discardableResult
+    func acceptSuggestion(_ suggestion: ProjectCandidate.Suggestion) -> Project? {
+        guard let made = createProject(name: suggestion.name, about: "") else { return nil }
+        for id in suggestion.meetings { tagMeeting(id, with: made.id) }
+        suggestionCache = nil
+        return made
+    }
+
     // MARK: - Метка проекта на встрече
 
     /// Пометить встречу проектом. Повторная метка тем же проектом — ничего.
@@ -1262,7 +1307,13 @@ class AppState: ObservableObject {
         recordingStore.update(id: entry.id, projects: .some(ids.isEmpty ? nil : ids))
         atomCache = nil
         rosterCache = nil
+        suggestionCache = nil
+        // Тот же порог, что у `markDirty`: документ встречи пишется, только
+        // когда он уже есть. Пометить проектом можно и встречу, которая ещё
+        // расшифровывается, — но переписывать её документ на полпути значит
+        // гоняться с пайплайном за один и тот же файл.
         guard let fresh = recordingStore.recording(for: entry.id),
+              fresh.status >= .saved,
               let text = fresh.transcript, !text.isEmpty
         else { return }
         _ = try? MarkdownWriter.save(
