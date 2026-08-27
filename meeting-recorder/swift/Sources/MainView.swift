@@ -309,6 +309,25 @@ struct MainView: View {
     /// Список проектов читается на старте (`AppState.bootstrap`) именно ради
     /// этого места: без него чип не знал бы своего имени, а «плюс» — что
     /// предложить.
+    /// Состав встречи для строки атрибутов: ряды, предложения и два действия.
+    ///
+    /// `nil` — о встрече не известно ничего, и чипа нет вовсе (правило в
+    /// `MeetingRoster.rows`). По id, а не по записи: правка, приехавшая при
+    /// переключении встреч, принадлежит той встрече, в списке которой её сделали.
+    private func peopleSlot(
+        for entry: RecordingEntry, speakers: [String]
+    ) -> MeetingPane.Meta.People? {
+        let rows = state.meetingRoster(for: entry, speakers: speakers)
+        guard !rows.isEmpty else { return nil }
+        let id = entry.id
+        return .init(
+            rows: rows,
+            candidates: state.rosterCandidates(for: entry, speakers: speakers),
+            remove: { row in state.removePerson(row, from: id) },
+            add: { name in state.addPerson(named: name, to: id) }
+        )
+    }
+
     private func projectSlot(for entry: RecordingEntry) -> MeetingPane.Meta.Projects {
         let tagged = entry.projects ?? []
         let known = state.projects
@@ -1011,9 +1030,7 @@ struct MainView: View {
                 ),
                 meta: .init(
                     date: entry.date,
-                    people: MeetingMeta.count(
-                        state.meetingRoster(for: entry, speakers: turns.map(\.speaker))
-                    ),
+                    people: peopleSlot(for: entry, speakers: turns.map(\.speaker)),
                     projects: projectSlot(for: entry)
                 ),
                 share: .init("Поделиться") {

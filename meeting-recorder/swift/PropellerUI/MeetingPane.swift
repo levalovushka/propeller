@@ -267,16 +267,24 @@ struct MeetingMetaRow: View {
 
     /// Курсор над строкой целиком — им живёт сжатый «плюс».
     @State private var hovering = false
+    /// Открыт ли список участников.
+    @State private var participantsOpen = false
 
     var body: some View {
         HStack(spacing: Tokens.Pane.Meta.gap) {
             if let date = meta.date {
                 MetaChip(symbol: "calendar", text: MeetingMeta.when(date))
             }
-            if let people = MeetingMeta.people(meta.people) {
-                // Состав пока такой же факт, как дата: нажимать не на что,
-                // значит и светиться нечему.
-                MetaChip(symbol: "person.2.fill", text: people)
+            if let people = meta.people,
+               let label = MeetingMeta.people(MeetingMeta.count(people.rows)) {
+                // Состав — единственный чип строки, который открывает не меню, а
+                // плиту: у меню нет ни крестика по ряду, ни поля ввода в нём
+                // (285:19438). Число — длина `rows`, второго счётчика нет.
+                MetaChip(symbol: "person.2.fill", text: label, live: true)
+                    .onTapGesture { participantsOpen.toggle() }
+                    .popoverPlate(isPresented: $participantsOpen) {
+                        ParticipantsPlate(model: people) { participantsOpen = false }
+                    }
             }
             if let projects = meta.projects {
                 ForEach(projects.tagged, id: \.id) { project in
@@ -1013,14 +1021,42 @@ public struct Identity {
 /// Факты о встрече над её именем — 312:11129.
 public struct Meta {
     public let date: Date?
-    /// Сколько человек было. 0 — чипа нет.
-    public let people: Int
+    /// Кто был и что с этим можно сделать. `nil` — чипа нет вовсе.
+    public let people: People?
     /// К каким проектам встреча относится и что с этим можно сделать.
     public let projects: Projects?
-    public init(date: Date?, people: Int, projects: Projects? = nil) {
+    public init(date: Date?, people: People? = nil, projects: Projects? = nil) {
         self.date = date
         self.people = people
         self.projects = projects
+    }
+
+    /// Состав встречи: ряды и то, что с ними делают — 285:19438.
+    ///
+    /// Число в чипе здесь не передаётся: оно **длина** `rows`, и вторым полем
+    /// разошлось бы со списком под ним в первый же день (`MeetingMeta.count`).
+    public struct People {
+        /// Ряды, собранные `MeetingRoster.rows`. Порядок их — оттуда же.
+        public let rows: [MeetingRoster.Row]
+        /// Кого предложить в «Добавить»: приглашённые этой встречи плюс те, с
+        /// кем созванивались раньше (`MeetingRoster.candidates`).
+        public let candidates: [String]
+        /// Убрать ряд. Владельца не вызывают — у него `isRemovable == false`.
+        public let remove: (MeetingRoster.Row) -> Void
+        /// Добавить участника — выбранного из предложений или названного руками.
+        public let add: (String) -> Void
+
+        public init(
+            rows: [MeetingRoster.Row],
+            candidates: [String] = [],
+            remove: @escaping (MeetingRoster.Row) -> Void = { _ in },
+            add: @escaping (String) -> Void = { _ in }
+        ) {
+            self.rows = rows
+            self.candidates = candidates
+            self.remove = remove
+            self.add = add
+        }
     }
 
     /// Проекты встречи: чем помечена и чем можно пометить.
@@ -1157,7 +1193,11 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
     public var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 0) {
-                head
+                // Голова выше тела по z: список участников висит из чипа вниз, а
+                // соседи в стеке рисуются **после** него и без этого кладутся
+                // поверх плиты. Проверено сборкой — имя встречи читалось сквозь
+                // список.
+                head.zIndex(1)
                 columns
             }
             // Потолок стоит на содержимом, а `.infinity` под ним центрирует
@@ -1192,6 +1232,9 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
                 if let meta {
                     MeetingMetaRow(meta: meta)
                         .paneProbe(PaneProbe.meta)
+                        // Та же причина, что у `head.zIndex(1)`: имя встречи —
+                        // следующий ребёнок этого же стека.
+                        .zIndex(1)
                 }
                 if let identity {
                     MeetingPaneIdentity(

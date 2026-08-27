@@ -197,6 +197,9 @@ class AppState: ObservableObject {
     @Published var projectDraft: ProjectDraft?
     /// Последний посчитанный состав проекта — см. `roster(of:)`.
     private var rosterCache: (key: String, people: [ProjectRoster.Person])?
+    /// Люди всего архива — см. `knownPeople`. Ключ по длинам текстов: их смена
+    /// значит новую расшифровку, и список считается заново.
+    private var knownPeopleCache: (key: String, names: [String])?
     /// Последние посчитанные предложения — см. `projectSuggestions`.
     private var suggestionCache: (key: String, found: [ProjectCandidate.Suggestion])?
     /// Последние разобранные атомы — см. `atoms(of:section:)`.
@@ -1134,6 +1137,44 @@ class AppState: ObservableObject {
             .sorted { $0.date > $1.date }
     }
 
+    /// Убрать участника из состава встречи.
+    ///
+    /// Пишется **литеральное имя ряда**, а не его ключ: причина — в доккомменте
+    /// `RecordingEntry.peopleRemoved` (стирание человека должно доставать и эту
+    /// запись). Кластер убирается так же, как человек: его подпись и есть его
+    /// имя в этом списке.
+    ///
+    /// Добавленного руками убираем **из добавленных**, а не вписываем в
+    /// убранные: иначе один и тот же человек стоял бы в двух списках, и порядок
+    /// их чтения решал бы, есть он в составе или нет.
+    func removePerson(_ row: MeetingRoster.Row, from meetingID: String) {
+        guard row.isRemovable, let entry = recordingStore.recording(for: meetingID) else { return }
+        var added = entry.peopleAdded ?? []
+        var removed = entry.peopleRemoved ?? []
+        let key = MeetingRoster.key(row.name)
+        if let at = added.firstIndex(where: { MeetingRoster.key($0) == key }) {
+            added.remove(at: at)
+        } else if !removed.contains(where: { MeetingRoster.key($0) == key }) {
+            removed.append(row.name)
+        }
+        recordingStore.setPeopleEdits(added: added, removed: removed, for: meetingID)
+    }
+
+    /// Добавить участника в состав встречи.
+    ///
+    /// Если этого человека раньше вычеркнули, добавление **снимает вычерк**, а не
+    /// дописывает второй раз: вернуть убранного и завести нового — одно движение
+    /// для человека, и различать их он не обязан.
+    func addPerson(named raw: String, to meetingID: String) {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let entry = recordingStore.recording(for: meetingID) else { return }
+        let key = MeetingRoster.key(name)
+        let removed = (entry.peopleRemoved ?? []).filter { MeetingRoster.key($0) != key }
+        var added = entry.peopleAdded ?? []
+        if !added.contains(where: { MeetingRoster.key($0) == key }) { added.append(name) }
+        recordingStore.setPeopleEdits(added: added, removed: removed, for: meetingID)
+    }
+
     /// Досчёт состава по трассам, которые уже лежат на диске.
     ///
     /// Поле `callRoster` появилось 2026-08-27, а трассы окна пишутся с 20 августа:
@@ -1193,6 +1234,40 @@ class AppState: ObservableObject {
     /// место есть.
     func meetingRoster(for entry: RecordingEntry, speakers: [String]) -> [MeetingRoster.Row] {
         MeetingRoster.rows(rosterInput(for: entry, speakers: speakers))
+    }
+
+    /// Кого предложить, когда человек называет кластер или добавляет участника:
+    /// приглашённые этой встречи плюс те, с кем созванивался раньше.
+    ///
+    /// «Раньше» — по всему архиву, и считается это по расшифровкам, то есть
+    /// регулярка по каждой встрече. Поэтому ответ снимается **с уже посчитанного
+    /// состава проектов**, а не заново: `ProjectRoster` уже прошёл эти тексты, и
+    /// второй проход по тем же файлам ради того же списка — это то, чего кэш
+    /// `rosterCache` рядом и избегает.
+    func rosterCandidates(for entry: RecordingEntry, speakers: [String]) -> [String] {
+        MeetingRoster.candidates(
+            rosterInput(for: entry, speakers: speakers),
+            known: knownPeople()
+        )
+    }
+
+    /// Люди, встречавшиеся в архиве. Считается по подписям лент и досчитанным
+    /// составам звонилки — не по приглашённым: рассылка не встреча, а один
+    /// приглашённый ещё не человек, с которым созванивались.
+    private func knownPeople() -> [String] {
+        let key = recordingStore.recordings
+            .map { "\($0.id):\(($0.transcript ?? "").count):\(($0.callRoster ?? []).count)" }
+            .joined(separator: ",")
+        if let cached = knownPeopleCache, cached.key == key { return cached.names }
+        let people = ProjectRoster.roster(of: recordingStore.recordings.map { entry in
+            ProjectRoster.Meeting(
+                id: entry.id,
+                speakers: (entry.callRoster ?? [])
+                    + RecapDocument.participants(fromTranscript: entry.transcript ?? "")
+            )
+        }).map(\.name)
+        knownPeopleCache = (key, people)
+        return people
     }
 
     func rosterInput(for entry: RecordingEntry, speakers: [String]) -> MeetingRoster.Input {

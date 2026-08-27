@@ -124,7 +124,13 @@ final class SummaryPaneLayoutTests: XCTestCase {
         var collected: [String: CGRect] = [:]
         let root = MeetingPaneBody(
             identity: .init(meetingID: "probe", title: "Базированный утренник", onRename: { _, _ in }),
-            meta: .init(date: Date(timeIntervalSince1970: 1_787_412_600), people: 6),
+            meta: .init(
+                date: Date(timeIntervalSince1970: 1_787_412_600),
+                // Шесть рядов вместо числа: чип показывает длину списка.
+                people: .init(rows: (0..<6).map {
+                    .init(name: "Участник \($0)", origin: $0 == 0 ? .owner : .call, label: nil)
+                })
+            ),
             share: .init("Поделиться") {},
             summary: Self.document
         )

@@ -30,7 +30,12 @@ final class SummaryPaneShotTests: XCTestCase {
                 title: "Базированный утренник",
                 onRename: { _, _ in }
             ),
-            meta: .init(date: Date(timeIntervalSince1970: 1_787_412_600), people: 6),
+            meta: .init(
+                date: Date(timeIntervalSince1970: 1_787_412_600),
+                // Шесть рядов, а не число: чип показывает длину списка, и снимок
+                // должен ломаться, если состав перестанет её давать.
+                people: .init(rows: Self.roster)
+            ),
             share: .init("Поделиться") {},
             summary: Self.summary
         )
@@ -55,6 +60,16 @@ final class SummaryPaneShotTests: XCTestCase {
     }
 
     /// Тот же конспект, что в макете: лид, «Решения», «Задачи».
+    /// Состав снимка — шесть имён из макета 312:11129.
+    private static let roster: [MeetingRoster.Row] = [
+        .init(name: "Левон", origin: .owner, label: "Левон"),
+        .init(name: "Илья Федоренко", origin: .call, label: "Илья Федоренко"),
+        .init(name: "Костя Замуренко", origin: .call, label: "Костя Замуренко"),
+        .init(name: "Женя Яровой", origin: .call, label: "Женя Яровой"),
+        .init(name: "Арина Солдатенкова", origin: .call, label: nil),
+        .init(name: "Полина Кременец", origin: .spoken, label: "Полина Кременец"),
+    ]
+
     private static let summary = SummaryDocument.parse(markdown: """
     ## Итог
     На встрече обсуждали переработку дизайна главной страницы приложения. \

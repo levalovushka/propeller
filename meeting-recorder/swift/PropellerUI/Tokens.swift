@@ -1024,12 +1024,67 @@ public enum Tokens {
             /// буквы в четверть силы, и «Passwork» читался как «Passwoк».
             public static let fadeClear = crossSide
             public static let fadeRamp = Space.s10
-            /// Ховер — **только** у чипа, по которому есть что нажать: сейчас
-            /// это проекты. Дата не станет нажимаемой никогда, состав — когда
-            /// у него будет что показать. Залитый в макете чип «6 человек» —
-            /// его ховер, а не его отличие от даты; подсвечивать факт, который
-            /// ни во что не ведёт, значит обещать несуществующее действие.
+            /// Ховер — **только** у чипа, по которому есть что нажать: проекты
+            /// и, с 2026-08-27, состав. Дата не станет нажимаемой никогда, и
+            /// подсвечивать факт, который ни во что не ведёт, значит обещать
+            /// несуществующее действие. Залитый в макете чип «6 человек» — его
+            /// ховер: до этого дня подсвечивать было нечего, теперь под ним
+            /// открывается список (285:19438).
             public static let hoverFill = Sidebar.rowSelected
+
+            /// Список участников под чипом — Figma `summary/participants`
+            /// (285:19438). Все числа сняты с макета, а не выведены из шрифта.
+            public enum People {
+                /// Плита 220, поле 5 → ряд 210. Радиус плиты концентричен ряду:
+                /// его радиус плюс поле, как требует `SummonedPlate`.
+                public static let width: CGFloat = 220
+                public static let padding: CGFloat = 5
+                public static let rowWidth: CGFloat = 210
+                public static let rowHeight = Space.s28
+                public static let rowRadius = Radius.xxs
+                public static let plateRadius = rowRadius + padding
+                /// Поле ряда слева и справа — 8 в макете с обеих сторон
+                /// (значок на x=8, правый значок кончается на 210−8).
+                public static let rowInset = Space.s8
+                /// Значок человека и крестик — один размер, 16.
+                public static let iconSide = Space.s16
+                /// Между значком и именем: текст в макете стоит на x=32 при
+                /// значке 16 от 8, то есть ровно 8.
+                public static let iconGap = Space.s8
+                /// Разделитель перед «Добавить»: блок 5 высотой, линия в 1 pt
+                /// с полем 8 по бокам — то же поле, что у содержимого ряда.
+                public static let dividerBlock: CGFloat = 5
+                /// Отступ плиты от чипа, под которым она стоит.
+                public static let plateGap = Space.s4
+                /// Кегль крестика — как у крестика строки атрибутов: `xmark` на
+                /// 12 рисует туши заметно крупнее глифа макета.
+                public static let crossSize: CGFloat = 10
+                /// Ряд под курсором. Тот же цвет, что у выбранной строки рельса
+                /// и у ховера чипа: «под курсором» в приложении один.
+                public static let rowHover = Sidebar.rowSelected
+
+                /// Плита — почти непрозрачная заливка, а **не** стекло
+                /// `SummonedPlate`.
+                ///
+                /// Проверено сборкой 2026-08-27: на стекле имя встречи 22/24
+                /// читается сквозь список и сталкивается с именами участников —
+                /// «Левон» и «Разбираюсь с кейсами» в одной строке пикселей.
+                /// Стекло годится вызванному инструменту, поверх которого не
+                /// читают (панель действий, переключатель встреч); здесь читают
+                /// сам список. То же решение и по той же причине — у модалки
+                /// проектов (`Tokens.Projects.Modal.plate`), и заливка берётся
+                /// оттуда: два «почти непрозрачных» в одном приложении не
+                /// нужны.
+                public static let plate = Projects.Modal.plate
+                public static let border = Projects.Modal.border
+                public static let shadow = Projects.Modal.shadow
+                public static let haloRadius = Projects.Modal.haloRadius
+                public static let dropRadius = Projects.Modal.dropRadius
+                public static let dropY = Projects.Modal.dropY
+                /// Разделитель перед «Добавить». Тот же цвет, что у рамки плиты:
+                /// это одна и та же тихая линия, только внутри.
+                public static let divider = Projects.Modal.border
+            }
             public static let label = Paint.Text.primary
             public static let quiet = Sidebar.chromeIcon
 
