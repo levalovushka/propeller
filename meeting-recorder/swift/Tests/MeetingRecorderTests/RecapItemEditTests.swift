@@ -314,6 +314,21 @@ final class RecapItemEditTests: XCTestCase {
         ))
     }
 
+    /// Дописанный пункт наследует окончание строки у соседа. Строка без
+    /// возврата каретки в CRLF-документе — единственная во всём файле с другим
+    /// окончанием, и следующий редактор покажет там мусор.
+    func testДописанныйПунктНаследуетВиндовоеОкончаниеСтроки() {
+        XCTAssertEqual(
+            RecapItemEdit.appending("три", toSection: "Решения", in: "## Решения\r\n- раз\r\n"),
+            "## Решения\r\n- раз\r\n- три\r\n"
+        )
+        // И у пустой секции — у её заголовка.
+        XCTAssertEqual(
+            RecapItemEdit.appending("раз", toSection: "Решения", in: "## Решения\r\n\r\n## Задачи\r\n- а\r\n"),
+            "## Решения\r\n- раз\r\n\r\n## Задачи\r\n- а\r\n"
+        )
+    }
+
     /// The file ends without a trailing newline as often as with one, and
     /// nothing about an edit should add or drop it.
     func testTrailingNewlineIsNeitherAddedNorDropped() {

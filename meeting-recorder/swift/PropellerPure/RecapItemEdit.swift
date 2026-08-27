@@ -237,10 +237,18 @@ public enum RecapItemEdit {
 
         // Первая секция с таким именем — та же, на которую смотрит
         // `RecapDigest.section(named:)`; порядковый номер берётся один раз.
+        // Возврат каретки новая строка наследует у соседа: в CRLF-документе
+        // строка без него — единственная во всём файле с другим окончанием, и
+        // следующий редактор покажет там мусор.
+        func carriage(of line: Int) -> String {
+            lines.indices.contains(line) && lines[line].hasSuffix("\r") ? "\r" : ""
+        }
+
         let all = locations(in: markdown)
         if let ordinal = all.first(where: { RecapDigest.foldTitle($0.section) == wanted })?.sectionOrdinal,
            let last = all.last(where: { $0.sectionOrdinal == ordinal }) {
-            lines.insert(last.indent + last.marker + trimmed, at: last.lines.upperBound + 1)
+            let at = last.lines.upperBound
+            lines.insert(last.indent + last.marker + trimmed + carriage(of: at), at: at + 1)
             return lines.joined(separator: "\n")
         }
 
@@ -249,7 +257,7 @@ public enum RecapItemEdit {
             RecapDigest.headingTitle($0.trimmingCharacters(in: .whitespacesAndNewlines))
                 .map { RecapDigest.foldTitle($0) == wanted } ?? false
         }) else { return nil }
-        lines.insert("- " + trimmed, at: heading + 1)
+        lines.insert("- " + trimmed + carriage(of: heading), at: heading + 1)
         return lines.joined(separator: "\n")
     }
 
