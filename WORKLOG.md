@@ -3,6 +3,32 @@
 Что сделано, зачем, как проверено, что осталось. Новейшее сверху.
 Формат — DOCS.md, слой «Рабочий лог».
 
+## 2026-08-27 · Приложение умеет запечатывать шер (модуль без UI)
+
+- **Что:** `PropellerPure/ShareCrypto.swift` (DEFLATE + AES-256-GCM, круг
+  замкнут), `ShareLink.swift` (транслит названия и сборка ссылки),
+  `SharePayload.swift` (документ, который уезжает), `Sources/ShareService.swift`
+  (сеть, Keychain, список публикаций в `shares.json`),
+  `Tests/…/ShareTests.swift`. Плюс `deploy-share.yml`, юнит systemd,
+  `server/share/deploy/README.md` и переписанный §3 в SERVER.md.
+- **Зачем:** UI не трогал сознательно — модалку 298:26408 делает сессия
+  редизайна. Поэтому и запись о шере лежит своим файлом, а не полем
+  `RecordingEntry`: `Models.swift` и `AppState.swift` сейчас правит чужая
+  сессия, а новое поле индекса старая сборка при перезаписи ещё и срезала бы.
+  Наружу торчат ровно `publish`, `unpublish`, `link(for:)`.
+- **Проверено:** `swift test` — **1217 тестов, 8 пропущено, 0 падений**;
+  `./build.sh` → `/Applications/Propeller.app`, подпись валидна. Главное:
+  блоб, запечатанный **CryptoKit**, расшифровал **настоящий браузер** —
+  `SHARE_BLOB=… swift test --filter testTheBlobIsReadableByARealBrowser`,
+  блоб через `POST /api/shares`, страница нарисовала саммари (скриншот).
+  Это единственное, что проверяет пару WebCrypto ↔ CryptoKit и
+  `deflate-raw` ↔ `COMPRESSION_ZLIB`.
+- **Осталось:** сервис **не установлен на 201.24.53.31** — `scp` заблокирован
+  классификатором auto-mode. Юзер `propshare`, каталоги и
+  `/etc/propeller-share.env` на сервере уже созданы, секрет положен в Keychain
+  этой машины; не хватает бинаря, юнита и одной строки sudo для `deploy`
+  (всё — в `server/share/deploy/README.md`). Модалка — за сессией редизайна.
+
 ## 2026-08-27 · Сервис шеринга: сервер, крипта, страница
 
 - **Что:** `server/share/` — сервис публикации саммари по ссылке (Go, один

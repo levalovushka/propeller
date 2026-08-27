@@ -1,0 +1,57 @@
+name: Deploy share service
+
+on:
+  push:
+    branches: [main]
+    paths: ['server/share/**']
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-share
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+          cache-dependency-path: server/share/go.mod
+
+      # Красный тест не уезжает на живой сервер. Сервис держит чужие ссылки:
+      # откат — это ещё один деплой, а не «отменить».
+      - name: Test
+        run: cd server/share && go vet ./... && go test ./...
+
+      - name: Build
+        run: |
+          cd server/share
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -ldflags="-s -w" -o propeller-share .
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "201.24.53.31 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBcHrySZBn4JQ9tWGpj3CNiGJnTPbpBJtObpMACcwO4V" >> ~/.ssh/known_hosts
+
+      # Копия рядом, потом переименование: работающий бинарь нельзя переписать
+      # на месте («text file busy»), а systemd поднимет новый за две секунды.
+      - name: Install and restart
+        run: |
+          scp -i ~/.ssh/deploy_key server/share/propeller-share \
+            deploy@201.24.53.31:/opt/propeller-share/propeller-share.new
+          ssh -i ~/.ssh/deploy_key deploy@201.24.53.31 '
+            mv /opt/propeller-share/propeller-share.new /opt/propeller-share/propeller-share
+            chmod 0755 /opt/propeller-share/propeller-share
+            sudo /bin/systemctl restart propeller-share
+          '
+
+      - name: Verify
+        run: |
+          sleep 3
+          curl -sSf --max-time 15 https://propeller.report/api/health

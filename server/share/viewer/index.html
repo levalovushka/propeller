@@ -171,8 +171,11 @@ function idFromPath() {
   return m ? m[1] : '';
 }
 
-async function gunzip(bytes) {
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+// Сырой DEFLATE, не gzip: приложение сжимает через `COMPRESSION_ZLIB`, а это
+// у Apple означает именно RFC 1951 без обёртки. Заголовок и CRC gzip'а
+// пришлось бы собирать в Swift руками ради того же результата.
+async function inflate(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
   return new Response(stream).text();
 }
 
@@ -241,7 +244,7 @@ async function open() {
     const sealed = blob.slice(12);
     const k = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
     const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce }, k, sealed);
-    const doc = JSON.parse(await gunzip(new Uint8Array(plain)));
+    const doc = JSON.parse(await inflate(new Uint8Array(plain)));
     if (doc.v !== 1) { say('Эта ссылка сделана более новой версией Propeller.'); return; }
     render(doc);
   } catch (e) {
