@@ -187,6 +187,13 @@ enum GalleryFixture {
             state.galleryPoseSetupPrompt(prompt)
             return
         }
+        if let tab = ProjectTab.allCases.first(where: { id == "project-\($0.rawValue)" }) {
+            state.recordingStore.recordings = tagged(library)
+            state.selectedRecordingID = state.recordingStore.recordings.first?.id
+            state.projects = projects
+            state.paneRoute = .project("gal-proj-design", tab)
+            return
+        }
         switch id {
         case "projects-list", "projects-empty":
             // Встреча выбирается **до** маршрута и не через `selectRecording`:
@@ -383,9 +390,14 @@ enum GalleryFixture {
         ]
     }
 
-    /// Те же встречи, но с метками проектов: подпись карточки («Вчера · 3
-    /// встречи») считается по индексу, и без меток каждый кадр говорил бы
-    /// «Пока нет встреч».
+    /// Те же встречи, но с метками проектов и составом: подпись карточки
+    /// («Вчера · 3 встречи») считается по индексу, а вкладка «Участники» — по
+    /// подписям расшифровки и приглашённым. Без того и другого каждый кадр
+    /// говорил бы «Пока нет встреч» и «Пока некого показать».
+    ///
+    /// Приглашённые нужны отдельно: в ленте по имени назван ровно один —
+    /// владелец микрофона, — остальные там `Speaker 2` и `Speaker 3`, и состав
+    /// из одной строки не показал бы, чем эта вкладка занята.
     private static func tagged(_ rows: [RecordingEntry]) -> [RecordingEntry] {
         let byID: [String: [String]] = [
             contentID:        ["gal-proj-design"],
@@ -395,9 +407,22 @@ enum GalleryFixture {
             "gal-quarter":    ["gal-proj-1on1"],
             "gal-review":     ["gal-proj-design"],
         ]
+        let invited: [String: [String]] = [
+            contentID:    ["Левон", "Аня Соколова", "Марк Тен"],
+            "gal-review": ["Левон", "Аня Соколова", "Гриша Панов"],
+        ]
         return rows.map { row in
             var copy = row
             copy.projects = byID[row.id]
+            if let people = invited[row.id] {
+                copy.calendarMeta = CalendarMeta(
+                    eventID: "gal-event-\(row.id)",
+                    seriesID: "gal-series-design",
+                    title: row.title,
+                    attendees: people,
+                    isRecurring: true
+                )
+            }
             return copy
         }
     }

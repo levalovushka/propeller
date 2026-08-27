@@ -217,10 +217,21 @@ public enum UIStateCatalog {
         .init(id: "projects-empty", label: "Проекты — ни одного"),
     ]
 
+    /// Экран проекта — по кадру на вкладку.
+    ///
+    /// Выводится из `ProjectTab`, а не перечисляется руками: «Решения» и
+    /// «Задачи» появятся в типе шагом 4 и получат кадр от этого, а не от того,
+    /// что кто-то вспомнил про галерею.
+    public static var projectTabs: [Screen] {
+        ProjectTab.allCases.map {
+            Screen(id: "project-\($0.rawValue)", label: "Проект — вкладка «\($0.title)»")
+        }
+    }
+
     /// Everything the gallery has to be able to show, in shooting order.
     public static var allScreenIDs: [String] {
         meetingStates.map(\.id)
             + (recording + onboarding + railPrompt + settingsClaude
-               + detailTabs + library + projects).map(\.id)
+               + detailTabs + library + projects + projectTabs).map(\.id)
     }
 }

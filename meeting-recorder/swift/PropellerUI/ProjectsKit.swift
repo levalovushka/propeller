@@ -402,3 +402,141 @@ public struct ProjectComposer: View {
             .fill(Tokens.Projects.Modal.fill)
     }
 }
+
+// MARK: - Экран проекта
+
+/// Полоса вкладок — Figma 256:7547.
+///
+/// Не `Picker`: существующий переключатель колонок панели живёт внутри меню
+/// «ещё», а здесь вкладки стоят строкой и читаются как места, а не как выбор.
+/// Чип тот же, что у меню сортировки, — 32 pt, скругление 8, надпись 12: это
+/// один и тот же предмет разной начинки.
+public struct ProjectTabBar: View {
+    @Binding private var selection: ProjectTab
+
+    public init(selection: Binding<ProjectTab>) {
+        self._selection = selection
+    }
+
+    public var body: some View {
+        HStack(spacing: Tokens.Projects.Screen.tabGap) {
+            ForEach(ProjectTab.allCases, id: \.self) { tab in
+                Button { selection = tab } label: {
+                    Text(tab.title)
+                        .typo(Tokens.Projects.Typo.action)
+                        .foregroundStyle(tab == selection
+                            ? Tokens.Projects.title
+                            : Tokens.Projects.quiet)
+                        .padding(.horizontal, Tokens.Projects.actionHPadding)
+                        .frame(height: Tokens.Projects.actionHeight)
+                        .background(
+                            tab == selection ? Tokens.Projects.sortFill : .clear,
+                            in: RoundedRectangle(
+                                cornerRadius: Tokens.Projects.actionRadius, style: .continuous
+                            )
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.press)
+            }
+        }
+        .frame(height: Tokens.Projects.actionHeight)
+    }
+}
+
+/// Волосяная линия между строками списка. Между, а не после каждой: последняя
+/// строка не отделяется от пустоты под собой.
+public struct ProjectRowDivider: View {
+    public init() {}
+
+    public var body: some View {
+        Rectangle()
+            .fill(Tokens.Projects.Screen.divider)
+            .frame(height: Tokens.Settings.dividerHeight)
+    }
+}
+
+/// Строка встречи в проекте — Figma 256:8832.
+public struct ProjectMeetingRow: View {
+    private let meta: String
+    private let subtitle: String
+    private let open: () -> Void
+
+    @State private var hovering = false
+
+    public init(meta: String, subtitle: String, open: @escaping () -> Void) {
+        self.meta = meta
+        self.subtitle = subtitle
+        self.open = open
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: Tokens.Projects.Screen.rowLineGap) {
+            Text(meta)
+                .typo(Tokens.Projects.Typo.body)
+                .foregroundStyle(Tokens.Projects.quiet)
+            if !subtitle.isEmpty {
+                Text(subtitle)
+                    .typo(Tokens.Projects.Typo.title)
+                    .foregroundStyle(Tokens.Projects.title)
+                    .lineLimit(Tokens.Projects.Screen.meetingLines)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .padding(.vertical, Tokens.Projects.Screen.rowVPadding)
+        .padding(.horizontal, Tokens.Projects.Screen.meetingInset)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            hovering ? Tokens.Projects.Screen.rowHoverFill : .clear,
+            in: RoundedRectangle(cornerRadius: Tokens.Projects.Screen.rowRadius, style: .continuous)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture(perform: open)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+    }
+}
+
+/// Строка человека — Figma 256:7571.
+///
+/// Кружок с инициалом, а не аватар: картинок у нас нет и взять их неоткуда, а
+/// пустой серый круг на каждой строке — это обещание фотографии, которого никто
+/// не сдержит.
+public struct ProjectPersonRow: View {
+    private let name: String
+    private let subtitle: String
+
+    public init(name: String, subtitle: String) {
+        self.name = name
+        self.subtitle = subtitle
+    }
+
+    private var initial: String {
+        String(name.trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
+    }
+
+    public var body: some View {
+        HStack(spacing: Tokens.Projects.Screen.avatarGap) {
+            Text(initial)
+                .typo(Tokens.Projects.Typo.title)
+                .foregroundStyle(Tokens.Projects.quiet)
+                .frame(width: Tokens.Projects.Screen.avatarSide,
+                       height: Tokens.Projects.Screen.avatarSide)
+                .background(Tokens.Projects.Screen.avatarFill, in: Circle())
+            VStack(alignment: .leading, spacing: Tokens.Projects.Screen.rowLineGap) {
+                Text(name)
+                    .typo(Tokens.Projects.Typo.title)
+                    .foregroundStyle(Tokens.Projects.title)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .typo(Tokens.Projects.Typo.body)
+                    .foregroundStyle(Tokens.Projects.quiet)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, Tokens.Projects.Screen.rowVPadding)
+        .padding(.horizontal, Tokens.Projects.Screen.personInset)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}

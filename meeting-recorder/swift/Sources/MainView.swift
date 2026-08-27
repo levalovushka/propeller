@@ -546,6 +546,10 @@ struct MainView: View {
     private var paneSubject: String {
         if case .settings(let section) = state.paneRoute { return "settings-" + section.rawValue }
         if state.paneRoute.isProjects { return "projects" }
+        // Вкладка нарочно не входит в ключ: смена вкладки — движение **внутри**
+        // экрана, а разный ключ проигрывает затухание всей панели, и клик по
+        // вкладке читался бы как переход на другой экран.
+        if let open = state.paneRoute.openProject { return "project-" + open.id }
         guard let entry = state.selectedRecording else { return "empty" }
         return isBeingRecorded(entry) ? "recording-\(entry.id)" : "meeting-\(entry.id)"
     }
@@ -793,6 +797,17 @@ struct MainView: View {
         } else if state.paneRoute.isProjects {
             ProjectsPane(state: state)
                 .frame(maxWidth: .infinity)
+        } else if let open = state.paneRoute.openProject {
+            if let project = state.projects.first(where: { $0.id == open.id }) {
+                ProjectScreen(state: state, project: project, tab: open.tab)
+                    .frame(maxWidth: .infinity)
+            } else {
+                // Проект исчез из-под открытого экрана — удалён другой сессией
+                // или файл переписан. Показывать нечего, и врать об этом тоже
+                // нечем: возвращаемся к списку.
+                ProjectsPane(state: state)
+                    .frame(maxWidth: .infinity)
+            }
         } else if let entry = state.selectedRecording, isBeingRecorded(entry) {
             RecordingPaneView(
                 live: state.live,

@@ -1644,6 +1644,45 @@ public enum Tokens {
             )
         }
 
+        // MARK: Экран проекта — 256:6954 / 256:7467
+
+        /// Числа сняты с макета по узлам; **цвет и начертание новых строк взяты
+        /// из соседних поверхностей, а не с макета** — файл Figma в момент
+        /// стройки был недоступен. Геометрия измерена, краска выведена.
+        public enum Screen {
+            /// Шапка: имя 24, описание 66, подпись 14.
+            public static let headerGap = Space.s10
+            public static let aboutGap = Space.s12
+            /// Описание проекта — три строки телом саммари (66 = 3 × 22).
+            public static let aboutLines = 3
+            /// Шапка → полоса вкладок.
+            public static let tabsGap = Space.s40
+            /// Полоса вкладок → список.
+            public static let listGap = Space.s16
+            /// Между вкладками. Двойка, а не восьмёрка: вкладки — один предмет
+            /// с четырьмя положениями, а не четыре кнопки.
+            public static let tabGap = Space.s2
+            /// Боковой вылет строки встречи за меру списка (256:8832).
+            public static let meetingInset = Space.s16
+            /// У человека он на две точки меньше — там слева стоит кружок,
+            /// и вылет считается от него (256:7571).
+            public static let personInset: CGFloat = 14
+            public static let rowVPadding = Space.s12
+            /// Строка встречи: «22 августа · 45 минут» → две строки темы.
+            public static let rowLineGap = Space.s2
+            public static let meetingLines = 2
+            /// Кружок человека.
+            public static let avatarSide = Space.s32
+            public static let avatarGap = Space.s10
+            public static let avatarFill = Primitive.ink(dark: Primitive.AlphaWhite.a7,
+                                                         light: Primitive.AlphaBlack.a7)
+            public static let divider = Primitive.ink(dark: Primitive.AlphaWhite.a7,
+                                                      light: Primitive.AlphaBlack.a7)
+            public static let rowHoverFill = Primitive.ink(dark: Primitive.AlphaWhite.a5,
+                                                           light: Primitive.AlphaBlack.a5)
+            public static let rowRadius = Radius.xs
+        }
+
         // MARK: Type
 
         public enum Typo {
@@ -1666,6 +1705,12 @@ public enum Tokens {
             )
             /// 11 / 14 — подпись над полем и счётчик знаков.
             public static let label = Sidebar.Typo.meta
+            /// 17 / 24 — имя проекта на его экране. Тот же, что у заголовка
+            /// раздела: это заголовок страницы и есть.
+            public static let screenTitle = Settings.Typo.page
+            /// 14 / 22 — описание проекта на его экране. Бокс 66 при трёх
+            /// строках (256:7030) — это тело саммари, а не подпись карточки.
+            public static let screenBody = Pane.Typo.body
         }
     }
 

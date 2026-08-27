@@ -58,6 +58,37 @@ public enum ProjectCardText {
         return "Давно"
     }
 
+    /// «22 августа · 45 мин» — первая строка встречи в списке проекта.
+    ///
+    /// Дата, а не время: в рельсе строки сгруппированы по дням и час отвечает на
+    /// «когда», здесь список тянется через месяцы и на «когда» отвечает число.
+    /// Длительность — тем же правилом, что и в рельсе (`SidebarMeta`), чтобы
+    /// одна и та же встреча не называлась «95 мин» в одном месте и «1 ч 35 мин»
+    /// в другом.
+    public static func meetingLine(
+        date: Date,
+        duration: TimeInterval,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> String {
+        var cal = calendar
+        cal.locale = SidebarDayGrouping.locale
+        let sameYear = cal.component(.year, from: date) == cal.component(.year, from: now)
+        let day = (sameYear ? dayMonth : dayMonthYear).string(from: date)
+        guard duration > 0 else { return day }
+        return day + " · " + SidebarMeta.durationText(duration)
+    }
+
+    private static let dayMonth: DateFormatter = formatter("d MMMM")
+    private static let dayMonthYear: DateFormatter = formatter("d MMMM yyyy")
+
+    private static func formatter(_ format: String) -> DateFormatter {
+        let f = DateFormatter()
+        f.locale = SidebarDayGrouping.locale
+        f.dateFormat = format
+        return f
+    }
+
     /// Russian counting: the form is chosen by the last two digits, and the
     /// teens are all the third form — 11 встреч, not 11 встреча.
     static func declined(_ count: Int, _ one: String, _ few: String, _ many: String) -> String {

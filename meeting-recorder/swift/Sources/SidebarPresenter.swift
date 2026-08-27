@@ -130,7 +130,7 @@ enum SidebarPresenter {
                 id: NavAction.projects.rawValue,
                 symbol: "folder.fill",
                 title: "Проекты",
-                isSelected: state.paneRoute.isProjects
+                isSelected: state.paneRoute.isProjectsArea
             ),
             // Поиска здесь нет: он стал кнопкой в шапке рельса, рядом с
             // тумблером. Строка списка обещает место, куда ведёт, а палитра —

@@ -16,21 +16,35 @@ enum PaneRoute: Equatable {
     case settings(SettingsSection)
     /// Список проектов.
     case projects
+    /// Один проект и открытая на нём вкладка. Вкладка живёт в маршруте по той
+    /// же причине, что и раздел настроек: «проект открыт, но какая вкладка —
+    /// неизвестно» не должно быть выразимо.
+    case project(String, ProjectTab)
 
     var isSettings: Bool {
         if case .settings = self { return true }
         return false
     }
 
+    /// Список проектов, но не один проект: строка рельса подсвечивается на
+    /// обоих (`isProjectsArea`), а сетку рисует только этот.
     var isProjects: Bool {
         if case .projects = self { return true }
         return false
     }
 
+    var openProject: (id: String, tab: ProjectTab)? {
+        if case .project(let id, let tab) = self { return (id, tab) }
+        return nil
+    }
+
+    /// Раздел проектов целиком — и список, и экран одного.
+    var isProjectsArea: Bool { isProjects || openProject != nil }
+
     /// Панель занята не встречей. Ровно то, что нужно знать хрому окна и шапке:
     /// им безразлично, настройки это или проекты, — им важно, что встречи под
     /// ними сейчас не видно.
-    var isSection: Bool { isSettings || isProjects }
+    var isSection: Bool { isSettings || isProjectsArea }
 }
 
 /// Что набрано в плите проекта. `editing` — id того, кого правят; nil значит,
@@ -174,6 +188,8 @@ class AppState: ObservableObject {
     /// включая рельс (261:9361 — 360 pt по центру 913), а окно принадлежит
     /// `MainView`. Та же причина, по которой там же живёт переключатель встреч.
     @Published var projectDraft: ProjectDraft?
+    /// Последний посчитанный состав проекта — см. `roster(of:)`.
+    private var rosterCache: (key: String, people: [ProjectRoster.Person])?
 
     /// Recording was asked for and the microphone is not ours to open.
     ///
@@ -1090,6 +1106,34 @@ class AppState: ObservableObject {
         }
     }
 
+    /// Встречи проекта, от новых к старым.
+    func meetings(of projectID: String) -> [RecordingEntry] {
+        recordingStore.recordings
+            .filter { ($0.projects ?? []).contains(projectID) }
+            .sorted { $0.date > $1.date }
+    }
+
+    /// Состав проекта. Считается по расшифровкам, а это регулярка по всему
+    /// тексту каждой встречи, поэтому ответ запоминается: вкладку открывают и
+    /// закрывают, а вид перерисовывается на каждое движение мыши.
+    ///
+    /// Ключ — проект и состав его встреч: добавилась встреча или сменился её
+    /// текст на новый — ключ другой, и состав считается заново.
+    func roster(of projectID: String) -> [ProjectRoster.Person] {
+        let rows = meetings(of: projectID)
+        let key = projectID + "|" + rows.map { "\($0.id):\(($0.transcript ?? "").count)" }.joined(separator: ",")
+        if let cached = rosterCache, cached.key == key { return cached.people }
+        let people = ProjectRoster.roster(of: rows.map { entry in
+            ProjectRoster.Meeting(
+                id: entry.id,
+                speakers: RecapDocument.participants(fromTranscript: entry.transcript ?? ""),
+                invited: entry.calendarMeta?.attendees ?? []
+            )
+        })
+        rosterCache = (key, people)
+        return people
+    }
+
     /// Завести проект. Возвращает его — вызывающему обычно нужно тут же
     /// открыть его экран.
     @discardableResult
@@ -1125,6 +1169,19 @@ class AppState: ObservableObject {
 
     /// Удалить проект. Метки со встреч снимаются — иначе они указывали бы в
     /// пустоту; сами встречи и их содержимое не трогаются (`plan-projects.md` §8).
+    /// Открыть экран проекта. Вкладка — первая, а не запомненная: запомненная
+    /// переживает возврат и ничем его не объясняет (то же правило, что у
+    /// разделов настроек).
+    func openProject(_ id: String, tab: ProjectTab = .entry) {
+        paneRoute = .project(id, tab)
+        reloadProjects()
+    }
+
+    func selectProjectTab(_ tab: ProjectTab) {
+        guard let open = paneRoute.openProject else { return }
+        paneRoute = .project(open.id, tab)
+    }
+
     /// Открыть плиту: пустую для нового проекта, заполненную для правки.
     func composeProject(editing project: Project? = nil) {
         projectDraft = ProjectDraft(
@@ -1153,7 +1210,8 @@ class AppState: ObservableObject {
         }
         _ = recordingStore.removeProject(id)
         reloadProjects()
-        if paneRoute == .projects { objectWillChange.send() }
+        // Экран удалённого проекта показывать нечем — возвращаемся к списку.
+        if paneRoute.openProject?.id == id { paneRoute = .projects }
     }
 
     func selectRecording(_ entry: RecordingEntry) {
