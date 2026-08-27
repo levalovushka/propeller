@@ -47,6 +47,9 @@ public struct RecapDigest: Equatable, Sendable {
     public static let decisionsTitle = "Решения"
     public static let tasksTitle = "Задачи"
     public static let openQuestionsTitle = "Открытые вопросы"
+    /// Последняя большая секция шаблона — и единственная, отсутствие которой
+    /// значит «модель не дописала»: см. `RecapGenerationPolicy.missingDiscussion`.
+    public static let discussionTitle = "Ход обсуждения"
 
     public func section(named title: String) -> Section? {
         let wanted = Self.foldTitle(title)

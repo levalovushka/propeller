@@ -104,7 +104,7 @@ def build_user_message(title: str, transcript_markdown: str, notes: str | None =
         )
     trimmed_notes = (notes or "").strip()
     if trimmed_notes:
-        parts += ["", "Заметки пользователя (якоря — приоритетнее болтовни в транскрипте):", trimmed_notes]
+        parts += ["", "Заметки пользователя (якоря — приоритетнее болтовни в транскрипте). Вплетай их по смыслу, а не отдельным списком; раздела «Заметки» не пиши — он собирается из этого текста дословно и без тебя:", trimmed_notes]
     parts += ["", "Транскрипт:", transcript_markdown, "", "Ответь строго на русском языке."]
     return "\n".join(parts)
 
@@ -120,6 +120,33 @@ def num_ctx(prompt_characters: int) -> int:
 
 def exceeds_largest_window(prompt_characters: int) -> bool:
     return estimated_tokens(prompt_characters) + REPLY_TOKENS > BUCKETS[-1]
+
+
+def check_generation_constants() -> list[str]:
+    """Fail loudly if the generation policy drifted from Swift.
+
+    Заведено 2026-08-28, после того как одна и та же ошибка нашлась третий раз за
+    сутки: лаборатория шлёт запрос, которого приложение не отправляет. Первые два
+    раза это были состав в user-сообщении и промпт редактора; третий — сама
+    генерация: `run.py` гонял t=0,2 без повтора при схлопнувшемся ответе, а
+    приложение гоняет t=0 и перегенерирует всё короче 800 токенов. Числа,
+    снятые так, отвечали на вопрос, которого никто не задавал.
+    """
+    pol = (REPO / "meeting-recorder" / "swift" / "PropellerPure"
+           / "RecapGenerationPolicy.swift").read_text(encoding="utf-8")
+    import run as runner   # локальный импорт: run.py импортирует promptlib
+    problems = []
+    checks = [
+        ("temperature", r"public static let temperature = ([\d.]+)", runner.POLICY_TEMPERATURE),
+        ("retryTemperature", r"public static let retryTemperature = ([\d.]+)", RETRY_TEMPERATURE),
+        ("recapMinReplyTokens", r"public static let recapMinReplyTokens = (\d+)",
+         REPLY_TOKENS_FLOOR["recap"]),
+    ]
+    for name, pattern, mine in checks:
+        m = re.search(pattern, pol)
+        if not m or float(m.group(1)) != float(mine):
+            problems.append(f"RecapGenerationPolicy.{name} = {m.group(1) if m else '?'}, у лаборатории {mine}")
+    return problems
 
 
 def check_context_constants() -> list[str]:
@@ -163,11 +190,22 @@ REPLY_TOKENS_FLOOR = {"recap": 800, "facts": 600}
 
 RETRY_TEMPERATURE = 0.3   # на ней перегенерируется схлопнувшийся ответ пути t=0
 
+# Последняя секция шаблона. Ответ без неё дописан не до конца, и длиной это не
+# ловится: замер 2026-08-28 — секция есть у каждого ответа от 941 токена и ни у
+# одного до 945, при пороге схлопывания 800. Зеркало
+# `RecapGenerationPolicy.missingDiscussion`.
+DISCUSSION_HEADING = re.compile(r"(?mi)^##+\s*\**\s*Ход обсуждения\s*\**\s*:?\s*$")
+
+
+def missing_discussion(text: str) -> bool:
+    return DISCUSSION_HEADING.search(text) is None
+
 
 def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
                 temperature: float = 0.2,
                 min_reply_tokens: int | None = None,
                 retry_temperature: float | None = None,
+                requires_discussion: bool = False,
                 fmt: dict | None = None) -> tuple[str, dict]:
     """Same payload shape as `RecapService.callOllama` — think off, temp 0.2, sized window.
 
@@ -231,14 +269,22 @@ def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
     # ней. Воспроизводимость сохраняется, пока ответ здоров, и приносится в жертву
     # ровно в том случае, когда она вредна.
     collapsed = bool(min_reply_tokens and reply_tokens < min_reply_tokens)
+    # Второй признак недописанности, и он структурный: нет «Хода обсуждения».
+    # Длина была прокси, и прокси разошёлся с предметом — документ на 814–945
+    # токенов проходит порог 800 и приезжает без самой большой своей секции.
+    cut = requires_discussion and missing_discussion(content)
     retry_at = temperature if temperature > 0 else (retry_temperature or 0.0)
-    if collapsed and retry_at > 0:
+    if (collapsed or cut) and retry_at > 0:
         retried = True
         second, second_tokens, second_seconds, _ = once(retry_at)
         seconds += second_seconds
-        # Берётся длинный из двух, а не второй: вторая попытка тоже может
-        # сорваться, и тогда менять один огрызок на другой — потеря без выигрыша.
-        if second_tokens > reply_tokens:
+        # Дописанность важнее длины: ответ с секцией побеждает более длинный без
+        # неё. Когда по секции ничья — правило прежнее, длинный из двух.
+        second_cut = requires_discussion and missing_discussion(second)
+        if requires_discussion and cut != second_cut:
+            if cut:
+                content, reply_tokens = second, second_tokens
+        elif second_tokens > reply_tokens:
             content, reply_tokens = second, second_tokens
 
     stats = {
@@ -252,6 +298,8 @@ def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
         # иначе таблица говорила бы «схлопнулось», когда починка уже сработала.
         "collapsed": bool(min_reply_tokens and reply_tokens < min_reply_tokens),
         "collapsed_first": collapsed,
+        "cut_first": cut,
+        "cut": requires_discussion and missing_discussion(content),
         "calls": 2 if retried else 1,
         "seconds": seconds,
         "truncated": exceeds_largest_window(len(system) + len(user)),

@@ -154,4 +154,19 @@ final class RecapDocumentTests: XCTestCase {
         )
         XCTAssertFalse(bare.contains("Участники:"))
     }
+
+    /// Правило про заметки переехало из системного промпта сюда 2026-08-28: там
+    /// оно платилось 191 символом на **каждой** встрече, а заметки есть у
+    /// меньшинства, и хвоста документа моделью не дописывался — «Ход обсуждения»
+    /// пропадал (`tools/recap-lab/README.md`, замер 2026-08-28).
+    func testПравилоПроЗаметкиПриезжаетТолькоСЗаметками() {
+        let withNotes = RecapDocument.userMessage(
+            title: "Т", transcriptMarkdown: "текст", notes: "созвон про смету"
+        )
+        XCTAssertTrue(withNotes.contains("раздела «Заметки» не пиши"))
+        XCTAssertTrue(withNotes.contains("созвон про смету"))
+
+        let bare = RecapDocument.userMessage(title: "Т", transcriptMarkdown: "текст", notes: nil)
+        XCTAssertFalse(bare.contains("раздела «Заметки» не пиши"))
+    }
 }

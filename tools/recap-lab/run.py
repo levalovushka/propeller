@@ -22,6 +22,7 @@ import promptlib as p
 HERE = Path(__file__).parent
 CORPUS = HERE / "corpus.txt"
 MODEL = "qwen3.5:4b"   # matches the app's default (`Preferences.recapOllamaModel`)
+POLICY_TEMPERATURE = 0.0   # `RecapGenerationPolicy.temperature` — первый вызов детерминированный
 
 
 def corpus() -> list[str]:
@@ -41,7 +42,7 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="перегенерировать уже готовые")
     args = ap.parse_args()
 
-    drift = p.check_context_constants()
+    drift = p.check_context_constants() + p.check_generation_constants()
     if drift:
         print("Лаборатория разошлась с приложением:", *drift, sep="\n  ")
         return 1
@@ -62,7 +63,20 @@ def main() -> int:
         user = p.build_user_message(title, markdown)
         started = time.time()
         try:
-            raw, stats = p.call_ollama(args.model, system, user)
+            # Ровно то, что делает `RecapService.callOllamaTracked`: первый вызов
+            # детерминированный, ответ короче порога схлопывания
+            # (`RecapGenerationPolicy.recapMinReplyTokens`) перегенерируется на
+            # t=0,3, из двух берётся длинный. Без этих трёх параметров
+            # лаборатория мерила запрос, которого приложение не отправляет —
+            # ошибка того же рода, что уже дважды нашлась 2026-08-27 (состав в
+            # user-сообщении, промпт редактора).
+            raw, stats = p.call_ollama(
+                args.model, system, user,
+                temperature=POLICY_TEMPERATURE,
+                min_reply_tokens=p.REPLY_TOKENS_FLOOR["recap"],
+                retry_temperature=p.RETRY_TEMPERATURE,
+                requires_discussion=True,
+            )
         except Exception as error:                      # noqa: BLE001 — a failed meeting must not stop the batch
             print(f"{meeting}  · ОШИБКА: {error}")
             continue

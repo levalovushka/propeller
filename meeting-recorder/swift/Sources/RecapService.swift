@@ -75,6 +75,34 @@ actor RecapService {
     /// задач 19–20 → 24–26. Остаток ярлыков снимает второй проход, которому
     /// линтер отдаёт адреса (`RecapLint.decisionForm`).
     ///
+    /// # Длина промпта платится хвостом документа
+    ///
+    /// Правило «пустые секции опускай» с исключением для «Хода обсуждения» —
+    /// первая попытка, и её замер не подтвердил: 4 и 2 конспекта из 8 без
+    /// секции против 4 и 4 у прежней редакции и 1–2 в базе, полосы
+    /// перекрываются. Значит секция не «опускается как пустая», а **не
+    /// дописывается**: у промпта в 1907 символов против 1474 хвоста документа не
+    /// хватает — тот самый закон, которым живёт этот файл, только замеренный не
+    /// по числу договорённостей, а по последней секции.
+    ///
+    /// Поэтому 191 символ куплен обратно там, где он всё равно был условным:
+    /// правило про заметки пользователя переехало в `RecapDocument.userMessage`,
+    /// рядом с самими заметками. Это то же место и та же причина, что у строки
+    /// про состав — оба правила теперь стоят там, где известно, есть ли данные,
+    /// о которых они говорят.
+    ///
+    /// # «Ход обсуждения» защищён и правилом
+    ///
+    /// Правка формы стоила самой длинной секции, и замер это показал только
+    /// после живого прогона. Без «Хода обсуждения» приезжало **4 конспекта из 8
+    /// против 1–2 до правки**, доля секции в документе 0,34–0,40 → 0,22–0,24, и
+    /// видно это на обоих прогонах каждого варианта, то есть не шум.
+    ///
+    /// Читать это как «стало плотнее» — ошибка, которую я и совершил: короче
+    /// стал не пересказ, а документ, и ушла ровно та секция, которая несёт
+    /// контекст и аргументы. Правило «пустые секции опускай» модель применила к
+    /// самой большой, поэтому исключение стоит там же, где правило.
+    ///
     /// # Примеров-предложений здесь нет, и это дороже, чем кажется
     ///
     /// Первая редакция этой правки давала форме **два примера строками**:
@@ -106,9 +134,8 @@ actor RecapService {
     Собери ВСЕ договорённости, а не первые попавшиеся: они разбросаны по всему разговору, и на рабочей встрече их обычно пять и больше. Пропущенная договорённость — худшая ошибка конспекта.
     Решение и задача — разные вещи: решение — то, о чём договорились, задача — работа, которую кому-то делать.
     Не выдумывай того, чего нет в транскрипте: срок и ответственного пиши, только если они прозвучали вслух.
-    Если пользователь приложил свои заметки — это то, что он счёл важным; вплетай их по смыслу, а не отдельным списком. Раздела «Заметки» не пиши: он собирается из его текста дословно и без тебя.
 
-    Формат — Markdown: заголовки через ##, списки через дефис, жирное через **. Пустые секции опускай целиком. Шапку Date / Duration / Participants не добавляй.
+    Формат — Markdown: заголовки через ##, списки через дефис, жирное через **. Пустую секцию опускай целиком — кроме «Хода обсуждения»: он есть на любой встрече. Шапку Date / Duration / Participants не добавляй.
 
     ## Итог
     Один абзац, 2–3 предложения: зачем собирались и к чему пришли.
@@ -330,7 +357,8 @@ actor RecapService {
                 let tracked = try await callOllamaTracked(
                     model: prefs.ollamaModel, system: prompt, user: userContent,
                     numCtx: window,
-                    minReplyTokens: RecapGenerationPolicy.recapMinReplyTokens
+                    minReplyTokens: RecapGenerationPolicy.recapMinReplyTokens,
+                    requiresDiscussion: true
                 )
                 draft = tracked.content
                 draftStats = tracked.stats
@@ -875,7 +903,12 @@ actor RecapService {
         user: String,
         jsonMode: Bool = false,
         numCtx: Int? = nil,
-        minReplyTokens: Int? = nil
+        minReplyTokens: Int? = nil,
+        /// Спрашивать ли у ответа «Ход обсуждения» — признак дописанности,
+        /// которого длина не даёт (`RecapGenerationPolicy.missingDiscussion`).
+        /// Только у конспекта целиком: у извлечения из фрагмента такой секции
+        /// нет по построению.
+        requiresDiscussion: Bool = false
     ) async throws -> (content: String, stats: RecapGenerationPolicy.CallStats) {
         let url = URL(string: "http://127.0.0.1:11434/api/chat")!
         var req = URLRequest(url: url)
@@ -960,11 +993,16 @@ actor RecapService {
         do {
             let first = try await once(temperature: RecapGenerationPolicy.temperature)
             var retry: RecapGenerationPolicy.ModelReply?
-            if RecapGenerationPolicy.wantsRetry(first: first, threshold: minReplyTokens) {
+            if RecapGenerationPolicy.wantsRetry(
+                first: first, threshold: minReplyTokens, requiresDiscussion: requiresDiscussion
+            ) {
                 try Task.checkCancellation()
+                let why = RecapGenerationPolicy.collapsed(first, threshold: minReplyTokens)
+                    ? "схлопнулся (\(first.replyTokens ?? -1) токенов при пороге \(minReplyTokens ?? 0))"
+                    : "дописан не до конца: нет «\(RecapDigest.discussionTitle)»"
                 NSLog("""
-                [RecapService] ответ схлопнулся (\(first.replyTokens ?? -1) токенов при пороге \
-                \(minReplyTokens ?? 0)) — один повтор на t=\(RecapGenerationPolicy.retryTemperature)
+                [RecapService] ответ \(why) — один повтор на \
+                t=\(RecapGenerationPolicy.retryTemperature)
                 """)
                 do {
                     retry = try await once(temperature: RecapGenerationPolicy.retryTemperature)
@@ -977,7 +1015,8 @@ actor RecapService {
                 }
             }
             let (winner, stats) = RecapGenerationPolicy.resolved(
-                first: first, retry: retry, threshold: minReplyTokens
+                first: first, retry: retry, threshold: minReplyTokens,
+                requiresDiscussion: requiresDiscussion
             )
             if stats.retried {
                 NSLog("""
