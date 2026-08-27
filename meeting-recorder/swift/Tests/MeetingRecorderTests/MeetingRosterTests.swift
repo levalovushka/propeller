@@ -77,9 +77,29 @@ final class MeetingRosterTests: XCTestCase {
         )
     }
 
-    func testКластерыЭтоРяды() {
-        // За `Speaker 2` стоит живой человек, чьего имени мы не знаем. Не ряд —
-        // значит его нечем назвать одним движением.
+    func testПриЕстьПлиткахКластерыНеРяды() {
+        // Замер 2026-08-28: на 15 трассах из 19 плейсхолдеры стоят рядом с
+        // именами плиток, и под ними 406 реплик — это секунды, которые журнал
+        // не покрыл (демонстрация экрана, вид «Динамик»), а не лишние люди.
+        // Настоящая встреча `20260827_141346`: 4 плитки, и в ленте ещё
+        // `Speaker S1` и `Speaker S2`.
+        let rows = MeetingRoster.rows(.init(
+            call: ["Levon Lobanov", "Polina Kremenets", "Vlad Aldokhin", "Анастасия"],
+            spoken: ["Левон", "Polina Kremenets", "Speaker S2", "Vlad Aldokhin",
+                     "Анастасия", "Speaker S1"],
+            ownerName: "Левон", ownerZoomName: "Levon Lobanov"
+        ))
+        XCTAssertEqual(
+            rows.map(\.name), ["Левон", "Polina Kremenets", "Vlad Aldokhin", "Анастасия"]
+        )
+        XCTAssertFalse(rows.contains { $0.origin == .cluster })
+    }
+
+    func testБезПлитокКластерыОстаютсяРядами() {
+        // 96 % встреч по телеметрии — без трассы. Там кластер единственное, что
+        // говорит «сколько людей», и выбросить его значило бы отвечать «1». За
+        // `Speaker 2` стоит живой человек, чьего имени мы не знаем, и подпись
+        // ленты ряд несёт с собой — иначе его нечем назвать одним движением.
         let rows = MeetingRoster.rows(.init(
             spoken: ["Левон", "Speaker 2", "Speaker 3"], ownerName: "Левон"
         ))
