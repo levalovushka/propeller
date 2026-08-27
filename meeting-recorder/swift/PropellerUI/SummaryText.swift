@@ -14,13 +14,19 @@ import PropellerPure
 /// подзаголовка» становится неотличимо от самого подзаголовка. Атрибут знает
 /// разницу, начертание — нет.
 ///
-/// # Диск списка — настоящий символ
+/// # Маркеров списка на экране нет
 ///
-/// TextKit сам маркеры не рисует: `NSTextList` только описывает список, рисует
-/// его тот, кто вставил маркер в строку. Поэтому «•\t» лежит в тексте, а
-/// редактор стережёт его от каретки (`SummaryTextView`), и обратный разбор его
-/// снимает. Альтернатива — рисовать диски поверх, вычисляя позиции строк, —
-/// разъезжается на первом же переносе.
+/// До 2026-08-27 пункт нёс настоящий символ «•\t» в тексте, а редактор стерёг
+/// его от каретки. Макет 312:11129 маркеров не рисует вовсе: пункт «Решений» и
+/// абзац под ними выглядят одинаково, различаются они только в файле («- »
+/// против пустого начала). Решение владельца: маркеры в UI не едут — то место,
+/// где они стояли, займут чекбокс и кружок слоя атомов, и рисовать сейчас диск,
+/// чтобы через неделю заменить его на другой знак, незачем.
+///
+/// Из этого следует, что `bullet` и `body` на экране неразличимы, а в
+/// выпадающем списке панели действий остаются оба. Это не тупик: галочка в том
+/// же меню показывает, какой вид у блока сейчас, а сам вид меняет строку файла —
+/// её потом собирают `RecapDigest` и MCP.
 public enum SummaryText {
 
     /// Вид блока, на всём абзаце вместе с его переводом строки.
@@ -34,9 +40,6 @@ public enum SummaryText {
         public static let bold = Emphasis(rawValue: 1 << 0)
         public static let italic = Emphasis(rawValue: 1 << 1)
     }
-
-    /// Маркер пункта и его табуляция до втяжки.
-    public static let bulletMarker = "•\t"
 
     // MARK: - Типографика вида блока
 
@@ -93,12 +96,6 @@ public enum SummaryText {
         // может быть выше заданной (SF Pro vs макетный LH). Ужимать нечем —
         // остаётся не добавлять.
         paragraph.lineSpacing = max(0, typography.lineHeight - typography.renderedLineHeight)
-        if kind == .bullet {
-            paragraph.headIndent = Tokens.Pane.bulletIndent
-            paragraph.firstLineHeadIndent = 0
-            paragraph.tabStops = [NSTextTab(textAlignment: .left, location: Tokens.Pane.bulletIndent)]
-            paragraph.defaultTabInterval = Tokens.Pane.bulletIndent
-        }
         return paragraph
     }
 
@@ -119,9 +116,6 @@ public enum SummaryText {
         let out = NSMutableAttributedString()
         for (index, block) in document.blocks.enumerated() {
             let start = out.length
-            if block.kind == .bullet {
-                out.append(NSAttributedString(string: bulletMarker))
-            }
             for span in block.spans {
                 var emphasis: Emphasis = []
                 if span.bold { emphasis.insert(.bold) }
@@ -215,10 +209,6 @@ public enum SummaryText {
             // Перевод строки принадлежит абзацу, но не его тексту.
             if body.length > 0, (text.string as NSString).substring(with: body).hasSuffix("\n") {
                 body.length -= 1
-            }
-            if kind == .bullet, (text.string as NSString).substring(with: body).hasPrefix(bulletMarker) {
-                body.location += (bulletMarker as NSString).length
-                body.length -= (bulletMarker as NSString).length
             }
             guard body.length > 0 else { continue }
             let spans = self.spans(in: text, range: body)

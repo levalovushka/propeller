@@ -55,13 +55,21 @@ final class SummaryTextTests: XCTestCase {
         XCTAssertEqual(back.blocks[1].spans.first?.bold, true)
     }
 
-    func testTheBulletDiscIsNotPartOfTheBulletsText() {
-        let document = SummaryDocument.parse(markdown: "## Задачи\n- Собрать смету")
+    /// Маркера на экране нет, а в файле пункт остаётся пунктом.
+    ///
+    /// Это и есть вся разница между `bullet` и `body` с 2026-08-27: она живёт
+    /// в markdown, где её читают `RecapDigest` и MCP, и не живёт в пикселях.
+    func testAnItemCarriesNoMarkerOnScreenAndStaysAnItemInTheFile() {
+        let document = SummaryDocument.parse(markdown: "## Решения\n- Убрали барабан")
         let text = SummaryText.attributed(document, colour: ink)
-        XCTAssertTrue(text.string.contains(SummaryText.bulletMarker))
+        XCTAssertFalse(text.string.contains("•"))
+        XCTAssertFalse(text.string.contains("\t"))
+        XCTAssertTrue(text.string.contains("Убрали барабан"))
+
         let back = SummaryText.document(from: text, leadHeading: nil)
-        XCTAssertEqual(back.blocks[1].text, "Собрать смету")
-        XCTAssertFalse(back.markdown.contains("•"))
+        XCTAssertEqual(back.blocks[1].kind, .bullet)
+        XCTAssertEqual(back.blocks[1].text, "Убрали барабан")
+        XCTAssertTrue(back.markdown.contains("- Убрали барабан"))
     }
 
     func testEveryParagraphKnowsWhichBlockItIsIncludingItsLineBreak() {

@@ -358,7 +358,6 @@ public struct SummaryEditor: NSViewRepresentable {
 
         public func textViewDidChangeSelection(_ notification: Notification) {
             guard let view = notification.object as? SummaryTextView else { return }
-            view.keepCaretOutOfBulletMarker()
             view.setTypingAttributesFromCaret()
             let next = view.currentSelection()
             // Анимация только когда панель появляется или исчезает. На каждый
@@ -499,25 +498,21 @@ public final class SummaryTextView: NSTextView {
         super.insertNewline(sender)
         let next: SummaryDocument.Block.Kind = kind == .bullet ? .bullet : .body
         setKindOfCurrentParagraph(next)
-        if next == .bullet {
-            insertText(SummaryText.bulletMarker, replacementRange: selectedRange())
-            setKindOfCurrentParagraph(.bullet)
-        }
         restyle()
         setTypingAttributesFromCaret()
         coordinator?.publish(from: self)
     }
 
-    /// Backspace сразу за диском убирает весь маркер и превращает пункт в
-    /// абзац — иначе он съедает табуляцию и оставляет диск без списка.
+    /// Backspace в самом начале пункта делает его абзацем, а не приклеивает к
+    /// предыдущему. Маркера на экране больше нет, но «выйти из списка» — всё
+    /// ещё осмысленный первый шаг назад, и он же обратный к Return из пункта.
     public override func deleteBackward(_ sender: Any?) {
         guard !isTypewriting else { return }
         let range = selectedRange()
         let paragraph = paragraphRange(at: range.location)
-        let markerLength = (SummaryText.bulletMarker as NSString).length
         if range.length == 0,
            kindAtCaret() == .bullet,
-           range.location == paragraph.location + markerLength {
+           range.location == paragraph.location {
             convertParagraphToBody()
             return
         }
@@ -553,22 +548,12 @@ public final class SummaryTextView: NSTextView {
             attributedString: storage.attributedSubstring(from: union)
         )
         for range in affected.reversed() {
-            var local = NSRange(
+            let local = NSRange(
                 location: range.location - union.location,
                 length: range.length
             )
             let was = SummaryText.kind(in: edited, at: local.location)
             guard was != kind else { continue }
-            if was == .bullet {
-                local = removingMarker(at: local, in: edited)
-            }
-            if kind == .bullet {
-                edited.replaceCharacters(
-                    in: NSRange(location: local.location, length: 0),
-                    with: SummaryText.bulletMarker
-                )
-                local.length += (SummaryText.bulletMarker as NSString).length
-            }
             edited.addAttribute(
                 SummaryText.blockKindKey, value: kind.rawValue, range: local
             )
@@ -691,7 +676,7 @@ public final class SummaryTextView: NSTextView {
         )
     }
 
-    /// Выделить текст первого блока такого вида, без маркера списка.
+    /// Выделить текст первого блока такого вида.
     func selectFirstBlock(of kind: SummaryDocument.Block.Kind) {
         guard let storage = textStorage, storage.length > 0 else { return }
         for range in SummaryText.paragraphRanges(in: storage.string) {
@@ -699,11 +684,6 @@ public final class SummaryTextView: NSTextView {
             var body = range
             let text = (storage.string as NSString).substring(with: body)
             if text.hasSuffix("\n") { body.length -= 1 }
-            if text.hasPrefix(SummaryText.bulletMarker) {
-                let marker = (SummaryText.bulletMarker as NSString).length
-                body.location += marker
-                body.length -= marker
-            }
             guard body.length > 0 else { continue }
             setSelectedRange(body)
             coordinator?.controller.selection = currentSelection()
@@ -779,24 +759,6 @@ public final class SummaryTextView: NSTextView {
 
     // MARK: Каретка и оформление
 
-    /// Каретка не заходит внутрь диска: щелчок в маркер ставит её за ним.
-    ///
-    /// Только когда маркер в абзаце действительно есть. Абзац с видом `bullet`
-    /// без `•\t` (так ломало «Подробнее») сюда не входит: иначе каретка на
-    /// каждом щелчке прыгает на два символа вперёд и интерфейс зависает.
-    func keepCaretOutOfBulletMarker() {
-        let range = selectedRange()
-        guard range.length == 0, kindAtCaret() == .bullet else { return }
-        let paragraph = paragraphRange(at: range.location)
-        let marker = SummaryText.bulletMarker as NSString
-        guard paragraph.length >= marker.length,
-              (string as NSString).substring(with: paragraph).hasPrefix(SummaryText.bulletMarker)
-        else { return }
-        let floor = paragraph.location + marker.length
-        guard range.location < floor else { return }
-        setSelectedRange(NSRange(location: floor, length: 0))
-    }
-
     /// Печать продолжает тот блок, в котором стоит каретка.
     func setTypingAttributesFromCaret() {
         let kind = kindAtCaret()
@@ -857,9 +819,9 @@ public final class SummaryTextView: NSTextView {
 
     private func currentParagraphIsEmptyBullet() -> Bool {
         let paragraph = paragraphRange(at: selectedRange().location)
-        let text = (string as NSString).substring(with: paragraph)
+        return (string as NSString).substring(with: paragraph)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return text == SummaryText.bulletMarker.trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
     }
 
     private func convertParagraphToBody() {
@@ -868,31 +830,16 @@ public final class SummaryTextView: NSTextView {
         let edited = NSMutableAttributedString(
             attributedString: storage.attributedSubstring(from: paragraph)
         )
-        let stripped = removingMarker(
-            at: NSRange(location: 0, length: edited.length), in: edited
-        )
         edited.addAttribute(
             SummaryText.blockKindKey,
             value: SummaryDocument.Block.Kind.body.rawValue,
-            range: stripped
+            range: NSRange(location: 0, length: edited.length)
         )
         guard shouldChangeText(in: paragraph, replacementString: edited.string) else { return }
         storage.replaceCharacters(in: paragraph, with: edited)
         setSelectedRange(NSRange(location: paragraph.location, length: 0))
         didChangeText()
         setTypingAttributesFromCaret()
-    }
-
-    /// Снять «•\t» с начала абзаца и вернуть его новые границы.
-    private func removingMarker(at range: NSRange, in storage: NSMutableAttributedString) -> NSRange {
-        let marker = SummaryText.bulletMarker as NSString
-        guard range.length >= marker.length,
-              (storage.string as NSString).substring(with: range).hasPrefix(SummaryText.bulletMarker)
-        else { return range }
-        storage.replaceCharacters(
-            in: NSRange(location: range.location, length: marker.length), with: ""
-        )
-        return NSRange(location: range.location, length: range.length - marker.length)
     }
 
     private func setKindOfCurrentParagraph(_ kind: SummaryDocument.Block.Kind) {

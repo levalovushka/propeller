@@ -982,9 +982,9 @@ public enum Tokens {
         public static let summaryMaxWidth: CGFloat = 569
         /// Мера вместе с полями — ширина блока панели в макете, 649.
         public static let paneMeasure = summaryMaxWidth + summaryHPadding * 2
-        /// Bullet indent and the space between items — a paragraph and a list
-        /// item are the same item in the comps, so it is one number.
-        public static let bulletIndent: CGFloat = 21
+        /// Между пунктами — а абзац и пункт списка в макете один и тот же
+        /// предмет, поэтому число одно. Втяжки у пункта нет: маркера, под
+        /// который она делалась, на экране больше нет.
         public static let summaryItemGap = Space.s20
 
         // MARK: Transcript column (32:5278)
