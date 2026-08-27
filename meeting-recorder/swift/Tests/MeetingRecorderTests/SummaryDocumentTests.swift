@@ -380,32 +380,43 @@ final class SummaryDocumentTests: XCTestCase {
     /// строки `# Название — рекап`.
     // MARK: - Заметки
 
-    /// Перевод строки в заметке поставил человек, и он значит ровно то, что
-    /// значит. Всё остальное в конспекте написала модель — там перенос строки
-    /// это ширина окна, и склеивать его правильно.
-    func testEachLineOfANoteStaysItsOwnLine() {
+    /// Заметку начинает метка времени. Строки, разделённые одним переносом, —
+    /// это две заметки (так их писали старые сборки), и склеивать их в абзац
+    /// значит переписывать написанное человеком.
+    func testTwoStampedNotesOnAdjacentLinesStayTwoNotes() {
         let markdown = """
         ## Итог
         Разбирали агентный дизайн.
 
         ## Заметки
 
-        14:20 — проверить, сколько итераций уходит на один блок
-        51:05 — вопрос Марине: кто вычитывает то, что агент нарисовал
+        [14:20] проверить, сколько итераций уходит на один блок
+        [51:05] вопрос Марине: кто вычитывает то, что агент нарисовал
 
         ## Решения
         - Отказались от общей дизайн-системы.
         """
-        let document = SummaryDocument.parse(markdown: markdown)
-        let notes = document.blocks
-            .drop(while: { $0.text != "Заметки" })
-            .dropFirst()
-            .prefix(while: { $0.kind == .body })
-            .map(\.text)
-        XCTAssertEqual(notes, [
-            "14:20 — проверить, сколько итераций уходит на один блок",
-            "51:05 — вопрос Марине: кто вычитывает то, что агент нарисовал",
+        XCTAssertEqual(notes(of: markdown), [
+            "[14:20] проверить, сколько итераций уходит на один блок",
+            "[51:05] вопрос Марине: кто вычитывает то, что агент нарисовал",
         ])
+    }
+
+    /// А перенос **внутри** заметки её не делит.
+    ///
+    /// Строка без метки — продолжение предыдущей. Разрезав по каждому переносу,
+    /// мы бы из одной заметки сделали три самостоятельных и без времени, и в
+    /// файле это стало бы неотличимо от трёх настоящих. Проверено на архиве:
+    /// так разъезжался `20260809_160755`.
+    func testALineBreakInsideOneNoteDoesNotSplitIt() {
+        let markdown = """
+        ## Заметки
+
+        [00:19] Начинаем писать,
+        Теперь
+        окно раширяется
+        """
+        XCTAssertEqual(notes(of: markdown), ["[00:19] Начинаем писать, Теперь окно раширяется"])
     }
 
     /// И переживает круг: правка конспекта не должна склеивать чужой текст.
@@ -416,15 +427,33 @@ final class SummaryDocumentTests: XCTestCase {
 
         ## Заметки
 
-        14:20 — первая
-        51:05 — вторая
+        [14:20] первая
+        [51:05] вторая
         """
         let once = SummaryDocument.parse(markdown: markdown).markdown
-        XCTAssertTrue(once.contains("14:20 — первая"))
-        XCTAssertTrue(once.contains("51:05 — вторая"))
-        XCTAssertFalse(once.contains("14:20 — первая 51:05 — вторая"))
+        XCTAssertTrue(once.contains("[14:20] первая"))
+        XCTAssertTrue(once.contains("[51:05] вторая"))
+        XCTAssertFalse(once.contains("[14:20] первая [51:05] вторая"))
         let twice = SummaryDocument.parse(markdown: once).markdown
         XCTAssertEqual(once, twice)
+    }
+
+    /// Вне «Заметок» перенос строки по-прежнему означает ширину строки.
+    func testOutsideTheNotesLinesAreStillJoined() {
+        let document = SummaryDocument.parse(markdown: """
+        ## Решения
+        Отказались от идеи барабана,
+        потому что за пределами главного экрана он не обоснован.
+        """)
+        XCTAssertEqual(document.blocks.filter { $0.kind == .body }.count, 1)
+    }
+
+    private func notes(of markdown: String) -> [String] {
+        SummaryDocument.parse(markdown: markdown).blocks
+            .drop(while: { $0.text != "Заметки" })
+            .dropFirst()
+            .prefix(while: { $0.kind == .body })
+            .map(\.text)
     }
 
     func testПростойЗаголовокФайлаПереживаетПравку() {

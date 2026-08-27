@@ -96,6 +96,16 @@ public enum MeetingNotes {
     }
 
     /// A leading `[12:34] ` / `[1:02:03] `, if the text opens with one.
+    /// Начинается ли строка меткой времени — то есть начинается ли ею заметка.
+    ///
+    /// Разбору конспекта нужно ровно это: в разделе «Заметки» новая заметка
+    /// начинается со штампа, а строка без штампа — продолжение предыдущей.
+    /// Через `stamp`, а не своим регулярным выражением: два разных ответа на
+    /// вопрос «это штамп?» разъехались бы молча.
+    public static func startsANote(_ text: String) -> Bool {
+        stamp(in: text) != nil
+    }
+
     static func stamp(in text: String) -> (seconds: Double, rest: String)? {
         guard text.hasPrefix("["), let close = text.firstIndex(of: "]") else { return nil }
         let inside = text[text.index(after: text.startIndex)..<close]
