@@ -825,9 +825,18 @@ public enum Tokens {
                                                    light: Primitive.AlphaBlack.a88)
         /// `State=Disabled` (307:6733) — label and glyph together.
         public static let navLabelDisabled = Paint.Text.disabled
-        /// Shortcut hint and the hover-only quick action, white 40 %.
+        /// Shortcut hint, white 40 %.
         public static let navShortcut = Primitive.ink(dark: Primitive.AlphaWhite.a40,
                                                       light: Primitive.AlphaBlack.a48)
+        /// Быстрое действие строки — плюс справа (`Icon`, 307:6712), белый 70 %.
+        ///
+        /// Громче подсказки рядом с ним, и это снято с макета, а не выбрано:
+        /// подсказка называет клавишу для того же клика, а плюс — **другая**
+        /// кнопка, и одинаковый с подсказкой тон читался бы как одна строка
+        /// пояснений. Тот же тон, что у «Помощь ↗» в подвале
+        /// (`Footer.buttonGlyph`), — по той же причине.
+        public static let navQuickAction = Primitive.ink(dark: Primitive.AlphaWhite.a70,
+                                                         light: Primitive.AlphaBlack.a70)
 
         /// «17:30 · 45 мин».
         public static let meetingMeta = Primitive.ink(dark: Primitive.AlphaWhite.a55,

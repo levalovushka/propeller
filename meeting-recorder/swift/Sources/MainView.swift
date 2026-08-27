@@ -476,6 +476,18 @@ struct MainView: View {
             model: SidebarPresenter.model(state: state, store: recordingStore),
             trafficLights: railTrafficLights,
             onNav: performNav,
+            onNavQuickAction: { id in
+                // Плюс есть только у «Проектов»; проверка не лишняя — она
+                // держит обещание, что рельс отдаёт ид, а не действие.
+                guard id == SidebarPresenter.NavAction.projects.rawValue else { return }
+                // И переходим, и открываем плиту. Переход — не «заодно»: плита
+                // накрывает окно целиком, и без него «Создать» закрывало бы её
+                // над встречей, не показав ничего из созданного, а «Отмена»
+                // оставляла бы человека там же, куда строка под плюсом всё
+                // равно ведёт.
+                performNav(id)
+                state.composeProject()
+            },
             onSelectMeeting: { id in
                 guard let entry = recordingStore.recordings.first(where: { $0.id == id }) else { return }
                 state.selectRecording(entry)

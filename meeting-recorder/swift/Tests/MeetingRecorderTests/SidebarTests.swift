@@ -381,6 +381,51 @@ final class SidebarTests: XCTestCase {
         XCTAssertEqual(height, Tokens.Sidebar.navRowHeight, accuracy: 0.1)
     }
 
+    /// Плюс «создать проект» есть в макете (`showQuickAction`, 307:6704) и
+    /// однажды уже не доехал до приложения. Ширину строки он меняет ровно на
+    /// свой бокс и зазор — и это единственное, чем его присутствие можно
+    /// померить снаружи: нарисован он прозрачным, пока курсор не пришёл.
+    @MainActor
+    func testTheQuickActionTakesItsOwnSlotAndNothingMore() {
+        func width(quickAction: SidebarNavItem.QuickAction?, handled: Bool) -> CGFloat {
+            let item = SidebarNavItem(
+                id: "projects", symbol: "folder.fill", title: "Проекты",
+                quickAction: quickAction
+            )
+            let hosting = NSHostingView(
+                rootView: SidebarNavRow(item: item, onQuickAction: handled ? {} : nil, action: {})
+            )
+            hosting.layoutSubtreeIfNeeded()
+            return hosting.fittingSize.width
+        }
+        let plus = SidebarNavItem.QuickAction(symbol: "plus", title: "Новый проект")
+        let bare = width(quickAction: nil, handled: true)
+        XCTAssertEqual(
+            width(quickAction: plus, handled: true) - bare,
+            Tokens.Sidebar.navIconSide + Tokens.Sidebar.navRowGap,
+            accuracy: 0.5,
+            "плюс обязан занять свой бокс и зазор — и ни точкой больше"
+        )
+        // Кнопка без обработчика — тупик, и слота под неё тоже нет.
+        XCTAssertEqual(width(quickAction: plus, handled: false), bare, accuracy: 0.5)
+    }
+
+    @MainActor
+    func testTheQuickActionDoesNotMakeTheRowTaller() {
+        let height = measure(
+            SidebarNavRow(
+                item: SidebarNavItem(
+                    id: "projects", symbol: "folder.fill", title: "Проекты",
+                    quickAction: .init(symbol: "plus", title: "Новый проект")
+                ),
+                onQuickAction: {},
+                action: {}
+            ),
+            width: Tokens.Sidebar.width - Tokens.Sidebar.bodyHPadding * 2
+        )
+        XCTAssertEqual(height, Tokens.Sidebar.navRowHeight, accuracy: 0.1)
+    }
+
     func testTheMeetingListStartsWhereTheCompsPutIt() {
         // Body inset 10, four nav rows of 32, then the gap: the first meeting
         // begins 206 pt down the rail. There used to be a rule in that gap; it

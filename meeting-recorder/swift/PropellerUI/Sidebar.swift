@@ -40,12 +40,33 @@ public struct SidebarNavItem: Identifiable, Equatable, Sendable {
         case opensBrowser
     }
 
+    /// Вторая кнопка строки — плюс у правого края (`showQuickAction`,
+    /// 307:6704). Не подсказка: подсказка объясняет клик по строке, а это
+    /// **другой** клик, который строка держит рядом с собой. В макете её носят
+    /// «Проекты» и только они: создать проект — то, за чем в этот раздел ходят
+    /// чаще всего, и лишний заход внутрь ради кнопки там был бы шагом впустую.
+    ///
+    /// `title` — не подпись: плюс подписан только для VoiceOver и для
+    /// всплывающей подсказки, нарисован он глифом.
+    public struct QuickAction: Equatable, Sendable {
+        public let symbol: String
+        public let title: String
+
+        public init(symbol: String, title: String) {
+            self.symbol = symbol
+            self.title = title
+        }
+    }
+
     public let id: String
     /// SF Symbol name — or `SidebarNavItem.propellerMarkSymbol` for the brand glyph.
     public let symbol: String
     public let title: String
     /// Revealed on hover. The comps reserve the slot and paint it transparent.
     public let hint: Hint?
+    /// Revealed on hover too, and pressed on its own. Nil means the row has one
+    /// click and no slot for a second.
+    public let quickAction: QuickAction?
     public let isSelected: Bool
     /// A *forced* hover pose, OR-ed with the live pointer. Only the state
     /// gallery sets it — a still frame has no pointer, and a second "looks
@@ -70,6 +91,7 @@ public struct SidebarNavItem: Identifiable, Equatable, Sendable {
         symbol: String,
         title: String,
         hint: Hint? = nil,
+        quickAction: QuickAction? = nil,
         isSelected: Bool = false,
         isHovered: Bool = false,
         isEnabled: Bool = true
@@ -78,6 +100,7 @@ public struct SidebarNavItem: Identifiable, Equatable, Sendable {
         self.symbol = symbol
         self.title = title
         self.hint = hint
+        self.quickAction = quickAction
         self.isSelected = isSelected
         self.isHovered = isHovered
         self.isEnabled = isEnabled
@@ -205,6 +228,11 @@ public struct PropellerSidebar: View {
     private let model: SidebarModel
     private let trafficLights: SidebarTrafficLights
     private let onNav: (String) -> Void
+    /// Плюс на строке нажали — приезжает ид той же строки. Отдельным замыканием,
+    /// а не вторым ид в `onNav`: это другое действие, и путать их в одном
+    /// пространстве имён — то же, что путать «открыть» и «создать». Absent
+    /// means no row draws its plus.
+    private let onNavQuickAction: ((String) -> Void)?
     private let onSelectMeeting: (String) -> Void
     /// The row's hover action, by meeting id. Absent means the rows show none.
     private let onDeleteMeeting: ((String) -> Void)?
@@ -234,6 +262,7 @@ public struct PropellerSidebar: View {
         model: SidebarModel,
         trafficLights: SidebarTrafficLights = .system,
         onNav: @escaping (String) -> Void = { _ in },
+        onNavQuickAction: ((String) -> Void)? = nil,
         onSelectMeeting: @escaping (String) -> Void = { _ in },
         onDeleteMeeting: ((String) -> Void)? = nil,
         onCopySummary: ((String) -> Void)? = nil,
@@ -251,6 +280,7 @@ public struct PropellerSidebar: View {
         self.model = model
         self.trafficLights = trafficLights
         self.onNav = onNav
+        self.onNavQuickAction = onNavQuickAction
         self.onSelectMeeting = onSelectMeeting
         self.onDeleteMeeting = onDeleteMeeting
         self.onCopySummary = onCopySummary
@@ -440,7 +470,10 @@ public struct PropellerSidebar: View {
     private var navBlock: some View {
         VStack(spacing: Tokens.Sidebar.rowGap) {
             ForEach(model.nav) { item in
-                SidebarNavRow(item: item) { onNav(item.id) }
+                SidebarNavRow(
+                    item: item,
+                    onQuickAction: onNavQuickAction.map { act in { act(item.id) } }
+                ) { onNav(item.id) }
             }
         }
     }
@@ -785,12 +818,26 @@ private struct SidebarScrollOffsetReader: NSViewRepresentable {
 public struct SidebarNavRow: View {
     let item: SidebarNavItem
     let action: () -> Void
+    /// Нажали плюс, а не строку. Nil — плюс нарисован не будет, даже если
+    /// строка его объявила: кнопка без обработчика это тупик.
+    let onQuickAction: (() -> Void)?
 
     @State private var hovering = false
 
-    public init(item: SidebarNavItem, action: @escaping () -> Void) {
+    public init(
+        item: SidebarNavItem,
+        onQuickAction: (() -> Void)? = nil,
+        action: @escaping () -> Void
+    ) {
         self.item = item
+        self.onQuickAction = onQuickAction
         self.action = action
+    }
+
+    /// Плюс рисуется, только если он и объявлен строкой, и кому-то нужен.
+    private var quickAction: SidebarNavItem.QuickAction? {
+        guard onQuickAction != nil, item.isEnabled else { return nil }
+        return item.quickAction
     }
 
     /// Выключенная строка не подсвечивается под курсором: подсветка — обещание
@@ -810,12 +857,30 @@ public struct SidebarNavRow: View {
     }
 
     public var body: some View {
-        Button(action: action) { label }
-            .buttonStyle(.plain)
-            .disabled(!item.isEnabled)
-            .onHover { hovering = $0 }
-            .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
-            .animation(.easeOut(duration: Tokens.Motion.hover), value: item.isSelected)
+        // Плюс лежит **над** кнопкой строки, а не внутри её подписи: вложенная
+        // кнопка в SwiftUI то отдаёт клик наружной, то нет, и «создать проект»
+        // не может иногда означать «открыть проекты». Место под него подпись
+        // всё равно резервирует — прозрачным, как и в макете, — поэтому
+        // название обрывается там же, где оборвалось бы под курсором.
+        ZStack(alignment: .trailing) {
+            Button(action: action) { label }
+                .buttonStyle(.plain)
+                .disabled(!item.isEnabled)
+
+            if let quickAction {
+                SidebarNavQuickActionButton(
+                    quickAction: quickAction,
+                    isRevealed: isHovered,
+                    action: onQuickAction ?? {}
+                )
+                .padding(.trailing, Tokens.Sidebar.navRowHPadding)
+            }
+        }
+        // Ховер слушает контейнер, а не кнопка: плюс перекрывает её собой, и
+        // строка гасла бы ровно в тот момент, когда курсор доехал до плюса.
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: item.isSelected)
     }
 
     private var label: some View {
@@ -839,6 +904,14 @@ public struct SidebarNavRow: View {
                     // Invisible is not the same as absent: VoiceOver would
                     // otherwise read a hint the eye cannot see.
                     .accessibilityHidden(!isHovered)
+            }
+
+            if quickAction != nil {
+                // Слот, не кнопка: сама кнопка лежит выше по ZStack. Держит
+                // ширину, чтобы название не удлинялось под курсором.
+                Color.clear
+                    .frame(width: Tokens.Sidebar.navIconSide,
+                           height: Tokens.Sidebar.navIconSide)
             }
         }
         .foregroundStyle(foreground)
@@ -876,6 +949,36 @@ public struct SidebarNavRow: View {
             Image(systemName: item.symbol)
                 .font(.system(size: Tokens.Sidebar.navIconSize, weight: .regular))
         }
+    }
+}
+
+/// Плюс у правого края строки рельса — `Icon` внутри `nav-item` (307:6712).
+///
+/// Тот же 16 pt бокс и тот же 13 pt глиф, что у иконки слева и у подсказки
+/// справа: в рельсе один кегль, и различает элементы только цвет. В покое
+/// прозрачен, но и **не нажимается**: невидимая кнопка, которая срабатывает,
+/// хуже отсутствующей. Курсор проявляет её раньше, чем успевает щёлкнуть, так
+/// что за руку это не ловит никого.
+struct SidebarNavQuickActionButton: View {
+    let quickAction: SidebarNavItem.QuickAction
+    let isRevealed: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: quickAction.symbol)
+                .font(.system(size: Tokens.Sidebar.navIconSize, weight: .regular))
+                .foregroundStyle(Tokens.Sidebar.navQuickAction)
+                .frame(width: Tokens.Sidebar.navIconSide,
+                       height: Tokens.Sidebar.navIconSide)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(quickAction.title)
+        .accessibilityLabel(quickAction.title)
+        .opacity(isRevealed ? 1 : 0)
+        .allowsHitTesting(isRevealed)
+        .accessibilityHidden(!isRevealed)
     }
 }
 

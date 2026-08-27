@@ -28,7 +28,14 @@ final class RailShotTests: XCTestCase {
         let model = SidebarModel(
             nav: [
                 SidebarNavItem(id: "new", symbol: SidebarNavItem.propellerMarkSymbol, title: "Новая запись"),
-                SidebarNavItem(id: "projects", symbol: "folder.fill", title: "Проекты"),
+                // Под курсором — иначе плюса в кадре не будет: в покое он
+                // прозрачен. Две наведённые строки разом в приложении
+                // невозможны, но это сверочный лист, а не снимок экрана.
+                SidebarNavItem(
+                    id: "projects", symbol: "folder.fill", title: "Проекты",
+                    quickAction: .init(symbol: "plus", title: "Новый проект"),
+                    isHovered: true
+                ),
                 SidebarNavItem(id: "settings", symbol: "gearshape.fill", title: "Настройки", isHovered: true),
             ],
             body: .archive(groups: [
@@ -88,6 +95,7 @@ final class RailShotTests: XCTestCase {
             Color(red: 0.07, green: 0.07, blue: 0.08)
             PropellerSidebar(
                 model: model, trafficLights: .drawn,
+                onNavQuickAction: { _ in },
                 // Set to «4» to photograph the group that is on its way out: its
                 // date and its gap must already be gone.
                 dissolvingMeetingID: ProcessInfo.processInfo.environment["RAIL_SHOT_DISSOLVING"],

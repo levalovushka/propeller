@@ -130,6 +130,11 @@ enum SidebarPresenter {
                 id: NavAction.projects.rawValue,
                 symbol: "folder.fill",
                 title: "Проекты",
+                // Единственная строка рельса с плюсом (`showQuickAction`,
+                // 307:6744) — и единственная, у которой есть что создавать
+                // отсюда. Запись начинает строка выше собой, у настроек
+                // создавать нечего.
+                quickAction: .init(symbol: "plus", title: "Новый проект"),
                 isSelected: state.paneRoute.isProjectsArea
             ),
             // Поиска здесь нет: он стал кнопкой в шапке рельса, рядом с
