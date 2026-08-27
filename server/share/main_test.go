@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -314,4 +316,95 @@ func TestAForgedForwardedForBuysNoNewBucket(t *testing.T) {
 		}
 	}
 	t.Fatal("forty reads from one address, each claiming a different one, never hit the limit")
+}
+
+// Страница говорит читателю, что ссылка временная, — значит, срок обязан
+// доехать до неё. Заголовок стоит только на удачном чтении: на 404 его нет,
+// иначе он рассказывал бы про шеры, которых читатель не открывал.
+func TestABlobCarriesItsExpiry(t *testing.T) {
+	srv, clock := newTestServer(t)
+	id, _ := create(t, srv, "ciphertext", "week")
+
+	rec := do(t, srv, httptest.NewRequest("GET", "/api/blob/"+id, nil))
+	want := fmt.Sprintf("%d", clock.Add(week).Unix())
+	if got := rec.Header().Get("X-Share-Expires"); got != want {
+		t.Errorf("X-Share-Expires = %q, want %q", got, want)
+	}
+
+	missing := do(t, srv, httptest.NewRequest("GET", "/api/blob/AAAAAAAAAAAAAAAAAAAAAA", nil))
+	if got := missing.Header().Get("X-Share-Expires"); got != "" {
+		t.Errorf("a missing share announced an expiry: %q", got)
+	}
+}
+
+// Страница — тоже интерфейс, и правила у неё те же, что у приложения
+// (`design/principles.md` §3 и §6). Глазами это не удержать: строка пишется
+// в спешке, а живёт год.
+//
+// Проверяется **видимый текст**, а не файл целиком: в комментариях правило
+// как раз и объясняется словами, которые оно запрещает, и первая версия этой
+// проверки поймала собственный комментарий про кнопку «Повторить».
+func TestThePageAsksTheReaderForNothing(t *testing.T) {
+	visible := visibleText(t)
+
+	// Слов-просьб в состояниях покоя не бывает: всё, что страница умеет
+	// сделать сама, она делает сама — в том числе повторяет запрос.
+	for _, word := range []string{"Повторить", "Попробуйте", "Попробовать", "Не удалось", "Ошибка", "Нажмите", "Проверьте"} {
+		if strings.Contains(visible, word) {
+			t.Errorf("страница говорит «%s» — это просьба сделать нашу работу", word)
+		}
+	}
+
+	// Русская типографика: многоточие — один символ, кавычки — ёлочки,
+	// тире — не дефис в пробелах.
+	if strings.Contains(visible, "...") {
+		t.Error("многоточие из трёх точек — нужен «…»")
+	}
+	if m := regexp.MustCompile(`"[А-Яа-яЁё]`).FindString(visible); m != "" {
+		t.Errorf("прямая кавычка перед кириллицей (%q) — нужны «ёлочки»", m)
+	}
+	if m := regexp.MustCompile(`[а-яё] - [а-яё]`).FindString(visible); m != "" {
+		t.Errorf("дефис вместо тире (%q)", m)
+	}
+}
+
+// Однобуквенный предлог не остаётся в конце строки: перед ним неразрывный
+// пробел.
+func TestOneLetterPrepositionsAreTiedToTheirWord(t *testing.T) {
+	if m := regexp.MustCompile(`(?i)(^|[\s>(«])[вкосуиая] `).FindString(visibleText(t)); m != "" {
+		t.Errorf("однобуквенный предлог с обычным пробелом (%q) — нужен \\u00A0", strings.TrimSpace(m))
+	}
+}
+
+// Текст, который читает человек: строки состояний (объект SAY) и разметка
+// между <body> и <script>. Всё остальное — код и комментарии к нему.
+func visibleText(t *testing.T) string {
+	t.Helper()
+	page := string(mustViewer(t))
+
+	start := strings.Index(page, "const SAY = {")
+	if start < 0 {
+		t.Fatal("объект SAY переехал — проверка ослепла")
+	}
+	end := strings.Index(page[start:], "\n};")
+	if end < 0 {
+		t.Fatal("не нашёлся конец объекта SAY")
+	}
+	say := page[start : start+end]
+
+	bodyStart := strings.Index(page, "<body>")
+	bodyEnd := strings.Index(page, "<script>")
+	if bodyStart < 0 || bodyEnd < bodyStart {
+		t.Fatal("разметка тела переехала — проверка ослепла")
+	}
+	return say + "\n" + page[bodyStart:bodyEnd]
+}
+
+func mustViewer(t *testing.T) []byte {
+	t.Helper()
+	page, err := viewerFS.ReadFile("viewer/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return page
 }

@@ -209,6 +209,13 @@ either of them into the path, a query or a header breaks the whole promise.
 - **No UI here.** The modal (Figma 298:26408) belongs to the redesign; the whole
   surface is `ShareService.publish / unpublish / link(for:)` and `Lifetime`
   (`.week` / `.month` — there is no eternal link).
+- **The page obeys the app's own rules, and tests hold them.** It asks the
+  reader for nothing — a dropped connection is retried by the page, never by a
+  button — and `server/share/main_test.go` greps the *visible* text (the `SAY`
+  object plus the markup, never the comments) for request-words and for Russian
+  typography. Both checks were verified by mutation. Its two deliberate
+  departures from `Tokens.Pane` are argued in the file's own header comment;
+  add a third the same way or not at all.
 
 ### Data storage
 

@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -212,12 +213,15 @@ func (s *server) handleBlob(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
 		return
 	}
-	blob, err := s.store.Get(r.PathValue("id"), s.now())
+	blob, expires, err := s.store.Get(r.PathValue("id"), s.now())
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
+	// Страница говорит читателю, когда ссылка исчезнет: она временная, и
+	// узнать об этом лучше до того, как её положат в закладки.
+	w.Header().Set("X-Share-Expires", strconv.FormatInt(expires.Unix(), 10))
 	w.Write(blob)
 }
 

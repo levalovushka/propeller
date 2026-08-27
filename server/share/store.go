@@ -104,24 +104,29 @@ func (s *Store) Put(blob []byte, expires time.Time) (id, token string, err error
 	return id, token, nil
 }
 
-// Get отдаёт шифротекст. Просроченный шер неотличим от несуществующего уже
-// здесь, а не в обработчике: так ошибиться в одном из вызовов невозможно.
-func (s *Store) Get(id string, now time.Time) ([]byte, error) {
+// Get отдаёт шифротекст и срок, до которого он жив. Просроченный шер
+// неотличим от несуществующего уже здесь, а не в обработчике: так ошибиться
+// в одном из вызовов невозможно.
+//
+// Срок отдаётся наружу заголовком, чтобы страница могла сказать читателю, что
+// ссылка временная. Нового знания это никому не даёт: спросить срок можно
+// только по id, а ответ 200 и без того означает «шер существует».
+func (s *Store) Get(id string, now time.Time) (blob []byte, expires time.Time, err error) {
 	if !validID(id) {
-		return nil, errNotFound
+		return nil, time.Time{}, errNotFound
 	}
 	m, err := s.meta(id)
 	if err != nil {
-		return nil, errNotFound
+		return nil, time.Time{}, errNotFound
 	}
 	if now.Unix() >= m.Exp {
-		return nil, errNotFound
+		return nil, time.Time{}, errNotFound
 	}
-	blob, err := os.ReadFile(s.blobPath(id))
+	blob, err = os.ReadFile(s.blobPath(id))
 	if err != nil {
-		return nil, errNotFound
+		return nil, time.Time{}, errNotFound
 	}
-	return blob, nil
+	return blob, time.Unix(m.Exp, 0), nil
 }
 
 // Delete снимает публикацию. Неверный токен отвечает тем же, чем отсутствие
