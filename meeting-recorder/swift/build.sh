@@ -350,6 +350,30 @@ TELEMETRYDECK_APP_ID="${TELEMETRYDECK_APP_ID:-FD2E1040-C134-4F44-BCAC-76441E1662
     || /usr/libexec/PlistBuddy -c "Set :TelemetryDeckAppID ${TELEMETRYDECK_APP_ID}" "$APP/Contents/Info.plist"
 echo "  TelemetryDeck App ID embedded (${TELEMETRYDECK_APP_ID:0:8}…)"
 
+# Ключ публикации шеров. Едет в Info.plist, потому что должен быть у каждого,
+# кто поставил приложение: в Keychain автора он был бы только у автора, а у
+# всех остальных «Поделиться» просто не работало бы — и на первом нажатии
+# macOS ещё и спрашивала бы разрешение на чужой элемент связки.
+#
+# Дефолта в репозитории нет и быть не может: репозиторий публичный. Берётся из
+# окружения или из `.share-secret` рядом с этим скриптом (в .gitignore). Нет
+# ни того ни другого — ключ в бандл не попадает, `ShareService.isAvailable`
+# отдаёт false, и плита честно говорит, что публиковать нечем.
+#
+# Цена названа вслух: ключ уезжает внутри приложения, то есть извлекается
+# любым, кто его скачал. Он гейтит **только выпуск** ссылок — прочитать чужой
+# шер им нельзя, снять чужую публикацию нельзя (для этого нужен токен, а он
+# на сервере только хешем). Это порог выше «curl из скрипта», а не секрет.
+# Смена ключа = новая сборка, и старые сборки перестают публиковать.
+PROPELLER_SHARE_SECRET="${PROPELLER_SHARE_SECRET:-$(cat .share-secret 2>/dev/null || true)}"
+if [ -n "$PROPELLER_SHARE_SECRET" ]; then
+    /usr/libexec/PlistBuddy -c "Add :PropellerShareSecret string ${PROPELLER_SHARE_SECRET}" "$APP/Contents/Info.plist" 2>/dev/null \
+        || /usr/libexec/PlistBuddy -c "Set :PropellerShareSecret ${PROPELLER_SHARE_SECRET}" "$APP/Contents/Info.plist"
+    echo "  Share key embedded (${PROPELLER_SHARE_SECRET:0:4}…)"
+else
+    echo "  Share key absent — «Поделиться» в этой сборке публиковать не будет"
+fi
+
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
 # Entitlements. Two files, not one: the ASR binary records, the app also reads the

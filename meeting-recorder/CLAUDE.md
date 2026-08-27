@@ -186,8 +186,17 @@ path is the one part of a URL the server always receives. Anything that moves
 either of them into the path, a query or a header breaks the whole promise.
 
 - **Everything decidable lives in `PropellerPure`** — `ShareCrypto`, `ShareLink`,
-  `SharePayload`. `Sources/ShareService.swift` keeps only the network, the
-  Keychain and the list of live shares, because tests cannot import `Sources/`.
+  `SharePayload`. `Sources/ShareService.swift` keeps only the network and the
+  list of live shares, because tests cannot import `Sources/`.
+- **The publish key lives in `Info.plist`, not the Keychain** — `build.sh` puts
+  it there from `swift/.share-secret` (gitignored; the repo is public), and the
+  build log says `Share key embedded (…)`. The Keychain was tried and rejected
+  2026-08-27: a key in the author's keyring is a key nobody else has, so
+  «Поделиться» would be dead for every user and would raise a permission prompt
+  on top. **The key name is a string in two files** — `build.sh` and
+  `ShareClient.infoPlistKey` — so a typo silently disables publishing; grep both
+  after touching either. And it is extractable from any copy of the app: it gates
+  *issuing* links only, never reading or revoking someone else's.
 - **The blob is a JSON document, not rendered HTML** (`SharePayload`). One viewer
   serves every share, so the page can be redressed without reissuing links
   already sent. Changing the payload shape means bumping `v` and teaching

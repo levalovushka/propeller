@@ -180,29 +180,34 @@ final class ShareService: ObservableObject {
 
 struct ShareClient {
 
-    /// Секрет публикации. Он гейтит только создание шера: прочитать чужой им
-    /// нельзя, отозвать чужой нельзя (для этого нужен токен), — но выпускать
-    /// ссылки от нашего имени можно. Репозиторий публичный, поэтому в код
-    /// секрет не зашит: он лежит в Keychain этой машины и больше нигде.
-    static let keychainAccount = "share-secret"
+    /// Ключ публикации. Лежит в `Info.plist`, куда его кладёт `build.sh` из
+    /// `swift/.share-secret` (в .gitignore — репозиторий публичный).
+    ///
+    /// **Не Keychain**, и это решение владельца 2026-08-27, а не удобство.
+    /// В связке ключей он был бы только у автора: у всех остальных
+    /// «Поделиться» не работало бы вовсе, а первое обращение macOS вынесла бы
+    /// на подтверждение. Ключ нужен каждому, кто поставил приложение, —
+    /// значит, он часть установки, как веса ASR и рантайм LLM, а не чья-то
+    /// личная тайна. Отсюда же ушла и вся возня с отложенным чтением связки:
+    /// читать `Info.plist` можно сколько угодно и когда угодно.
+    ///
+    /// **Цена названа вслух:** ключ уезжает внутри приложения и извлекается
+    /// любым, кто его скачал (`plutil -p Propeller.app/Contents/Info.plist`).
+    /// Он гейтит **только выпуск** ссылок. Прочитать чужой шер им нельзя —
+    /// содержимое лежит под ключом, которого нет ни у сервера, ни в
+    /// приложении; снять чужую публикацию нельзя — для этого нужен токен, а на
+    /// сервере от него только SHA-256. Это порог выше «curl из скрипта», а не
+    /// секрет. Настоящая защита выпуска — токен на установку, и её здесь нет.
+    /// Смена ключа = новая сборка, старые сборки перестают публиковать.
+    static let infoPlistKey = "PropellerShareSecret"
 
     private let session: URLSession
-    /// Замыкание, а не значение: читать связку ключей на создании клиента —
-    /// значит спрашивать пароль тогда, когда человек ещё ничего не просил.
-    ///
-    /// Секрет положен `security add-generic-password` без `-T`, поэтому в его
-    /// ACL не значится ни одно приложение, и первое обращение macOS выносит на
-    /// подтверждение (`TAILS.md`). До 2026-08-27 обращение случалось при первом
-    /// касании `ShareService.shared` — то есть на **открытии** плиты
-    /// публикации, где ещё ничего не публикуют. Теперь оно там, где человек
-    /// нажал «Опубликовать».
-    private let secret: () -> String?
+    private let secret: String?
     private let base: URL
 
     init(
         session: URLSession = .shared,
-        secret: @escaping @autoclosure () -> String? =
-            KeychainHelper.get(account: ShareClient.keychainAccount),
+        secret: String? = Bundle.main.object(forInfoDictionaryKey: ShareClient.infoPlistKey) as? String,
         base: URL = URL(string: ShareLink.host)!
     ) {
         self.session = session
@@ -211,7 +216,7 @@ struct ShareClient {
     }
 
     /// Спрашивает связку ключей — звать только там, где ответ нужен по делу.
-    var hasSecret: Bool { secret()?.isEmpty == false }
+    var hasSecret: Bool { secret?.isEmpty == false }
 
     struct Published {
         let id: String
@@ -220,7 +225,7 @@ struct ShareClient {
     }
 
     func publish(blob: Data, lifetime: ShareService.Lifetime) async throws -> Published {
-        guard let secret = secret(), !secret.isEmpty else { throw ShareError.noSecret }
+        guard let secret, !secret.isEmpty else { throw ShareError.noSecret }
 
         var components = URLComponents(
             url: base.appendingPathComponent("api/shares"), resolvingAgainstBaseURL: false
@@ -252,7 +257,7 @@ struct ShareClient {
     }
 
     func revoke(id: String, token: String) async throws {
-        guard let secret = secret(), !secret.isEmpty else { throw ShareError.noSecret }
+        guard let secret, !secret.isEmpty else { throw ShareError.noSecret }
 
         var request = URLRequest(url: base.appendingPathComponent("api/shares/\(id)"))
         request.httpMethod = "DELETE"

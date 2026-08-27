@@ -70,3 +70,9 @@ meeting-recorder/tools/gigastt/bench-gigastt-serve.log
 
 # Собранные DMG и appcast — артефакты релиза, не исходники
 dist/
+
+# Ключ публикации шеров. build.sh кладёт его в Info.plist сборки; репозиторий
+# публичный, поэтому здесь его нет и быть не может. Потерян — перевыпустить
+# на сервере (/etc/propeller-share.env) и здесь одновременно.
+meeting-recorder/swift/.share-secret
+
