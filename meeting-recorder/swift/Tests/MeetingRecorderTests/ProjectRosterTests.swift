@@ -93,12 +93,24 @@ final class ProjectRosterTests: XCTestCase {
 
     // MARK: - Вкладки
 
+    /// Порядок макетный, и вход — первая вкладка: в проект заходят за тем, о
+    /// чём договорились, а не за списком встреч.
     func testУВкладокЕстьИмяИПерваяИзНихПервая() {
-        XCTAssertEqual(ProjectTab.entry, .meetings)
-        XCTAssertEqual(ProjectTab.allCases.first, .meetings)
+        XCTAssertEqual(ProjectTab.allCases, [.decisions, .tasks, .meetings, .participants])
+        XCTAssertEqual(ProjectTab.entry, .decisions)
         for tab in ProjectTab.allCases {
             XCTAssertFalse(tab.title.isEmpty, tab.rawValue)
         }
+    }
+
+    /// Чекбокс есть только у задачи. Кружок у решения — маркер списка, а не
+    /// состояние, и в markdown у решения скобок не заводится.
+    func testЧекбоксЕстьТолькоУЗадачи() {
+        XCTAssertEqual(ProjectTab.allCases.filter(\.itemsAreCheckable), [.tasks])
+        XCTAssertEqual(ProjectTab.decisions.recapSection, RecapDigest.decisionsTitle)
+        XCTAssertEqual(ProjectTab.tasks.recapSection, RecapDigest.tasksTitle)
+        XCTAssertNil(ProjectTab.meetings.recapSection)
+        XCTAssertNil(ProjectTab.participants.recapSection)
     }
 
     /// Кадр галереи появляется от того, что случай появился в типе, а не от

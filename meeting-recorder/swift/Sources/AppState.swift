@@ -190,6 +190,8 @@ class AppState: ObservableObject {
     @Published var projectDraft: ProjectDraft?
     /// Последний посчитанный состав проекта — см. `roster(of:)`.
     private var rosterCache: (key: String, people: [ProjectRoster.Person])?
+    /// Последние разобранные атомы — см. `atoms(of:section:)`.
+    private var atomCache: (key: String, groups: [AtomGroup])?
 
     /// Recording was asked for and the microphone is not ours to open.
     ///
@@ -1132,6 +1134,90 @@ class AppState: ObservableObject {
         })
         rosterCache = (key, people)
         return people
+    }
+
+    // MARK: - Атомы проекта
+
+    /// Пункты одной встречи, разобранные в объекты.
+    struct AtomGroup: Identifiable {
+        let meeting: RecordingEntry
+        let items: [AtomItem]
+        var id: String { meeting.id }
+    }
+
+    /// Один пункт. `index` — его место в секции, `raw` — текст, каким его отдал
+    /// `RecapDigest`. Оба нужны, чтобы правка нашла ту же строку и отказалась,
+    /// если файл разошёлся (`RecapItemEdit.Target`).
+    struct AtomItem: Identifiable {
+        let index: Int
+        let raw: String
+        let atom: RecapAtom
+        var id: String { "\(index)|\(raw)" }
+    }
+
+    /// Решения или задачи проекта, сгруппированные по встрече.
+    ///
+    /// Группировка по встрече, а не по неделям (`plan-projects.md` §4.6): пункт
+    /// принадлежит встрече, а не проекту, и правка отсюда меняет документ той
+    /// встречи, где он прозвучал. Заголовок группы про это и говорит.
+    ///
+    /// Читает файлы конспектов с диска, поэтому ответ запоминается: вкладку
+    /// перерисовывают на каждое движение мыши. Ключ — состав встреч и время
+    /// правки их файлов, так что чужая правка снаружи пересчёт вызовет.
+    func atoms(of projectID: String, section: String) -> [AtomGroup] {
+        let rows = meetings(of: projectID)
+        let key = projectID + "|" + section + "|" + rows.map {
+            "\($0.id):\(Self.recapStamp(for: $0))"
+        }.joined(separator: ",")
+        if let cached = atomCache, cached.key == key { return cached.groups }
+
+        let groups: [AtomGroup] = rows.compactMap { entry in
+            guard let text = Self.loadRecapText(for: entry),
+                  let found = RecapDigest.parse(text).section(named: section),
+                  !found.items.isEmpty
+            else { return nil }
+            return AtomGroup(
+                meeting: entry,
+                items: found.items.enumerated().map {
+                    AtomItem(index: $0.offset, raw: $0.element, atom: RecapAtom.parse($0.element))
+                }
+            )
+        }
+        atomCache = (key, groups)
+        return groups
+    }
+
+    /// Время правки файла конспекта — ключ кэша. Нет файла — нет и метки.
+    private static func recapStamp(for entry: RecordingEntry) -> String {
+        guard let url = resolvedRecapURL(for: entry),
+              let date = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        else { return "-" }
+        return String(date.timeIntervalSince1970)
+    }
+
+    /// Переписать один пункт в документе встречи, или убрать его (`item == nil`).
+    ///
+    /// Идёт через `RecapItemEdit`: меняется **одна строка файла**, а не весь
+    /// документ. Это и есть та причина, по которой модуль заведён — человек
+    /// правит встречу, на которую в этот момент не смотрит, и платить за
+    /// галочку пересборкой чужого конспекта он не подписывался.
+    ///
+    /// `false` — правка не применилась: файла нет, секции нет, или текст пункта
+    /// разошёлся с тем, что держит экран. Вызывающему остаётся перечитать.
+    @discardableResult
+    func editAtom(
+        in entry: RecordingEntry, section: String, index: Int, expecting raw: String,
+        to item: String?
+    ) -> Bool {
+        guard let text = Self.loadRecapText(for: entry) else { return false }
+        let target = RecapItemEdit.Target(section: section, index: index, text: raw)
+        let edited = item.map { RecapItemEdit.replacing(target, in: text, with: $0) }
+            ?? RecapItemEdit.removing(target, from: text)
+        guard let edited, saveSummary(edited, for: entry) else { return false }
+        atomCache = nil
+        // Открытая панель этой же встречи читает файл сама и о правке не знает.
+        if selectedRecordingID == entry.id { objectWillChange.send() }
+        return true
     }
 
     /// Завести проект. Возвращает его — вызывающему обычно нужно тут же

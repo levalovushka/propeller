@@ -7,21 +7,39 @@ import Foundation
 /// (`UIStateCatalog.projectTabs`), и «вкладка открыта, но какая — неизвестно»
 /// становится невыразимым.
 ///
-/// **Здесь две из четырёх.** В макете полоса начинается с «Решений» и «Задач»
-/// — они приедут вместе с разбором атомов (`plan-projects.md` §12, шаг 4) и
-/// встанут перед этими двумя. Заводить их сейчас пустыми значило бы нарисовать
-/// вкладку, за которой ничего нет, — ровно то, чем строка «Проекты» в рельсе
-/// была месяц.
+/// Порядок — макетный: сначала то, ради чего в проект заходят, потом то, из
+/// чего он состоит.
 public enum ProjectTab: String, CaseIterable, Equatable, Sendable {
+    case decisions
+    case tasks
     case meetings
     case participants
 
     public var title: String {
         switch self {
+        case .decisions:    return "Решения"
+        case .tasks:        return "Задачи"
         case .meetings:     return "Встречи"
         case .participants: return "Участники"
         }
     }
 
-    public static let entry: ProjectTab = .meetings
+    /// Раздел конспекта, из которого вкладка берёт пункты. Nil — вкладка не про
+    /// атомы вовсе.
+    public var recapSection: String? {
+        switch self {
+        case .decisions: return RecapDigest.decisionsTitle
+        case .tasks:     return RecapDigest.tasksTitle
+        case .meetings, .participants: return nil
+        }
+    }
+
+    /// Есть ли у пункта настоящий чекбокс.
+    ///
+    /// У задачи — да. У решения — нет: кружок в макете это **маркер списка, а не
+    /// состояние** (решение владельца 2026-08-27), и чекбокса у решения в
+    /// markdown не заводится.
+    public var itemsAreCheckable: Bool { self == .tasks }
+
+    public static let entry: ProjectTab = .decisions
 }

@@ -554,3 +554,166 @@ public struct ProjectPersonRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
+
+// MARK: - Решения и задачи
+
+/// Пункт конспекта на экране проекта — Figma 297:25131 (задача) и 297:25207
+/// (решение).
+///
+/// Один компонент на оба: различает их только маркер. У задачи он настоящий
+/// чекбокс, у решения — кружок, и кружок этот **маркер списка, а не состояние**
+/// (решение владельца 2026-08-27): чекбокса у решения в markdown не заводится.
+public struct ProjectAtomRow: View {
+    private let checkbox: Bool
+    private let done: Bool
+    private let text: String
+    private let assignee: String?
+    private let toggle: (() -> Void)?
+    private let dropAssignee: (() -> Void)?
+    private let remove: () -> Void
+
+    @State private var hovering = false
+
+    public init(
+        checkbox: Bool,
+        done: Bool,
+        text: String,
+        assignee: String?,
+        toggle: (() -> Void)? = nil,
+        dropAssignee: (() -> Void)? = nil,
+        remove: @escaping () -> Void
+    ) {
+        self.checkbox = checkbox
+        self.done = done
+        self.text = text
+        self.assignee = assignee
+        self.toggle = toggle
+        self.dropAssignee = dropAssignee
+        self.remove = remove
+    }
+
+    private var marker: String {
+        guard checkbox else { return "circle" }
+        return done ? "checkmark.square.fill" : "square"
+    }
+
+    public var body: some View {
+        HStack(alignment: .top, spacing: Tokens.Projects.Atom.markerGap) {
+            Group {
+                if let toggle {
+                    Button(action: toggle) { markerGlyph }.buttonStyle(.press)
+                } else {
+                    markerGlyph
+                }
+            }
+            VStack(alignment: .leading, spacing: Tokens.Projects.Atom.chipGap) {
+                Text(text)
+                    .typo(Tokens.Projects.Typo.title)
+                    .foregroundStyle(done ? Tokens.Projects.Atom.doneText : Tokens.Projects.title)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                if let assignee {
+                    chip(assignee)
+                        .opacity(done ? Tokens.Projects.Atom.doneChipOpacity : 1)
+                }
+            }
+            .padding(.trailing, Tokens.Projects.Atom.textInset)
+            // Корзина живёт под курсором: у пятнадцати пунктов подряд пятнадцать
+            // корзин — это пятнадцать предложений удалить там, где читают.
+            Button(action: remove) {
+                Image(systemName: "trash")
+                    .font(.system(size: Tokens.Projects.Typo.title.size, weight: .regular))
+                    .foregroundStyle(Tokens.Projects.quiet)
+                    .frame(width: Tokens.Projects.Atom.markerSide,
+                           height: Tokens.Projects.Atom.markerSide)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.press)
+            .opacity(hovering ? 1 : 0)
+            .accessibilityLabel("Удалить пункт")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+    }
+
+    private var markerGlyph: some View {
+        Image(systemName: marker)
+            .font(.system(size: Tokens.Projects.Typo.title.size, weight: .regular))
+            .foregroundStyle(Tokens.Projects.quiet)
+            .frame(width: Tokens.Projects.Atom.markerSide,
+                   height: Tokens.Projects.Atom.markerSide)
+            .contentShape(Rectangle())
+    }
+
+    private func chip(_ name: String) -> some View {
+        HStack(spacing: Tokens.Projects.Atom.Chip.gap) {
+            Text(name)
+                .foregroundStyle(Tokens.Projects.title)
+            if let dropAssignee {
+                Button(action: dropAssignee) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: Tokens.Projects.Typo.action.size, weight: .regular))
+                        .foregroundStyle(Tokens.Projects.quiet)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.press)
+                .accessibilityLabel("Снять ответственного")
+            }
+        }
+        .typo(Tokens.Projects.Typo.action)
+        .padding(.horizontal, Tokens.Projects.Atom.Chip.hPadding)
+        .frame(height: Tokens.Projects.Atom.Chip.height)
+        .background(
+            Tokens.Projects.Atom.Chip.fill,
+            in: RoundedRectangle(cornerRadius: Tokens.Projects.Atom.Chip.radius, style: .continuous)
+        )
+    }
+}
+
+/// Карточка пунктов одной встречи — Figma 297:25130.
+///
+/// Строки разделены воздухом, а не линиями: пункт бывает в четыре строки, и
+/// волосяная линия между такими читается как таблица.
+public struct ProjectAtomCard<Content: View>: View {
+    private let content: () -> Content
+
+    public init(@ViewBuilder content: @escaping () -> Content) {
+        self.content = content
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: Tokens.Projects.Atom.rowGap) {
+            content()
+        }
+        .padding(Tokens.Projects.Atom.cardPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Tokens.Settings.cardFill,
+            in: RoundedRectangle(cornerRadius: Tokens.Projects.Atom.cardRadius, style: .continuous)
+        )
+    }
+}
+
+/// Подпись над карточкой: чья это встреча и когда она была — Figma 256:7303.
+public struct ProjectAtomGroupHeader: View {
+    private let title: String
+    private let when: String
+
+    public init(title: String, when: String) {
+        self.title = title
+        self.when = when
+    }
+
+    public var body: some View {
+        HStack(spacing: Tokens.Projects.Screen.metaGap) {
+            Text(title).lineLimit(1)
+            Spacer(minLength: Tokens.Projects.Screen.metaGap)
+            Text(when).lineLimit(1)
+        }
+        .typo(Tokens.Projects.Typo.groupHeader)
+        .foregroundStyle(Tokens.Settings.header)
+        .padding(.horizontal, Tokens.Projects.Screen.groupHeaderInset)
+    }
+}

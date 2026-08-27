@@ -37,8 +37,9 @@ struct ProjectScreen: View {
                         set: { state.selectProjectTab($0) }
                     ))
                     switch tab {
-                    case .meetings:     meetingList
-                    case .participants: participantList
+                    case .decisions, .tasks: atomList
+                    case .meetings:          meetingList
+                    case .participants:      participantList
                     }
                 }
             }
@@ -71,6 +72,67 @@ struct ProjectScreen: View {
                 .buttonStyle(.press)
             }
         }
+    }
+
+    // MARK: - Решения и задачи
+
+    /// Пункты, сгруппированные по встрече: пункт принадлежит встрече, а не
+    /// проекту, и правка отсюда меняет документ той встречи, где он прозвучал
+    /// (`plan-projects.md` §4.6). Заголовок группы про это и говорит.
+    @ViewBuilder
+    private var atomList: some View {
+        if let section = tab.recapSection {
+            let groups = state.atoms(of: project.id, section: section)
+            if groups.isEmpty {
+                emptyTab(
+                    tab == .tasks ? "Пока ни одной задачи" : "Пока ни одного решения",
+                    "Они появятся сами: конспект каждой встречи проекта отдаёт сюда свой раздел «\(section)»."
+                )
+            } else {
+                VStack(alignment: .leading, spacing: Tokens.Projects.Atom.groupGap) {
+                    ForEach(groups) { group in
+                        VStack(alignment: .leading, spacing: Tokens.Projects.Atom.groupHeaderGap) {
+                            ProjectAtomGroupHeader(
+                                title: group.meeting.title,
+                                when: SidebarDayGrouping.day(for: group.meeting.date).header
+                                    ?? ProjectCardText.recency(of: group.meeting.date)
+                            )
+                            ProjectAtomCard {
+                                ForEach(group.items) { item in
+                                    row(item, of: group.meeting, section: section)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func row(
+        _ item: AppState.AtomItem, of meeting: RecordingEntry, section: String
+    ) -> some View {
+        ProjectAtomRow(
+            checkbox: tab.itemsAreCheckable,
+            done: item.atom.isDone,
+            text: item.atom.body,
+            assignee: item.atom.assignee,
+            toggle: tab.itemsAreCheckable ? {
+                write(item, of: meeting, section: section, to: item.atom.toggled().item)
+            } : nil,
+            dropAssignee: item.atom.assignee == nil ? nil : {
+                write(item, of: meeting, section: section, to: item.atom.withoutAssignee().item)
+            },
+            remove: { write(item, of: meeting, section: section, to: nil) }
+        )
+    }
+
+    private func write(
+        _ item: AppState.AtomItem, of meeting: RecordingEntry, section: String, to line: String?
+    ) {
+        state.editAtom(
+            in: meeting, section: section, index: item.index, expecting: item.raw, to: line
+        )
     }
 
     // MARK: - Встречи

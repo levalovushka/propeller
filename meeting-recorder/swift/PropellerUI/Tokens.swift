@@ -1717,6 +1717,48 @@ public enum Tokens {
             public static let rowRadius = Radius.xs
         }
 
+        // MARK: Решения и задачи — 297:25130 / 297:25206
+
+        /// Карточка атомов устроена иначе, чем список встреч: строки разделены
+        /// **воздухом, а не линиями** (297:25130 — `gap-16`, поля 14), потому что
+        /// пункт бывает в четыре строки и волосяная линия между такими читается
+        /// как таблица.
+        public enum Atom {
+            public static let cardPadding: CGFloat = 14
+            public static let cardRadius = Radius.lg
+            /// Между пунктами.
+            public static let rowGap = Space.s16
+            /// Маркер → текст, текст → хвостовые значки.
+            public static let markerGap = Space.s10
+            public static let markerSide = Space.s16
+            /// Текст → чип ответственного.
+            public static let chipGap = Space.s8
+            /// Правое поле текста: он не должен доезжать до значков.
+            public static let textInset = Space.s12
+            /// Между хвостовыми значками.
+            public static let actionGap = Space.s8
+            /// Заголовок группы → карточка; между группами.
+            public static let groupHeaderGap = Space.s8
+            public static let groupGap = Space.s24
+
+            /// Сделанная задача — текст гаснет до 20 %, а не зачёркивается:
+            /// зачёркнутое в четыре строки не читается вовсе.
+            public static let doneText = Primitive.ink(dark: Primitive.AlphaWhite.a20,
+                                                       light: Primitive.AlphaBlack.a28)
+            /// Чип сделанной — тот же чип, приглушённый.
+            public static let doneChipOpacity: Double = 0.4
+
+            /// Чип ответственного — 297:25136.
+            public enum Chip {
+                public static let height = Space.s24
+                public static let radius = Radius.xxs
+                public static let hPadding = Space.s6
+                public static let gap = Space.s4
+                public static let fill = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                       light: Primitive.AlphaBlack.a10)
+            }
+        }
+
         // MARK: Type
 
         public enum Typo {
