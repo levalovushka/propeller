@@ -972,12 +972,16 @@ public struct SidebarMeetingRow: View {
         return isHovered ? Tokens.Sidebar.rowHover : .clear
     }
 
-    /// Название, уходящее в прозрачность у правого края.
+    /// Название строки.
     ///
     /// Текст рисуется поверх пустого гибкого прямоугольника, а не сам держит
     /// ширину: у `Text` с `fixedSize` минимальная ширина равна его полной, и
     /// длинное название распирало бы строку вместо того, чтобы обрезаться.
     /// `Color.clear` берёт ту ширину, которую даёт строка, и ничего не требует.
+    ///
+    /// Затухания здесь нет — оно лежит на всей строке (`contentMask`), как в
+    /// макете: градиент отсчитывается от левого края строки, а не от начала
+    /// текста, и потому не зависит от того, есть ли перед ним иконка.
     private var title: some View {
         Color.clear
             .frame(maxWidth: .infinity)
@@ -988,16 +992,22 @@ public struct SidebarMeetingRow: View {
                     .lineLimit(1)
                     .fixedSize()
             }
-            .mask(alignment: .leading) {
-                HStack(spacing: 0) {
-                    Rectangle()
-                    LinearGradient(
-                        colors: [.black, .black.opacity(0)],
-                        startPoint: .leading, endPoint: .trailing
-                    )
-                    .frame(width: Tokens.Sidebar.titleFade)
-                }
-            }
+    }
+
+    /// Маска строки — слой `mask` внутри `meeting-item` (307:7191).
+    ///
+    /// Ложится на содержимое, но **не** на плашку: в макете это дочерний слой
+    /// компонента, он закрывает иконку и текст, а заливку строки не трогает.
+    /// В SwiftUI это порядок модификаторов — `.mask` до `.background`.
+    private var contentMask: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .black, location: Tokens.Sidebar.titleFadeStart),
+                .init(color: .clear, location: Tokens.Sidebar.titleFadeEnd),
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
     }
 
     public var body: some View {
@@ -1019,6 +1029,7 @@ public struct SidebarMeetingRow: View {
             // дала бы 28 — и список поехал бы на четыре точки на строку.
             .frame(height: Tokens.Sidebar.meetingRowHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .mask(contentMask)
             .background(
                 fill,
                 in: RoundedRectangle(cornerRadius: Tokens.Sidebar.meetingRadius, style: .continuous)
