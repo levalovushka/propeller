@@ -44,20 +44,28 @@ struct MeetingPaneIdentity: View {
         let maxWidth: CGFloat
         let hPadding: CGFloat
         let vPadding: CGFloat
+        /// Высота бокса, если она названа макетом, а не выведена из шрифта.
+        /// `renderedLineHeight` считает по потолкам асцендера и десцендера
+        /// отдельно и на 22 pt промахивается: макет даёт 24, SF рисует 26, и
+        /// всё, что ниже имени, уезжает на эти два. То же решение, что у
+        /// заголовка страницы настроек (`SettingsKit`).
+        var boxHeight: CGFloat?
 
         /// Полоса 48 над идущей записью — 14/18 в поле 430.
         static let paneHeader = Look(
             typo: Tokens.Pane.Typo.headerTitle,
             maxWidth: Tokens.Pane.headerTitleWidth,
             hPadding: Tokens.Pane.headerHPadding,
-            vPadding: Tokens.Pane.headerVPadding
+            vPadding: Tokens.Pane.headerVPadding,
+            boxHeight: nil
         )
         /// Имя в теле готовой встречи — 22/24 без полей: их уже дала колонка.
         static let body = Look(
             typo: Tokens.Pane.Typo.paneTitle,
             maxWidth: .infinity,
             hPadding: 0,
-            vPadding: 0
+            vPadding: 0,
+            boxHeight: Tokens.Pane.Typo.paneTitle.lineHeight
         )
     }
 
@@ -107,6 +115,7 @@ struct MeetingPaneIdentity: View {
         // A cap, not a width — and minWidth 0 so the pane can go narrow without
         // the title claiming more room than the actions leave it.
         .frame(minWidth: 0, maxWidth: look.maxWidth, alignment: .leading)
+        .frame(height: look.boxHeight, alignment: .leading)
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
         .animation(.easeOut(duration: Tokens.Motion.hover), value: focused)
     }
@@ -743,6 +752,38 @@ extension MeetingPaneBody where MoreMenu == EmptyView {
     }
 }
 
+/// Замер панели для тестов геометрии.
+///
+/// Прибор в продуктовом коде, как `MeetingsChromeMidYKey`: у SwiftUI-вью нет
+/// своего `NSView`, и снаружи их не померить, а сканировать растр по яркости на
+/// антиалиасинге текста — гадание. Ничего не рисует.
+public enum PaneProbe {
+    public static let space = "pane"
+    public static let meta = "meta"
+    public static let title = "title"
+    public static let actions = "actions"
+}
+
+public struct PaneProbeKey: PreferenceKey {
+    public static var defaultValue: [String: CGRect] { [:] }
+    public static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
+extension View {
+    func paneProbe(_ name: String) -> some View {
+        background(
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: PaneProbeKey.self,
+                    value: [name: geo.frame(in: .named(PaneProbe.space))]
+                )
+            }
+        )
+    }
+}
+
 /// Что панель встречи показывает о встрече помимо её текста.
 ///
 /// Отдельным пространством имён, а не вложенными типами: `MeetingPaneBody`
@@ -885,6 +926,7 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
+        .coordinateSpace(name: PaneProbe.space)
         // Снаружи скролла: угол принадлежит панели, а не тексту в ней, и
         // уезжать вверх вместе с ним ему незачем. Прижат к кромке блока, а не
         // к центрированной мере колонки: на 649 это одно и то же, на широком
@@ -902,6 +944,7 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
             VStack(alignment: .leading, spacing: Tokens.Pane.titleGap) {
                 if let meta {
                     MeetingMetaRow(meta: meta)
+                        .paneProbe(PaneProbe.meta)
                 }
                 MeetingPaneIdentity(
                     meetingID: identity.meetingID,
@@ -909,6 +952,7 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
                     onRename: identity.onRename,
                     look: .body
                 )
+                .paneProbe(PaneProbe.title)
             }
             .padding(.horizontal, Tokens.Pane.summaryHPadding)
             .padding(.top, Tokens.Pane.paneTopPadding)
@@ -940,6 +984,7 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
             }
             .padding(Tokens.Pane.paneActionsInset)
             .fixedSize()
+            .paneProbe(PaneProbe.actions)
         }
     }
 

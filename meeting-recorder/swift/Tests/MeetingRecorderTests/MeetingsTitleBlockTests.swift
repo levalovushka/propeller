@@ -68,6 +68,12 @@ final class MeetingsTitleBlockTests: XCTestCase {
             backing: .buffered,
             defer: false
         )
+        // Программно созданное окно освобождает себя на `close()`, а ARC
+        // держит ссылку дальше. Пока этот замер был в наборе единственным,
+        // покойник никого не задевал; следующий, кто трогает AppKit, падает по
+        // SIGSEGV — и падает не там, где причина. Найдено 2026-08-27, когда у
+        // панели саммари появился свой замер и падение стало детерминированным.
+        window.isReleasedWhenClosed = false
         let hosting = NSHostingView(rootView: hosted)
         window.contentView = hosting
         window.orderFrontRegardless()
