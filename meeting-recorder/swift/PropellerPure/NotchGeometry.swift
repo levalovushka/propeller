@@ -20,40 +20,24 @@ import CoreGraphics
 /// — только про то, что мы к вырезу пририсовываем (Figma 299:26711).
 public enum NotchGeometry {
 
-    /// Высота, под которую нарисован макет, и ширина скоса на ней.
+    /// Макет нарисован под настоящий вырез 14-дюймового: 185×32 pt, замерено
+    /// на живой машине (`tools/notchprobe`). Крыло на этой высоте — 85,5 pt.
     ///
-    /// Скос — внешний край крыла, S-образная кривая. Он масштабируется **вместе
-    /// с высотой по обеим осям**: растянутый только по горизонтали, он ложится
-    /// почти плашмя, и чёлка становится вдвое шире, чем ей нужно.
-    public static let designHeight: CGFloat = 47
-    public static let designSlopeWidth: CGFloat = 47.8414
+    /// На вырезе другой высоты (16″ — 38 pt, мелкие разрешения — меньше 32)
+    /// крыло масштабируется вместе с ним: форма у него одна, меняется только
+    /// её размер.
+    public static let designHeight: CGFloat = 32
+    public static let designWingWidth: CGFloat = 85.5
 
-    /// Зазор между скосом и первой кнопкой.
-    public static let edgeGap: CGFloat = 2
-    /// Зазор между парой кнопок и вырезом: под ним камера, и подходить к ней
-    /// вплотную нельзя.
-    public static let notchGap: CGFloat = 4
+    /// Кнопка: 32×32, знак 16. Пара стоит **вплотную к вырезу и без зазора
+    /// внутри себя** — так в макете, и это то, что отличает пульт от россыпи
+    /// значков.
+    public static let buttonSide: CGFloat = 32
+    public static let buttonGap: CGFloat = 0
 
-    /// Плита **не свисает под вырез**: её высота — высота самого выреза, и
-    /// растёт чёлка только вширь. Свисающая на 47 pt плита (как нарисована в
-    /// макете) читается как выехавшая панель, а не как раздавшаяся чёлка, и в
-    /// этом всё различие между «прибор в железе» и «окно поверх экрана».
-
-    /// Кнопка: 28×28, знак 15. В макете 32, но там и плита свисала на 47 —
-    /// в высоту выреза пара 32-х не помещается, не забрав всю ширину крыла.
-    public static let buttonSide: CGFloat = 28
-    /// Зазор внутри пары.
-    public static let buttonGap: CGFloat = 2
-    /// Ширина скоса при этой высоте плиты.
-    public static func slopeWidth(height: CGFloat) -> CGFloat {
-        designSlopeWidth * height / designHeight
-    }
-
-    /// Крыло целиком: скос, воздух, пара кнопок и зазор до выреза. Считается, а
-    /// не задаётся: поменяется кнопка или высота выреза — крыло поедет за ними,
-    /// и кнопки не окажутся ни на скосе, ни под камерой.
+    /// Ширина крыла при этой высоте плиты.
     public static func wingWidth(height: CGFloat) -> CGFloat {
-        slopeWidth(height: height) + edgeGap + groupWidth + notchGap
+        designWingWidth * height / designHeight
     }
 
     /// Ширина пары кнопок.
@@ -100,13 +84,9 @@ public enum NotchGeometry {
         public var wingWidth: CGFloat { (width - notchWidth) / 2 }
         /// Ширина пары кнопок.
         public var groupWidth: CGFloat { NotchGeometry.groupWidth }
-        /// Ширина скоса при этой высоте.
-        public var slopeWidth: CGFloat { NotchGeometry.slopeWidth(height: height) }
-        /// Сколько в крыле остаётся под кнопки после скоса и зазора до выреза.
-        /// Меньше пары означало бы, что кнопки лезут на скос или под камеру.
-        public var roomForButtons: CGFloat {
-            wingWidth - slopeWidth - NotchGeometry.edgeGap - NotchGeometry.notchGap
-        }
+        /// Отступ пары от внешнего края плиты. Не задан, а остаётся: пара
+        /// прижата к вырезу, и весь запас крыла уходит наружу от неё.
+        public var groupInset: CGFloat { wingWidth - groupWidth }
 
         /// Плита целиком лежит на своём экране.
         public func fits(on screen: Screen) -> Bool {

@@ -37,7 +37,8 @@ final class NotchGeometryTests: XCTestCase {
         let f = NotchGeometry.frame(on: mbp14, stage: .open)
         // Крыло считается, а не задаётся: скос по высоте выреза плюс кнопки.
         XCTAssertEqual(f.width, 185 + 2 * NotchGeometry.wingWidth(height: 32))
-        XCTAssertLessThan(f.width, 380, "чёлка стала уже: скос сжат вместе с высотой")
+        XCTAssertEqual(f.width, 356, "185 выреза и два крыла по 85,5 — как в макете")
+        XCTAssertEqual(f.groupInset, 21.5, "и пара стоит в 21,5 от внешнего края")
         XCTAssertEqual(f.height, 32, "чёлка растёт вширь, а не вниз: высота — её собственная")
         XCTAssertEqual(f.wingWidth, NotchGeometry.wingWidth(height: 32))
     }
@@ -53,9 +54,8 @@ final class NotchGeometryTests: XCTestCase {
     func testКнопкиНеЛезутПодКамеруНиНаОднойГеометрии() {
         for s in [mbp14, mbp16] {
             let f = NotchGeometry.frame(on: s, stage: .open)
-            XCTAssertEqual(f.groupWidth, 58, "две кнопки 28 и зазор 2")
-            XCTAssertGreaterThanOrEqual(f.roomForButtons + 0.001, f.groupWidth,
-                                        "пара помещается, не заезжая ни на скос, ни под камеру")
+            XCTAssertEqual(f.groupWidth, 64, "две кнопки 32, вплотную")
+            XCTAssertGreaterThan(f.groupInset, 0, "снаружи от пары остаётся чернота крыла")
         }
     }
 
@@ -139,7 +139,7 @@ final class NotchGeometryTests: XCTestCase {
             XCTAssertEqual(f.wingWidth, NotchGeometry.wingWidth(height: c.safeTop), accuracy: 0.01)
             // С допуском: крыло выведено из этой же величины, и вычитание
             // возвращает её с точностью до последнего бита.
-            XCTAssertGreaterThanOrEqual(f.roomForButtons + 0.001, f.groupWidth)
+            XCTAssertGreaterThan(f.groupInset, 0)
             XCTAssertEqual(f.originY + f.height, c.top, "и всегда стоит на кромке")
         }
     }

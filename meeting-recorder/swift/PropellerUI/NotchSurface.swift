@@ -18,24 +18,22 @@ import PropellerPure
 /// читаются одной фигурой. Ради этого здесь нет ни тени, ни обводки, ни
 /// материала: всё, что даёт край, выдаёт накладку.
 public struct NotchShape: Shape {
-    /// Точки левого крыла из макета, в его собственных координатах (47 pt по
-    /// высоте). Правое — зеркало.
-    private static var designHeight: CGFloat { NotchGeometry.designHeight }
-    private static let topInset: CGFloat = 0.697479
-    private static let c1 = CGPoint(x: 10.706, y: 0)
-    private static let c2 = CGPoint(x: 19.5656, y: 6.47235)
-    private static let p1 = CGPoint(x: 22.6086, y: 16.0071)
-    private static let p2 = CGPoint(x: 27.8356, y: 32.3848)
-    private static let c3 = CGPoint(x: 30.614, y: 41.0905)
-    private static let c4 = CGPoint(x: 38.7032, y: 47)
-    private static let p3 = CGPoint(x: 47.8414, y: 47)
+    /// Левое крыло из макета (`350:11446`, 85,5×32). Правое — зеркало.
+    private static let c1 = CGPoint(x: 6.80069, y: 0)
+    private static let c2 = CGPoint(x: 12.8046, y: 4.43928)
+    private static let p1 = CGPoint(x: 14.7977, y: 10.9413)
+    private static let p2 = CGPoint(x: 18.6525, y: 23.5169)
+    private static let c3 = CGPoint(x: 20.1978, y: 28.5581)
+    private static let c4 = CGPoint(x: 24.8529, y: 32)
+    private static let p3 = CGPoint(x: 30.1256, y: 32)
 
     public init() {}
 
     public func path(in rect: CGRect) -> Path {
-        // Скос сжимается по обеим осям сразу: растянутый только по горизонтали,
-        // он ложится плашмя и перестаёт быть тем скосом, что нарисован.
-        let k = rect.height / Self.designHeight
+        // Крыло масштабируется по обеим осям сразу: растянутое только по
+        // горизонтали, оно ложится плашмя и перестаёт быть тем скосом, что
+        // нарисован.
+        let k = rect.height / NotchGeometry.designHeight
         func left(_ p: CGPoint) -> CGPoint {
             CGPoint(x: rect.minX + p.x * k, y: rect.minY + p.y * k)
         }
@@ -44,16 +42,14 @@ public struct NotchShape: Shape {
         }
 
         var path = Path()
-        path.move(to: CGPoint(x: rect.minX + Self.topInset * (rect.height / Self.designHeight),
-                              y: rect.minY))
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
         path.addCurve(to: left(Self.p1), control1: left(Self.c1), control2: left(Self.c2))
         path.addLine(to: left(Self.p2))
         path.addCurve(to: left(Self.p3), control1: left(Self.c3), control2: left(Self.c4))
         path.addLine(to: right(Self.p3))
         path.addCurve(to: right(Self.p2), control1: right(Self.c4), control2: right(Self.c3))
         path.addLine(to: right(Self.p1))
-        path.addCurve(to: CGPoint(x: rect.maxX - Self.topInset * (rect.height / Self.designHeight),
-                                  y: rect.minY),
+        path.addCurve(to: CGPoint(x: rect.maxX, y: rect.minY),
                       control1: right(Self.c2), control2: right(Self.c1))
         path.closeSubpath()
         return path
@@ -203,8 +199,9 @@ public final class NotchPlateView: NSView {
         shape.frame = bounds
         guard let screen else { return }
         let frame = NotchGeometry.frame(on: screen, stage: .open)
-        let inset = frame.slopeWidth + NotchGeometry.edgeGap
-        let width = frame.width - 2 * inset
+        // Пары прижаты к вырезу: контейнер — это сам вырез плюс по паре кнопок
+        // с каждой стороны, и внутри они разъезжаются к его краям.
+        let width = frame.notchWidth + 2 * frame.groupWidth
         controls.frame = CGRect(
             x: (bounds.width - width) / 2,
             y: bounds.maxY - frame.height,
@@ -300,7 +297,7 @@ struct NotchButton: View {
     private var glyph: some View {
         ZStack {
             Image(systemName: shown.isEmpty ? symbol : shown)
-                .font(.system(size: NotchGeometry.buttonSide - 13, weight: .regular))
+                .font(.system(size: 16, weight: .regular))
                 .transition(.blurReplace)
                 .id(shown.isEmpty ? symbol : shown)
         }
