@@ -402,9 +402,9 @@ final class SidebarTests: XCTestCase {
         let bare = width(quickAction: nil, handled: true)
         XCTAssertEqual(
             width(quickAction: plus, handled: true) - bare,
-            Tokens.Sidebar.navIconSide + Tokens.Sidebar.navRowGap,
+            Tokens.Sidebar.navQuickActionPlate + Tokens.Sidebar.navRowGap,
             accuracy: 0.5,
-            "плюс обязан занять свой бокс и зазор — и ни точкой больше"
+            "плюс обязан занять свою плашку и зазор — и ни точкой больше"
         )
         // Кнопка без обработчика — тупик, и слота под неё тоже нет.
         XCTAssertEqual(width(quickAction: plus, handled: false), bare, accuracy: 0.5)
@@ -429,6 +429,20 @@ final class SidebarTests: XCTestCase {
         XCTAssertEqual(onSelf, 0.70, accuracy: 0.01)
         // И тише самой строки, пока она — цель: подпись строки идёт в 90 %.
         XCTAssertLessThan(onRow, alpha(Tokens.Sidebar.navLabel))
+    }
+
+    /// Плашка 24 в строке 32 — решение владельца 2026-08-27. Числа здесь не
+    /// косметика: 24 сидит в 32 ровно по 4 сверху и снизу, а правым краем
+    /// встаёт на поле строки, то есть на те же 8, что и всё остальное в
+    /// рельсе. Стоит любому из трёх чисел разъехаться — плашка перестаёт быть
+    /// вписанной, и это видно.
+    func testThePlusPlateSitsInsideTheRow() {
+        let inset = (Tokens.Sidebar.navRowHeight - Tokens.Sidebar.navQuickActionPlate) / 2
+        XCTAssertEqual(inset, 4)
+        XCTAssertEqual(Tokens.Sidebar.navQuickActionPlate, 24)
+        XCTAssertEqual(Tokens.Sidebar.navQuickActionPlateRadius, 4)
+        // Правый край плашки — на поле строки, а не на своём числе.
+        XCTAssertEqual(Tokens.Sidebar.navRowHPadding, 8)
     }
 
     @MainActor

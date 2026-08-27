@@ -845,6 +845,20 @@ public enum Tokens {
                                                               light: Primitive.AlphaBlack.a30)
         public static let navQuickActionOnSelf = Primitive.ink(dark: Primitive.AlphaWhite.a70,
                                                                light: Primitive.AlphaBlack.a70)
+        /// Плашка под плюсом — 24 × 24 со скруглением 4, решение владельца
+        /// 2026-08-27. В макете плашки нет вовсе, глиф стоит голым.
+        ///
+        /// Квадрат, а не 16 pt глифа: у плюса на строке своя, отдельная цель, и
+        /// у цели должны быть края. Двадцать четыре в строке 32 — это по 4
+        /// сверху и снизу, и правым краем плашка встаёт на поле строки (8),
+        /// то есть новых чисел здесь не появляется, кроме её собственных.
+        public static let navQuickActionPlate = Space.s24
+        public static let navQuickActionPlateRadius = Radius.xxxs
+        /// Заливка плашки под курсором — 10 %, столько же, сколько у выбранной
+        /// строки. Ложится **поверх** ховера строки (5 %), так что глазами это
+        /// около 14 %: десять процентов здесь — краска плашки, а не итог.
+        public static let navQuickActionPlateHover = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                                   light: Primitive.AlphaBlack.a10)
 
         /// «17:30 · 45 мин».
         public static let meetingMeta = Primitive.ink(dark: Primitive.AlphaWhite.a55,

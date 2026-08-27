@@ -908,10 +908,11 @@ public struct SidebarNavRow: View {
 
             if quickAction != nil {
                 // Слот, не кнопка: сама кнопка лежит выше по ZStack. Держит
-                // ширину, чтобы название не удлинялось под курсором.
+                // ширину, чтобы название не удлинялось под курсором, — и
+                // ширину именно плашки, иначе она наползла бы на название.
                 Color.clear
-                    .frame(width: Tokens.Sidebar.navIconSide,
-                           height: Tokens.Sidebar.navIconSide)
+                    .frame(width: Tokens.Sidebar.navQuickActionPlate,
+                           height: Tokens.Sidebar.navQuickActionPlate)
             }
         }
         .foregroundStyle(foreground)
@@ -954,17 +955,20 @@ public struct SidebarNavRow: View {
 
 /// Плюс у правого края строки рельса — `Icon` внутри `nav-item` (307:6712).
 ///
-/// Тот же 16 pt бокс и тот же 13 pt глиф, что у иконки слева и у подсказки
-/// справа: в рельсе один кегль, и различает элементы только цвет. В покое
-/// прозрачен, но и **не нажимается**: невидимая кнопка, которая срабатывает,
-/// хуже отсутствующей. Курсор проявляет её раньше, чем успевает щёлкнуть, так
-/// что за руку это не ловит никого.
+/// Тот же 13 pt глиф, что у иконки слева и у подсказки справа: в рельсе один
+/// кегль. В покое прозрачен, но и **не нажимается**: невидимая кнопка, которая
+/// срабатывает, хуже отсутствующей. Курсор проявляет её раньше, чем успевает
+/// щёлкнуть, так что за руку это не ловит никого.
 ///
-/// Проявляется в два тона (`navQuickActionOnRow` / `navQuickActionOnSelf`):
-/// тихо, пока курсор просто на строке, и в полный голос, когда он на нём
-/// самом. Это единственное место в рельсе, где на одной строке живут две
-/// цели, и тон — единственное, чем строка может сказать, в какую из них
-/// сейчас попадёт клик.
+/// Под глифом — плашка 24 × 24 (решение владельца 2026-08-27; в макете глиф
+/// голый). Она и есть то, чем эта кнопка отличается от подсказки рядом:
+/// у второй цели на строке должны быть края, иначе неясно, где кончается
+/// строка и начинается она.
+///
+/// Отвечает курсору дважды: тихим тоном, пока курсор просто на строке, и
+/// полным тоном плюс заливка плашки, когда он на ней самой. Это единственное
+/// место в рельсе, где на одной строке живут две цели, и это — единственное,
+/// чем строка может сказать, в какую из них сейчас попадёт клик.
 struct SidebarNavQuickActionButton: View {
     let quickAction: SidebarNavItem.QuickAction
     let isRevealed: Bool
@@ -979,9 +983,18 @@ struct SidebarNavQuickActionButton: View {
                 .foregroundStyle(hovering
                                  ? Tokens.Sidebar.navQuickActionOnSelf
                                  : Tokens.Sidebar.navQuickActionOnRow)
-                .frame(width: Tokens.Sidebar.navIconSide,
-                       height: Tokens.Sidebar.navIconSide)
-                .contentShape(Rectangle())
+                .frame(width: Tokens.Sidebar.navQuickActionPlate,
+                       height: Tokens.Sidebar.navQuickActionPlate)
+                .background(
+                    hovering ? Tokens.Sidebar.navQuickActionPlateHover : .clear,
+                    in: RoundedRectangle(cornerRadius: Tokens.Sidebar.navQuickActionPlateRadius,
+                                         style: .continuous)
+                )
+                // Ловит вся плашка, а не только тушь глифа: у кнопки с краями
+                // цель — её края.
+                .contentShape(RoundedRectangle(
+                    cornerRadius: Tokens.Sidebar.navQuickActionPlateRadius, style: .continuous
+                ))
         }
         .buttonStyle(.plain)
         .help(quickAction.title)
