@@ -653,6 +653,17 @@ public enum Tokens {
         /// can change how tall the list is.
         public static let meetingRowHeight = Space.s32
         public static let meetingHPadding = Space.s8
+        /// Чем длинное название кончается у правого края строки.
+        ///
+        /// Не многоточием: у макета на списке лежит маска, и название уходит в
+        /// прозрачность (307:6361). Разница не косметическая — многоточие
+        /// съедает ещё один знак ради того, чтобы сказать «тут не всё», а
+        /// затухание говорит то же самое и не отнимает ничего.
+        ///
+        /// **Число выбрано, не снято**: ассет маски с сервера Figma в тот момент
+        /// уже не отдавался. Правится здесь одной строкой.
+        public static let titleFade: CGFloat = 24
+
         /// Leading slot for the animated status icon (`PropellerStatusIcon`).
         /// Sized like the nav glyph box, so a working meeting and a nav row
         /// start their text on the same margin.

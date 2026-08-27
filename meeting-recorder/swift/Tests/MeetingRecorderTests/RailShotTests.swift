@@ -28,7 +28,7 @@ final class RailShotTests: XCTestCase {
         let model = SidebarModel(
             nav: [
                 SidebarNavItem(id: "new", symbol: SidebarNavItem.propellerMarkSymbol, title: "Новая запись"),
-                SidebarNavItem(id: "projects", symbol: "folder.fill", title: "Проекты", isEnabled: false),
+                SidebarNavItem(id: "projects", symbol: "folder.fill", title: "Проекты"),
                 SidebarNavItem(id: "settings", symbol: "gearshape.fill", title: "Настройки", isHovered: true),
             ],
             body: .archive(groups: [

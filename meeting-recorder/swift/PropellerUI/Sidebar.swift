@@ -55,6 +55,11 @@ public struct SidebarNavItem: Identifiable, Equatable, Sendable {
     /// `State=Disabled` (307:6733) — the row is present and says so, but the
     /// click does nothing. Enabled unless someone says otherwise: a row that has
     /// no reason to be off should not have to declare it.
+    ///
+    /// **Никто не передаёт `false` с 2026-08-26**: «Проекты» стояли выключенными
+    /// ровно до того дня, когда за них взялись. Состояние в макете есть, поэтому
+    /// и здесь остаётся — но пока это возможность, а не то, что видно в
+    /// приложении, и говорить обратное нельзя.
     public let isEnabled: Bool
 
     /// Reserved `symbol` for the Propeller mark in the record row.
@@ -967,6 +972,34 @@ public struct SidebarMeetingRow: View {
         return isHovered ? Tokens.Sidebar.rowHover : .clear
     }
 
+    /// Название, уходящее в прозрачность у правого края.
+    ///
+    /// Текст рисуется поверх пустого гибкого прямоугольника, а не сам держит
+    /// ширину: у `Text` с `fixedSize` минимальная ширина равна его полной, и
+    /// длинное название распирало бы строку вместо того, чтобы обрезаться.
+    /// `Color.clear` берёт ту ширину, которую даёт строка, и ничего не требует.
+    private var title: some View {
+        Color.clear
+            .frame(maxWidth: .infinity)
+            .frame(height: Tokens.Sidebar.Typo.meetingTitle.lineHeight)
+            .overlay(alignment: .leading) {
+                Text(row.title)
+                    .typo(Tokens.Sidebar.Typo.meetingTitle)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .mask(alignment: .leading) {
+                HStack(spacing: 0) {
+                    Rectangle()
+                    LinearGradient(
+                        colors: [.black, .black.opacity(0)],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                    .frame(width: Tokens.Sidebar.titleFade)
+                }
+            }
+    }
+
     public var body: some View {
         // Keep the real row for layout. Ash is an overlay only — a ZStack/stand-in
         // that grew with the particle canvas was blowing the rail open.
@@ -977,11 +1010,7 @@ public struct SidebarMeetingRow: View {
                     // строки, на которой стоит, — как SF Symbol.
                     PropellerStatusIcon(status: status)
                 }
-                Text(row.title)
-                    .typo(Tokens.Sidebar.Typo.meetingTitle)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                title
             }
             .foregroundStyle(Tokens.Sidebar.meetingTitle)
             .padding(.horizontal, Tokens.Sidebar.meetingHPadding)
