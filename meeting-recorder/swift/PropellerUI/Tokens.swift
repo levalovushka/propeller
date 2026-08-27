@@ -828,15 +828,23 @@ public enum Tokens {
         /// Shortcut hint, white 40 %.
         public static let navShortcut = Primitive.ink(dark: Primitive.AlphaWhite.a40,
                                                       light: Primitive.AlphaBlack.a48)
-        /// Быстрое действие строки — плюс справа (`Icon`, 307:6712), белый 70 %.
+        /// Быстрое действие строки — плюс справа (`Icon`, 307:6712) — в две
+        /// ступени: 30 %, пока курсор на строке, и 70 %, когда он на самом
+        /// плюсе.
         ///
-        /// Громче подсказки рядом с ним, и это снято с макета, а не выбрано:
-        /// подсказка называет клавишу для того же клика, а плюс — **другая**
-        /// кнопка, и одинаковый с подсказкой тон читался бы как одна строка
-        /// пояснений. Тот же тон, что у «Помощь ↗» в подвале
-        /// (`Footer.buttonGlyph`), — по той же причине.
-        public static let navQuickAction = Primitive.ink(dark: Primitive.AlphaWhite.a70,
-                                                         light: Primitive.AlphaBlack.a70)
+        /// **Макет даёт одну ступень**, 70 % на ховер строки. Две — решение
+        /// владельца 2026-08-27, и оно чинит то, чего в статичном кадре не
+        /// видно: плюс, который в 70 % проявляется вместе с плашкой строки,
+        /// выглядит нажатым до нажатия, и по нему невозможно понять, куда
+        /// сейчас попадёт клик — в строку или в него. Тише строки, пока это
+        /// строка; громче её, когда цель — он.
+        ///
+        /// Ступени называют то, на что наведено, а не «покой» и «ховер»: покоя
+        /// у этой кнопки нет вовсе — в покое строки её не видно.
+        public static let navQuickActionOnRow = Primitive.ink(dark: Primitive.AlphaWhite.a30,
+                                                              light: Primitive.AlphaBlack.a30)
+        public static let navQuickActionOnSelf = Primitive.ink(dark: Primitive.AlphaWhite.a70,
+                                                               light: Primitive.AlphaBlack.a70)
 
         /// «17:30 · 45 мин».
         public static let meetingMeta = Primitive.ink(dark: Primitive.AlphaWhite.a55,

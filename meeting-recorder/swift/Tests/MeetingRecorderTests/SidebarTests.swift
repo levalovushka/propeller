@@ -410,6 +410,27 @@ final class SidebarTests: XCTestCase {
         XCTAssertEqual(width(quickAction: plus, handled: false), bare, accuracy: 0.5)
     }
 
+    /// Две ступени тона у плюса — решение владельца 2026-08-27, макет даёт
+    /// одну. Смысл в разнице: пока курсор на строке, плюс тише её, а когда
+    /// курсор на нём — громче. Одинаковые ступени означали бы, что строка не
+    /// говорит, куда попадёт клик, — и заметить это глазами почти нельзя.
+    @MainActor
+    func testThePlusIsQuieterOnTheRowThanUnderTheCursor() {
+        func alpha(_ colour: Color) -> CGFloat {
+            var value: CGFloat = -1
+            NSAppearance(named: .darkAqua)!.performAsCurrentDrawingAppearance {
+                value = NSColor(colour).usingColorSpace(.deviceRGB)!.alphaComponent
+            }
+            return value
+        }
+        let onRow = alpha(Tokens.Sidebar.navQuickActionOnRow)
+        let onSelf = alpha(Tokens.Sidebar.navQuickActionOnSelf)
+        XCTAssertEqual(onRow, 0.30, accuracy: 0.01)
+        XCTAssertEqual(onSelf, 0.70, accuracy: 0.01)
+        // И тише самой строки, пока она — цель: подпись строки идёт в 90 %.
+        XCTAssertLessThan(onRow, alpha(Tokens.Sidebar.navLabel))
+    }
+
     @MainActor
     func testTheQuickActionDoesNotMakeTheRowTaller() {
         let height = measure(
