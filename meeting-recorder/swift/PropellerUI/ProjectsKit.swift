@@ -568,27 +568,39 @@ public struct ProjectAtomRow: View {
     private let done: Bool
     private let text: String
     private let assignee: String?
+    private let people: [String]
     private let toggle: (() -> Void)?
     private let dropAssignee: (() -> Void)?
+    private let setAssignee: ((String) -> Void)?
+    private let edit: ((String) -> Void)?
     private let remove: () -> Void
 
     @State private var hovering = false
+    @State private var editing = false
+    @State private var draft = ""
+    @FocusState private var focused: Bool
 
     public init(
         checkbox: Bool,
         done: Bool,
         text: String,
         assignee: String?,
+        people: [String] = [],
         toggle: (() -> Void)? = nil,
         dropAssignee: (() -> Void)? = nil,
+        setAssignee: ((String) -> Void)? = nil,
+        edit: ((String) -> Void)? = nil,
         remove: @escaping () -> Void
     ) {
         self.checkbox = checkbox
         self.done = done
         self.text = text
         self.assignee = assignee
+        self.people = people
         self.toggle = toggle
         self.dropAssignee = dropAssignee
+        self.setAssignee = setAssignee
+        self.edit = edit
         self.remove = remove
     }
 
@@ -607,30 +619,44 @@ public struct ProjectAtomRow: View {
                 }
             }
             VStack(alignment: .leading, spacing: Tokens.Projects.Atom.chipGap) {
-                Text(text)
-                    .typo(Tokens.Projects.Typo.title)
-                    .foregroundStyle(done ? Tokens.Projects.Atom.doneText : Tokens.Projects.title)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                if editing {
+                    field
+                } else {
+                    Text(text)
+                        .typo(Tokens.Projects.Typo.title)
+                        .foregroundStyle(done ? Tokens.Projects.Atom.doneText : Tokens.Projects.title)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
                 if let assignee {
                     chip(assignee)
                         .opacity(done ? Tokens.Projects.Atom.doneChipOpacity : 1)
+                // Сделанной задаче ответственного не предлагают: спрашивать, кто
+                // это сделает, у того, что уже сделано, — вопрос без адресата.
+                // Так же и в макете (297:25158 — чип есть, кнопки нет).
+                } else if let setAssignee, !done, !people.isEmpty {
+                    addAssignee(setAssignee)
                 }
             }
             .padding(.trailing, Tokens.Projects.Atom.textInset)
-            // Корзина живёт под курсором: у пятнадцати пунктов подряд пятнадцать
-            // корзин — это пятнадцать предложений удалить там, где читают.
-            Button(action: remove) {
-                Image(systemName: "trash")
-                    .font(.system(size: Tokens.Projects.Typo.title.size, weight: .regular))
-                    .foregroundStyle(Tokens.Projects.quiet)
-                    .frame(width: Tokens.Projects.Atom.markerSide,
-                           height: Tokens.Projects.Atom.markerSide)
-                    .contentShape(Rectangle())
+            // Действия живут под курсором: у пятнадцати пунктов подряд
+            // пятнадцать корзин — это пятнадцать предложений удалить там, где
+            // читают.
+            HStack(spacing: Tokens.Projects.Atom.actionGap) {
+                if edit != nil {
+                    action("square.and.pencil", "Править пункт") {
+                        draft = text
+                        editing = true
+                        focused = true
+                    }
+                }
+                action("trash", "Удалить пункт", do: remove)
             }
-            .buttonStyle(.press)
             .opacity(hovering ? 1 : 0)
-            .accessibilityLabel("Удалить пункт")
+            // Кнопка с нулевой прозрачностью в SwiftUI всё ещё ловит нажатие.
+            // Для «удалить» это значит удаление по клику в пустое место строки,
+            // за которой не следили мышью.
+            .allowsHitTesting(hovering)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -645,6 +671,53 @@ public struct ProjectAtomRow: View {
             .frame(width: Tokens.Projects.Atom.markerSide,
                    height: Tokens.Projects.Atom.markerSide)
             .contentShape(Rectangle())
+    }
+
+    /// Правка формулировки прямо в строке. Поле растёт вниз, а не уезжает
+    /// вбок: пункт бывает в четыре строки, и править его в однострочном окне
+    /// значило бы править вслепую.
+    private var field: some View {
+        TextField("", text: $draft, axis: .vertical)
+            .textFieldStyle(.plain)
+            .focused($focused)
+            .typo(Tokens.Projects.Typo.title)
+            .foregroundStyle(Tokens.Settings.title)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .onSubmit(commit)
+            .onExitCommand(perform: cancel)
+    }
+
+    private func action(
+        _ symbol: String, _ label: String, do run: @escaping () -> Void
+    ) -> some View {
+        Button(action: run) {
+            Image(systemName: symbol)
+                .font(.system(size: Tokens.Projects.Typo.title.size, weight: .regular))
+                .foregroundStyle(Tokens.Projects.quiet)
+                .frame(width: Tokens.Projects.Atom.markerSide,
+                       height: Tokens.Projects.Atom.markerSide)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.press)
+        .accessibilityLabel(label)
+    }
+
+    /// Пустая правка — отказ, а не удаление: удаляют корзиной, и подменять её
+    /// стёртым текстом значило бы прятать необратимое за опечаткой.
+    private func commit() {
+        // Перенос строки складывается в пробел, а не отвергается: пункт — одна
+        // строка файла, и вставленный из письма абзац должен доехать, а не
+        // молча не сохраниться.
+        let flat = draft.split(whereSeparator: \.isNewline).joined(separator: " ")
+        let trimmed = flat.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty, trimmed != text { edit?(trimmed) }
+        cancel()
+    }
+
+    private func cancel() {
+        editing = false
+        focused = false
+        draft = ""
     }
 
     private func chip(_ name: String) -> some View {
@@ -670,6 +743,43 @@ public struct ProjectAtomRow: View {
             in: RoundedRectangle(cornerRadius: Tokens.Projects.Atom.Chip.radius, style: .continuous)
         )
     }
+
+    /// Предлагаются только те, кого проект уже знает по своим встречам.
+    ///
+    /// Не поле для ввода: ответственный вне состава — то, что
+    /// `RecapLint.assigneesOutsideRoster` считает дефектом конспекта, и заводить
+    /// экран, который его производит, значило бы спорить с собственной
+    /// проверкой. Пустой состав — кнопки нет вовсе: предлагать выбор из ничего
+    /// хуже, чем не предлагать.
+    private func addAssignee(_ set: @escaping (String) -> Void) -> some View {
+        Menu {
+            ForEach(people, id: \.self) { name in
+                Button(name) { set(name) }
+            }
+        } label: {
+            HStack(spacing: Tokens.Projects.Atom.AddAssignee.gap) {
+                Image(systemName: "plus")
+                    .font(.system(size: Tokens.Projects.Typo.action.size, weight: .regular))
+                Text("Добавить ответственного")
+                    .padding(.horizontal, Tokens.Projects.Atom.AddAssignee.labelInset)
+            }
+            .typo(Tokens.Projects.Typo.action)
+            .foregroundStyle(Tokens.Projects.quiet)
+            .padding(.horizontal, Tokens.Projects.Atom.AddAssignee.hPadding)
+            .frame(height: Tokens.Projects.Atom.AddAssignee.height)
+            .overlay(
+                RoundedRectangle(
+                    cornerRadius: Tokens.Projects.Atom.AddAssignee.radius, style: .continuous
+                )
+                .strokeBorder(Tokens.Projects.Atom.AddAssignee.border, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
 }
 
 /// Последняя строка карточки — Figma 297:25164 / 312:11329.
@@ -690,9 +800,11 @@ public struct ProjectAtomAddRow: View {
 
     public var body: some View {
         HStack(alignment: .top, spacing: Tokens.Projects.Atom.addGap) {
+            // Плюс той же тишины, что и надпись (40 %, 297:25164): это одна
+            // строка, а не значок при подписи. Стояли 30 и 40 — разъезжались.
             Image(systemName: "plus")
                 .font(.system(size: Tokens.Projects.Typo.title.size, weight: .regular))
-                .foregroundStyle(Tokens.Settings.header)
+                .foregroundStyle(Tokens.Projects.quiet)
                 .frame(width: Tokens.Projects.Atom.markerSide,
                        height: Tokens.Projects.Typo.title.lineHeight)
             if typing {

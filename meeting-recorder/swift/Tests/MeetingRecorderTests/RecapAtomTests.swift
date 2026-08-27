@@ -158,4 +158,47 @@ final class RecapAtomTests: XCTestCase {
         - кто владелец
         """)
     }
+
+    // MARK: - Правка одного пункта
+
+    /// Карандаш правит формулировку и **не трогает** ни галочку, ни
+    /// ответственного: правят слова, а не то, кто отвечает и сделано ли.
+    func testПравкаТекстаНеТрогаетГалочкуИОтветственного() {
+        let atom = RecapAtom.parse("[x] **Левон** — написать Дену")
+        let edited = atom.with(body: "  написать Дене и Ане  ")
+        XCTAssertEqual(edited.item, "[x] **Левон** — написать Дене и Ане")
+        XCTAssertEqual(edited.checkbox, .done)
+        XCTAssertEqual(edited.assignee, "Левон")
+    }
+
+    /// У пункта без скобок скобки не появляются от правки текста: разбор ничего
+    /// не додумывает, и сборка обратно тоже.
+    func testПравкаТекстаНеЗаводитСкобок() {
+        XCTAssertEqual(RecapAtom.parse("обсудить flow").with(body: "обсудить демо").item,
+                       "обсудить демо")
+    }
+
+    /// Назначение ответственного пишет имя жирным перед длинным тире — ровно в
+    /// той разметке, из которой разбор его потом и узнает.
+    func testНазначенныйОтветственныйЧитаетсяОбратно() {
+        let assigned = RecapAtom.parse("[ ] обсудить flow").with(assignee: "  Марина  ")
+        XCTAssertEqual(assigned.item, "[ ] **Марина** — обсудить flow")
+        XCTAssertEqual(RecapAtom.parse(assigned.item).assignee, "Марина")
+    }
+
+    /// Замена, а не приписка: второй ответственный форматом не предусмотрен.
+    func testНазначениеЗаменяетПрежнегоОтветственного() {
+        XCTAssertEqual(
+            RecapAtom.parse("**Левон** — написать Дену").with(assignee: "Марина").item,
+            "**Марина** — написать Дену"
+        )
+    }
+
+    /// Пустое имя — это снятие ответственного, а не ответственный без имени:
+    /// `**` вокруг пустоты дали бы строку, которую разбор прочтёт как текст.
+    func testПустоеИмяСнимаетОтветственного() {
+        let cleared = RecapAtom.parse("[ ] **Левон** — написать Дену").with(assignee: "   ")
+        XCTAssertNil(cleared.assignee)
+        XCTAssertEqual(cleared.item, "[ ] написать Дену")
+    }
 }

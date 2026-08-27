@@ -1837,9 +1837,12 @@ public enum Tokens {
             public static let textInset = Space.s12
             /// Между хвостовыми значками.
             public static let actionGap = Space.s8
-            /// Плюс → «Добавить…». Уже, чем у пункта: там между маркером и
-            /// текстом 10, здесь 6 (297:25164).
-            public static let addGap = Space.s6
+            /// Плюс → «Добавить…». **Тот же шаг, что у пункта**: строка
+            /// добавления стоит на той же сетке, что и пункты над ней, и её
+            /// текст обязан начинаться на одной с ними вертикали (297:25164,
+            /// 297:25227 — обе `gap-[10px]` при значке в 16). Здесь стояло 6, и
+            /// это была ошибка чтения, а не решение.
+            public static let addGap = markerGap
             /// Заголовок группы → карточка; между группами.
             public static let groupHeaderGap = Space.s8
             public static let groupGap = Space.s24
@@ -1859,6 +1862,24 @@ public enum Tokens {
                 public static let gap = Space.s4
                 public static let fill = Primitive.ink(dark: Primitive.AlphaWhite.a10,
                                                        light: Primitive.AlphaBlack.a10)
+            }
+
+            /// «+ Добавить ответственного» — 297:25147.
+            ///
+            /// Рост, скругление и боковое поле те же, что у чипа: кнопка встаёт
+            /// на его место и обязана занимать его габарит. Разное — материал:
+            /// у чипа заливка, здесь контур. Чип называет факт, кнопка просит
+            /// действия, и одинаковая плотность слепила бы их в один ряд.
+            public enum AddAssignee {
+                public static let height = Chip.height
+                public static let radius = Chip.radius
+                public static let hPadding = Chip.hPadding
+                /// Плюс → надпись. Уже чипового: там между именем и крестиком 4.
+                public static let gap = Space.s2
+                /// Воздух вокруг надписи внутри кнопки — макетный `px-[2px]`.
+                public static let labelInset = Space.s2
+                public static let border = Primitive.ink(dark: Primitive.AlphaWhite.a10,
+                                                         light: Primitive.AlphaBlack.a10)
             }
         }
 

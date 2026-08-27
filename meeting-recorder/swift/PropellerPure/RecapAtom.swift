@@ -134,4 +134,20 @@ public struct RecapAtom: Equatable, Sendable {
     public func withoutAssignee() -> RecapAtom {
         RecapAtom(checkbox: checkbox, assignee: nil, body: body)
     }
+
+    /// Тот же пункт с назначенным ответственным. Имя уходит в файл жирным, и
+    /// разбор его оттуда потом узнает — правило «нет жирного, нет и
+    /// ответственного» работает в обе стороны.
+    public func with(assignee: String) -> RecapAtom {
+        let name = assignee.trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? withoutAssignee()
+                            : RecapAtom(checkbox: checkbox, assignee: name, body: body)
+    }
+
+    /// Тот же пункт с другой формулировкой. Галочка и ответственный остаются:
+    /// карандаш правит текст, а не то, кто отвечает и сделано ли.
+    public func with(body: String) -> RecapAtom {
+        RecapAtom(checkbox: checkbox, assignee: assignee,
+                  body: body.trimmingCharacters(in: .whitespaces))
+    }
 }

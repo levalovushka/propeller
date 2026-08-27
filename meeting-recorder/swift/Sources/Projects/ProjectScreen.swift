@@ -122,11 +122,25 @@ struct ProjectScreen: View {
             done: item.atom.isDone,
             text: item.atom.body,
             assignee: item.atom.assignee,
+            // Предлагаются те, кого проект знает по своим встречам, а не по этой
+            // одной: задачу дают и тому, кого сегодня не было.
+            people: state.roster(of: project.id).map(\.name),
             toggle: tab.itemsAreCheckable ? {
                 write(item, of: meeting, section: section, to: item.atom.toggled().item)
             } : nil,
             dropAssignee: item.atom.assignee == nil ? nil : {
                 write(item, of: meeting, section: section, to: item.atom.withoutAssignee().item)
+            },
+            // Ответственного предлагают только задаче. Решение не поручают —
+            // его принимают, и в макете решений (297:25206) чипа нет ни у одной
+            // строки. Уже стоящий в файле чип при этом показывается: он там
+            // есть, и прятать его значило бы прятать данные.
+            setAssignee: tab.itemsAreCheckable ? { name in
+                write(item, of: meeting, section: section,
+                      to: item.atom.with(assignee: name).item)
+            } : nil,
+            edit: { body in
+                write(item, of: meeting, section: section, to: item.atom.with(body: body).item)
             },
             remove: { write(item, of: meeting, section: section, to: nil) }
         )
