@@ -628,7 +628,14 @@ public enum Tokens {
         /// Soft alpha fade at the foot of the meeting list — always on. When a
         /// docked prompt is present the clear zone under this fade grows to the
         /// prompt's measured height; the fade itself stays this tall.
-        public static let listBottomFade: CGFloat = 36
+        ///
+        /// 36 → 32: снято с самой маски макета, а не с глаза. В экспорте она
+        /// одна на весь список (244 × 474) и вертикальная — прозрачна у нижней
+        /// кромки и непрозрачна с 6.67 % высоты, то есть 474 × 0.0667 = 31.6.
+        /// Горизонтального затухания в файле нет вовсе: длинные названия там
+        /// обрезаются, и то, что они уходят в прозрачность у нас, — решение
+        /// владельца, а не макет (`titleFade`).
+        public static let listBottomFade = Space.s32
 
         /// Nav rows — `list-item`, h-32 rounded-8.
         public static let navRowHeight = Space.s32
