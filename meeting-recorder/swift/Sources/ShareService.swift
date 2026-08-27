@@ -187,12 +187,22 @@ struct ShareClient {
     static let keychainAccount = "share-secret"
 
     private let session: URLSession
-    private let secret: String?
+    /// Замыкание, а не значение: читать связку ключей на создании клиента —
+    /// значит спрашивать пароль тогда, когда человек ещё ничего не просил.
+    ///
+    /// Секрет положен `security add-generic-password` без `-T`, поэтому в его
+    /// ACL не значится ни одно приложение, и первое обращение macOS выносит на
+    /// подтверждение (`TAILS.md`). До 2026-08-27 обращение случалось при первом
+    /// касании `ShareService.shared` — то есть на **открытии** плиты
+    /// публикации, где ещё ничего не публикуют. Теперь оно там, где человек
+    /// нажал «Опубликовать».
+    private let secret: () -> String?
     private let base: URL
 
     init(
         session: URLSession = .shared,
-        secret: String? = KeychainHelper.get(account: ShareClient.keychainAccount),
+        secret: @escaping @autoclosure () -> String? =
+            KeychainHelper.get(account: ShareClient.keychainAccount),
         base: URL = URL(string: ShareLink.host)!
     ) {
         self.session = session
@@ -200,7 +210,8 @@ struct ShareClient {
         self.base = base
     }
 
-    var hasSecret: Bool { secret?.isEmpty == false }
+    /// Спрашивает связку ключей — звать только там, где ответ нужен по делу.
+    var hasSecret: Bool { secret()?.isEmpty == false }
 
     struct Published {
         let id: String
@@ -209,7 +220,7 @@ struct ShareClient {
     }
 
     func publish(blob: Data, lifetime: ShareService.Lifetime) async throws -> Published {
-        guard let secret, !secret.isEmpty else { throw ShareError.noSecret }
+        guard let secret = secret(), !secret.isEmpty else { throw ShareError.noSecret }
 
         var components = URLComponents(
             url: base.appendingPathComponent("api/shares"), resolvingAgainstBaseURL: false
@@ -241,7 +252,7 @@ struct ShareClient {
     }
 
     func revoke(id: String, token: String) async throws {
-        guard let secret, !secret.isEmpty else { throw ShareError.noSecret }
+        guard let secret = secret(), !secret.isEmpty else { throw ShareError.noSecret }
 
         var request = URLRequest(url: base.appendingPathComponent("api/shares/\(id)"))
         request.httpMethod = "DELETE"
