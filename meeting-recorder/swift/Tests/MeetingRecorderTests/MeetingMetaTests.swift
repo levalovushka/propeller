@@ -34,6 +34,23 @@ final class MeetingMetaTests: XCTestCase {
         XCTAssertEqual(when, "3 нояб 2025, 09:05")
     }
 
+    // MARK: - Слот проекта
+
+    /// Слово «Проект» — только когда о проекте на экране не сказано ничего.
+    func testTheEmptySlotSpellsItselfOutOnlyWhenNothingElseSaysProject() {
+        XCTAssertFalse(MeetingMeta.projectSlotCollapsed(tagged: 0, hasSuggestion: false))
+    }
+
+    /// Рядом с именем проекта слово «Проект» повторяет уже сказанное.
+    func testATaggedMeetingKeepsOnlyThePlus() {
+        XCTAssertTrue(MeetingMeta.projectSlotCollapsed(tagged: 1, hasSuggestion: false))
+    }
+
+    /// Предложение — тоже разговор о проекте, даже пока метки нет.
+    func testASuggestionAloneIsEnoughToCollapseTheSlot() {
+        XCTAssertTrue(MeetingMeta.projectSlotCollapsed(tagged: 0, hasSuggestion: true))
+    }
+
     // MARK: - Сколько человек
 
     func testTheCountIsDeclinedTheWayRussianDeclinesIt() {

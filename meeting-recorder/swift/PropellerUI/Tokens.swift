@@ -964,11 +964,15 @@ public enum Tokens {
             public static let gap: CGFloat = 14
             /// Насколько плита ховера шире своего содержимого.
             public static let hPadding = Space.s6
-            /// Между иконкой и словом внутри чипа.
-            public static let iconGap = Space.s2
+            /// Между иконкой и словом внутри чипа. 4, а не 2: на 2 значок
+            /// и слово читались одним предметом, а это два (владелец, 2026-08-27).
+            public static let iconGap = Space.s4
             public static let iconSize: CGFloat = 12
-            /// Ховер. В макете залит чип «6 человек» — это и есть его ховер,
-            /// а не отличие людей от даты (подтверждено владельцем 2026-08-27).
+            /// Ховер — **только** у чипа, по которому есть что нажать: сейчас
+            /// это проекты. Дата не станет нажимаемой никогда, состав — когда
+            /// у него будет что показать. Залитый в макете чип «6 человек» —
+            /// его ховер, а не его отличие от даты; подсвечивать факт, который
+            /// ни во что не ведёт, значит обещать несуществующее действие.
             public static let hoverFill = Sidebar.rowSelected
             public static let label = Paint.Text.primary
             public static let quiet = Sidebar.chromeIcon

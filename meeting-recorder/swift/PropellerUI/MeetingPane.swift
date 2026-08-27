@@ -259,11 +259,14 @@ struct PaneIconLabel: View {
 
 /// Дата, число участников, слот проекта — 312:11129.
 ///
-/// Чип, а не строка через точку: каждый факт — свой предмет, и по каждому
-/// однажды можно будет щёлкнуть. Пока щёлкать не по чему, и ховер это
-/// единственное, что об этом говорит.
+/// Чип, а не строка через точку: каждый факт — свой предмет. Нажимаем из них
+/// пока только проект, и ховер есть **ровно** у него: подсветить дату значило
+/// бы обещать действие, которого нет.
 struct MeetingMetaRow: View {
     let meta: MeetingPane.Meta
+
+    /// Курсор над строкой целиком — им живёт сжатый «плюс».
+    @State private var hovering = false
 
     var body: some View {
         HStack(spacing: Tokens.Pane.Meta.gap) {
@@ -271,18 +274,26 @@ struct MeetingMetaRow: View {
                 MetaChip(symbol: "calendar", text: MeetingMeta.when(date))
             }
             if let people = MeetingMeta.people(meta.people) {
+                // Состав пока такой же факт, как дата: нажимать не на что,
+                // значит и светиться нечему.
                 MetaChip(symbol: "person.2.fill", text: people)
             }
             if let projects = meta.projects {
                 ForEach(projects.tagged, id: \.id) { project in
-                    MetaMenuChip(symbol: "folder.fill", text: project.name) {
+                    MetaMenuChip(symbol: "folder.fill", text: project.name, live: true) {
                         Button("Снять метку") { projects.untag(project.id) }
                     }
                 }
-                // Пустой слот — «плюс» и слово «Проект», оба тихие (312:11142).
-                // Не пустое место и не приглашение: чип стоит рядом с датой и
-                // составом ровно так же, как они, и молчит.
-                MetaMenuChip(symbol: "plus", text: "Проект", quiet: true) {
+                // Слово «Проект» — только когда о проекте не сказано ничего
+                // (312:11142, правило в `MeetingMeta.projectSlotCollapsed`).
+                // Иначе один «плюс», и он появляется под курсором: место за
+                // ним держится всегда, чтобы строка не дёргалась.
+                let collapsed = MeetingMeta.projectSlotCollapsed(
+                    tagged: projects.tagged.count, hasSuggestion: projects.suggestion != nil
+                )
+                MetaMenuChip(
+                    symbol: "plus", text: collapsed ? nil : "Проект", quiet: true, live: true
+                ) {
                     if let suggestion = projects.suggestion {
                         Button("Завести «\(suggestion.name)»", action: suggestion.accept)
                         // Отказ — навсегда: второй раз то же самое не спросят
@@ -296,10 +307,13 @@ struct MeetingMetaRow: View {
                     if !projects.available.isEmpty { Divider() }
                     Button("Новый проект…") { projects.create() }
                 }
+                .opacity(collapsed && !hovering ? 0 : 1)
                 .accessibilityLabel("Добавить проект")
             }
         }
         .frame(height: Tokens.Pane.Meta.height)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
     }
 }
 
@@ -311,13 +325,17 @@ private struct MetaMenuChip<Content: View>: View {
     /// Надпись тем же тихим цветом, что и значок: так выглядит слот, в котором
     /// ещё ничего нет.
     var quiet: Bool = false
+    /// Ховер. Передаётся, а не выводится из того, что чип в меню: у меню
+    /// заведомо есть что открыть, но признак остаётся у вызова — иначе первый
+    /// же неактивный чип в меню засветится молча.
+    var live: Bool = false
     @ViewBuilder var content: () -> Content
 
     var body: some View {
         Menu {
             content()
         } label: {
-            MetaChip(symbol: symbol, text: text, quiet: quiet)
+            MetaChip(symbol: symbol, text: text, quiet: quiet, live: live)
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -332,6 +350,9 @@ private struct MetaChip: View {
     let text: String?
     /// Надпись тихая, как значок: пустой слот (312:11142) против факта.
     var quiet: Bool = false
+    /// Есть ли что нажать. По умолчанию нет — и тогда чип не светится под
+    /// курсором вовсе: ховер здесь единственное обещание действия.
+    var live: Bool = false
 
     @State private var hovering = false
 
@@ -353,13 +374,15 @@ private struct MetaChip: View {
         // и так же нарисована в макете (312:11138 залит с полем, 312:11134
         // без поля стоит на самой кромке).
         .background(
-            (hovering ? Tokens.Pane.Meta.hoverFill : .clear)
+            (live && hovering ? Tokens.Pane.Meta.hoverFill : .clear)
                 .clipShape(
                     RoundedRectangle(cornerRadius: Tokens.Pane.Meta.radius, style: .continuous)
                 )
                 .padding(.horizontal, -Tokens.Pane.Meta.hPadding)
         )
-        .onHover { hovering = $0 }
+        // У мёртвого чипа нет и состояния ховера: подсвечивать нечем, и
+        // считать нечего.
+        .onHover { if live { hovering = $0 } }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
     }
 }

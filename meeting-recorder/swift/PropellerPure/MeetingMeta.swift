@@ -54,6 +54,19 @@ public enum MeetingMeta {
         max(distinct(invited), distinct(speakers))
     }
 
+    /// Слот проекта — словом или одним «плюсом» (312:11142).
+    ///
+    /// Словом — только у встречи, о проекте которой на экране не сказано
+    /// ничего: ни метки, ни предложения. Тогда «+ Проект» единственное, что о
+    /// проектах вообще сообщает, и он обязан читаться. Как только рядом стоит
+    /// имя проекта или приехало предложение (`plan-projects.md` §3 — его
+    /// пунктирный чип ждёт макета и встанет в эту же строку), слово «Проект»
+    /// повторяет уже сказанное: слот сжимается до значка, а значок виден
+    /// только под курсором.
+    public static func projectSlotCollapsed(tagged: Int, hasSuggestion: Bool) -> Bool {
+        tagged > 0 || hasSuggestion
+    }
+
     private static func distinct(_ names: [String]) -> Int {
         var seen = Set<String>()
         for name in names {
