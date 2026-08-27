@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Propeller</title>
+
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+<link rel="preload" href="/assets/InterVariable.woff2" as="font" type="font/woff2" crossorigin>
+
+<style>
+/* Страница саммари — та же типографика, что в панели встречи (Figma 312:11129).
+   Числа сняты с Tokens.Pane: мера 569, поля 40, имя 22/24, тело 13/22,
+   заголовок раздела 12/14 в 30 %, разрыв раздела 36, между абзацами 20.
+   Маркеров списка нет: пункт и абзац — один и тот же предмет. */
+@font-face {
+  font-family: "Inter Variable";
+  src: url("/assets/InterVariable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  --bg: #000;
+  --title: rgba(255,255,255,.95);
+  --body: rgba(255,255,255,.90);
+  --quiet: rgba(255,255,255,.30);
+  --meta: rgba(255,255,255,.95);
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #fff;
+    --title: rgba(0,0,0,.92);
+    --body: rgba(0,0,0,.88);
+    --quiet: rgba(0,0,0,.42);
+    --meta: rgba(0,0,0,.92);
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--body);
+  font-family: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 22px;
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  max-width: 649px;            /* мера 569 + поля 40·2 */
+  margin: 0 auto;
+  padding: 32px 40px 40px;
+}
+@media (max-width: 560px) {
+  main { padding: 24px 20px 32px; }
+}
+
+/* Шапка: строка атрибутов → имя встречи → первый абзац, один шаг 16 на оба стыка. */
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--meta);
+  margin: 0 0 16px;
+}
+h1 {
+  font-size: 22px;
+  line-height: 24px;
+  font-weight: 400;
+  color: var(--title);
+  margin: 0 0 16px;
+  letter-spacing: -0.01em;
+}
+
+.block { margin: 0 0 20px; }
+.block:last-child { margin-bottom: 0; }
+
+/* Заголовок раздела — тихая подпись, а не титул. 36 сверху: разрыв раздела —
+   самая громкая тишина на экране теперь, когда сами заголовки замолчали. */
+.heading {
+  font-size: 12px;
+  line-height: 14px;
+  color: var(--quiet);
+  margin: 36px 0 8px;
+}
+.block + .heading { margin-top: 36px; }
+.heading:first-child { margin-top: 0; }
+
+strong { font-weight: 600; }
+em { font-style: italic; }
+
+/* Состояния: пусто, пока не расшифровали; одна строка, если не вышло. */
+.state {
+  color: var(--quiet);
+  font-size: 13px;
+  line-height: 22px;
+  margin: 0;
+}
+
+footer {
+  margin-top: 48px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--quiet);
+}
+footer a { color: inherit; text-decoration: none; border-bottom: 1px solid currentColor; }
+footer a:hover { color: var(--body); }
+</style>
+</head>
+<body>
+<main id="root">
+  <p class="state" id="state">Открываем…</p>
+</main>
+
+<script>
+// Ключ приходит во фрагменте ссылки и на сервер не уходит: браузер не
+// отправляет всё, что после «#». Поэтому расшифровка целиком здесь, а сервер
+// знает только байты. Без JS страница не откроется — осознанный размен
+// в пользу того, что сервер не видит содержимого (SERVER.md §3.4).
+
+const root = document.getElementById('root');
+
+function say(text) {
+  root.innerHTML = '';
+  const p = document.createElement('p');
+  p.className = 'state';
+  p.textContent = text;
+  root.appendChild(p);
+  sign();
+}
+
+function sign() {
+  const f = document.createElement('footer');
+  const a = document.createElement('a');
+  a.href = 'https://propeller.report/';
+  a.textContent = 'Propeller';
+  f.append('Саммари собрано в ', a);
+  root.appendChild(f);
+}
+
+function base64urlToBytes(s) {
+  const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4));
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/') + pad);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// Во фрагменте живёт и слаг для глаза: «#vstrecha-s-daney&k=…». Читается он
+// только человеком — искать нужно именно «k=», а не первый кусок.
+function keyFromHash() {
+  const hash = location.hash.replace(/^#/, '');
+  for (const part of hash.split('&')) {
+    if (part.startsWith('k=')) return part.slice(2);
+  }
+  return '';
+}
+
+function idFromPath() {
+  const m = location.pathname.match(/^\/s\/([A-Za-z0-9_-]{22})$/);
+  return m ? m[1] : '';
+}
+
+async function gunzip(bytes) {
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return new Response(stream).text();
+}
+
+function render(doc) {
+  root.innerHTML = '';
+
+  if (Array.isArray(doc.meta) && doc.meta.length) {
+    const row = document.createElement('div');
+    row.className = 'meta';
+    for (const chip of doc.meta) {
+      const span = document.createElement('span');
+      span.textContent = chip;
+      row.appendChild(span);
+    }
+    root.appendChild(row);
+  }
+
+  if (doc.title) {
+    const h = document.createElement('h1');
+    h.textContent = doc.title;
+    root.appendChild(h);
+    document.title = doc.title + ' — Propeller';
+  }
+
+  for (const block of doc.blocks || []) {
+    const el = document.createElement('p');
+    // Пункт списка и абзац рисуются одинаково: разница живёт в markdown,
+    // а не на экране. `lead` тоже давно перестал быть своим лицом.
+    el.className = block.kind === 'heading' ? 'heading' : 'block';
+    for (const span of block.spans || []) {
+      let node = document.createTextNode(span.text || '');
+      if (span.italic) { const em = document.createElement('em'); em.appendChild(node); node = em; }
+      if (span.bold) { const st = document.createElement('strong'); st.appendChild(node); node = st; }
+      el.appendChild(node);
+    }
+    root.appendChild(el);
+  }
+
+  sign();
+}
+
+async function open() {
+  const id = idFromPath();
+  const key = keyFromHash();
+  if (!id || !key) {
+    say('Ссылка неполная — скорее всего, при копировании потерялся хвост после «#». Попросите отправить её ещё раз.');
+    return;
+  }
+
+  let blob;
+  try {
+    const res = await fetch('/api/blob/' + id, { cache: 'no-store', referrerPolicy: 'no-referrer' });
+    if (res.status === 429) { say('Слишком много запросов. Попробуйте через минуту.'); return; }
+    // Нет, протухло и отозвано отвечают одинаково — и здесь тоже
+    // говорятся одной фразой: сервер не сообщает, что именно случилось.
+    if (!res.ok) { say('Ссылки больше нет: её отозвали или у неё вышел срок.'); return; }
+    blob = new Uint8Array(await res.arrayBuffer());
+  } catch (e) {
+    say('Не получилось загрузить. Проверьте связь и обновите страницу.');
+    return;
+  }
+
+  try {
+    const raw = base64urlToBytes(key);
+    const nonce = blob.slice(0, 12);
+    const sealed = blob.slice(12);
+    const k = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce }, k, sealed);
+    const doc = JSON.parse(await gunzip(new Uint8Array(plain)));
+    if (doc.v !== 1) { say('Эта ссылка сделана более новой версией Propeller.'); return; }
+    render(doc);
+  } catch (e) {
+    say('Не удалось расшифровать: ключ в ссылке не подходит.');
+  }
+}
+
+open();
+</script>
+</body>
+</html>
