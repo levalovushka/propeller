@@ -257,6 +257,65 @@ struct PaneIconLabel: View {
     }
 }
 
+/// Копирование саммари: знак, который на секунду становится галочкой.
+///
+/// Подтверждение живёт **на самой кнопке**, а не всплывает плашкой: в этом
+/// приложении нет тостов (`principles.md` §2), и состояние принадлежит
+/// предмету, который его нажал. Человек и так смотрит на кнопку в момент
+/// нажатия — там же ему и отвечают.
+///
+/// Ловушка, уже разобранная в чёлке (`NotchSurface.glyph`): замена знака идёт
+/// заменой всего дерева, а такая замена — не транзакция, и `.transition` при
+/// ней просто не включается, знак моргает. Поэтому смена делается своей
+/// `withAnimation`, и только тогда `blurReplace` отрабатывает.
+struct CopyButton: View {
+    let action: () -> Void
+
+    @State private var done = false
+    @State private var hovering = false
+    /// Отсчёт выдержки. Хранится, чтобы второе нажатие продлевало галочку с
+    /// нуля, а не гасило её по расписанию первого.
+    @State private var countdown: Task<Void, Never>?
+
+    private var symbol: String {
+        done ? Tokens.Pane.copyDoneGlyph : Tokens.Pane.copyGlyph
+    }
+
+    var body: some View {
+        Button {
+            action()
+            countdown?.cancel()
+            withAnimation(.easeOut(duration: Tokens.Pane.copySwap)) { done = true }
+            countdown = Task {
+                try? await Task.sleep(for: .seconds(Tokens.Pane.copyConfirmationDwell))
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeOut(duration: Tokens.Pane.copySwap)) { done = false }
+            }
+        } label: {
+            ZStack {
+                Image(systemName: symbol)
+                    .font(.system(size: Tokens.Pane.headerIconSize, weight: .regular))
+                    .transition(.blurReplace)
+                    .id(symbol)
+            }
+            .foregroundStyle(hovering ? Tokens.Paint.Text.primary : Tokens.Pane.buttonIcon)
+            .frame(width: Tokens.Pane.headerButtonSide, height: Tokens.Pane.headerButtonSide)
+            .background(
+                hovering ? Tokens.Sidebar.rowHover : .clear,
+                in: RoundedRectangle(cornerRadius: Tokens.Pane.headerButtonRadius, style: .continuous)
+            )
+            .contentShape(
+                RoundedRectangle(cornerRadius: Tokens.Pane.headerButtonRadius, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+        .help("Скопировать саммари")
+        .onDisappear { countdown?.cancel() }
+    }
+}
+
 /// Дата, число участников, слот проекта — 312:11129.
 ///
 /// Чип, а не строка через точку: каждый факт — свой предмет. Нажимаем из них
@@ -936,6 +995,7 @@ extension MeetingPaneBody where MoreMenu == EmptyView {
         identity: MeetingPane.Identity? = nil,
         meta: MeetingPane.Meta? = nil,
         share: MeetingPane.Share? = nil,
+        copy: MeetingPane.Copy? = nil,
         mode: MeetingPaneMode = .summary,
         summary: MeetingSummary,
         turns: [MeetingTranscriptColumn.Turn] = [],
@@ -951,6 +1011,7 @@ extension MeetingPaneBody where MoreMenu == EmptyView {
             identity: identity,
             meta: meta,
             share: share,
+            copy: copy,
             hasMoreMenu: false,
             mode: mode,
             summary: summary,
@@ -977,6 +1038,8 @@ public enum PaneProbe {
     public static let meta = "meta"
     public static let title = "title"
     public static let actions = "actions"
+    public static let copy = "copy"
+    public static let share = "share"
 }
 
 public struct PaneProbeKey: PreferenceKey {
@@ -1109,6 +1172,19 @@ public struct Meta {
     }
 }
 
+/// Кладёт саммари в буфер обмена — иконкой, без подписи.
+///
+/// Свой тип, а не `Share` без заголовка: у этих двух разные предметы. Шер
+/// выпускает ссылку наружу и потому подписан словом; копирование остаётся
+/// на этой машине и потому знак. Общий тип заставил бы объяснять, почему у
+/// одного заголовок пустой.
+public struct Copy {
+    public let handler: () -> Void
+    public init(handler: @escaping () -> Void) {
+        self.handler = handler
+    }
+}
+
 /// Поднимает системный шер из угла панели.
 public struct Share {
     public let title: String
@@ -1132,6 +1208,7 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
     private let identity: MeetingPane.Identity?
     private let meta: MeetingPane.Meta?
     private let share: MeetingPane.Share?
+    private let copy: MeetingPane.Copy?
     /// Троеточие — *меню*, а не кнопка: у «ещё» нет одного действия, и
     /// замыкание умело бы открыть его только где-то в другом месте.
     private let moreMenu: () -> MoreMenu
@@ -1169,6 +1246,7 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
         identity: MeetingPane.Identity? = nil,
         meta: MeetingPane.Meta? = nil,
         share: MeetingPane.Share? = nil,
+        copy: MeetingPane.Copy? = nil,
         hasMoreMenu: Bool = true,
         mode: MeetingPaneMode = .summary,
         summary: MeetingSummary,
@@ -1185,6 +1263,7 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
         self.identity = identity
         self.meta = meta
         self.share = share
+        self.copy = copy
         self.hasMoreMenu = hasMoreMenu
         self.moreMenu = moreMenu
         self.mode = mode
@@ -1259,7 +1338,7 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
 
     @ViewBuilder
     private var actions: some View {
-        if hasMoreMenu || share != nil {
+        if hasMoreMenu || share != nil || copy != nil {
             HStack(spacing: Tokens.Pane.headerActionsGap) {
                 if hasMoreMenu {
                     Menu {
@@ -1276,8 +1355,15 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
                     .menuIndicator(.hidden)
                     .help("Ещё")
                 }
+                // Копирование стоит слева от «Поделиться»: слева то, что
+                // остаётся на этой машине, справа то, что уходит наружу.
+                if let copy {
+                    CopyButton(action: copy.handler)
+                        .paneProbe(PaneProbe.copy)
+                }
                 if let share {
                     SharePill(title: share.title, action: share.handler)
+                        .paneProbe(PaneProbe.share)
                 }
             }
             .padding(Tokens.Pane.paneActionsInset)

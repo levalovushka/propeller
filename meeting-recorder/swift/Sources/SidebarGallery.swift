@@ -299,6 +299,7 @@ enum SidebarGallery {
                         people: 6
                     ),
                     share: .init("Поделиться") {},
+                    copy: .init {},
                     summary: Self.summary
                 )
             }

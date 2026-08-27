@@ -1002,6 +1002,25 @@ public enum Tokens {
         public static let headerButtonRadius = Radius.xs
         public static let headerIconSize: CGFloat = 13
 
+        // MARK: Копирование саммари
+
+        /// Знак покоя и знак подтверждения. Оба здесь, а не по вызовам: смена
+        /// одного без другого — это кнопка, которая после нажатия становится
+        /// другой кнопкой.
+        public static let copyGlyph = "doc.on.doc"
+        public static let copyDoneGlyph = "checkmark"
+
+        /// Сколько держится галочка. **Не ступень лестницы движения**: это не
+        /// длительность хода, а выдержка состояния, как `EchoDedup.holdSeconds`.
+        /// Секунда — столько, чтобы успеть увидеть, и не столько, чтобы начать
+        /// ждать, когда кнопка вернётся.
+        public static let copyConfirmationDwell: Double = 1.0
+
+        /// Подмена знака. `easeOut` и ступень лестницы (`principles.md` §9), а
+        /// не `.smooth(0.26)` из чёлки: то число вне лестницы и осталось там
+        /// как долг, повторять его — размножать долг.
+        public static let copySwap = Motion.Step.t240
+
         // MARK: Summary column (31:4645)
 
         public static let summaryHPadding = Space.s40

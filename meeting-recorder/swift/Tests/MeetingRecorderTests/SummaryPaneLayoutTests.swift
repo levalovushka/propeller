@@ -77,6 +77,30 @@ final class SummaryPaneLayoutTests: XCTestCase {
         }
     }
 
+    /// Копирование стоит слева от «Поделиться», а не где придётся.
+    ///
+    /// Порядок здесь смысловой, а не декоративный: слева то, что остаётся на
+    /// этой машине, справа то, что уходит наружу. Тест на порядок — потому что
+    /// в `HStack` он держится ровно тем, в каком порядке написаны две строки.
+    @MainActor
+    func testCopyStandsLeftOfShareAndInsideTheSameCluster() throws {
+        let probes = probe()
+        let copy = try XCTUnwrap(probes[PaneProbe.copy], "кнопка копирования не измерена")
+        let actions = try XCTUnwrap(probes[PaneProbe.actions], "кластер не измерен")
+
+        let share = try XCTUnwrap(probes[PaneProbe.share], "шер не измерен")
+        // Против самого шера, а не против кластера: кластер шире обоих на свой
+        // инсет, и сравнение с ним истинно при любом порядке — первая версия
+        // этой проверки была именно такой и мутацию не поймала.
+        XCTAssertLessThanOrEqual(copy.maxX, share.minX, "копирование оказалось правее шера")
+        XCTAssertEqual(copy.width, Tokens.Pane.headerButtonSide, accuracy: 0.5)
+        XCTAssertEqual(copy.height, Tokens.Pane.headerButtonSide, accuracy: 0.5)
+        // Внутри кластера, а не рядом с ним: иначе угол считался бы по шеру,
+        // а кнопка висела бы сама по себе.
+        XCTAssertGreaterThanOrEqual(copy.minX, actions.minX - 0.5)
+        XCTAssertLessThanOrEqual(copy.maxY, actions.maxY + 0.5)
+    }
+
     /// Цена этого решения, названная вслух: на широком окне между именем
     /// встречи и кнопками, которые её шерят, лежит уже не мера колонки, а
     /// полокна. Тест не запрещает этого — он не даёт забыть, что так решили.
@@ -142,6 +166,7 @@ final class SummaryPaneLayoutTests: XCTestCase {
                 })
             ),
             share: .init("Поделиться") {},
+            copy: .init {},
             summary: Self.document
         )
         .frame(width: width, height: height)

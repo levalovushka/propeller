@@ -47,6 +47,7 @@ final class SummaryPaneShotTests: XCTestCase {
                 people: .init(rows: Self.roster)
             ),
             share: .init("Поделиться") {},
+            copy: .init {},
             summary: Self.summary
         )
         .environment(\.colorScheme, .dark)

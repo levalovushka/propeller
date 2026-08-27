@@ -1038,6 +1038,10 @@ struct MainView: View {
                     NetworkWatch.shared.start()
                     sharingMeetingID = entry.id
                 },
+                // Тот же `copySummary`, что у правого клика в рельсе: читаемый
+                // вид саммари живёт в `SummaryDocument.plainText` и должен
+                // остаться одним для обеих дверей.
+                copy: .init { copySummary(entry) },
                 mode: paneMode,
                 summary: document,
                 turns: turns,
