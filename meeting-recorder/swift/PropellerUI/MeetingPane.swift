@@ -280,9 +280,17 @@ struct MeetingMetaRow: View {
             }
             if let projects = meta.projects {
                 ForEach(projects.tagged, id: \.id) { project in
-                    MetaMenuChip(symbol: "folder.fill", text: project.name, live: true) {
-                        Button("Снять метку") { projects.untag(project.id) }
-                    }
+                    MetaTagChip(name: project.name) { projects.untag(project.id) }
+                }
+                // Кандидат стоит в строке сам, а не пунктом меню (297:23241,
+                // `plan-projects.md` §3): щелчок по имени заводит проект,
+                // щелчок по крестику глушит связку навсегда.
+                if let suggestion = projects.suggestion {
+                    MetaSuggestionChip(
+                        name: suggestion.name,
+                        accept: suggestion.accept,
+                        dismiss: suggestion.dismiss
+                    )
                 }
                 // Слово «Проект» — только когда о проекте не сказано ничего
                 // (312:11142, правило в `MeetingMeta.projectSlotCollapsed`).
@@ -294,13 +302,6 @@ struct MeetingMetaRow: View {
                 MetaMenuChip(
                     symbol: "plus", text: collapsed ? nil : "Проект", quiet: true, live: true
                 ) {
-                    if let suggestion = projects.suggestion {
-                        Button("Завести «\(suggestion.name)»", action: suggestion.accept)
-                        // Отказ — навсегда: второй раз то же самое не спросят
-                        // (`plan-projects.md` §3, правило 3).
-                        Button("Не предлагать", action: suggestion.dismiss)
-                        Divider()
-                    }
                     ForEach(projects.available, id: \.id) { project in
                         Button(project.name) { projects.tag(project.id) }
                     }
@@ -319,6 +320,93 @@ struct MeetingMetaRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+    }
+}
+
+/// Помеченный проект: факт и один жест — снять.
+///
+/// Меню здесь было, и его нет: чтобы снять метку, приходилось щёлкнуть по
+/// самому проекту и выбрать пункт, то есть открыть разговор ради одного ответа.
+/// Крестик приходит под курсором, **не меняя ширины чипа** — он ложится на
+/// имя, растворяя его конец под собой. Ширина, которая прыгает под курсором,
+/// сдвигала бы всё, что стоит правее, ровно в тот момент, когда туда целятся.
+private struct MetaTagChip: View {
+    let name: String
+    let remove: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        MetaChip(symbol: "folder.fill", text: name, live: true, fadingTail: hovering)
+            .overlay(alignment: .trailing) {
+                if hovering {
+                    MetaCross(help: "Снять метку", action: remove)
+                }
+            }
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+    }
+}
+
+/// Кандидат в проекты — 297:23241.
+///
+/// Пунктир и есть всё сообщение: это не метка, это вопрос. Щелчок по имени
+/// заводит проект и подтягивает прошлые похожие встречи, щелчок по крестику
+/// глушит связку навсегда (`plan-projects.md` §3, правило 3). Третий ответ —
+/// молчание, и он ничего не стоит: чип висит и не мигает.
+private struct MetaSuggestionChip: View {
+    let name: String
+    let accept: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        HStack(spacing: Tokens.Pane.Meta.Suggested.gap) {
+            Button(action: accept) {
+                Text(name)
+                    .typo(Tokens.Pane.Typo.metaWide)
+                    .foregroundStyle(Tokens.Pane.Meta.label)
+                    .padding(.horizontal, Tokens.Pane.Meta.Suggested.namePadding)
+                    .frame(height: Tokens.Pane.Meta.height)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.press)
+            .help("Завести проект «\(name)»")
+            MetaCross(help: "Не предлагать", action: dismiss)
+        }
+        .padding(.horizontal, Tokens.Pane.Meta.Suggested.hPadding)
+        .frame(height: Tokens.Pane.Meta.height)
+        .overlay(
+            RoundedRectangle(
+                cornerRadius: Tokens.Pane.Meta.Suggested.radius, style: .continuous
+            )
+            .strokeBorder(
+                Tokens.Pane.Meta.Suggested.border,
+                style: StrokeStyle(lineWidth: 1, dash: Tokens.Pane.Meta.Suggested.dash)
+            )
+        )
+    }
+}
+
+/// Крестик чипа: «снять метку» и «не предлагать» — один и тот же жест.
+private struct MetaCross: View {
+    let help: String
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: Tokens.Pane.Meta.crossSize, weight: .regular))
+                .foregroundStyle(hovering ? Tokens.Pane.Meta.label : Tokens.Pane.Meta.quiet)
+                .frame(width: Tokens.Pane.Meta.crossSide, height: Tokens.Pane.Meta.height)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.press)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 
@@ -358,6 +446,9 @@ private struct MetaChip: View {
     /// Есть ли что нажать. По умолчанию нет — и тогда чип не светится под
     /// курсором вовсе: ховер здесь единственное обещание действия.
     var live: Bool = false
+    /// Растворить конец имени: под ним встанет крестик, а ширина чипа останется
+    /// прежней.
+    var fadingTail: Bool = false
 
     @State private var hovering = false
 
@@ -372,6 +463,22 @@ private struct MetaChip: View {
                     .foregroundStyle(quiet ? Tokens.Pane.Meta.quiet : Tokens.Pane.Meta.label)
             }
         }
+        // Маска, а не заливка под крестиком: чип стоит на фоне страницы, и
+        // плашка под значком выдала бы прямоугольник там, где макет растворяет
+        // текст. Растушёвка в точках, а не в долях, — длина имени на неё не влияет.
+        .mask(
+            HStack(spacing: 0) {
+                Rectangle()
+                LinearGradient(
+                    colors: [.black, fadingTail ? .clear : .black],
+                    startPoint: .leading, endPoint: .trailing
+                )
+                .frame(width: Tokens.Pane.Meta.fadeRamp)
+                Rectangle()
+                    .fill(fadingTail ? Color.clear : Color.black)
+                    .frame(width: Tokens.Pane.Meta.fadeClear)
+            }
+        )
         .frame(height: Tokens.Pane.Meta.height)
         // Поле не у содержимого, а у плиты: иконка даты обязана встать ровно
         // под именем встречи, иначе левый край головы рвётся. Плита при этом

@@ -1006,6 +1006,24 @@ public enum Tokens {
             /// и слово читались одним предметом, а это два (владелец, 2026-08-27).
             public static let iconGap = Space.s4
             public static let iconSize: CGFloat = 12
+            /// Крестик: «снять метку» у помеченного проекта и «не предлагать»
+            /// у кандидата (297:23241). Глиф опознан замером
+            /// (`tools/figma/symmatch.swift`, U+100184): `multiply` и `xmark`
+            /// разошлись на 12 %, то есть замер молчит, — решил контекст, во
+            /// всём приложении крестик это `xmark`.
+            public static let crossSide = Space.s16
+            /// Кегль крестика. 10, а не 12: в макете это глиф иконочного шрифта
+            /// на 12/16, а `xmark` на 12 рисует туши заметно крупнее его.
+            public static let crossSize: CGFloat = 10
+            /// Растушёвка имени под крестиком. Ширина чипа при этом не
+            /// меняется — крестик ложится **на** имя, а не рядом с ним.
+            ///
+            /// Две величины, а не одна: под самим значком имя стёрто начисто
+            /// (`fadeClear`), и только слева от него оно уходит в прозрачность
+            /// (`fadeRamp`). Одним градиентом на всю длину значок садился на
+            /// буквы в четверть силы, и «Passwork» читался как «Passwoк».
+            public static let fadeClear = crossSide
+            public static let fadeRamp = Space.s10
             /// Ховер — **только** у чипа, по которому есть что нажать: сейчас
             /// это проекты. Дата не станет нажимаемой никогда, состав — когда
             /// у него будет что показать. Залитый в макете чип «6 человек» —
@@ -1014,6 +1032,26 @@ public enum Tokens {
             public static let hoverFill = Sidebar.rowSelected
             public static let label = Paint.Text.primary
             public static let quiet = Sidebar.chromeIcon
+
+            /// Кандидат в проекты — пунктирный чип 297:23241.
+            ///
+            /// Единственный чип строки со своей рамкой, и это сказано в макете
+            /// намеренно: помеченный проект — факт, кандидат — вопрос, и пунктир
+            /// ровно то, чем вопрос отличается от факта (`plan-projects.md` §3).
+            public enum Suggested {
+                public static let radius = Radius.xxs
+                public static let border = Primitive.ink(dark: Primitive.AlphaWhite.a20,
+                                                         light: Primitive.AlphaBlack.a28)
+                /// Поле внутри рамки, а не за ней: у кандидата плита нарисована.
+                public static let hPadding = Space.s6
+                /// Между именем и крестиком.
+                public static let gap = Space.s4
+                /// Имя стоит в своей коробке с полем 2 — так в макете.
+                public static let namePadding = Space.s2
+                /// Штрих пунктира снят глазом с 297:23241: `get_design_context`
+                /// отдаёт только `border-dashed`, длины штриха в нём нет.
+                public static let dash: [CGFloat] = [2, 2]
+            }
         }
 
         /// «Поделиться» — 312:11129. Первая сплошная кнопка в приложении:
