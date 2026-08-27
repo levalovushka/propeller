@@ -402,9 +402,9 @@ final class SidebarTests: XCTestCase {
         let bare = width(quickAction: nil, handled: true)
         XCTAssertEqual(
             width(quickAction: plus, handled: true) - bare,
-            Tokens.Sidebar.navQuickActionPlate + Tokens.Sidebar.navRowGap,
+            Tokens.Sidebar.navQuickActionSlot + Tokens.Sidebar.navRowGap,
             accuracy: 0.5,
-            "плюс обязан занять свою плашку и зазор — и ни точкой больше"
+            "плюс обязан занять свой слот и зазор — и ни точкой больше"
         )
         // Кнопка без обработчика — тупик, и слота под неё тоже нет.
         XCTAssertEqual(width(quickAction: plus, handled: false), bare, accuracy: 0.5)
@@ -437,12 +437,24 @@ final class SidebarTests: XCTestCase {
     /// рельсе. Стоит любому из трёх чисел разъехаться — плашка перестаёт быть
     /// вписанной, и это видно.
     func testThePlusPlateSitsInsideTheRow() {
-        let inset = (Tokens.Sidebar.navRowHeight - Tokens.Sidebar.navQuickActionPlate) / 2
-        XCTAssertEqual(inset, 4)
         XCTAssertEqual(Tokens.Sidebar.navQuickActionPlate, 24)
         XCTAssertEqual(Tokens.Sidebar.navQuickActionPlateRadius, 4)
-        // Правый край плашки — на поле строки, а не на своём числе.
-        XCTAssertEqual(Tokens.Sidebar.navRowHPadding, 8)
+        // По 4 со всех четырёх сторон. Первый заход поставил плашку правым
+        // краем на поле строки (8) — по вертикали 4, по горизонтали 8, и это
+        // было видно глазами прежде, чем посчитано.
+        XCTAssertEqual(Tokens.Sidebar.navQuickActionPlateInset, 4)
+        XCTAssertEqual(
+            Tokens.Sidebar.navQuickActionPlateInset,
+            (Tokens.Sidebar.navRowHeight - Tokens.Sidebar.navQuickActionPlate) / 2,
+            "отступ по горизонтали обязан равняться вертикальному, иначе плашка не вписана"
+        )
+        // Глиф внутри плашки при этом встаёт на поле строки — туда же, где
+        // слева стоит иконка. Плашка вылезает за поле, глиф — нет.
+        XCTAssertEqual(
+            Tokens.Sidebar.navQuickActionPlateInset
+                + (Tokens.Sidebar.navQuickActionPlate - Tokens.Sidebar.navIconSide) / 2,
+            Tokens.Sidebar.navRowHPadding
+        )
     }
 
     @MainActor

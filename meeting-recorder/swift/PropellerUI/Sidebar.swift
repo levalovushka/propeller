@@ -873,7 +873,7 @@ public struct SidebarNavRow: View {
                     isRevealed: isHovered,
                     action: onQuickAction ?? {}
                 )
-                .padding(.trailing, Tokens.Sidebar.navRowHPadding)
+                .padding(.trailing, Tokens.Sidebar.navQuickActionPlateInset)
             }
         }
         // Ховер слушает контейнер, а не кнопка: плюс перекрывает её собой, и
@@ -908,10 +908,11 @@ public struct SidebarNavRow: View {
 
             if quickAction != nil {
                 // Слот, не кнопка: сама кнопка лежит выше по ZStack. Держит
-                // ширину, чтобы название не удлинялось под курсором, — и
-                // ширину именно плашки, иначе она наползла бы на название.
+                // ширину, чтобы название не удлинялось под курсором. Уже
+                // плашки: та вылезает за поле строки, и резервировать под
+                // вылет пришлось бы дважды.
                 Color.clear
-                    .frame(width: Tokens.Sidebar.navQuickActionPlate,
+                    .frame(width: Tokens.Sidebar.navQuickActionSlot,
                            height: Tokens.Sidebar.navQuickActionPlate)
             }
         }
