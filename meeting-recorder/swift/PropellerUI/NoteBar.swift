@@ -79,7 +79,7 @@ public struct NoteBar: View {
         // Та же мерка, что у колонки под ним: на широком окне поле не
         // растягивается во всю панель, а стоит ровно под текстом, к которому
         // относится.
-        .frame(maxWidth: Tokens.Pane.summaryMaxWidth + Tokens.Pane.summaryHPadding * 2)
+        .frame(maxWidth: Tokens.Pane.recordingMeasure)
         .frame(maxWidth: .infinity)
     }
 

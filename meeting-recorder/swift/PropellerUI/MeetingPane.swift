@@ -293,11 +293,18 @@ private struct MetaChip: View {
                 .typo(Tokens.Pane.Typo.metaWide)
                 .foregroundStyle(Tokens.Pane.Meta.label)
         }
-        .padding(.horizontal, Tokens.Pane.Meta.hPadding)
         .frame(height: Tokens.Pane.Meta.height)
+        // Поле не у содержимого, а у плиты: иконка даты обязана встать ровно
+        // под именем встречи, иначе левый край головы рвётся. Плита при этом
+        // вылезает за колонку на свои 6 — так же, как ховер строки в рельсе,
+        // и так же нарисована в макете (312:11138 залит с полем, 312:11134
+        // без поля стоит на самой кромке).
         .background(
-            hovering ? Tokens.Pane.Meta.hoverFill : .clear,
-            in: RoundedRectangle(cornerRadius: Tokens.Pane.Meta.radius, style: .continuous)
+            (hovering ? Tokens.Pane.Meta.hoverFill : .clear)
+                .clipShape(
+                    RoundedRectangle(cornerRadius: Tokens.Pane.Meta.radius, style: .continuous)
+                )
+                .padding(.horizontal, -Tokens.Pane.Meta.hPadding)
         )
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
@@ -457,7 +464,7 @@ public struct MeetingSummaryColumn: View {
         // The measure is capped for readability and then *centred* in whatever
         // room the column has. Pinned left, a wide window leaves the text
         // against one edge with a field of empty beside it.
-        .frame(maxWidth: Tokens.Pane.summaryMaxWidth + Tokens.Pane.summaryHPadding * 2)
+        .frame(maxWidth: Tokens.Pane.paneMeasure)
         .frame(maxWidth: .infinity)
     }
 
@@ -671,8 +678,11 @@ public struct MeetingTranscriptColumn: View {
         }
         .multilineTextAlignment(.leading)
         .padding(.horizontal, Tokens.Pane.summaryHPadding)
-        .padding(.vertical, Tokens.Pane.summaryVPadding)
-        .frame(maxWidth: Tokens.Pane.summaryMaxWidth + Tokens.Pane.summaryHPadding * 2)
+        // Сверху — тот же шаг, что у саммари: имя встречи стоит над обеими
+        // колонками, и при переключении оно не должно прыгать на восемь точек.
+        .padding(.top, Tokens.Pane.titleGap)
+        .padding(.bottom, Tokens.Pane.summaryVPadding)
+        .frame(maxWidth: Tokens.Pane.paneMeasure)
         .frame(maxWidth: .infinity)
     }
 
@@ -927,11 +937,17 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
         }
         .scrollIndicators(.hidden)
         .coordinateSpace(name: PaneProbe.space)
-        // Снаружи скролла: угол принадлежит панели, а не тексту в ней, и
-        // уезжать вверх вместе с ним ему незачем. Прижат к кромке блока, а не
-        // к центрированной мере колонки: на 649 это одно и то же, на широком
-        // окне кнопки остаются у края окна.
-        .overlay(alignment: .topTrailing) { actions }
+        // Угол принадлежит блоку, а не окну: оверлей накрывает ту же меру, в
+        // которой стоит текст, и центрируется вместе с ней. Оверлеем на всю
+        // ширину «Поделиться» на широком окне уезжало на две сотни точек от
+        // имени встречи, которое оно шерит.
+        .overlay(alignment: .top) {
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                actions
+            }
+            .frame(maxWidth: Tokens.Pane.paneMeasure)
+        }
     }
 
     /// Имя встречи над саммари — 312:11129. Живёт *выше* смены колонок:
@@ -940,19 +956,21 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
     /// саммари.
     @ViewBuilder
     private var head: some View {
-        if let identity {
+        if identity != nil || meta != nil {
             VStack(alignment: .leading, spacing: Tokens.Pane.titleGap) {
                 if let meta {
                     MeetingMetaRow(meta: meta)
                         .paneProbe(PaneProbe.meta)
                 }
-                MeetingPaneIdentity(
-                    meetingID: identity.meetingID,
-                    title: identity.title,
-                    onRename: identity.onRename,
-                    look: .body
-                )
-                .paneProbe(PaneProbe.title)
+                if let identity {
+                    MeetingPaneIdentity(
+                        meetingID: identity.meetingID,
+                        title: identity.title,
+                        onRename: identity.onRename,
+                        look: .body
+                    )
+                    .paneProbe(PaneProbe.title)
+                }
             }
             .padding(.horizontal, Tokens.Pane.summaryHPadding)
             .padding(.top, Tokens.Pane.paneTopPadding)

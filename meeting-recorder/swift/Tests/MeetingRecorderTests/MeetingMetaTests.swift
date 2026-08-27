@@ -55,12 +55,26 @@ final class MeetingMetaTests: XCTestCase {
 
     /// Календарь знает состав, диаризация знает только тех, кто говорил, — и
     /// один человек приходит из них под разными именами. Складывать нельзя.
-    func testTheCalendarWinsAndTheTwoRostersAreNeverAdded() {
+    func testTheTwoRostersAreNeverAdded() {
         let count = MeetingMeta.count(
             speakers: ["Левон", "Собеседник"],
             invited: ["Levon Lobanov", "Ilyas Aitkulov", "Полина"]
         )
         XCTAssertEqual(count, 3)
+    }
+
+    /// И не суммой, и не только календарём.
+    ///
+    /// `CalendarService` складывает имена как `attendees.compactMap { $0.name }`,
+    /// а у гостя без карточки в контактах имени нет — он выпадает молча. Взяв
+    /// календарь единственной правдой, мы отвечали бы «2 человека» на встрече,
+    /// где слышно шестерых.
+    func testTheCalendarDoesNotLowerWhatWasActuallyHeard() {
+        let count = MeetingMeta.count(
+            speakers: ["Левон", "Speaker 2", "Speaker 3", "Speaker 4", "Speaker 5", "Speaker 6"],
+            invited: ["Levon Lobanov", "Полина"]
+        )
+        XCTAssertEqual(count, 6)
     }
 
     func testWithoutACalendarTheSpeakersAreTheAnswer() {

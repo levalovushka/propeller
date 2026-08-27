@@ -150,8 +150,8 @@ final class SummaryTypewriterDrive {
 
     /// Своя прозрачность цвета — чтобы рампа гасила её, а не подменяла.
     ///
-    /// `alphaComponent` на динамическом цвете бросает, поэтому через
-    /// `usingColorSpace`, и «не смогли» читается как «непрозрачный».
+    /// Через `usingColorSpace`, потому что `alphaComponent` определён не на
+    /// всяком цветовом пространстве; «не смогли» читается как «непрозрачный».
     private func opacity(of colour: NSColor) -> CGFloat {
         colour.usingColorSpace(.deviceRGB)?.alphaComponent ?? 1
     }

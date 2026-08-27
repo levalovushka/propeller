@@ -22,6 +22,8 @@ final class SummaryPaneLayoutTests: XCTestCase {
         let meta = try XCTUnwrap(probes[PaneProbe.meta], "строка атрибутов не измерена")
         let title = try XCTUnwrap(probes[PaneProbe.title], "имя встречи не измерено")
 
+        // Содержимое чипа, а не плита под ним: плита вылезает за колонку на
+        // своё поле, а иконка даты стоит ровно под именем встречи.
         XCTAssertEqual(meta.minX, Tokens.Pane.summaryHPadding, accuracy: 0.5)
         XCTAssertEqual(title.minX, Tokens.Pane.summaryHPadding, accuracy: 0.5)
         XCTAssertEqual(meta.minY, Tokens.Pane.paneTopPadding, accuracy: 0.5)
@@ -54,6 +56,28 @@ final class SummaryPaneLayoutTests: XCTestCase {
         // Инсет внутри самого кластера, не снаружи: так кнопка ловит нажатие
         // до самой кромки.
         XCTAssertEqual(actions.height, Tokens.Pane.headerButtonSide + Tokens.Pane.paneActionsInset * 2, accuracy: 0.5)
+    }
+
+    /// Кнопки принадлежат блоку, а не окну.
+    ///
+    /// На мере макета это одно и то же, поэтому проверка выше ничего не ловит:
+    /// оверлеем во всю ширину «Поделиться» уезжало на две сотни точек вправо от
+    /// имени встречи, которое оно шерит. Ширина взята заведомо больше меры.
+    @MainActor
+    func testTheButtonsStayWithTheBlockInAWideWindow() throws {
+        let wide: CGFloat = 1200
+        let probes = probe(width: wide)
+        let actions = try XCTUnwrap(probes[PaneProbe.actions], "кнопки не измерены")
+        let title = try XCTUnwrap(probes[PaneProbe.title], "имя встречи не измерено")
+        let blockRight = (wide + Tokens.Pane.paneMeasure) / 2
+        XCTAssertEqual(actions.maxX, blockRight, accuracy: 0.5)
+        // И то же самое с другой стороны: между именем и кнопками — ровно мера
+        // колонки, а не полокна.
+        XCTAssertEqual(
+            actions.maxX - title.minX,
+            Tokens.Pane.paneMeasure - Tokens.Pane.summaryHPadding,
+            accuracy: 0.5
+        )
     }
 
     // MARK: - Тело
@@ -95,7 +119,8 @@ final class SummaryPaneLayoutTests: XCTestCase {
     // MARK: - Приборы
 
     @MainActor
-    private func probe() -> [String: CGRect] {
+    private func probe(width: CGFloat? = nil) -> [String: CGRect] {
+        let width = width ?? self.width
         var collected: [String: CGRect] = [:]
         let root = MeetingPaneBody(
             identity: .init(meetingID: "probe", title: "Базированный утренник", onRename: { _, _ in }),

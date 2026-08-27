@@ -292,6 +292,12 @@ enum SidebarGallery {
                         title: "Воркшоп по VK Музыке",
                         onRename: { _, _ in }
                     ),
+                    meta: .init(
+                        // Фиксированные, а не «сейчас»: кадр галереи обязан
+                        // быть одинаковым от съёмки к съёмке.
+                        date: Date(timeIntervalSince1970: 1_787_412_600),
+                        people: 6
+                    ),
                     share: .init("Поделиться") {},
                     summary: Self.summary
                 )

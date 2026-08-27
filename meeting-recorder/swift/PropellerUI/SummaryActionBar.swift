@@ -147,7 +147,11 @@ private struct KindMenu: View {
                 Button {
                     onKind(kind)
                 } label: {
-                    if kind == current {
+                    // `lead` в списке не предлагается, но каретка в нём стоять
+                    // может, и меню без единой галочки читалось бы как «вида
+                    // этого блока здесь нет». Он рисуется как обычный текст —
+                    // галочка стоит там же.
+                    if kind == (current == .lead ? .body : current) {
                         Label(kind.title, systemImage: "checkmark")
                     } else {
                         Text(kind.title)

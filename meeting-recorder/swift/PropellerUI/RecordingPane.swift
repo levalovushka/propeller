@@ -175,7 +175,7 @@ public struct LiveTranscriptColumn: View {
         .animation(.easeOut(duration: Tokens.Motion.hover), value: feed.count)
         .padding(.horizontal, Tokens.Pane.summaryHPadding)
         .padding(.vertical, Tokens.Pane.summaryVPadding)
-        .frame(maxWidth: Tokens.Pane.summaryMaxWidth + Tokens.Pane.summaryHPadding * 2)
+        .frame(maxWidth: Tokens.Pane.recordingMeasure)
         .frame(maxWidth: .infinity)
     }
 

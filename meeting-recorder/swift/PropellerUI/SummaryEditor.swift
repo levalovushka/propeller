@@ -765,7 +765,7 @@ public final class SummaryTextView: NSTextView {
         let emphasis = emphasisAtCaret()
         typingAttributes = [
             .font: SummaryText.font(for: kind, emphasis: emphasis),
-            .foregroundColor: Tokens.Pane.bodyNSColor,
+            .foregroundColor: SummaryText.colour(for: kind, body: Tokens.Pane.bodyNSColor),
             .paragraphStyle: SummaryText.paragraphStyle(for: kind, after: previousKind()),
             .kern: SummaryText.tracking(for: kind),
             SummaryText.blockKindKey: kind.rawValue,
