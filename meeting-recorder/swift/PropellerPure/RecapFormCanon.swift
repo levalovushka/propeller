@@ -2,7 +2,8 @@ import Foundation
 
 /// # Форма конспекта приводится к канону кодом, а не просьбой к модели
 ///
-/// Два правила: разметка ответственного в «Задачах» и «Итог» одним абзацем.
+/// Три правила: голова решения, «Итог» одним абзацем и разметка
+/// ответственного в «Задачах».
 ///
 /// Канон — `plan-projects.md` §4.1, решение владельца 2026-08-27:
 ///
@@ -84,8 +85,10 @@ public enum RecapFormCanon {
     /// уходят в промпт и в `PersonCanon`.
     public static func canonical(_ recap: String, roster: [String]) -> Result {
         guard !recap.isEmpty else { return Result(recap: recap, fixed: []) }
+        let names = PersonCanon.table(roster: roster)
         let joined = joiningSummary(recap)
-        return owners(in: joined.recap, roster: roster, fixed: joined.fixed)
+        let heads = decisionHeads(in: joined.recap, names: names, fixed: joined.fixed)
+        return owners(in: heads.recap, roster: roster, fixed: heads.fixed)
     }
 
     // MARK: - Ответственный
@@ -120,6 +123,143 @@ public enum RecapFormCanon {
             lines[index] = split.prefix + owner.body + (carriage ? "\r" : "")
         }
         return Result(recap: lines.joined(separator: "\n"), fixed: fixed)
+    }
+
+    // MARK: - Голова решения
+
+    /// Жирного в начале решения не остаётся, и это не косметика: разбор достаёт
+    /// из `**Имя** — дело` ответственного, которого у решения быть не может
+    /// (`ProjectTab.itemsAreCheckable`), а `**Тема:** пояснение` сообщает
+    /// читателю рубрику вместо договорённости.
+    ///
+    /// Промпт это просит и снимает больше половины (28–29 → 13–21 на корпусе),
+    /// адрес редактору снимает ещё часть (13 → 8). Остаток снимается здесь,
+    /// потому что снимается знаками.
+    ///
+    /// # Четыре головы, и только одна теряет слова
+    ///
+    /// Замер по живому архиву (430 пунктов «Решений», из них 243 с ведущим
+    /// жирным, 2026-08-27):
+    ///
+    /// | что стоит в голове | сколько | что делаем |
+    /// |---|---|---|
+    /// | рубрика из двух и больше слов | 135 | **снимаем ярлык целиком** |
+    /// | однословная рубрика («Сроки:») | 49 | снимаем только звёздочки |
+    /// | сущность: имя, проект, латиница, цифры | 28 | снимаем только звёздочки |
+    /// | `**Имя** — дело` — форма поручения | 30 | снимаем только звёздочки |
+    ///
+    /// **Ярлык — единственное место во всём модуле, где слова уходят**, поэтому
+    /// заслонок четыре, и каждая из них — про цену ошибки:
+    ///
+    /// - **проперные слова не трогаем.** Заглавная внутри, латиница или цифра
+    ///   значит, что ярлык называет проект или человека: «**ГПН (Дом пряжи)**:
+    ///   Проект прокинут…» без головы теряет, о каком проекте речь;
+    /// - **однословный ярлык не трогаем.** «Сроки» и «Ирина» с этой стороны
+    ///   выглядят одинаково, а цена ошибки перевёрнута: потерять человека хуже,
+    ///   чем оставить рубрику. Он просто перестаёт быть заголовком;
+    /// - **имя из состава не трогаем** никогда, даже двухсловное;
+    /// - **остаток короче пяти слов не трогаем.** «**Сроки:** к сентябрю» без
+    ///   головы становится обрывком «К сентябрю», а это хуже рубрики.
+    ///
+    /// Снятый ярлык уезжает в `fixed` — как и всё остальное, что этот модуль
+    /// переписал в чужом тексте.
+    private static func decisionHeads(
+        in recap: String, names: [String: String], fixed carried: [String]
+    ) -> Result {
+        var lines = recap.components(separatedBy: "\n")
+        var fixed = carried
+        var inDecisions = false
+
+        for index in lines.indices {
+            let carriage = lines[index].hasSuffix("\r")
+            let line = carriage ? String(lines[index].dropLast()) : lines[index]
+
+            if let heading = RecapDigest.headingTitle(
+                line.trimmingCharacters(in: .whitespacesAndNewlines)
+            ) {
+                inDecisions = RecapDigest.foldTitle(heading)
+                    == RecapDigest.foldTitle(RecapDigest.decisionsTitle)
+                continue
+            }
+            guard inDecisions, let split = bullet(line),
+                  let head = boldHead(split.body)
+            else { continue }
+
+            let body: String
+            if dropsLabel(head, names: names) {
+                fixed.append("ярлык «\(head.label)»")
+                body = capitalizingFirst(head.rest)
+            } else {
+                fixed.append("жирное в решении «\(head.label)»")
+                body = head.label + head.separator + head.rest
+            }
+            lines[index] = split.prefix + body + (carriage ? "\r" : "")
+        }
+        return Result(recap: lines.joined(separator: "\n"), fixed: fixed)
+    }
+
+    /// Ведущее жирное пункта, разобранное на ярлык, разделитель и остаток.
+    /// Двоеточие бывает и внутри звёздочек, и снаружи — обе постановки живут в
+    /// архиве, и различать их незачем.
+    private static func boldHead(
+        _ item: String
+    ) -> (label: String, separator: String, rest: String)? {
+        guard item.hasPrefix("**"),
+              let closing = item.range(
+                  of: "**", range: item.index(item.startIndex, offsetBy: 2)..<item.endIndex
+              )
+        else { return nil }
+        var label = String(item[item.index(item.startIndex, offsetBy: 2)..<closing.lowerBound])
+            .trimmingCharacters(in: .whitespaces)
+        var inner = false
+        while label.hasSuffix(":") {
+            label = String(label.dropLast()).trimmingCharacters(in: .whitespaces)
+            inner = true
+        }
+        guard !label.isEmpty else { return nil }
+
+        var rest = Substring(item[closing.upperBound...])
+        var separator = inner ? ": " : ""
+        while rest.first == " " { rest = rest.dropFirst() }
+        for mark in [":", "—", "–"] where rest.hasPrefix(mark) {
+            rest = rest.dropFirst(mark.count)
+            separator = mark == ":" ? ": " : " \(mark) "
+            while rest.first == " " { rest = rest.dropFirst() }
+            break
+        }
+        if separator.isEmpty { separator = " " }
+        let tail = String(rest).trimmingCharacters(in: .whitespaces)
+        guard !tail.isEmpty else { return nil }
+        return (label, separator, tail)
+    }
+
+    /// Уходит ли ярлык целиком. Все четыре заслонки — в доке к `decisionHeads`.
+    private static func dropsLabel(
+        _ head: (label: String, separator: String, rest: String), names: [String: String]
+    ) -> Bool {
+        guard head.separator.hasPrefix(":") else { return false }
+        guard names[PersonCanon.fold(head.label)] == nil else { return false }
+        let words = head.label.split(whereSeparator: { $0 == " " || $0 == "\u{00A0}" })
+        guard words.count >= 2 else { return false }
+        guard head.rest.split(whereSeparator: \.isWhitespace).count >= 5 else { return false }
+        // Заглавная **где угодно после первой буквы** — а не после первого
+        // слова: «ГПН (Дом пряжи)» пряталась за открывающей скобкой, потому что
+        // проверка смотрела на первый символ слова, а не на буквы.
+        // Заодно это ловит аббревиатуры целиком.
+        var seenLetter = false
+        for character in head.label {
+            if character.isNumber { return false }
+            if character.isASCII, character.isLetter { return false }
+            guard character.isLetter else { continue }
+            if seenLetter, character.isUppercase { return false }
+            seenLetter = true
+        }
+        return true
+    }
+
+    private static func capitalizingFirst(_ text: String) -> String {
+        guard let first = text.first else { return text }
+        return first.uppercased() + String(text.dropFirst())
     }
 
     // MARK: - «Итог» одним абзацем

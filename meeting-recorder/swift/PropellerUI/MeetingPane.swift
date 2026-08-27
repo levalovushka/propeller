@@ -257,15 +257,6 @@ struct PaneIconLabel: View {
     }
 }
 
-/// Имена плит строки атрибутов и система координат, в которой считаются якоря.
-///
-/// Строками, а не enum: `PlateHost` универсален и знает только id, а держать под
-/// один экран свой тип — заводить второй словарь тому же ключу.
-enum MetaPlate {
-    static let space = "meta-plates"
-    static let people = "people"
-}
-
 /// Дата, число участников, слот проекта — 312:11129.
 ///
 /// Чип, а не строка через точку: каждый факт — свой предмет. Нажимаем из них
@@ -276,8 +267,6 @@ struct MeetingMetaRow: View {
 
     /// Курсор над строкой целиком — им живёт сжатый «плюс».
     @State private var hovering = false
-    /// Кто поднял плиту. Полка одна на панель, поэтому не `@State`, а окружение.
-    @Environment(\.plateStack) private var plates
 
     var body: some View {
         HStack(spacing: Tokens.Pane.Meta.gap) {
@@ -286,19 +275,12 @@ struct MeetingMetaRow: View {
             }
             if let people = meta.people,
                let label = MeetingMeta.people(MeetingMeta.count(people.rows)) {
-                // Состав — единственный чип строки, который открывает не меню, а
-                // плиту: у меню нет ни крестика по ряду, ни поля ввода в нём
-                // (285:19438). Число — длина `rows`, второго счётчика нет.
-                //
-                // Сам чип плиту не рисует, только говорит, где он встал: плита в
-                // его оверлее свисала ниже формы этой строки и не получала
-                // щелчков вовсе (`PlateHost`).
-                MetaChip(
-                    symbol: "person.2.fill", text: label, live: true,
-                    hovered: plates.isOpen(MetaPlate.people) ? true : nil
-                )
-                .plateAnchor(MetaPlate.people, in: MetaPlate.space)
-                .onTapGesture { plates.toggle(MetaPlate.people) }
+                // Меню, как у проекта рядом: решение владельца 2026-08-27 —
+                // список команд остаётся системным везде. Число — длина `rows`,
+                // второго счётчика нет.
+                MetaMenuChip(symbol: "person.2.fill", text: label, live: true) {
+                    ParticipantsMenu(model: people)
+                }
             }
             if let projects = meta.projects {
                 ForEach(projects.tagged, id: \.id) { project in
@@ -1217,25 +1199,11 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
         self.onSummaryRewrite = onSummaryRewrite
     }
 
-    /// Полка плит панели. Здесь, а не в строке атрибутов: её поднимает чип, а
-    /// рисует хозяин на всю панель, и общее у них одно — кто открыт.
-    @StateObject private var plates = PlateStack()
-
     public var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 0) {
                 head
                 columns
-            }
-            // Хозяин плит: он и рисует поднятую выпадашку, и ловит клик мимо
-            // неё. Стоит здесь, а не на чипе, потому что из чипа плита свисает
-            // за пределы его формы — и не получает щелчков (`PlateHost`).
-            // Внутри скролла, чтобы плита ехала вместе с чипом, из которого её
-            // подняли.
-            .plateHost(plates, space: MetaPlate.space, gap: Tokens.Pane.Meta.People.plateGap) { id in
-                if id == MetaPlate.people, let people = meta?.people {
-                    ParticipantsPlate(model: people) { plates.close() }
-                }
             }
             // Потолок стоит на содержимом, а `.infinity` под ним центрирует
             // получившийся блок. Наоборот — потолок поверх отступов — уже
@@ -1243,7 +1211,6 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
             .frame(maxWidth: Tokens.Pane.paneMeasure, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .environment(\.plateStack, plates)
         .scrollIndicators(.hidden)
         .coordinateSpace(name: PaneProbe.space)
         // Угол принадлежит блоку, а не окну: оверлей накрывает ту же меру, в
