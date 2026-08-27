@@ -80,9 +80,13 @@ public struct ArchiveLayout: Equatable, Sendable {
 
     public static let indexName = "recordings.json"
     public static let tombstonesName = "deleted.json"
+    /// Определения проектов. Отдельный файл, потому что проект живёт и без
+    /// встреч, и вешать его не на что в индексе встреч.
+    public static let projectsName = "projects.json"
 
     public var indexURL: URL { recordings.appendingPathComponent(Self.indexName) }
     public var tombstonesURL: URL { recordings.appendingPathComponent(Self.tombstonesName) }
+    public var projectsURL: URL { recordings.appendingPathComponent(Self.projectsName) }
 
     /// Копия индекса — любой файл, чьё имя начинается с имени индекса и им не
     /// равен: `.bak`, `.corrupt-<stamp>`, `.pre-restore-<stamp>`. Правило по

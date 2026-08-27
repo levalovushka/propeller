@@ -103,6 +103,10 @@ public enum PersonErasure {
         "id", "filename", "status", "date", "language",
         "eventID", "seriesID", "conferenceURL", "start", "end", "at",
         "phase", "kind", "createdAt", "nextAttemptAt", "terminalReason",
+        // Метки проектов на встрече — массив id, а не текст. Имя проекта в
+        // `projects.json` при этом чистится как обычная строка, и это верно:
+        // «1×1 с Даней» после «стереть Даню» обязан стать «1×1 с Участник».
+        "projects",
     ]
 
     public static let defaultReplacement = "Участник"

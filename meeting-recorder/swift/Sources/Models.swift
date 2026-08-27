@@ -99,6 +99,18 @@ struct RecordingEntry: Identifiable, Codable {
     /// weekly?" later without a second guess. nil = no calendar match, calendar
     /// access off, or recorded before 1.15.
     var calendarMeta: CalendarMeta?
+    /// Projects this meeting belongs to — `Project.id`, not names, so a rename
+    /// costs one line in `projects.json` and nothing here. Optional because a
+    /// non-optional field would fail the decode of every entry written before
+    /// it existed and send the whole index to quarantine
+    /// (`RecordingStore.load`). Two projects on one meeting are legal
+    /// (`plan-projects.md` §2); no meeting at all is the normal case.
+    ///
+    /// Unlike `recapGeneratorVersion`, an older build that drops this on write
+    /// destroys something nothing can restore — a tag the person put on by
+    /// hand. That is why the name is also written into the meeting document
+    /// (`Project.plainHeaderLines`), the way `calendarMeta` is.
+    var projects: [String]?
 
     /// Topics joined for subtitle display ("Отказ от скролла, фаст-плей на главной").
     /// Only the first glyph is capitalised — the rest stay as written.

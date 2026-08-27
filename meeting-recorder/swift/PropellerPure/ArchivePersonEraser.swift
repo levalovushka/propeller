@@ -57,6 +57,14 @@ public enum ArchivePersonEraser {
             }
         }
 
+        // 3. Определения проектов. Тем же обходом: это тоже массив объектов, и
+        //    имя проекта — обычный текст. «1×1 с Даней» обязан пережить
+        //    стирание Дани в виде «1×1 с Участник», иначе человек остался в
+        //    архиве под вывеской.
+        if redactIndex(at: layout.projectsURL, name: name, with: replacement) > 0 {
+            changed.append(ArchiveLayout.projectsName)
+        }
+
         return PersonErasureReport(
             entriesChanged: entriesChanged,
             filesChanged: changed,
@@ -82,7 +90,8 @@ public enum ArchivePersonEraser {
         for filename in ArchiveEraser.filenames(in: layout.recordings)
         where filename == ArchiveLayout.indexName
             || ArchiveLayout.isIndexSnapshot(filename)
-            || filename == ArchiveLayout.tombstonesName {
+            || filename == ArchiveLayout.tombstonesName
+            || filename == ArchiveLayout.projectsName {
             let url = layout.recordings.appendingPathComponent(filename)
             // Сырым текстом намеренно: индекс пишется в UTF-8 без экранирования,
             // а вложенный JSON (`mergedSegmentsJSON`) в нём — строка, где имя

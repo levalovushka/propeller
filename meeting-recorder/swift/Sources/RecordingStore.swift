@@ -47,6 +47,30 @@ class RecordingStore: ObservableObject {
     /// а он теперь бегает не только на запуске.
     private var tombstones: [MeetingTombstone] = []
 
+    // MARK: - Проекты
+
+    /// Определения проектов (`recordings/projects.json`).
+    ///
+    /// Читается с диска по требованию, а не держится в памяти: список короткий,
+    /// а тот, кто его меняет, обязан видеть свежую версию — экран проектов и
+    /// запись документа встречи ходят сюда из разных мест.
+    var projects: [Project] { ProjectFile.read(layout.projectsURL) }
+
+    @discardableResult
+    func saveProject(_ project: Project) -> Bool { ProjectFile.save(project, in: layout) }
+
+    @discardableResult
+    func removeProject(_ id: String) -> Bool { ProjectFile.remove(id, in: layout) }
+
+    /// Имена проектов встречи. В индексе лежат id, в документе встречи — имена
+    /// (`Project.plainHeaderLines`), и перевод нужен ровно здесь. Метка,
+    /// указывающая на несуществующий проект, читается как отсутствие метки.
+    func projectNames(for entry: RecordingEntry) -> [String] {
+        guard let ids = entry.projects, !ids.isEmpty else { return [] }
+        let known = projects
+        return Project.normalized(ids.compactMap { id in known.first { $0.id == id }?.name })
+    }
+
     // MARK: - Load / Save
 
     /// Schedule a debounced save. Multiple rapid mutations coalesce into one write.
@@ -205,7 +229,12 @@ class RecordingStore: ObservableObject {
         systemStemOffset: Double? = nil,
         speakerAttribution: SpeakerAttribution? = nil,
         lastFailure: PipelineFailure?? = nil,
-        recapGeneratorVersion: Int? = nil
+        recapGeneratorVersion: Int? = nil,
+        // Двойная опция, а не простая: тег проекта снимают так же часто, как
+        // ставят, а простая опция здесь умеет только ставить — `nil` в ней
+        // означает «не трогай». Соседний `topics` этого не умеет, и очистить
+        // его через `update` нельзя вовсе.
+        projects: [String]?? = nil
     ) {
         guard let idx = recordings.firstIndex(where: { $0.id == id }) else { return }
         if let t = transcript {
@@ -238,6 +267,7 @@ class RecordingStore: ObservableObject {
         if let sa = speakerAttribution { recordings[idx].speakerAttribution = sa }
         if let lf = lastFailure { recordings[idx].lastFailure = lf }
         if let gv = recapGeneratorVersion { recordings[idx].recapGeneratorVersion = gv }
+        if let pr = projects { recordings[idx].projects = pr }
         scheduleSave()
     }
 

@@ -2310,7 +2310,8 @@ class AppState: ObservableObject {
                 duration: duration,
                 speakers: speakers,
                 notes: rec.notes,
-                calendarMeta: rec.calendarMeta
+                calendarMeta: rec.calendarMeta,
+                projectNames: recordingStore.projectNames(for: rec)
             )
             advanceStage(recordingID, to: .saved)
             clearFailure(recordingID)
@@ -3049,7 +3050,8 @@ class AppState: ObservableObject {
             duration: rec.duration,
             speakers: MeetingMarkdown.extractSpeakers(from: text),
             notes: rec.notes,
-            calendarMeta: rec.calendarMeta
+            calendarMeta: rec.calendarMeta,
+            projectNames: recordingStore.projectNames(for: rec)
         )
     }
 

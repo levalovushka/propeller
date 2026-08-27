@@ -15,6 +15,7 @@ struct MarkdownWriter {
         speakers: [String] = [],
         notes: String? = nil,
         calendarMeta: CalendarMeta? = nil,
+        projectNames: [String] = [],
         format: MarkdownOutputFormat = Preferences.shared.markdownOutputFormat
     ) throws -> String {
         let prefs = Preferences.shared
@@ -44,6 +45,7 @@ struct MarkdownWriter {
             speakers: speakers,
             notes: notes,
             calendarMeta: calendarMeta,
+            projectNames: projectNames,
             format: format
         )
         try content.write(to: filepath, atomically: true, encoding: .utf8)
@@ -59,6 +61,7 @@ struct MarkdownWriter {
         speakers: [String] = [],
         notes: String? = nil,
         calendarMeta: CalendarMeta? = nil,
+        projectNames: [String] = [],
         format: MarkdownOutputFormat = Preferences.shared.markdownOutputFormat
     ) -> String {
         PipelineMetrics.interval(PipelineMetrics.pipeline, PipelineMetrics.markdown) {
@@ -70,6 +73,7 @@ struct MarkdownWriter {
                 speakers: speakers,
                 notes: notes,
                 calendarMeta: calendarMeta,
+                projectNames: projectNames,
                 format: format,
                 today: todayISO(),
                 // Only the Obsidian format links people, and only it pays for

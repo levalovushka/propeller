@@ -32,6 +32,7 @@ public enum MeetingMarkdown {
         speakers: [String] = [],
         notes: String? = nil,
         calendarMeta: CalendarMeta? = nil,
+        projectNames: [String] = [],
         format: MarkdownOutputFormat,
         today: String,
         linkedSpeakers: [(String, String)] = []
@@ -45,6 +46,7 @@ public enum MeetingMarkdown {
                 speakers: speakers,
                 notes: notes,
                 calendarMeta: calendarMeta,
+                projectNames: projectNames,
                 today: today
             )
         case .obsidian:
@@ -56,6 +58,7 @@ public enum MeetingMarkdown {
                 speakers: speakers,
                 notes: notes,
                 calendarMeta: calendarMeta,
+                projectNames: projectNames,
                 today: today,
                 linkedSpeakers: linkedSpeakers
             )
@@ -71,6 +74,7 @@ public enum MeetingMarkdown {
         speakers: [String],
         notes: String?,
         calendarMeta: CalendarMeta? = nil,
+        projectNames: [String] = [],
         today: String
     ) -> String {
         let heading = title.isEmpty ? "Meeting" : title
@@ -89,6 +93,7 @@ public enum MeetingMarkdown {
         if let calendarMeta, !calendarMeta.isEmpty {
             lines.append(contentsOf: calendarMeta.plainHeaderLines)
         }
+        lines.append(contentsOf: Project.plainHeaderLines(names: projectNames))
         lines.append("")
 
         if let notes = notes, !notes.isEmpty {
@@ -174,6 +179,7 @@ public enum MeetingMarkdown {
         speakers: [String],
         notes: String?,
         calendarMeta: CalendarMeta? = nil,
+        projectNames: [String] = [],
         today: String,
         linkedSpeakers: [(String, String)]
     ) -> String {
@@ -208,6 +214,7 @@ public enum MeetingMarkdown {
         if let calendarMeta, !calendarMeta.isEmpty {
             lines.append(contentsOf: calendarMeta.yamlFrontmatterLines)
         }
+        lines.append(contentsOf: Project.yamlFrontmatterLines(names: projectNames))
         lines.append("tags: [meeting]")
         lines.append("---")
         lines.append("")
