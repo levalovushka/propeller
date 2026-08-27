@@ -60,113 +60,19 @@ public struct NotchShape: Shape {
     }
 }
 
-/// Плита — слой, а не SwiftUI-фигура.
+/// Плита и её кнопки — слои, а не SwiftUI-иерархия.
 ///
-/// Уход в вырез приходится ровно на самый занятый момент главного потока:
-/// «Стоп» останавливает запись, сводит микс и сохраняет архив, а `RecordingStore`
-/// кодирует его синхронно. Анимация, живущая в SwiftUI, в этот момент лагает —
-/// та же болезнь, от которой в своё время увезли лопасть. `CAShapeLayer`
-/// интерполирует `path` в рендер-сервере: главный поток может стоять, плита всё
-/// равно уедет ровно.
+/// Оба движения приходятся ровно на самый занятый момент главного потока:
+/// «Стоп» останавливает запись, сводит микс и сохраняет архив, а
+/// `RecordingStore` кодирует его синхронно. Всё, что анимируется в SwiftUI, там
+/// лагает — та же болезнь, от которой в своё время увезли лопасть. Здесь
+/// `CAShapeLayer` интерполирует `path`, а слой с кнопками гасится своей
+/// `CABasicAnimation`: главный поток может стоять, движение всё равно пройдёт
+/// ровно.
 ///
-/// Оба пути строит один `NotchShape` и структура у них одинаковая (четыре кривые
-/// и три прямые) — иначе интерполяции не будет и плита прыгнет.
-public struct NotchPlate: NSViewRepresentable {
-    private let screen: NotchGeometry.Screen
-    private let stage: NotchGeometry.Stage
-
-    public init(screen: NotchGeometry.Screen, stage: NotchGeometry.Stage) {
-        self.screen = screen
-        self.stage = stage
-    }
-
-    public func makeNSView(context: Context) -> PlateView { PlateView() }
-
-    public func updateNSView(_ view: PlateView, context: Context) {
-        view.apply(screen: screen, stage: stage)
-    }
-}
-
-public final class PlateView: NSView {
-    private let shape = CAShapeLayer()
-    private var shown: NotchGeometry.Stage?
-    private var screen: NotchGeometry.Screen?
-
-    /// Ход плиты. Раскрытие чуть длиннее ухода: она вырастает при старте записи,
-    /// когда на неё смотрят краем глаза, и уходит на стопе, когда уже не смотрят.
-    private static let openDuration: CFTimeInterval = 0.5
-    private static let sealDuration: CFTimeInterval = 0.42
-
-    init() {
-        super.init(frame: .zero)
-        wantsLayer = true
-        layer?.addSublayer(shape)
-        shape.fillColor = NSColor.black.cgColor
-        shape.fillRule = .nonZero
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
-
-    func apply(screen: NotchGeometry.Screen, stage: NotchGeometry.Stage) {
-        let geometryChanged = self.screen != screen
-        self.screen = screen
-        guard stage != shown || geometryChanged else { return }
-        let first = shown == nil
-        let sealing = stage == .sealed
-        shown = stage
-        shape.frame = bounds
-
-        let target = Self.path(on: screen, stage: stage, in: bounds)
-        // Первый показ и смена железа — без анимации: это не движение
-        // интерфейса, а то, из чего оно начинается.
-        guard !first, !geometryChanged else {
-            shape.path = target
-            return
-        }
-        let move = CABasicAnimation(keyPath: "path")
-        move.fromValue = shape.presentation()?.path ?? shape.path
-        move.toValue = target
-        move.duration = sealing ? Self.sealDuration : Self.openDuration
-        move.timingFunction = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
-        shape.path = target
-        shape.add(move, forKey: "plate")
-    }
-
-    public override func layout() {
-        super.layout()
-        shape.frame = bounds
-        guard let screen, let shown else { return }
-        shape.path = Self.path(on: screen, stage: shown, in: bounds)
-    }
-
-    /// Плита прижата к верхней кромке и стоит по центру выреза; окно под ней
-    /// всегда размером с раскрытую.
-    private static func path(
-        on screen: NotchGeometry.Screen, stage: NotchGeometry.Stage, in bounds: CGRect
-    ) -> CGPath {
-        let frame = NotchGeometry.frame(on: screen, stage: stage)
-        // Фигура рисуется сверху вниз (у `Shape` начало — верхний край), а
-        // слой живёт в координатах AppKit, где верх — это `maxY`. Отражаем
-        // готовый путь, а не перекладываем форму: форма одна и та же.
-        let box = CGRect(x: (bounds.width - frame.width) / 2, y: 0,
-                         width: frame.width, height: frame.height)
-        var flip = CGAffineTransform(scaleX: 1, y: -1)
-            .translatedBy(x: 0, y: -bounds.height)
-        let path = NotchShape().path(in: box).cgPath
-        return path.copy(using: &flip) ?? path
-    }
-}
-
-/// Что нарисовано на плите.
-///
-/// Плита меняет размер сама, внутри SwiftUI, а окно под ней стоит неподвижно и
-/// всегда максимального габарита. Первая версия анимировала `NSWindow.setFrame`
-/// — и раскрытие дёргалось, а сворачивание выглядело как отлипание от кромки:
-/// окно и его содержимое ехали по разным кривым. Единственный способ, которым
-/// плита может смыкаться с железом всё время движения, — быть одной анимируемой
-/// фигурой, а не окном, внутри которого что-то ещё перекладывается.
-public struct NotchFace: View {
+/// Оба пути плиты строит один `NotchShape`, и структура у них одинаковая
+/// (четыре кривые и три прямые) — иначе интерполяции не будет и плита прыгнет.
+public struct NotchFace: NSViewRepresentable {
     private let screen: NotchGeometry.Screen
     private let stage: NotchGeometry.Stage
     private let paused: Bool
@@ -196,80 +102,170 @@ public struct NotchFace: View {
         self.onStop = onStop
     }
 
-    /// Стадия, по которой плита нарисована сейчас.
-    ///
-    /// Отдельная от входящей намеренно. Стадию меняет контроллер — снаружи
-    /// SwiftUI, заменой всего дерева, — и такое изменение анимируется через раз.
-    /// Здесь любой приход стадии становится обычной транзакцией с явной
-    /// пружиной, поэтому старт записи и её конец идут по одной кривой.
-    @State private var shownStage: NotchGeometry.Stage = .sealed
+    public func makeNSView(context: Context) -> NotchPlateView {
+        NotchPlateView()
+    }
 
-    /// Рост при старте: единственное движение, которое человек увидит краем
-    /// глаза, уже сидя в звонке.
-    private static let arrive = Animation.spring(response: 0.58, dampingFraction: 0.94)
-    /// Уход в железо на стопе — спокойнее и без единого колебания.
-    private static let leave = Animation.spring(response: 0.46, dampingFraction: 1.0)
-    /// Кнопки идут за плитой, а не вместе с ней: сначала место, потом то, что в
-    /// нём стоит.
-    private static let controls = Animation.spring(response: 0.4, dampingFraction: 0.9).delay(0.1)
+    public func updateNSView(_ view: NotchPlateView, context: Context) {
+        view.apply(
+            screen: screen, stage: stage,
+            controls: NotchControls(
+                paused: paused, muted: muted, canMute: canMute,
+                interactive: stage == .open,
+                onMute: onMute, onPause: onPause, onStop: onStop
+            )
+        )
+    }
+}
 
-    private var frame: NotchGeometry.Frame { NotchGeometry.frame(on: screen, stage: shownStage) }
-    /// Габарит окна — всегда максимальный; плита живёт внутри него.
-    private var bounds: NotchGeometry.Frame { NotchGeometry.frame(on: screen, stage: .open) }
-    private var open: Bool { shownStage == .open }
+public final class NotchPlateView: NSView {
+    private let shape = CAShapeLayer()
+    private let controls = NSHostingView(rootView: NotchControls.placeholder)
+    private var shown: NotchGeometry.Stage?
+    private var screen: NotchGeometry.Screen?
+
+    /// Ход плиты. Раскрытие чуть длиннее ухода: она вырастает при старте записи,
+    /// когда на неё смотрят краем глаза, и уходит на стопе, когда уже не смотрят.
+    private static let openDuration: CFTimeInterval = 0.5
+    private static let sealDuration: CFTimeInterval = 0.42
+    /// Кнопки гаснут быстрее, чем уезжает плита, и появляются позже, чем она
+    /// раздалась: сначала место, потом то, что в нём стоит.
+    private static let controlsFade: CFTimeInterval = 0.22
+    private static let controlsDelay: CFTimeInterval = 0.12
+    private static let timing = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.addSublayer(shape)
+        shape.fillColor = NSColor.black.cgColor
+        shape.fillRule = .nonZero
+
+        controls.wantsLayer = true
+        controls.layer?.opacity = 0
+        addSubview(controls)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    func apply(screen: NotchGeometry.Screen, stage: NotchGeometry.Stage, controls rootView: NotchControls) {
+        controls.rootView = rootView
+        let geometryChanged = self.screen != screen
+        self.screen = screen
+        layoutContents()
+        guard stage != shown || geometryChanged else { return }
+        let first = shown == nil
+        let opening = stage == .open
+        shown = stage
+
+        let target = Self.path(on: screen, stage: stage, in: bounds)
+        // Первый показ и смена железа — без анимации: это не движение
+        // интерфейса, а то, из чего оно начинается.
+        guard !first, !geometryChanged else {
+            shape.path = target
+            controls.layer?.opacity = opening ? 1 : 0
+            return
+        }
+
+        let move = CABasicAnimation(keyPath: "path")
+        move.fromValue = shape.presentation()?.path ?? shape.path
+        move.toValue = target
+        move.duration = opening ? Self.openDuration : Self.sealDuration
+        move.timingFunction = Self.timing
+        shape.path = target
+        shape.add(move, forKey: "plate")
+
+        guard let controlsLayer = controls.layer else { return }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = controlsLayer.presentation()?.opacity ?? controlsLayer.opacity
+        fade.toValue = opening ? 1 : 0
+        fade.duration = Self.controlsFade
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        if opening {
+            fade.beginTime = CACurrentMediaTime() + Self.controlsDelay
+            fade.fillMode = .backwards
+        }
+        controlsLayer.opacity = opening ? 1 : 0
+        controlsLayer.add(fade, forKey: "controls")
+    }
+
+    public override func layout() {
+        super.layout()
+        layoutContents()
+        guard let screen, let shown else { return }
+        shape.path = Self.path(on: screen, stage: shown, in: bounds)
+    }
+
+    /// Кнопки стоят в раскрытой плите: между скосами, по высоте выреза. В
+    /// свёрнутой их не видно, поэтому раскладка у них одна.
+    private func layoutContents() {
+        shape.frame = bounds
+        guard let screen else { return }
+        let frame = NotchGeometry.frame(on: screen, stage: .open)
+        let inset = frame.slopeWidth + NotchGeometry.edgeGap
+        let width = frame.width - 2 * inset
+        controls.frame = CGRect(
+            x: (bounds.width - width) / 2,
+            y: bounds.maxY - frame.height,
+            width: width, height: frame.height
+        )
+    }
+
+    /// Плита прижата к верхней кромке и стоит по центру выреза; окно под ней
+    /// всегда размером с раскрытую.
+    private static func path(
+        on screen: NotchGeometry.Screen, stage: NotchGeometry.Stage, in bounds: CGRect
+    ) -> CGPath {
+        let frame = NotchGeometry.frame(on: screen, stage: stage)
+        // Фигура рисуется сверху вниз (у `Shape` начало — верхний край), а
+        // слой живёт в координатах AppKit, где верх — это `maxY`. Отражаем
+        // готовый путь, а не перекладываем форму: форма одна и та же.
+        let box = CGRect(x: (bounds.width - frame.width) / 2, y: 0,
+                         width: frame.width, height: frame.height)
+        var flip = CGAffineTransform(scaleX: 1, y: -1)
+            .translatedBy(x: 0, y: -bounds.height)
+        let path = NotchShape().path(in: box).cgPath
+        return path.copy(using: &flip) ?? path
+    }
+}
+
+/// Четыре кнопки: микрофон и вейвформа слева, пауза/плей и стоп справа.
+public struct NotchControls: View {
+    var paused: Bool
+    var muted: Bool
+    var canMute: Bool
+    var interactive: Bool
+    var onMute: () -> Void
+    var onPause: () -> Void
+    var onStop: () -> Void
+
+    static let placeholder = NotchControls(
+        paused: false, muted: false, canMute: false, interactive: false,
+        onMute: {}, onPause: {}, onStop: {}
+    )
 
     public var body: some View {
-        ZStack(alignment: .top) {
-            NotchPlate(screen: screen, stage: shownStage)
-
-            HStack(spacing: 0) {
-                pair(
-                    NotchButton(symbol: muted ? "microphone.slash.fill" : "microphone.fill",
-                                enabled: canMute, action: onMute),
-                    // Вейвформа пока не движется, но и не притворяется
-                    // недоступной кнопкой: это прибор, нажимать его незачем.
-                    NotchButton(symbol: "waveform.mid", action: nil)
-                )
-                Spacer(minLength: 0)
-                pair(
-                    NotchButton(symbol: paused ? "play.fill" : "pause.fill",
-                                enabled: true, action: onPause),
-                    NotchButton(symbol: "stop.fill", enabled: true, action: onStop)
-                )
+        HStack(spacing: 0) {
+            HStack(spacing: NotchGeometry.buttonGap) {
+                NotchButton(symbol: muted ? "microphone.slash.fill" : "microphone.fill",
+                            enabled: canMute, action: onMute)
+                // Вейвформа пока не движется, но и не притворяется недоступной
+                // кнопкой: это прибор, нажимать его незачем.
+                NotchButton(symbol: "waveform.mid", action: nil)
             }
-            .frame(width: frame.width - 2 * (frame.slopeWidth + NotchGeometry.edgeGap),
-                   height: frame.height)
-            .opacity(open ? 1 : 0)
-            .scaleEffect(open ? 1 : 0.8)
-            .blur(radius: open ? 0 : 3)
-            .allowsHitTesting(open)
+            Spacer(minLength: 0)
+            HStack(spacing: NotchGeometry.buttonGap) {
+                NotchButton(symbol: paused ? "play.fill" : "pause.fill",
+                            enabled: true, action: onPause)
+                NotchButton(symbol: "stop.fill", enabled: true, action: onStop)
+            }
         }
-        // Плита прижата к верхней кромке окна: расти и уменьшаться она может
-        // только вниз и вбок, иначе отрывается от железа.
-        .frame(width: bounds.width, height: bounds.height, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         // Плита чёрная при любой теме системы, значит и всё, что AppKit рисует
         // внутри неё сам, должно считать себя тёмным.
         .environment(\.colorScheme, .dark)
-        .onAppear {
-            guard shownStage == .sealed, stage != .sealed else { return }
-            // Следующим тактом, а не этим: рост, начатый в том же проходе, что
-            // и первая укладка, случается мгновенно и без анимации.
-            DispatchQueue.main.async { go(to: stage) }
-        }
-        .onChange(of: stage) { _, now in go(to: now) }
-    }
-
-    private func pair(_ first: NotchButton, _ second: NotchButton) -> some View {
-        HStack(spacing: NotchGeometry.buttonGap) {
-            first
-            second
-        }
-        .animation(open ? Self.controls : Self.leave, value: open)
-    }
-
-    private func go(to next: NotchGeometry.Stage) {
-        guard next != shownStage else { return }
-        withAnimation(next == .sealed ? Self.leave : Self.arrive) { shownStage = next }
+        .allowsHitTesting(interactive)
     }
 }
 
@@ -277,7 +273,7 @@ public struct NotchFace: View {
 ///
 /// Подложки нет намеренно: в чёрной плите любое пятно читается как вторая
 /// фигура, а не как мишень. Наведение объявляет себя яркостью.
-private struct NotchButton: View {
+struct NotchButton: View {
     var symbol: String
     /// Кнопка есть, но нажать её сейчас нельзя (мьют на микрофонном пути).
     var enabled: Bool = true

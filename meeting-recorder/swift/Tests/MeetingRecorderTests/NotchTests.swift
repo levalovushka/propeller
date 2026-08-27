@@ -54,7 +54,7 @@ final class NotchGeometryTests: XCTestCase {
         for s in [mbp14, mbp16] {
             let f = NotchGeometry.frame(on: s, stage: .open)
             XCTAssertEqual(f.groupWidth, 58, "две кнопки 28 и зазор 2")
-            XCTAssertGreaterThanOrEqual(f.roomForButtons, f.groupWidth,
+            XCTAssertGreaterThanOrEqual(f.roomForButtons + 0.001, f.groupWidth,
                                         "пара помещается, не заезжая ни на скос, ни под камеру")
         }
     }
@@ -116,25 +116,46 @@ final class NotchGeometryTests: XCTestCase {
     // MARK: - Вырезы бывают разные
 
     func testРазмерыСчитаютсяИзЭкранаАНеИзКонстант() {
-        // 14″, 16″ и масштабированное разрешение «Больше места», где тот же
-        // вырез приходит другими числами. Ни одно из них мы не знаем заранее.
+        // Замерено на живой машине (`notchprobe`, 2026-08-27): 14″ M-series,
+        // панель 3024×1964, вырез 370×64 физических пикселя. В точках он
+        // меняется вместе с выбранным разрешением — 370 × ширина_pt / 3024.
+        // 16″ здесь **не замерен**, а посчитан по тому же правилу от 220×38 из
+        // открытых замеров: своего 16-дюймового у нас нет.
         let cases: [(w: CGFloat, top: CGFloat, safeTop: CGFloat, aux: CGFloat, notch: CGFloat)] = [
-            (1512, 982, 32, 663.5, 185),     // 14″ по умолчанию
-            (1728, 1117, 38, 754, 220),      // 16″ по умолчанию
-            (1800, 1169, 38, 790, 220),      // 16″, «Больше места»
-            (1710, 1107, 29, 762.5, 185),    // 14″, «Больше места»
+            (1512, 982, 32, 663.5, 185),        // 14″, по умолчанию — замерено
+            (1352, 878, 28.6, 593.3, 165.4),    // 14″, «Больше текста»
+            (1280, 832, 27.1, 561.7, 156.6),    // 14″
+            (1147, 745, 24.3, 503.3, 140.4),    // 14″, самое мелкое
+            (1728, 1117, 38, 754, 220),         // 16″, по умолчанию — не замерено
         ]
         for c in cases {
             guard let s = screen(width: c.w, top: c.top, safeTop: c.safeTop, aux: c.aux) else {
                 return XCTFail("вырез \(c.notch) не распознан")
             }
-            XCTAssertEqual(s.notchWidth, c.notch)
+            XCTAssertEqual(s.notchWidth, c.notch, accuracy: 0.01)
             let f = NotchGeometry.frame(on: s, stage: .open)
-            XCTAssertEqual(f.width, c.notch + 2 * NotchGeometry.wingWidth(height: c.safeTop))
-            XCTAssertEqual(f.wingWidth, NotchGeometry.wingWidth(height: c.safeTop))
-            XCTAssertGreaterThanOrEqual(f.roomForButtons, f.groupWidth)
+            XCTAssertEqual(f.width, c.notch + 2 * NotchGeometry.wingWidth(height: c.safeTop),
+                           accuracy: 0.01)
+            XCTAssertEqual(f.wingWidth, NotchGeometry.wingWidth(height: c.safeTop), accuracy: 0.01)
+            // С допуском: крыло выведено из этой же величины, и вычитание
+            // возвращает её с точностью до последнего бита.
+            XCTAssertGreaterThanOrEqual(f.roomForButtons + 0.001, f.groupWidth)
             XCTAssertEqual(f.originY + f.height, c.top, "и всегда стоит на кромке")
         }
+    }
+
+    func testВырезСтоитНеПоЦентруЭкранаИПлитаЭтоЗнает() {
+        // Замерено: свободные углы 665 слева и 662 справа, то есть вырез сдвинут
+        // на полтора пункта вправо от середины экрана. Плита, поставленная по
+        // центру экрана, разошлась бы с железом ровно на эти полтора пункта.
+        let s = NotchGeometry.screen(
+            left: 0, width: 1512, top: 982, safeAreaTop: 32,
+            auxiliaryLeftWidth: 665, auxiliaryRightWidth: 662
+        )!
+        XCTAssertEqual(s.notchWidth, 185)
+        let f = NotchGeometry.frame(on: s, stage: .open)
+        XCTAssertEqual(f.originX + f.width / 2, 665 + 185 / 2, accuracy: 0.001)
+        XCTAssertNotEqual(f.originX + f.width / 2, 1512 / 2)
     }
 
     func testУзкийВырезНеПринимаетсяЗаЧёлку() {
