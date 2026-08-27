@@ -7,12 +7,16 @@ import SwiftUI
 /// таким же фактом, как дата, — нажимать было не на что, потому что состава как
 /// объекта не существовало.
 ///
-/// **Заливка, а не стекло `SummonedPlate`** — и это замер, а не вкус. Сборка
-/// 2026-08-27 показала, что сквозь стекло имя встречи 22/24 читается поверх имён
-/// участников: «Левон» и «Разбираюсь с кейсами» встали в одну строку пикселей.
-/// Стекло — предмету, поверх которого не читают (панель действий, переключатель
-/// встреч); здесь читают сам список. Та же причина и то же решение у модалки
-/// проектов, и заливка берётся оттуда.
+/// Плита — `SummonedPlate`, общая с панелью действий, переключателем встреч и
+/// полем заметки: это ровно тот предмет, который приложение не поднимало само и
+/// который держится, пока держат позвавший его жест. Своих решений про стекло,
+/// угол и тень здесь нет.
+///
+/// Первый заход дал ей отдельную заливку: сквозь стекло имя встречи 22/24
+/// читалось поверх имён участников — «Левон» и «Разбираюсь с кейсами» в одной
+/// строке пикселей. Решение владельца 2026-08-27 — не заводить второй материал
+/// для читаемых плит, а сделать стекло менее прозрачным **везде**
+/// (`Tokens.Glass.summonedBase`).
 ///
 /// **Ряд — участник, а не имя.** У кластера (`Speaker 2`) ряд такой же: за ним
 /// живой человек, чьего имени мы не знаем, и без ряда его нечем назвать. Ряд
@@ -34,32 +38,20 @@ struct ParticipantsPlate: View {
     private typealias T = Tokens.Pane.Meta.People
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(model.rows) { row in
-                PersonRow(row: row, remove: { model.remove(row) })
+        SummonedPlate(cornerRadius: T.plateRadius, padding: T.padding) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(model.rows) { row in
+                    PersonRow(row: row, remove: { model.remove(row) })
+                }
+                divider
+                addRow
             }
-            divider
-            addRow
+            .frame(width: T.rowWidth)
         }
-        .frame(width: T.rowWidth)
-        .padding(T.padding)
-        .background(plate)
-        .clipShape(shape)
-        .overlay(shape.stroke(T.border, lineWidth: 1))
-        .shadow(color: T.shadow, radius: T.haloRadius)
-        .shadow(color: T.shadow, radius: T.dropRadius, y: T.dropY)
         // Esc закрывает список, а не окно: пока плита поднята, она и есть то,
         // на что смотрит человек.
         .onExitCommand(perform: dismiss)
     }
-
-    private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: T.plateRadius, style: .continuous)
-    }
-
-    /// Заливка, а не стекло `SummonedPlate` — причина в `Tokens…People.plate`:
-    /// сквозь стекло имя встречи читалось поверх имён участников.
-    private var plate: some View { shape.fill(T.plate) }
 
     private var divider: some View {
         Rectangle()
@@ -127,39 +119,6 @@ struct ParticipantsPlate: View {
         guard !name.isEmpty else { return }
         model.add(name)
         dismiss()
-    }
-}
-
-extension View {
-    /// Поднять плиту под этим предметом.
-    ///
-    /// Оверлей, а не системный `.popover`: `NSPopover` рисует своё стекло и свою
-    /// стрелку, то есть чужую плиту с чужим углом поверх нашей. Позиция считается
-    /// от самого предмета, поэтому плита стоит под чипом «6 человек», а не под
-    /// строкой атрибутов, — ширина чипа даты у каждой встречи своя.
-    ///
-    /// **Клик вне плиты её не закрывает** — закрывают повторный щелчок по чипу,
-    /// Esc и любое действие в ней. Локальный монитор `NSEvent` закрывал бы её
-    /// раньше, чем кнопка внутри успеет сработать, а честный вариант с
-    /// перехватом на уровне панели требует своего хоста; он не сделан, и это
-    /// названо, а не забыто.
-    func popoverPlate<Plate: View>(
-        isPresented: Binding<Bool>, @ViewBuilder plate: @escaping () -> Plate
-    ) -> some View {
-        overlay(alignment: .topLeading) {
-            if isPresented.wrappedValue {
-                plate()
-                    // Смещением, а не `alignmentGuide`: в оверлее направляющая
-                    // увела плиту **вверх**, накрыв собою чип, который её
-                    // позвал. Смещение раскладку не трогает вовсе — плита
-                    // висит там, где ей велено, и чип остаётся виден.
-                    .offset(y: Tokens.Pane.Meta.height + Tokens.Pane.Meta.People.plateGap)
-                    .fixedSize()
-                    .transition(.opacity)
-                    .zIndex(1)
-            }
-        }
-        .animation(.easeOut(duration: Tokens.Motion.hover), value: isPresented.wrappedValue)
     }
 }
 
