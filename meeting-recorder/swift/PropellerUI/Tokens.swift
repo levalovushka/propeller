@@ -939,19 +939,20 @@ public enum Tokens {
         /// Room under the last line so a scrolled summary is not hard against
         /// the window edge.
         public static let summaryBottomPadding = Space.s40
-        /// Between the lead block and each section.
-        public static let summaryBlockGap = Space.s24
-        /// Inside a block: title (lead or section heading) to the text under it.
-        /// Off the scale — the comps' 7, plus eight so a heading has a clear beat
-        /// before the body or bullets that follow.
-        public static let summaryLineGap: CGFloat = 7 + Space.s8
+        /// Between sections — 312:11129. Off the scale, and it is the comps'
+        /// own number: the section break is the loudest silence on the screen
+        /// now that the headings themselves went quiet.
+        public static let summarySectionGap: CGFloat = 36
+        /// A section heading to the first item under it — 312:11129.
+        public static let summaryHeadingGap = Space.s8
         public static let summaryMinWidth: CGFloat = 520
         /// A measure, not a container: past ~640 pt a 14 pt line stops being
         /// comfortable to read, however much room the window has.
         public static let summaryMaxWidth: CGFloat = 640
-        /// Bullet indent and the space between list items.
+        /// Bullet indent and the space between items — a paragraph and a list
+        /// item are the same item in the comps, so it is one number.
         public static let bulletIndent: CGFloat = 21
-        public static let bulletGap = Space.s16
+        public static let summaryItemGap = Space.s20
 
         // MARK: Transcript column (32:5278)
 
@@ -1094,7 +1095,13 @@ public enum Tokens {
 
         /// `body`, for the text storage — see `Primitive.inkNSColor`.
         public static let bodyNSColor = Primitive.inkNSColor(
-            dark: Primitive.AlphaWhite.a95, light: Primitive.AlphaBlack.a92
+            dark: Primitive.AlphaWhite.a90, light: Primitive.AlphaBlack.a88
+        )
+        /// A section heading inside the summary — 312:11129 draws it at 30 %.
+        /// The heading stopped being the loudest thing in the block and became
+        /// a label over it, so it is quieter than what it names, not bolder.
+        public static let headingNSColor = Primitive.inkNSColor(
+            dark: Primitive.AlphaWhite.a30, light: Primitive.AlphaBlack.a30
         )
         /// The caret. Full-strength ink: a 1 pt line at 95 % reads as grey.
         public static let caret = Tokens.dualNSColor(
@@ -1258,25 +1265,41 @@ public enum Tokens {
         // MARK: Type
 
         public enum Typo {
-            /// 14 / 18 regular — the meeting's name in the pane header.
+            /// 14 / 18 regular — the meeting's name in the *recording* pane's
+            /// header. The finished meeting carries its name in the body now.
             public static let headerTitle = Sidebar.Typo.meetingTitle
-            /// 20 / 26 semibold, −0.1 tracking — the one-sentence summary.
-            public static let lead = Typography.Style(
-                size: 20, lineHeight: 26, weight: .semibold,
+            /// 22 / 24 regular — the meeting's name, in the body — 312:11129.
+            public static let paneTitle = Typography.Style(
+                size: 22, lineHeight: 24, weight: .regular,
                 weightTrim: Typography.railWeightTrim
             )
-            public static let leadTracking: CGFloat = -0.1
-            /// 14 / 22 regular — everything that is read rather than scanned.
+            /// 13 / 22 regular — everything that is read rather than scanned.
             public static let body = Typography.Style(
-                size: 14, lineHeight: 22, weight: .regular,
+                size: 13, lineHeight: 22, weight: .regular,
                 weightTrim: Typography.railWeightTrim
             )
-            /// 14 / 22 bold, −0.14 — a section heading inside the summary.
+            /// The lead is no longer a face of its own — 312:11129 draws the
+            /// opening paragraph exactly like the rest of the text. It stays a
+            /// *kind* because the parser's round trip stands on it
+            /// (`SummaryDocument.promotingLead`); it just stopped shouting.
+            public static let lead = body
+            public static let leadTracking: CGFloat = 0
+            /// 12 / 14 regular — a section heading inside the summary. Was
+            /// 14 / 22 bold: the comps turned it from a title into a label.
             public static let sectionTitle = Typography.Style(
-                size: 14, lineHeight: 22, weight: .bold,
+                size: 12, lineHeight: 14, weight: .regular,
                 weightTrim: Typography.railWeightTrim
             )
-            public static let sectionTracking: CGFloat = -0.14
+            public static let sectionTracking: CGFloat = 0
+            /// 12 / 14 and 12 / 16 — the attribute row over the title.
+            public static let meta = Typography.Style(
+                size: 12, lineHeight: 14, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
+            public static let metaWide = Typography.Style(
+                size: 12, lineHeight: 16, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
             /// 11 / 14 regular — the speaker and timecode over a remark.
             public static let transcriptMeta = Sidebar.Typo.meta
             /// Реплика — тем же кеглем, что и саммари.

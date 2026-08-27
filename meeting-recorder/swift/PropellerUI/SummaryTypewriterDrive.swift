@@ -91,6 +91,22 @@ final class SummaryTypewriterDrive {
         let end = (textView.string as NSString).length
         guard range.location >= 0, NSMaxRange(range) <= end, range.length > 0 else { return }
 
+        /// Собственный цвет символа, а не переданный сверху.
+        ///
+        /// Виды блоков красятся по-разному с 2026-08-27 — тихий заголовок
+        /// раздела против тела. Гасить надо *его* цвет: подставив общий, мы бы
+        /// на всё время проявления зажигали заголовок цветом тела, и он
+        /// схлопывался бы в свой только на `clear()`.
+        func base(_ offset: Int) -> NSColor {
+            guard let storage = textView.textStorage,
+                  range.location + offset < storage.length,
+                  let own = storage.attribute(
+                      .foregroundColor, at: range.location + offset, effectiveRange: nil
+                  ) as? NSColor
+            else { return colour }
+            return own
+        }
+
         let count = range.length
         let soft = Tokens.Pane.Reveal.softChars
         // Three runs: fully on, soft ramp (one attr per char — the ramp is
@@ -100,6 +116,7 @@ final class SummaryTypewriterDrive {
             let a = SummaryTypewriter.alpha(
                 at: i, count: count, progress: progress, softness: soft
             )
+            let ink = base(i)
             if a <= 0.001 || a >= 0.999 {
                 var j = i + 1
                 while j < count {
@@ -107,25 +124,36 @@ final class SummaryTypewriterDrive {
                         at: j, count: count, progress: progress, softness: soft
                     )
                     if a <= 0.001 ? b > 0.001 : b < 0.999 { break }
+                    // Run merging stops at a colour change too, or a heading
+                    // would be painted in the colour of the block above it.
+                    if base(j) != ink { break }
                     j += 1
                 }
                 let sub = NSRange(location: range.location + i, length: j - i)
                 layout.addTemporaryAttribute(
                     .foregroundColor,
-                    value: a <= 0.001 ? colour.withAlphaComponent(0) : colour,
+                    value: a <= 0.001 ? ink.withAlphaComponent(0) : ink,
                     forCharacterRange: sub
                 )
                 i = j
             } else {
                 layout.addTemporaryAttribute(
                     .foregroundColor,
-                    value: colour.withAlphaComponent(a),
+                    value: ink.withAlphaComponent(a * opacity(of: ink)),
                     forCharacterRange: NSRange(location: range.location + i, length: 1)
                 )
                 i += 1
             }
         }
         invalidate(range: range)
+    }
+
+    /// Своя прозрачность цвета — чтобы рампа гасила её, а не подменяла.
+    ///
+    /// `alphaComponent` на динамическом цвете бросает, поэтому через
+    /// `usingColorSpace`, и «не смогли» читается как «непрозрачный».
+    private func opacity(of colour: NSColor) -> CGFloat {
+        colour.usingColorSpace(.deviceRGB)?.alphaComponent ?? 1
     }
 
     private func invalidate(range: NSRange) {

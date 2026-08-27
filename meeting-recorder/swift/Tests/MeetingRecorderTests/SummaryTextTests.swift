@@ -41,9 +41,11 @@ final class SummaryTextTests: XCTestCase {
         XCTAssertEqual(before.markdown, after.markdown)
     }
 
-    func testBoldSurvivesEvenInsideAHeadingWhoseFaceIsAlreadyBold() {
-        // Reading emphasis off the *font* cannot tell these apart, which is why
-        // it is its own attribute.
+    func testBoldInsideAHeadingIsTheHeadingsOwnEmphasis() {
+        // Emphasis is its own attribute, not something read off the font. The
+        // heading used to be bold itself, which made the case obvious; it is
+        // 12/14 regular since 312:11129, and the reason still holds — a face
+        // says how a block is drawn, never what the writer marked inside it.
         let document = SummaryDocument.parse(markdown: "## Решения\n- **Рельс:** 300 pt")
         let text = SummaryText.attributed(document, colour: ink)
         let back = SummaryText.document(from: text, leadHeading: nil)
@@ -91,20 +93,51 @@ final class SummaryTextTests: XCTestCase {
     // MARK: - Typography
 
     func testEachBlockGetsTheFaceTheComposDrewForIt() {
-        XCTAssertEqual(SummaryText.style(for: .lead).size, 20)
-        XCTAssertEqual(SummaryText.style(for: .heading).weight, .bold)
-        XCTAssertEqual(SummaryText.style(for: .body).size, 14)
-        XCTAssertEqual(SummaryText.style(for: .bullet).size, 14)
+        // 312:11129: the lead stopped being a face of its own, and the section
+        // heading stopped being bold — it became a label over the block.
+        XCTAssertEqual(SummaryText.style(for: .lead).size, 13)
+        XCTAssertEqual(SummaryText.style(for: .lead).weight, .regular)
+        XCTAssertEqual(SummaryText.style(for: .heading).size, 12)
+        XCTAssertEqual(SummaryText.style(for: .heading).weight, .regular)
+        XCTAssertEqual(SummaryText.style(for: .body).size, 13)
+        XCTAssertEqual(SummaryText.style(for: .bullet).size, 13)
     }
 
-    /// The gaps are the ones the `VStack` used to make. Getting these wrong is
-    /// invisible on one block and a different screen down a whole summary.
-    func testTheGapsAreTheOnesTheStackUsedToMake() {
+    /// A quiet heading is quiet because of its colour, and the colour is the
+    /// only thing that says so — the face no longer differs from the body's.
+    /// A screenshot could never turn red on this; this test can.
+    func testTheSectionHeadingIsNotPaintedInTheColourOfTheBody() {
+        let document = SummaryDocument(blocks: [
+            .init(id: "h", kind: .heading, spans: [.init("Решения")]),
+            .init(id: "b", kind: .body, spans: [.init("Отказались от барабана.")]),
+        ], leadHeading: nil)
+        let text = SummaryText.attributed(document, colour: ink)
+        let heading = text.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        let body = text.attribute(
+            .foregroundColor, at: (text.string as NSString).range(of: "Отказались").location,
+            effectiveRange: nil
+        ) as? NSColor
+        XCTAssertEqual(body, ink)
+        XCTAssertNotNil(heading)
+        XCTAssertNotEqual(heading, body)
+    }
+
+    /// The gaps of 312:11129. Getting these wrong is invisible on one block and
+    /// a different screen down a whole summary.
+    func testTheGapsAreTheOnesTheCompsDrew() {
         XCTAssertEqual(SummaryText.spacingBefore(.lead, after: nil), 0)
-        XCTAssertEqual(SummaryText.spacingBefore(.body, after: .lead), Tokens.Pane.summaryLineGap)
-        XCTAssertEqual(SummaryText.spacingBefore(.heading, after: .bullet), Tokens.Pane.summaryBlockGap)
-        XCTAssertEqual(SummaryText.spacingBefore(.bullet, after: .heading), Tokens.Pane.summaryLineGap)
-        XCTAssertEqual(SummaryText.spacingBefore(.bullet, after: .bullet), Tokens.Pane.bulletGap)
-        XCTAssertEqual(Tokens.Pane.summaryLineGap, 15)
+        XCTAssertEqual(
+            SummaryText.spacingBefore(.heading, after: .bullet), Tokens.Pane.summarySectionGap)
+        XCTAssertEqual(
+            SummaryText.spacingBefore(.bullet, after: .heading), Tokens.Pane.summaryHeadingGap)
+        // A paragraph and a list item share one rhythm in the comps, so the
+        // gap does not depend on which of the two stands where.
+        XCTAssertEqual(
+            SummaryText.spacingBefore(.bullet, after: .bullet), Tokens.Pane.summaryItemGap)
+        XCTAssertEqual(
+            SummaryText.spacingBefore(.body, after: .lead), Tokens.Pane.summaryItemGap)
+        XCTAssertEqual(Tokens.Pane.summarySectionGap, 36)
+        XCTAssertEqual(Tokens.Pane.summaryHeadingGap, 8)
+        XCTAssertEqual(Tokens.Pane.summaryItemGap, 20)
     }
 }

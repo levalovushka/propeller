@@ -56,15 +56,26 @@ public enum SummaryText {
         }
     }
 
-    /// Сколько воздуха над абзацем — ровно те же зазоры, что были у стопки
-    /// `VStack`, которую редактор заменил.
+    /// Сколько воздуха над абзацем — зазоры макета 312:11129.
+    ///
+    /// Три числа вместо прежних трёх, но по другому правилу: раздел отбивается
+    /// от предыдущего на 36, его заголовок стоит в 8 над первым пунктом, а
+    /// пункты внутри раздела — через 20. Абзац и пункт списка в макете
+    /// неразличимы по ритму, поэтому у них один зазор, а не два.
     public static func spacingBefore(
         _ kind: SummaryDocument.Block.Kind, after previous: SummaryDocument.Block.Kind?
     ) -> CGFloat {
         guard let previous else { return 0 }
-        if kind == .heading { return Tokens.Pane.summaryBlockGap }
-        if previous == .lead || previous == .heading { return Tokens.Pane.summaryLineGap }
-        return Tokens.Pane.bulletGap
+        if kind == .heading { return Tokens.Pane.summarySectionGap }
+        if previous == .heading { return Tokens.Pane.summaryHeadingGap }
+        return Tokens.Pane.summaryItemGap
+    }
+
+    /// Цвет вида блока. Тихий заголовок раздела — единственный, кто спорит с
+    /// цветом, переданным снаружи: он не «текст потише», он подпись над
+    /// текстом, и 30 % — часть его определения, а не настройка вызывающего.
+    public static func colour(for kind: SummaryDocument.Block.Kind, body: NSColor) -> NSColor {
+        kind == .heading ? Tokens.Pane.headingNSColor : body
     }
 
     static func paragraphStyle(
@@ -155,7 +166,7 @@ public enum SummaryText {
             let kind = self.kind(in: text, at: range.location)
             text.addAttributes([
                 .paragraphStyle: paragraphStyle(for: kind, after: previous),
-                .foregroundColor: colour,
+                .foregroundColor: self.colour(for: kind, body: colour),
                 .kern: tracking(for: kind),
             ], range: range)
             text.enumerateAttribute(emphasisKey, in: range) { value, subrange, _ in

@@ -430,7 +430,7 @@ public struct MeetingSummaryColumn: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Pane.summaryBlockGap) {
+        VStack(alignment: .leading, spacing: Tokens.Pane.summarySectionGap) {
             if let placeholder, summary.isEmpty {
                 Text(placeholder)
                     .typoBlock(Tokens.Pane.Typo.body)

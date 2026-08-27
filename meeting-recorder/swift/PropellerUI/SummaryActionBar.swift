@@ -143,7 +143,7 @@ private struct KindMenu: View {
 
     var body: some View {
         Menu {
-            ForEach(SummaryDocument.Block.Kind.allCases, id: \.self) { kind in
+            ForEach(SummaryDocument.Block.Kind.offered, id: \.self) { kind in
                 Button {
                     onKind(kind)
                 } label: {
