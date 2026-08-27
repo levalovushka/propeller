@@ -1187,10 +1187,15 @@ class AppState: ObservableObject {
         }.joined(separator: ",")
         if let cached = atomCache, cached.key == key { return cached.groups }
 
+        // Раздел есть, а пунктов в нём нет — карточка всё равно нужна: иначе
+        // человек, стёрший корзиной последнюю задачу, лишается и строки
+        // «Добавить…», то есть двери обратно. Дверь в один конец в списке, где
+        // рядом стоит корзина, — не мелочь. Раздела нет вовсе (модель опускает
+        // пустые) — карточки нет: пустых карточек было бы по одной на каждую
+        // встречу проекта.
         let groups: [AtomGroup] = rows.compactMap { entry in
             guard let text = Self.loadRecapText(for: entry),
-                  let found = RecapDigest.parse(text).section(named: section),
-                  !found.items.isEmpty
+                  let found = RecapDigest.parse(text).section(named: section)
             else { return nil }
             return AtomGroup(
                 meeting: entry,

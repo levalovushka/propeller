@@ -77,7 +77,12 @@ enum GalleryFixture {
         // only thing that could produce it, and a reference of an impossible state
         // is worse than a missing one.
         for entry in allFixtureEntries where entry.status >= .summarized {
-            try? recapMarkdown.write(
+            // Одна встреча несёт пустой раздел «Решения»: заголовок есть,
+            // пунктов нет. Так выглядит встреча, у которой последнее решение
+            // стёрли корзиной, и карточка проекта обязана остаться — иначе
+            // добавить новое было бы неоткуда.
+            let text = entry.id == "gal-review" ? recapWithEmptyDecisions : recapMarkdown
+            try? text.write(
                 to: meetings.appendingPathComponent("\(entry.id)-recap.md"),
                 atomically: true, encoding: .utf8
             )
@@ -591,6 +596,17 @@ enum GalleryFixture {
 
     private static func stamp(_ seconds: Double) -> String {
         Timecode.minutesSeconds(seconds)
+    }
+
+    /// Тот же конспект с опустошённым разделом «Решения». Собран из него, а не
+    /// написан вторым: разойдись они, кадр стал бы сравнивать два разных
+    /// конспекта вместо одного состояния.
+    private static var recapWithEmptyDecisions: String {
+        let lines = recapMarkdown.components(separatedBy: "\n")
+        guard let heading = lines.firstIndex(where: { $0.hasPrefix("## Решения") })
+        else { return recapMarkdown }
+        let next = lines[(heading + 1)...].firstIndex { $0.hasPrefix("## ") } ?? lines.endIndex
+        return (lines[...heading] + [""] + lines[next...]).joined(separator: "\n")
     }
 
     private static let recapMarkdown = """
