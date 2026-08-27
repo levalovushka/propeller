@@ -370,4 +370,43 @@ final class SummaryDocumentTests: XCTestCase {
         document.blocks.append(.init(id: "new", kind: .body, text: "   "))
         XCTAssertEqual(document.markdown, "## Итог\n\nВсё решили.\n")
     }
+    // MARK: - Простой формат
+
+    /// Файл, который приложение пишет по умолчанию, обязан пережить правку.
+    ///
+    /// Все прочие проверки круга начинаются с `## Итог` или с обсидиановых
+    /// `---`, то есть с середины документа. А на диске у большинства людей
+    /// лежит `RecapDocument.wrapped(format: .simple)` — и он начинается со
+    /// строки `# Название — рекап`.
+    func testПростойЗаголовокФайлаПереживаетПравку() {
+        let file = RecapDocument.wrapped(
+            title: "Синк по найму",
+            recapBody: "## Итог\nОбсудили вилку.\n\n## Решения\n- Поднять оффер.",
+            notes: nil,
+            format: .simple
+        )
+        let document = SummaryDocument.parse(markdown: file)
+        XCTAssertTrue(
+            document.markdown.contains("# Синк по найму — рекап"),
+            "заголовок документа пропал при первой же правке:\n\(document.markdown)"
+        )
+        // И второй проход ничего не двигает: файл, уже прошедший через правку,
+        // должен собираться сам в себя, иначе он будет дрейфовать с каждой.
+        let again = SummaryDocument.parse(markdown: document.markdown)
+        XCTAssertEqual(again.markdown, document.markdown)
+    }
+
+    /// Обсидиановая шапка и заголовок документа не мешают друг другу.
+    func testОбсидиановаяШапкаПереживаетПравкуКакИРаньше() {
+        let file = RecapDocument.wrapped(
+            title: "Синк по найму",
+            recapBody: "## Итог\nОбсудили вилку.",
+            notes: nil,
+            format: .obsidian
+        )
+        let document = SummaryDocument.parse(markdown: file)
+        XCTAssertTrue(document.markdown.hasPrefix("---\n"), document.markdown)
+        XCTAssertTrue(document.markdown.contains("tags: [meeting, recap]"), document.markdown)
+    }
+
 }

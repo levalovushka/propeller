@@ -128,7 +128,8 @@ public struct SummaryDocument: Equatable, Sendable {
 
     public static func parse(markdown: String) -> SummaryDocument {
         let text = markdown.replacingOccurrences(of: "\r\n", with: "\n")
-        let (frontmatter, rest) = splittingFrontmatter(text)
+        let (frontmatter, afterFrontmatter) = splittingFrontmatter(text)
+        let (documentTitle, rest) = splittingDocumentTitle(afterFrontmatter)
         let lines = rest
             .components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -165,7 +166,7 @@ public struct SummaryDocument: Equatable, Sendable {
             out.append(contentsOf: body)
         }
 
-        return SummaryDocument(blocks: out, leadHeading: kept(frontmatter, leadHeading))
+        return SummaryDocument(blocks: out, leadHeading: kept(frontmatter, documentTitle, leadHeading))
     }
 
     /// Снять YAML-шапку с начала файла — дословно, ничего в ней не разбирая.
@@ -194,14 +195,37 @@ public struct SummaryDocument: Equatable, Sendable {
                 lines[(close + 1)...].joined(separator: "\n"))
     }
 
+    /// `# Название — рекап` — первая строка файла в простом формате.
+    ///
+    /// Уносится тем же каналом, что и обсидиановый YAML, и по той же причине:
+    /// это шапка документа, а не его раздел.
+    ///
+    /// Пока она шла общим путём, `parse` видела заголовок раздела с пустым
+    /// телом и выбрасывала раздел **вместе со строкой** (`guard !body.isEmpty`
+    /// ниже), а `AppState.saveSummary` писала результат поверх файла — то есть
+    /// первая же правка саммари стирала его заголовок навсегда. Простой формат
+    /// стоит по умолчанию, так что это касалось почти всех: круговые проверки
+    /// набора все начинались с `## Итог` или с `---`, то есть с середины
+    /// документа, и байты, которые приложение реально пишет, не проверял никто.
+    private static func splittingDocumentTitle(_ text: String) -> (String?, String) {
+        let lines = text.components(separatedBy: "\n")
+        guard let first = lines.firstIndex(where: {
+                  !$0.trimmingCharacters(in: .whitespaces).isEmpty
+              }),
+              // `## Итог` под это не попадает: за вторым `#` идёт `#`, а не пробел.
+              lines[first].trimmingCharacters(in: .whitespaces).hasPrefix("# ")
+        else { return (nil, text) }
+        return (lines[first].trimmingCharacters(in: .whitespaces),
+                lines[(first + 1)...].joined(separator: "\n"))
+    }
+
     /// Шапка и `## Итог` — одной строкой: обратно их несёт одно поле.
     ///
     /// Пустая строка между ними — тот же разделитель, каким `markdown` разводит
     /// блоки, поэтому файл собирается обратно ровно таким, каким пришёл.
-    private static func kept(_ frontmatter: String?, _ leadHeading: String?) -> String? {
-        guard let frontmatter else { return leadHeading }
-        guard let leadHeading else { return frontmatter }
-        return frontmatter + "\n\n" + leadHeading
+    private static func kept(_ parts: String?...) -> String? {
+        let present = parts.compactMap { $0 }
+        return present.isEmpty ? nil : present.joined(separator: "\n\n")
     }
 
     /// Первый абзац «Итога» становится ведущим — и, если он единственный и
