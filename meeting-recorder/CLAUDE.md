@@ -172,11 +172,51 @@ running, and it is the one process besides the app that Developer ID signs.
 Plan and decisions: [`../plan-claude-mcp.md`](../plan-claude-mcp.md); component
 status: [`../STATE.md`](../STATE.md) §13.
 
+### Sharing a summary by link
+
+A summary can be published to `propeller.report` and read by someone with no
+Propeller installed. Contract: [`../SERVER.md`](../SERVER.md) §3; the service
+itself is `server/share/` at the repo root.
+
+**The server never sees the content, and that is a construction, not a policy.**
+`ShareCrypto.seal` compresses and encrypts before anything touches the network;
+the key lives in the link's fragment (`/s/<id>#<slug>&k=…`), which browsers do
+not send. **The meeting's name lives there too** — a title is content, and the
+path is the one part of a URL the server always receives. Anything that moves
+either of them into the path, a query or a header breaks the whole promise.
+
+- **Everything decidable lives in `PropellerPure`** — `ShareCrypto`, `ShareLink`,
+  `SharePayload`. `Sources/ShareService.swift` keeps only the network, the
+  Keychain and the list of live shares, because tests cannot import `Sources/`.
+- **The blob is a JSON document, not rendered HTML** (`SharePayload`). One viewer
+  serves every share, so the page can be redressed without reissuing links
+  already sent. Changing the payload shape means bumping `v` and teaching
+  `viewer/index.html` — old links keep arriving for a month.
+- **The wire format is a contract with a browser**: `nonce (12) ‖ ciphertext ‖
+  tag (16)`, raw DEFLATE inside (Apple's `COMPRESSION_ZLIB` is RFC 1951, and the
+  page reads it with `DecompressionStream('deflate-raw')`). A Swift round-trip
+  proves nothing about that pair — ask the other side:
+  `SHARE_BLOB=/tmp/s swift test --filter testTheBlobIsReadableByARealBrowser`,
+  then POST the blob and open the page.
+- **Four outcomes must stay indistinguishable** — no such share, expired,
+  revoked, revoked with someone else's token — all answer the same empty 404, and
+  `/s/<id>` returns the viewer for *any* well-formed id so its status code is not
+  an oracle either. Tests in `server/share/main_test.go` compare the three
+  answers to each other rather than to a constant.
+- **There is no list of shares on the server**, by construction. It lives in
+  `Application Support/Meeting Recorder/shares.json`; losing that file means a
+  link cannot be revoked. Said out loud rather than hidden.
+- **No UI here.** The modal (Figma 298:26408) belongs to the redesign; the whole
+  surface is `ShareService.publish / unpublish / link(for:)` and `Lifetime`
+  (`.week` / `.month` — there is no eternal link).
+
 ### Data storage
 
 ```
 ~/.meeting-recorder/{recordings,meetings}   # people/ is legacy: no longer read/written
-~/Library/Application Support/Meeting Recorder/{gigastt-models/,hotwords.txt,ollama/}
+~/Library/Application Support/Meeting Recorder/{gigastt-models/,hotwords.txt,ollama/,shares.json}
+# shares.json — id, revoke token, key and expiry of every live share (0600). The
+# server cannot rebuild it, so losing it means a link that cannot be revoked.
 # plus, from the MCP server: <client>-mcp-seen markers and the usage log. Those are
 # the only files that process writes — it never touches ~/.meeting-recorder.
 # ollama/ — the summary engine unpacked from the bundle (~97 MB) plus models/ (~3.4 GB,

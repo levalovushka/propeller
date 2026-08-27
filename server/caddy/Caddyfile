@@ -1,0 +1,39 @@
+# Copy of /etc/caddy/Caddyfile on 201.24.53.31 — see ../../SERVER.md.
+# Kept in the repo so the machine can be rebuilt from this file, not from memory.
+# Not deployed automatically: edit here, then scp and `systemctl reload caddy`.
+
+propeller.report {
+	root * /var/www/site
+	file_server
+	encode gzip
+
+	header {
+		Referrer-Policy no-referrer
+		X-Content-Type-Options nosniff
+	}
+
+	# Шеринг: страница и её API. `Cache-Control` и `X-Robots-Tag` ставит сам
+	# сервис на каждом ответе, включая отказы, — здесь их нет намеренно, чтобы
+	# у заголовка был один хозяин. Наоборот, `Referrer-Policy` и
+	# `X-Content-Type-Options` из блока выше накрывают весь домен, и сервис их
+	# не трогает. До 2026-08-27 обе стороны ставили всё, и наружу уезжало по
+	# две одинаковых строки.
+	#
+	# `X-Forwarded-For` перезаписывается целиком, а не дополняется: иначе
+	# присланный клиентом адрес встал бы перед настоящим, и ограничитель
+	# чтения обходился бы одной строкой заголовка.
+	handle /s/* {
+		reverse_proxy localhost:8080 {
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+	handle /api/* {
+		reverse_proxy localhost:8080 {
+			header_up X-Forwarded-For {remote_host}
+		}
+	}
+}
+
+www.propeller.report {
+	redir https://propeller.report{uri} permanent
+}

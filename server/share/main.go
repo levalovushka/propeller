@@ -67,8 +67,24 @@ func main() {
 
 	go srv.sweepForever()
 
+	// Свои таймауты, а не голый ListenAndServe: без них одно висящее
+	// соединение держит горутину и файловый дескриптор бесконечно. Caddy
+	// впереди такое отсекает, но сервис не обязан зависеть от того, кто
+	// перед ним стоит.
+	httpServer := &http.Server{
+		Addr:              *addr,
+		Handler:           srv.routes(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    8 << 10,
+	}
+
 	log.Printf("propeller-share listening on %s, dir %s", *addr, *dir)
-	http.ListenAndServe(*addr, srv.routes())
+	// Молча упасть — худший из исходов: systemd перезапустит, и сервис будет
+	// падать по кругу, не сказав почему.
+	log.Fatal(httpServer.ListenAndServe())
 }
 
 func newServer(store *Store, secret string) (*server, error) {
@@ -94,7 +110,30 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("GET /api/blob/{id}", s.handleBlob)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("GET /s/{id}", s.handleViewer)
-	return mux
+	return privacyHeaders(mux)
+}
+
+// Два заголовка на **каждом** ответе сервиса, включая отказы.
+//
+// Одним слоем, а не по обработчикам: до 2026-08-27 их ставил каждый
+// обработчик сам, и ответы 400 и 401 уезжали без них вовсе.
+//
+// Ровно два, а не четыре: `Referrer-Policy` и `X-Content-Type-Options` Caddy
+// ставит на весь домен, включая статику сайта, — дублировать их здесь значит
+// заводить второго хозяина и отдавать наружу по две одинаковых строки, что
+// ровно и происходило. Эти два, наоборот, касаются только шеров, и Caddy их
+// больше не трогает.
+//
+// Кэш здесь важнее прочего: промежуточный кэш, сохранивший шифротекст,
+// пережил бы отзыв публикации — то есть «Снять с публикации» перестало бы
+// что-либо значить.
+func privacyHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Cache-Control", "private, no-store")
+		h.Set("X-Robots-Tag", "noindex, nofollow")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *server) sweepForever() {
@@ -147,7 +186,6 @@ func (s *server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "storage failure", http.StatusInternalServerError)
 		return
 	}
-	noStore(w)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"id":        id,
@@ -162,7 +200,6 @@ func (s *server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := s.store.Delete(r.PathValue("id"), r.Header.Get("X-Share-Token"), s.now())
-	noStore(w)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -176,7 +213,6 @@ func (s *server) handleBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	blob, err := s.store.Get(r.PathValue("id"), s.now())
-	noStore(w)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -199,14 +235,11 @@ func (s *server) handleViewer(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	noStore(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 	w.Write(s.viewer)
 }
 
 func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	noStore(w)
 	w.Write([]byte("ok\n"))
 }
 
@@ -217,13 +250,4 @@ func (s *server) authorized(r *http.Request) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(token), []byte(s.secret)) == 1
-}
-
-// Ничего из этого сервиса не кэшируется. Промежуточный кэш, сохранивший
-// шифротекст, пережил бы отзыв публикации — то есть «Снять с публикации»
-// перестало бы что-либо значить.
-func noStore(w http.ResponseWriter) {
-	w.Header().Set("Cache-Control", "private, no-store")
-	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
 }

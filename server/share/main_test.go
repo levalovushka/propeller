@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -246,13 +247,29 @@ func TestViewerIsNotAnExistenceOracle(t *testing.T) {
 }
 
 // Кэш, переживший отзыв, сделал бы «Снять с публикации» бессмысленным.
-func TestNothingIsCacheable(t *testing.T) {
+//
+// Отказы проверяются вместе с удачными ответами: заголовки раньше ставил
+// каждый обработчик сам, и 401 с 404 уезжали голыми. Плюс ровно одна строка
+// на заголовок — двойную ставили обработчик и Caddy разом.
+func TestNoAnswerIsCacheableIncludingRefusals(t *testing.T) {
 	srv, _ := newTestServer(t)
 	id, _ := create(t, srv, "ciphertext", "month")
-	for _, path := range []string{"/s/" + id, "/api/blob/" + id} {
-		rec := do(t, srv, httptest.NewRequest("GET", path, nil))
-		if got := rec.Header().Get("Cache-Control"); got != "private, no-store" {
-			t.Errorf("%s: Cache-Control = %q", path, got)
+
+	cases := map[string]*http.Request{
+		"viewer":  httptest.NewRequest("GET", "/s/"+id, nil),
+		"blob":    httptest.NewRequest("GET", "/api/blob/"+id, nil),
+		"health":  httptest.NewRequest("GET", "/api/health", nil),
+		"missing": httptest.NewRequest("GET", "/api/blob/AAAAAAAAAAAAAAAAAAAAAA", nil),
+		"denied":  httptest.NewRequest("POST", "/api/shares", bytes.NewBufferString("x")),
+	}
+	for name, req := range cases {
+		rec := do(t, srv, req)
+		values := rec.Header().Values("Cache-Control")
+		if len(values) != 1 || values[0] != "private, no-store" {
+			t.Errorf("%s: Cache-Control = %q", name, values)
+		}
+		if got := rec.Header().Values("X-Robots-Tag"); len(got) != 1 {
+			t.Errorf("%s: X-Robots-Tag = %q", name, got)
 		}
 	}
 }
@@ -280,4 +297,21 @@ func TestRateLimit(t *testing.T) {
 	if rec := do(t, srv, req); rec.Code != 200 {
 		t.Fatalf("another address got %d, want 200", rec.Code)
 	}
+}
+
+// Ограничитель, который верит первой записи `X-Forwarded-For`, обходится одной
+// строкой заголовка: клиент называет себя новым адресом на каждый запрос, а
+// прокси дописывает настоящий в хвост. Ведро обязано выбираться по хвосту.
+func TestAForgedForwardedForBuysNoNewBucket(t *testing.T) {
+	srv, _ := newTestServer(t)
+	id, _ := create(t, srv, "ciphertext", "month")
+
+	for i := range 40 {
+		req := httptest.NewRequest("GET", "/api/blob/"+id, nil)
+		req.Header.Set("X-Forwarded-For", fmt.Sprintf("10.0.0.%d, 203.0.113.9", i))
+		if do(t, srv, req).Code == 429 {
+			return
+		}
+	}
+	t.Fatal("forty reads from one address, each claiming a different one, never hit the limit")
 }

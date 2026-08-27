@@ -217,7 +217,9 @@ function render(doc) {
   sign();
 }
 
-async function open() {
+// Не `open`: на верхнем уровне классического скрипта это имя затирает
+// `window.open`, и страница молча ломает всё, что попробует его позвать.
+async function openShare() {
   const id = idFromPath();
   const key = keyFromHash();
   if (!id || !key) {
@@ -252,7 +254,7 @@ async function open() {
   }
 }
 
-open();
+openShare();
 </script>
 </body>
 </html>

@@ -25,9 +25,12 @@ open -a Propeller
 | `vocab/` | Russian meeting jargon → gigastt hotwords (source for the built-in list) |
 | `design/` | UI spec, the principles list, state gallery, «no dead ends» |
 | `tools/` | `gigastt` + models (not in git), Ollama runtime, echo and live-transcript probes |
+| `server/` | What runs on propeller.report: the share service (Go + its viewer page) and a copy of the Caddy config. See [`SERVER.md`](SERVER.md) |
+| `site/` | The landing page, deployed by `.github/workflows/deploy-site.yml` |
 | `product-ideas.md` | Idea / decision ledger (killed / deferred with reasons) |
 | `archive/` | Decision history — plans, reviews, migration brief, phase status notes, retired docs. Superseded by `STATE.md` wherever they disagree. |
 | `DOCS.md` | Documentation layers and rules: what goes where |
+| `SERVER.md` | The propeller.report machine: access, what runs on it, the share contract |
 | `propellericon.icon` | App icon (Icon Composer) |
 
 **Source of truth: [`STATE.md`](STATE.md)** — component-by-component status and open defects. When any other document disagrees with it, `STATE.md` wins.

@@ -129,16 +129,21 @@ final class ShareService: ObservableObject {
         return url
     }
 
-    /// Снимает публикацию. Запись стирается местно даже если сервер ответил
-    /// 404: 404 — это и есть «такой ссылки больше нет», а держать у себя
-    /// запись о несуществующем шере значит показывать кнопку, которая врёт.
+    /// Снимает публикацию — и забывает её **только если сервер подтвердил**.
+    ///
+    /// 404 подтверждением считается: он и означает «такой ссылки больше нет»
+    /// (§3.6), а держать запись о несуществующем шере значит показывать
+    /// кнопку, которая врёт. Разбор 404 живёт в `ShareClient.revoke`.
+    ///
+    /// А вот оборванная сеть или 500 — не подтверждение. Стирать запись здесь
+    /// (первая версия делала это через `defer`) значит потерять токен: ссылка
+    /// осталась бы живой до конца срока, и отозвать её было бы уже нечем.
+    /// Лучше показать ошибку и оставить кнопку, чем молча выбросить ключ.
     func unpublish(meetingID: String) async throws {
         guard let record = records[meetingID] else { return }
-        defer {
-            records[meetingID] = nil
-            save()
-        }
         try await client.revoke(id: record.id, token: record.token)
+        records[meetingID] = nil
+        save()
     }
 
     // MARK: - Файл со списком
@@ -206,8 +211,13 @@ struct ShareClient {
     func publish(blob: Data, lifetime: ShareService.Lifetime) async throws -> Published {
         guard let secret, !secret.isEmpty else { throw ShareError.noSecret }
 
-        var request = URLRequest(url: base.appendingPathComponent("api/shares"))
-        request.url = URL(string: request.url!.absoluteString + "?ttl=" + lifetime.rawValue)
+        var components = URLComponents(
+            url: base.appendingPathComponent("api/shares"), resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [URLQueryItem(name: "ttl", value: lifetime.rawValue)]
+        guard let url = components?.url else { throw ShareError.malformedLink }
+
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer " + secret, forHTTPHeaderField: "Authorization")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
