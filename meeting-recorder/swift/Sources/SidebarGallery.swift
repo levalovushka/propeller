@@ -207,7 +207,12 @@ enum SidebarGallery {
         static let model = SidebarModel(
             nav: [
                 .init(id: "record", symbol: SidebarNavItem.propellerMarkSymbol, title: "Новая запись", hint: .shortcut("⌘R")),
-                .init(id: "projects", symbol: "folder.fill", title: "Проекты", isEnabled: false),
+                // Не `isEnabled: false`: раздел открылся 2026-08-27, а поза
+                // осталась с той недели, когда его ещё не было. Выключенной
+                // строки навигации приложение больше не строит нигде
+                // (`SidebarPresenter`), и кадр, который её показывал, обещал
+                // состояние, которого нет.
+                .init(id: "projects", symbol: "folder.fill", title: "Проекты"),
                 .init(id: "settings", symbol: "gearshape.fill", title: "Настройки"),
             ],
             body: .archive(groups: [
