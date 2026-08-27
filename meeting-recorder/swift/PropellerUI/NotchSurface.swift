@@ -103,32 +103,62 @@ public struct NotchFace: NSViewRepresentable {
     }
 
     public func updateNSView(_ view: NotchPlateView, context: Context) {
-        view.apply(
-            screen: screen, stage: stage,
-            controls: NotchControls(
-                paused: paused, muted: muted, canMute: canMute,
-                interactive: stage == .open,
-                onMute: onMute, onPause: onPause, onStop: onStop
-            )
-        )
+        let live = stage == .open
+        view.apply(screen: screen, stage: stage, buttons: [
+            NotchButton(symbol: muted ? "microphone.slash.fill" : "microphone.fill",
+                        enabled: canMute, interactive: live, action: onMute),
+            // Вейвформа пока не движется, но и не притворяется недоступной
+            // кнопкой: это прибор, нажимать его незачем.
+            NotchButton(symbol: "waveform.mid", interactive: live, action: nil),
+            NotchButton(symbol: paused ? "play.fill" : "pause.fill",
+                        enabled: true, interactive: live, action: onPause),
+            NotchButton(symbol: "stop.fill", enabled: true, interactive: live, action: onStop),
+        ])
     }
 }
 
 public final class NotchPlateView: NSView {
     private let shape = CAShapeLayer()
-    private let controls = NSHostingView(rootView: NotchControls.placeholder)
     private var shown: NotchGeometry.Stage?
     private var screen: NotchGeometry.Screen?
 
-    /// Ход плиты. Раскрытие чуть длиннее ухода: она вырастает при старте записи,
-    /// когда на неё смотрят краем глаза, и уходит на стопе, когда уже не смотрят.
-    private static let openDuration: CFTimeInterval = 0.5
-    private static let sealDuration: CFTimeInterval = 0.42
-    /// Кнопки гаснут быстрее, чем уезжает плита, и появляются позже, чем она
-    /// раздалась: сначала место, потом то, что в нём стоит.
-    private static let controlsFade: CFTimeInterval = 0.22
-    private static let controlsDelay: CFTimeInterval = 0.12
-    private static let timing = CAMediaTimingFunction(controlPoints: 0.22, 1, 0.36, 1)
+    /// Ход плиты. Заметный ease-out: трогается резко, а последнюю четверть пути
+    /// идёт почти стоя — так движение кончается само, а не обрывается.
+    private static let openDuration: CFTimeInterval = 0.55
+    private static let sealDuration: CFTimeInterval = 0.45
+    private static let easeOut = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
+
+    /// Кнопки короче плиты: они догоняют её, а не тянут за собой.
+    private static let buttonDuration: CFTimeInterval = 0.34
+    /// Насколько крайняя кнопка отстаёт от внутренней. Больше — и пара
+    /// перестаёт читаться парой; меньше — и разлёта не видно.
+    private static let stagger: CFTimeInterval = 0.06
+    /// Откуда кнопка приезжает: из-под выреза наружу, то есть к центру плиты.
+    private static let drift: CGFloat = 14
+
+    /// Кнопка и то, как она относится к центру.
+    private enum Slot: CaseIterable {
+        case mic, wave, pause, stop
+
+        /// Крайние (микрофон и стоп) дальше от центра, поэтому и приезжают
+        /// позже: разлёт читается только если он не одновременный.
+        var outer: Bool { self == .mic || self == .stop }
+        /// Левые едут вправо, правые влево — все из центра.
+        var driftSign: CGFloat { (self == .mic || self == .wave) ? 1 : -1 }
+
+        /// Левый край кнопки в координатах плиты.
+        func x(in frame: NotchGeometry.Frame) -> CGFloat {
+            let side = NotchGeometry.buttonSide
+            switch self {
+            case .mic: return frame.groupInset
+            case .wave: return frame.groupInset + side
+            case .pause: return frame.wingWidth + frame.notchWidth
+            case .stop: return frame.wingWidth + frame.notchWidth + side
+            }
+        }
+    }
+
+    private var hosts: [Slot: NSHostingView<NotchButton>] = [:]
 
     init() {
         super.init(frame: .zero)
@@ -137,16 +167,26 @@ public final class NotchPlateView: NSView {
         shape.fillColor = NSColor.black.cgColor
         shape.fillRule = .nonZero
 
-        controls.wantsLayer = true
-        controls.layer?.opacity = 0
-        addSubview(controls)
+        for slot in Slot.allCases {
+            let host = NSHostingView(rootView: NotchButton.placeholder)
+            host.wantsLayer = true
+            host.layer?.opacity = 0
+            addSubview(host)
+            hosts[slot] = host
+        }
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func apply(screen: NotchGeometry.Screen, stage: NotchGeometry.Stage, controls rootView: NotchControls) {
-        controls.rootView = rootView
+    func apply(
+        screen: NotchGeometry.Screen,
+        stage: NotchGeometry.Stage,
+        buttons: [NotchButton]
+    ) {
+        for (slot, button) in zip(Slot.allCases, buttons) {
+            hosts[slot]?.rootView = button
+        }
         let geometryChanged = self.screen != screen
         self.screen = screen
         layoutContents()
@@ -160,7 +200,7 @@ public final class NotchPlateView: NSView {
         // интерфейса, а то, из чего оно начинается.
         guard !first, !geometryChanged else {
             shape.path = target
-            controls.layer?.opacity = opening ? 1 : 0
+            for slot in Slot.allCases { settle(slot, opening: opening) }
             return
         }
 
@@ -168,22 +208,53 @@ public final class NotchPlateView: NSView {
         move.fromValue = shape.presentation()?.path ?? shape.path
         move.toValue = target
         move.duration = opening ? Self.openDuration : Self.sealDuration
-        move.timingFunction = Self.timing
+        move.timingFunction = Self.easeOut
         shape.path = target
         shape.add(move, forKey: "plate")
 
-        guard let controlsLayer = controls.layer else { return }
+        for slot in Slot.allCases { animate(slot, opening: opening) }
+    }
+
+    /// Поставить кнопку в конечное состояние без движения.
+    private func settle(_ slot: Slot, opening: Bool) {
+        guard let layer = hosts[slot]?.layer else { return }
+        layer.opacity = opening ? 1 : 0
+        layer.setValue(opening ? 0 : slot.driftSign * Self.drift,
+                       forKeyPath: "transform.translation.x")
+    }
+
+    /// Кнопка выезжает из центра на своё место и проявляется по дороге; крайние
+    /// отстают от внутренних. На уходе — то же самое задом наперёд, и первыми
+    /// уходят как раз крайние.
+    private func animate(_ slot: Slot, opening: Bool) {
+        guard let layer = hosts[slot]?.layer else { return }
+        let delay = opening
+            ? (slot.outer ? Self.stagger : 0)
+            : (slot.outer ? 0 : Self.stagger)
+        let presented = layer.presentation()
+        let shift = slot.driftSign * Self.drift
+
         let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = controlsLayer.presentation()?.opacity ?? controlsLayer.opacity
+        fade.fromValue = presented?.opacity ?? layer.opacity
         fade.toValue = opening ? 1 : 0
-        fade.duration = Self.controlsFade
-        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        if opening {
-            fade.beginTime = CACurrentMediaTime() + Self.controlsDelay
-            fade.fillMode = .backwards
+
+        let slide = CABasicAnimation(keyPath: "transform.translation.x")
+        slide.fromValue = presented?.value(forKeyPath: "transform.translation.x")
+            ?? layer.value(forKeyPath: "transform.translation.x")
+        slide.toValue = opening ? 0 : shift
+
+        for animation in [fade, slide] {
+            animation.duration = Self.buttonDuration
+            animation.timingFunction = Self.easeOut
+            if delay > 0 {
+                animation.beginTime = CACurrentMediaTime() + delay
+                // Иначе кнопка на время задержки прыгает в конечное состояние.
+                animation.fillMode = .backwards
+            }
         }
-        controlsLayer.opacity = opening ? 1 : 0
-        controlsLayer.add(fade, forKey: "controls")
+        settle(slot, opening: opening)
+        layer.add(fade, forKey: "fade")
+        layer.add(slide, forKey: "slide")
     }
 
     public override func layout() {
@@ -193,20 +264,21 @@ public final class NotchPlateView: NSView {
         shape.path = Self.path(on: screen, stage: shown, in: bounds)
     }
 
-    /// Кнопки стоят в раскрытой плите: между скосами, по высоте выреза. В
-    /// свёрнутой их не видно, поэтому раскладка у них одна.
+    /// Кнопки стоят в раскрытой плите; в свёрнутой их не видно, поэтому
+    /// раскладка у них одна.
     private func layoutContents() {
         shape.frame = bounds
         guard let screen else { return }
         let frame = NotchGeometry.frame(on: screen, stage: .open)
-        // Пары прижаты к вырезу: контейнер — это сам вырез плюс по паре кнопок
-        // с каждой стороны, и внутри они разъезжаются к его краям.
-        let width = frame.notchWidth + 2 * frame.groupWidth
-        controls.frame = CGRect(
-            x: (bounds.width - width) / 2,
-            y: bounds.maxY - frame.height,
-            width: width, height: frame.height
-        )
+        let plateLeft = (bounds.width - frame.width) / 2
+        let side = NotchGeometry.buttonSide
+        for slot in Slot.allCases {
+            hosts[slot]?.frame = CGRect(
+                x: plateLeft + slot.x(in: frame),
+                y: bounds.maxY - frame.height + (frame.height - side) / 2,
+                width: side, height: side
+            )
+        }
     }
 
     /// Плита прижата к верхней кромке и стоит по центру выреза; окно под ней
@@ -227,53 +299,17 @@ public final class NotchPlateView: NSView {
     }
 }
 
-/// Четыре кнопки: микрофон и вейвформа слева, пауза/плей и стоп справа.
-public struct NotchControls: View {
-    var paused: Bool
-    var muted: Bool
-    var canMute: Bool
-    var interactive: Bool
-    var onMute: () -> Void
-    var onPause: () -> Void
-    var onStop: () -> Void
-
-    static let placeholder = NotchControls(
-        paused: false, muted: false, canMute: false, interactive: false,
-        onMute: {}, onPause: {}, onStop: {}
-    )
-
-    public var body: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: NotchGeometry.buttonGap) {
-                NotchButton(symbol: muted ? "microphone.slash.fill" : "microphone.fill",
-                            enabled: canMute, action: onMute)
-                // Вейвформа пока не движется, но и не притворяется недоступной
-                // кнопкой: это прибор, нажимать его незачем.
-                NotchButton(symbol: "waveform.mid", action: nil)
-            }
-            Spacer(minLength: 0)
-            HStack(spacing: NotchGeometry.buttonGap) {
-                NotchButton(symbol: paused ? "play.fill" : "pause.fill",
-                            enabled: true, action: onPause)
-                NotchButton(symbol: "stop.fill", enabled: true, action: onStop)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // Плита чёрная при любой теме системы, значит и всё, что AppKit рисует
-        // внутри неё сам, должно считать себя тёмным.
-        .environment(\.colorScheme, .dark)
-        .allowsHitTesting(interactive)
-    }
-}
-
 /// Кнопка в крыле: знак 16 в поле 32, без подложки.
 ///
 /// Подложки нет намеренно: в чёрной плите любое пятно читается как вторая
 /// фигура, а не как мишень. Наведение объявляет себя яркостью.
-struct NotchButton: View {
+public struct NotchButton: View {
     var symbol: String
     /// Кнопка есть, но нажать её сейчас нельзя (мьют на микрофонном пути).
     var enabled: Bool = true
+    /// Плита раскрыта — по кнопке можно попасть. В свёрнутой её не видно, и
+    /// ловить клики она не должна.
+    var interactive: Bool = true
     /// `nil` — это не кнопка вовсе, а показание прибора: яркость обычная,
     /// наведения нет, нажимать нечего.
     var action: (() -> Void)?
@@ -294,7 +330,7 @@ struct NotchButton: View {
     /// делается своей `withAnimation`, и тогда переход отрабатывает.
     @State private var shown: String = ""
 
-    private var glyph: some View {
+    @ViewBuilder private var glyph: some View {
         ZStack {
             Image(systemName: shown.isEmpty ? symbol : shown)
                 .font(.system(size: 16, weight: .regular))
@@ -310,13 +346,16 @@ struct NotchButton: View {
         }
     }
 
-    var body: some View {
+    static let placeholder = NotchButton(symbol: "waveform.mid", action: nil)
+
+    public var body: some View {
         if let action {
             Button(action: action) {
                 glyph.contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(!enabled)
+            .allowsHitTesting(interactive)
             .onHover { hovering = enabled && $0 }
         } else {
             glyph.allowsHitTesting(false)
