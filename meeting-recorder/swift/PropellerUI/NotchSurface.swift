@@ -333,7 +333,7 @@ public struct NotchButton: View {
     @ViewBuilder private var glyph: some View {
         ZStack {
             Image(systemName: shown.isEmpty ? symbol : shown)
-                .font(.system(size: 16, weight: .regular))
+                .font(.system(size: NotchGeometry.glyphSize, weight: .regular))
                 .transition(.blurReplace)
                 .id(shown.isEmpty ? symbol : shown)
         }

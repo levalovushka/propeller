@@ -35,6 +35,11 @@ public enum NotchGeometry {
     public static let buttonSide: CGFloat = 32
     public static let buttonGap: CGFloat = 0
 
+    /// Кегль знака. В макете 16, но рядом с системными значками меню-бара
+    /// заполненный SF-символ такого размера читается жирнее их — а стоит он в
+    /// одном ряду с ними и обязан выглядеть им ровней.
+    public static let glyphSize: CGFloat = 14
+
     /// Ширина крыла при этой высоте плиты.
     public static func wingWidth(height: CGFloat) -> CGFloat {
         designWingWidth * height / designHeight
