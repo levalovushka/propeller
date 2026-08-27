@@ -163,14 +163,20 @@ public struct SettingsGroupTitle: View {
 /// Карточка: ячейки и волосяные линии между ними.
 public struct SettingsCard: View {
     private let rows: [AnyView]
+    private let hPadding: CGFloat
 
     public init(@SettingsRows rows: () -> [AnyView]) {
         self.rows = rows()
+        self.hPadding = Tokens.Settings.cardHPadding
     }
 
-    /// Для тех, у кого список уже собран — `SettingsGroup` ниже.
-    public init(rows: [AnyView]) {
+    /// Для тех, у кого список уже собран — `SettingsGroup` ниже, и списки на
+    /// экране проекта. `hPadding` у последних свой: у списка встреч макет даёт
+    /// 16 (256:8831), у списка людей — 14 (256:7570), потому что слева там
+    /// стоит кружок и поле считается от него.
+    public init(hPadding: CGFloat = Tokens.Settings.cardHPadding, rows: [AnyView]) {
         self.rows = rows
+        self.hPadding = hPadding
     }
 
     public var body: some View {
@@ -180,7 +186,7 @@ public struct SettingsCard: View {
                 row
             }
         }
-        .padding(.horizontal, Tokens.Settings.cardHPadding)
+        .padding(.horizontal, hPadding)
         .padding(.vertical, Tokens.Settings.cardVPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(

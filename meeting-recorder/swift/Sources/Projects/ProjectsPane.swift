@@ -49,6 +49,7 @@ struct ProjectsPane: View {
                             name: card.project.name,
                             about: card.project.about,
                             footer: ProjectCardText.footer(meetings: card.meetings, last: card.last),
+                            dimmed: card.project.archived,
                             open: { open(card.project) },
                             menu: { ProjectActionsMenu(state: state, project: card.project) }
                         )

@@ -91,15 +91,6 @@ final class ProjectRosterTests: XCTestCase {
         XCTAssertTrue(ProjectRoster.roster(of: [meeting("1")]).isEmpty)
     }
 
-    /// Заголовок встречи третьим источником не берётся, и это видно по тому,
-    /// что состав такой встречи пуст: вытащить «Даней» из «1×1 с Даней» значило
-    /// бы завести участника в творительном падеже.
-    func testНазваниеВстречиИсточникомНеЯвляется() {
-        // `Meeting` его и не принимает — проверка держит эту границу на месте.
-        let people = ProjectRoster.roster(of: [meeting("1")])
-        XCTAssertTrue(people.isEmpty)
-    }
-
     // MARK: - Вкладки
 
     func testУВкладокЕстьИмяИПерваяИзНихПервая() {

@@ -18,13 +18,17 @@ import PropellerPure
 struct ProjectActionsMenu: View {
     @ObservedObject var state: AppState
     let project: Project
+    /// 12 на карточке в сетке (255:5088), 13 в шапке экрана (256:7618): у
+    /// первой троеточие живёт в строке заголовка карточки, у второй — в строке
+    /// заголовка страницы, и кегль там на пункт крупнее.
+    var iconSize: CGFloat = Tokens.Projects.Typo.action.size
 
     @State private var confirmingDelete = false
 
     var body: some View {
         MinimalIconMenu(
             systemName: "ellipsis",
-            iconSize: Tokens.Projects.Typo.action.size,
+            iconSize: iconSize,
             help: "Действия с проектом"
         ) {
             Button("Редактировать") { state.composeProject(editing: project) }

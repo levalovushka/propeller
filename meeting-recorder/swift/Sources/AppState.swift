@@ -1144,16 +1144,16 @@ class AppState: ObservableObject {
         return project
     }
 
-    func renameProject(_ id: String, name: String, about: String) {
-        guard var project = projects.first(where: { $0.id == id }) else { return }
+    @discardableResult
+    func renameProject(_ id: String, name: String, about: String) -> Bool {
+        guard let project = projects.first(where: { $0.id == id }) else { return false }
         let renamed = Project(
             id: project.id, name: name, about: about,
             archived: project.archived, createdAt: project.createdAt
         )
-        guard !renamed.isEmpty else { return }
-        project = renamed
-        guard recordingStore.saveProject(project) else { return }
+        guard !renamed.isEmpty, recordingStore.saveProject(renamed) else { return false }
         reloadProjects()
+        return true
         // Имя проекта лежит и в документах встреч — вторая копия, переживающая
         // откат сборки (`Project.plainHeaderLines`). Переписывать их все здесь
         // не за чем: документ перезаписывается вместе со встречей, и до тех пор
@@ -1195,7 +1195,9 @@ class AppState: ObservableObject {
     func commitProjectDraft() -> Bool {
         guard let draft = projectDraft else { return false }
         if let id = draft.editing {
-            renameProject(id, name: draft.name, about: draft.about)
+            // Не применилось — плиту не закрываем: закрыть её значило бы
+            // сказать «сохранено» про правку, которой не случилось.
+            guard renameProject(id, name: draft.name, about: draft.about) else { return false }
         } else {
             guard createProject(name: draft.name, about: draft.about) != nil else { return false }
         }

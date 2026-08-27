@@ -235,6 +235,22 @@ final class RecapItemEditTests: XCTestCase {
         """)
     }
 
+    /// Документ с виндовыми переводами строк не правится вовсе — и это верный
+    /// ответ, а не недосмотр. `RecapDigest`, которому этот модуль обязан
+    /// совпадать, возврат каретки не снимает: заголовок в таком файле для него
+    /// «Решения\r», и `section(named: "Решения")` не находит ничего. Значит и
+    /// пункта, за который отвечает вызывающий, там нет. Отказ честнее, чем
+    /// правка по догадке.
+    func testДокументСВиндовымиПереводамиСтрокНеПравится() {
+        let text = "## Решения\r\n- раз\r\n- два\r\n"
+        XCTAssertNil(RecapDigest.parse(text).section(named: "Решения"))
+        for probe in ["два", "два\r"] {
+            let target = RecapItemEdit.Target(section: "Решения", index: 1, text: probe)
+            XCTAssertNil(RecapItemEdit.replacing(target, in: text, with: "три"), probe)
+            XCTAssertNil(RecapItemEdit.removing(target, from: text), probe)
+        }
+    }
+
     /// The file ends without a trailing newline as often as with one, and
     /// nothing about an edit should add or drop it.
     func testTrailingNewlineIsNeitherAddedNorDropped() {

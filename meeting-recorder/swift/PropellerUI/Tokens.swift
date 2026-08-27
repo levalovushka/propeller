@@ -1560,14 +1560,16 @@ public enum Tokens {
         /// (255:5089) — три строки, и обрезка тут не жадность, а строй: подпись
         /// внизу карточки обязана стоять на одной высоте у всех восьми.
         public static let aboutLines = 3
-        /// «Вчера» · «12 встреч».
-        public static let footerGap = Space.s4
         public static let cardFill = Primitive.ink(dark: Primitive.AlphaWhite.a7,
                                                    light: Primitive.AlphaBlack.a7)
         public static let cardHoverFill = Primitive.ink(dark: Primitive.AlphaWhite.a10,
                                                         light: Primitive.AlphaBlack.a10)
         public static let title = Primitive.ink(dark: Primitive.AlphaWhite.a90,
                                                 light: Primitive.AlphaBlack.a88)
+        /// Насколько приглушена архивная карточка. Она стоит в конце сетки и
+        /// обязана читаться как «убрано», но остаться нажимаемой: вернуть проект
+        /// из архива можно только её меню.
+        public static let archivedOpacity: Double = 0.45
         /// Описание и подпись — один тихий цвет на оба.
         public static let quiet = Primitive.ink(dark: Primitive.AlphaWhite.a40,
                                                 light: Primitive.AlphaBlack.a48)
@@ -1664,14 +1666,15 @@ public enum Tokens {
 
         // MARK: Экран проекта — 256:6954 / 256:7467
 
-        /// Числа сняты с макета по узлам; **цвет и начертание новых строк взяты
-        /// из соседних поверхностей, а не с макета** — файл Figma в момент
-        /// стройки был недоступен. Геометрия измерена, краска выведена.
         public enum Screen {
-            /// Шапка: имя 24, описание 66, подпись 14.
+            /// Имя проекта → описание (256:7663).
             public static let headerGap = Space.s10
+            /// Описание → «Показать больше».
             public static let aboutGap = Space.s12
-            /// Описание проекта — три строки телом саммари (66 = 3 × 22).
+            /// Мера текста шапки. 500 при колонке 577: описание проекта читают,
+            /// а не сканируют, и строка в 577 для 13 pt длинна.
+            public static let aboutMeasure: CGFloat = 500
+            /// Сколько строк описания видно, пока не развернули.
             public static let aboutLines = 3
             /// Шапка → полоса вкладок.
             public static let tabsGap = Space.s40
@@ -1680,22 +1683,35 @@ public enum Tokens {
             /// Между вкладками. Двойка, а не восьмёрка: вкладки — один предмет
             /// с четырьмя положениями, а не четыре кнопки.
             public static let tabGap = Space.s2
-            /// Боковой вылет строки встречи за меру списка (256:8832).
-            public static let meetingInset = Space.s16
-            /// У человека он на две точки меньше — там слева стоит кружок,
-            /// и вылет считается от него (256:7571).
-            public static let personInset: CGFloat = 14
+
+            /// Оба списка — карточка настроек (`SettingsCard`): та же заливка 7 %,
+            /// то же скругление 14, те же волосяные линии между строками. Поле
+            /// по бокам разное и снято с макета.
+            public static let meetingCardHPadding = Space.s16
+            public static let personCardHPadding: CGFloat = 14
+            /// Строка списка — 12 сверху и снизу (256:8832, 256:7571).
             public static let rowVPadding = Space.s12
-            /// Строка встречи: «22 августа · 45 минут» → две строки темы.
+            /// Между двумя строками текста внутри строки списка.
             public static let rowLineGap = Space.s2
-            public static let meetingLines = 2
-            /// Кружок человека.
+            /// Между частями тихой строки: «Название · Вчера, 22 августа».
+            public static let metaGap = Space.s4
+            /// Мера строки-темы. Та же 500, что у описания.
+            public static let rowMeasure: CGFloat = 500
+
+            /// Между группами встреч.
+            public static let groupGap = Space.s24
+            /// Заголовок группы → её карточка.
+            public static let groupHeaderGap = Space.s8
+            /// Отступ заголовка группы слева — как у заголовка группы настроек.
+            public static let groupHeaderInset = Space.s8
+
+            /// Кружок человека — квадрат со скруглением 6, а не круг (256:7672).
             public static let avatarSide = Space.s32
+            public static let avatarRadius = Radius.xxs
             public static let avatarGap = Space.s10
-            public static let avatarFill = Primitive.ink(dark: Primitive.AlphaWhite.a7,
-                                                         light: Primitive.AlphaBlack.a7)
-            public static let divider = Primitive.ink(dark: Primitive.AlphaWhite.a7,
-                                                      light: Primitive.AlphaBlack.a7)
+            public static let avatarFill = Primitive.ink(dark: Primitive.AlphaWhite.a5,
+                                                         light: Primitive.AlphaBlack.a5)
+
             public static let rowHoverFill = Primitive.ink(dark: Primitive.AlphaWhite.a5,
                                                            light: Primitive.AlphaBlack.a5)
             public static let rowRadius = Radius.xs
@@ -1726,9 +1742,15 @@ public enum Tokens {
             /// 17 / 24 — имя проекта на его экране. Тот же, что у заголовка
             /// раздела: это заголовок страницы и есть.
             public static let screenTitle = Settings.Typo.page
-            /// 14 / 22 — описание проекта на его экране. Бокс 66 при трёх
-            /// строках (256:7030) — это тело саммари, а не подпись карточки.
-            public static let screenBody = Pane.Typo.body
+            /// 13 / 22 — описание проекта на его экране (256:7544). Кегель
+            /// строки, интерлиньяж абзаца: это единственный на экране текст,
+            /// который читают подряд.
+            public static let screenBody = Typography.Style(
+                size: 13, lineHeight: 22, weight: .regular,
+                weightTrim: Typography.railWeightTrim
+            )
+            /// 11 / 14 — заголовок группы встреч. Тот же, что у даты в рельсе.
+            public static let groupHeader = Sidebar.Typo.sectionHeader
         }
     }
 

@@ -100,14 +100,26 @@ final class ProjectCardTextTests: XCTestCase {
         XCTAssertEqual(cards.ordered(by: .recent).first?.project.name, "Только что заведён")
     }
 
-    func testАрхивныхВСеткеНетНиВОдномПорядке() {
+    /// Архивный проект стоит **в конце**, а не за пределами экрана: убрать его
+    /// туда умеет меню карточки, и если карточки не будет, вернуть его будет
+    /// нечем. Это дверь в один конец, и её здесь нет.
+    func testАрхивныеУходятВКонецАНеИсчезают() {
         let cards = [
-            summary("Живой", last: 10),
-            summary("Архивный", last: 1, archived: true),
+            summary("Архивный свежий", last: 1, archived: true),
+            summary("Живой старый", last: 10),
+            summary("Живой свежий", last: 2),
         ]
         for order in ProjectOrder.allCases {
-            XCTAssertEqual(cards.ordered(by: order).map(\.project.name), ["Живой"], order.rawValue)
+            let names = cards.ordered(by: order).map(\.project.name)
+            XCTAssertEqual(names.count, 3, order.rawValue)
+            XCTAssertEqual(names.last, "Архивный свежий", order.rawValue)
         }
+        // Порядок внутри живых при этом свой, а не «архивные в конце и всё».
+        XCTAssertEqual(
+            cards.ordered(by: .recent).map(\.project.name),
+            ["Живой свежий", "Живой старый", "Архивный свежий"]
+        )
+        XCTAssertEqual(cards.live.map(\.project.name), ["Живой старый", "Живой свежий"])
     }
 
     func testПоАлфавитуНеЗависитОтРегистра() {

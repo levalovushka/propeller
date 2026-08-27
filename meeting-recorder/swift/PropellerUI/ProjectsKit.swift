@@ -132,6 +132,9 @@ public struct ProjectCard<Menu: View>: View {
     private let name: String
     private let about: String
     private let footer: String
+    /// Архивный проект стоит в конце сетки приглушённым. Прятать его совсем
+    /// нельзя: убрать в архив умеет меню карточки, а вернуть было бы нечем.
+    private let dimmed: Bool
     private let open: () -> Void
     private let menu: () -> Menu
 
@@ -141,12 +144,14 @@ public struct ProjectCard<Menu: View>: View {
         name: String,
         about: String,
         footer: String,
+        dimmed: Bool = false,
         open: @escaping () -> Void,
         @ViewBuilder menu: @escaping () -> Menu
     ) {
         self.name = name
         self.about = about
         self.footer = footer
+        self.dimmed = dimmed
         self.open = open
         self.menu = menu
     }
@@ -198,6 +203,7 @@ public struct ProjectCard<Menu: View>: View {
             in: RoundedRectangle(cornerRadius: Tokens.Projects.cardRadius, style: .continuous)
         )
         .clipShape(RoundedRectangle(cornerRadius: Tokens.Projects.cardRadius, style: .continuous))
+        .opacity(dimmed ? Tokens.Projects.archivedOpacity : 1)
         .contentShape(Rectangle())
         .onTapGesture(perform: open)
         .onHover { hovering = $0 }
@@ -444,47 +450,53 @@ public struct ProjectTabBar: View {
     }
 }
 
-/// Волосяная линия между строками списка. Между, а не после каждой: последняя
-/// строка не отделяется от пустоты под собой.
-public struct ProjectRowDivider: View {
-    public init() {}
-
-    public var body: some View {
-        Rectangle()
-            .fill(Tokens.Projects.Screen.divider)
-            .frame(height: Tokens.Settings.dividerHeight)
-    }
-}
-
-/// Строка встречи в проекте — Figma 256:8832.
+/// Строка встречи в списке проекта — Figma 256:8832.
+///
+/// Сверху тихая строка «название · когда» и длительность справа, снизу — то, о
+/// чём встреча была. Порядок именно такой: в списке одного проекта названия
+/// повторяются («Дейлик», «Дейлик», «Дейлик»), и различает встречи вторая
+/// строка, а не первая.
 public struct ProjectMeetingRow: View {
-    private let meta: String
-    private let subtitle: String
+    private let title: String
+    private let when: String
+    private let duration: String
+    private let subject: String
     private let open: () -> Void
 
     @State private var hovering = false
 
-    public init(meta: String, subtitle: String, open: @escaping () -> Void) {
-        self.meta = meta
-        self.subtitle = subtitle
+    public init(
+        title: String, when: String, duration: String, subject: String,
+        open: @escaping () -> Void
+    ) {
+        self.title = title
+        self.when = when
+        self.duration = duration
+        self.subject = subject
         self.open = open
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Projects.Screen.rowLineGap) {
-            Text(meta)
-                .typo(Tokens.Projects.Typo.body)
-                .foregroundStyle(Tokens.Projects.quiet)
-            if !subtitle.isEmpty {
-                Text(subtitle)
+            HStack(spacing: Tokens.Projects.Screen.metaGap) {
+                Text(title).lineLimit(1)
+                if !when.isEmpty {
+                    Text("·")
+                    Text(when).lineLimit(1)
+                }
+                Spacer(minLength: Tokens.Projects.Screen.metaGap)
+                if !duration.isEmpty { Text(duration) }
+            }
+            .typo(Tokens.Projects.Typo.body)
+            .foregroundStyle(Tokens.Projects.quiet)
+            if !subject.isEmpty {
+                Text(subject)
                     .typo(Tokens.Projects.Typo.title)
-                    .foregroundStyle(Tokens.Projects.title)
-                    .lineLimit(Tokens.Projects.Screen.meetingLines)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .foregroundStyle(Tokens.Settings.title)
+                    .frame(maxWidth: Tokens.Projects.Screen.rowMeasure, alignment: .topLeading)
             }
         }
         .padding(.vertical, Tokens.Projects.Screen.rowVPadding)
-        .padding(.horizontal, Tokens.Projects.Screen.meetingInset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             hovering ? Tokens.Projects.Screen.rowHoverFill : .clear,
@@ -499,9 +511,9 @@ public struct ProjectMeetingRow: View {
 
 /// Строка человека — Figma 256:7571.
 ///
-/// Кружок с инициалом, а не аватар: картинок у нас нет и взять их неоткуда, а
-/// пустой серый круг на каждой строке — это обещание фотографии, которого никто
-/// не сдержит.
+/// Значок один на всех и родовой: аватаров у нас нет и взять их неоткуда, а
+/// инициал в кружке — обещание портрета, которого никто не сдержит. В макете
+/// он такой же.
 public struct ProjectPersonRow: View {
     private let name: String
     private let subtitle: String
@@ -511,32 +523,34 @@ public struct ProjectPersonRow: View {
         self.subtitle = subtitle
     }
 
-    private var initial: String {
-        String(name.trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
-    }
-
     public var body: some View {
         HStack(spacing: Tokens.Projects.Screen.avatarGap) {
-            Text(initial)
-                .typo(Tokens.Projects.Typo.title)
+            Image(systemName: "person.fill")
+                .font(.system(size: Tokens.Projects.Typo.title.size, weight: .regular))
                 .foregroundStyle(Tokens.Projects.quiet)
                 .frame(width: Tokens.Projects.Screen.avatarSide,
                        height: Tokens.Projects.Screen.avatarSide)
-                .background(Tokens.Projects.Screen.avatarFill, in: Circle())
+                .background(
+                    Tokens.Projects.Screen.avatarFill,
+                    in: RoundedRectangle(
+                        cornerRadius: Tokens.Projects.Screen.avatarRadius, style: .continuous
+                    )
+                )
             VStack(alignment: .leading, spacing: Tokens.Projects.Screen.rowLineGap) {
                 Text(name)
                     .typo(Tokens.Projects.Typo.title)
-                    .foregroundStyle(Tokens.Projects.title)
+                    .foregroundStyle(Tokens.Settings.title)
                     .lineLimit(1)
-                Text(subtitle)
-                    .typo(Tokens.Projects.Typo.body)
-                    .foregroundStyle(Tokens.Projects.quiet)
-                    .lineLimit(1)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .typo(Tokens.Projects.Typo.body)
+                        .foregroundStyle(Tokens.Projects.quiet)
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 0)
         }
         .padding(.vertical, Tokens.Projects.Screen.rowVPadding)
-        .padding(.horizontal, Tokens.Projects.Screen.personInset)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

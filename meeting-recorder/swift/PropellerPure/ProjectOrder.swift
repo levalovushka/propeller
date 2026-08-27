@@ -40,11 +40,26 @@ public struct ProjectSummary: Equatable, Identifiable, Sendable {
 }
 
 public extension Array where Element == ProjectSummary {
-    /// Archived projects are not here at all: they leave the field of view but
-    /// not the data (`plan-projects.md` §8). Filtering happens before sorting so
-    /// the caller cannot forget it and get an archived project in the grid.
+    /// Живые проекты в выбранном порядке, следом — архивные, тем же порядком.
+    ///
+    /// Архив стоит **в самом низу, а не за пределами экрана** (`plan-projects.md`
+    /// §4.2, второй из двух допущенных вариантов). Первый — не показывать вовсе
+    /// — здесь оказался дверью в один конец: убрать проект в архив может меню
+    /// карточки, а вернуть его было бы нечем, потому что карточки уже нет.
+    /// Пока «заглушенный короткий вид» не нарисован, архивная карточка — та же
+    /// карточка, приглушённая.
     func ordered(by order: ProjectOrder) -> [ProjectSummary] {
-        let live = filter { !$0.project.archived }
+        let live = filter { !$0.project.archived }.sorted(by: order)
+        let archived = filter { $0.project.archived }.sorted(by: order)
+        return live + archived
+    }
+
+    /// Только живые. Сетке она не нужна — та показывает и архивные, — но
+    /// «сколько у человека действующих проектов» спрашивают и другие места.
+    var live: [ProjectSummary] { filter { !$0.project.archived } }
+
+    private func sorted(by order: ProjectOrder) -> [ProjectSummary] {
+        let live = self
         switch order {
         case .recent:
             return live.sorted {

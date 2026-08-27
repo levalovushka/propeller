@@ -19,6 +19,12 @@ import Foundation
 /// same rule for continuation lines — and rewrites only the lines that item
 /// occupies. Every other byte comes back unchanged.
 ///
+/// A document with Windows line endings is not edited at all, and that is the
+/// right answer rather than an oversight: `RecapDigest`, which this module is
+/// bound to agree with, does not strip the carriage return, so a heading there
+/// reads as `Решения\r` and `section(named:)` finds nothing. If the caller could
+/// not have got an item out, there is no item to put back.
+///
 /// Nothing here decides *what* an item means. The checkbox and the owner chip
 /// are markup inside the item's text (`plan-projects.md` §4.1), and parsing
 /// them is a separate job; this module only moves lines.
@@ -193,7 +199,10 @@ public enum RecapItemEdit {
         guard !trimmed.isEmpty else { return nil }
 
         var lines = markdown.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        lines.replaceSubrange(found.lines, with: [found.indent + found.marker + trimmed])
+        // Возврат каретки — часть строки, а не разделитель: файл, пришедший с
+        // CRLF, не должен получить одну строку из двадцати с другим окончанием.
+        let carriage = lines[found.lines.upperBound].hasSuffix("\r") ? "\r" : ""
+        lines.replaceSubrange(found.lines, with: [found.indent + found.marker + trimmed + carriage])
         return lines.joined(separator: "\n")
     }
 
