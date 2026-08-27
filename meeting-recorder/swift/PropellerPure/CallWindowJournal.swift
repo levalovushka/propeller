@@ -506,6 +506,81 @@ public enum CallWindowJournal {
         return machine.spans()
     }
 
+    /// Участник встречи, каким его видно в трассе.
+    public struct Member: Equatable, Sendable {
+        /// Написание из плитки — то, как человек назвал себя в звонилке.
+        public let name: String
+        /// В скольких опросах его плитка была видна. Вес, который
+        /// `plan-people.md` §8 просит для наименования: кластер на девять секунд
+        /// называть нельзя, и решать это должно чем-то измеримым.
+        public let polls: Int
+        /// Первая и последняя секунда встречи, где его видели.
+        public let first: Double
+        public let last: Double
+
+        public init(name: String, polls: Int, first: Double, last: Double) {
+            self.name = name
+            self.polls = polls
+            self.first = first
+            self.last = last
+        }
+    }
+
+    /// Кто был на встрече — объединение имён плиток по всей трассе.
+    ///
+    /// Не «кто говорил в секунду `t`», а «кого вообще показывали». Журнал
+    /// отвечает на первый вопрос, и до 2026-08-27 на второй не отвечал никто,
+    /// кроме `soleCompanion` — а тот закрывает только класс 1×1.
+    ///
+    /// **Замер на 19 живых трассах владельца (226 676 плиток):** объединение
+    /// даёт 68 имён, все живые, против 91 подписи ленты, из которых имён только
+    /// 57 — остальное `Speaker N`. То есть там, где трасса есть, состав из плиток
+    /// и полнее, и чище того, что читается из расшифровки.
+    ///
+    /// **Ответ — «кого видели хоть раз за встречу», а не «кто был»,** и разница
+    /// не формальная: молчавший с закрытой камерой в галерее плитку имеет
+    /// (замеренный формат несёт `Video off`), а в виде «Динамик» плиток мало, а
+    /// при демонстрации экрана они исчезают вовсе (`Silence.noTiles`). Полнота
+    /// зависит от того, как человек смотрел встречу, и обещать больше нечем.
+    ///
+    /// **Владелец здесь остаётся.** Его Zoom-имя — такая же плитка, и вычесть его
+    /// тут нечем: `ownerZoomName` живёт в префах, а это чистый слой. Убирает
+    /// вызывающий — так же, как это делает лента.
+    ///
+    /// **Порога по весу нет, и это замер, а не упущение:** те же 19 трасс дали
+    /// **0 из 68** имён, видных меньше чем в шести опросах или меньше чем в 5 %
+    /// встречи. Порог, отсекающий пустое множество, — правило без образца; вес
+    /// уходит наружу, и отсечёт по нему вызывающий, когда образец появится.
+    ///
+    /// **Панель участников (`AXRow`) в состав не входит.** В тех же 19 трассах её
+    /// строк **ноль** — формат мерить не на чем, а строка чата, ставшая
+    /// участником, это ровно то выдуманное имя, которое здесь запрещено.
+    /// Наблюдатель их уже собирает (`CallWindowObserver.snapshot`), так что
+    /// правило допишется в день, когда в трассе появится первый образец.
+    public static func roster(from polls: [Poll], tuning: Tuning = Tuning()) -> [Member] {
+        var seen: [String: (polls: Int, first: Double, last: Double)] = [:]
+        for poll in polls {
+            // Множество, а не список: у человека, демонстрирующего экран, плиток
+            // в одном опросе бывает две — это один участник, а не два опроса.
+            for name in Set(namedTiles(in: poll, tuning: tuning).map(\.name)) {
+                guard let known = seen[name] else {
+                    seen[name] = (1, poll.t, poll.t)
+                    continue
+                }
+                seen[name] = (known.polls + 1, min(known.first, poll.t), max(known.last, poll.t))
+            }
+        }
+        return seen
+            .map { Member(name: $0.key, polls: $0.value.polls, first: $0.value.first, last: $0.value.last) }
+            .sorted {
+                // Тяжёлые вперёд, при равенстве по алфавиту — тот же порядок, что
+                // у `ProjectRoster.roster`: список людей в двух местах приложения
+                // не должен сортироваться двумя способами.
+                if $0.polls != $1.polls { return $0.polls > $1.polls }
+                return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+    }
+
     /// The 1×1 shortcut: when the whole trace shows exactly two named tiles —
     /// the owner's and one other, constant — the far side is one person, and
     /// every far-side remark carries that name **without any speaking signal**.

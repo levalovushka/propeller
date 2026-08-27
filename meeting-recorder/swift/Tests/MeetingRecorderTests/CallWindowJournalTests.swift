@@ -508,6 +508,106 @@ final class CallWindowJournalTests: XCTestCase {
         XCTAssertNil(live.name(at: 500.0))
     }
 
+    // MARK: - Состав встречи: объединение плиток по всей трассе
+
+    func testСоставСобираетИмёнаИзРазныхОпросов() {
+        // Плитки приходят и уходят вместе с видом: тот, кого видели только в
+        // начале, участник ровно так же, как тот, кого видели только в конце.
+        let polls: [CallWindowJournal.Poll] = [
+            .init(t: 0.0, tiles: [tile(levon, w: 608, h: 342), tile(leva, w: 608, h: 342)]),
+            .init(t: 0.4, tiles: [tile(levon, w: 608, h: 342), tile(leva, w: 608, h: 342)]),
+            .init(t: 0.8, tiles: [
+                tile(levon, w: 608, h: 342),
+                tile("Анна Пример, Звук компьютера включен, Video on", w: 608, h: 342),
+            ]),
+        ]
+        // Порядок — по весу: «Лева» виден в двух опросах, «Анна» в одном.
+        XCTAssertEqual(
+            CallWindowJournal.roster(from: polls).map(\.name),
+            ["Levon Lobanov", "Лева Ловушка", "Анна Пример"]
+        )
+    }
+
+    func testВесСчитаетсяОпросами_аНеПлитками() {
+        // Демонстрирующий экран несёт две плитки в одном опросе. Это один
+        // участник и один опрос, иначе его вес удваивается ни за что.
+        let polls = (0..<5).map { i in
+            CallWindowJournal.Poll(t: Double(i * 4) / 10, tiles: [
+                tile(levon, w: 1080, h: 600),
+                tile(levon, w: 160, h: 80),
+                tile(leva, w: 160, h: 80),
+            ])
+        }
+        let roster = CallWindowJournal.roster(from: polls)
+        XCTAssertEqual(roster.count, 2)
+        XCTAssertEqual(roster.first { $0.name == "Levon Lobanov" }?.polls, 5)
+    }
+
+    func testТяжёлыеВпередиПриРавенствеПоАлфавиту() {
+        var polls: [CallWindowJournal.Poll] = []
+        for i in 0..<4 {
+            polls.append(.init(t: Double(i * 4) / 10, tiles: [
+                tile("Борис Пример, Звук компьютера включен, Video on", w: 608, h: 342),
+            ]))
+        }
+        polls.append(.init(t: 2.0, tiles: [
+            tile("Анна Пример, Звук компьютера включен, Video on", w: 608, h: 342),
+            tile("Вера Пример, Звук компьютера включен, Video on", w: 608, h: 342),
+        ]))
+        XCTAssertEqual(
+            CallWindowJournal.roster(from: polls).map(\.name),
+            ["Борис Пример", "Анна Пример", "Вера Пример"]
+        )
+    }
+
+    func testЗаглушённыйИзСоставаНеВыпадает() {
+        // Мьют — вето говорящему, а не участнику: человек на встрече есть,
+        // просто молчит. Смешать эти два ответа значило бы терять людей.
+        let muted = "Анна Пример, Звук компьютера выключен, Video off"
+        let polls = (0..<3).map { i in
+            CallWindowJournal.Poll(t: Double(i * 4) / 10, tiles: [
+                tile(levon, w: 608, h: 342), tile(muted, w: 608, h: 342),
+            ])
+        }
+        XCTAssertEqual(
+            CallWindowJournal.roster(from: polls).map(\.name).sorted(),
+            ["Levon Lobanov", "Анна Пример"]
+        )
+    }
+
+    func testПервуюИПоследнююСекундуНеЛомаетПорядокОпросов() {
+        // Трасса читается построчно и сортировки не обещает — рваный хвост
+        // убитого прогона уже стоил одного правила в этом файле.
+        let polls: [CallWindowJournal.Poll] = [
+            .init(t: 4.0, tiles: [tile(levon, w: 608, h: 342)]),
+            .init(t: 0.4, tiles: [tile(levon, w: 608, h: 342)]),
+            .init(t: 2.0, tiles: [tile(levon, w: 608, h: 342)]),
+        ]
+        let member = CallWindowJournal.roster(from: polls).first
+        XCTAssertEqual(member?.first, 0.4)
+        XCTAssertEqual(member?.last, 4.0)
+        XCTAssertEqual(member?.polls, 3)
+    }
+
+    func testСтрокиПанелиВСоставНеПопадают() {
+        // Замер 2026-08-27: в 19 живых трассах (226 676 плиток) строк панели
+        // ноль. Формат мерить не на чем, а строка чата, ставшая участником, —
+        // выдуманное имя. Читать их можно будет, когда появится образец.
+        let polls = (0..<6).map { i in
+            CallWindowJournal.Poll(t: Double(i * 4) / 10, tiles: [
+                CallWindowJournal.Tile(role: "AXRow", description: "Анна Пример",
+                                       width: 300, height: 40,
+                                       window: "Zoom Meeting", process: "zoom.us"),
+            ])
+        }
+        XCTAssertEqual(CallWindowJournal.roster(from: polls), [])
+    }
+
+    func testПустаяТрассаДаётПустойСостав() {
+        XCTAssertEqual(CallWindowJournal.roster(from: []), [])
+        XCTAssertEqual(CallWindowJournal.roster(from: [.init(t: 0, tiles: [])]), [])
+    }
+
     // MARK: - The 1×1 shortcut (sole companion)
 
     private func pairPolls(_ owner: String, _ other: String, count: Int,

@@ -127,6 +127,18 @@ struct Output: Encodable {
     /// mute looked — both free here, and both otherwise invisible in the lab.
     let ownerZoomName: String?
     let ownerMutedTurns: [String: Int]?
+    /// Состав встречи (`CallWindowJournal.roster`) — «кого видели», а не «кто
+    /// говорил». Здесь он затем, что на живой трассе это единственный способ
+    /// проверить его, не унося чужие имена в репозиторий: синтетика проверяет
+    /// правило, трасса — что правило встретилось с настоящим Zoom.
+    let roster: [RosterRow]
+}
+
+struct RosterRow: Encodable {
+    let name: String
+    let polls: Int
+    let first: Double
+    let last: Double
 }
 
 let encoder = JSONEncoder()
@@ -154,6 +166,9 @@ let output = Output(
     spans: spans.map { SaerSpan(speaker: $0.name, start: $0.start, end: $0.end) },
     labels: byLine,
     ownerZoomName: ownerName,
-    ownerMutedTurns: ownerMuted
+    ownerMutedTurns: ownerMuted,
+    roster: CallWindowJournal.roster(from: polls, tuning: tuning).map {
+        RosterRow(name: $0.name, polls: $0.polls, first: $0.first, last: $0.last)
+    }
 )
 print(String(decoding: try encoder.encode(output), as: UTF8.self))
