@@ -394,15 +394,20 @@ actor RecapService {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !extracted.isEmpty else { throw RecapError.emptyResponse }
 
-            // Написание имён приводится к составу **до** редактуры, а не
-            // после: иначе «Марина» при ленточном «Marina Primer» уезжает
-            // редактору находкой `assigneeOutsideRoster` — защита от
-            // выдуманного ответственного тратится на верное имя, записанное в
-            // другом алфавите. Замена детерминированная и узкая: точное
-            // совпадение свёртки, падежи и регистр не трогаются (`PersonCanon`).
+            // Написание имён приводится к канону **до** редактуры, а не после:
+            // редактор видит документ, где человек назван одним способом, и не
+            // тратит находку на разнописание. Замена детерминированная и узкая:
+            // точное совпадение свёртки, падежи и регистр не трогаются
+            // (`PersonCanon`).
+            //
+            // Транскрипт здесь по той же причине, что ниже у формы: им
+            // подтверждается кириллическое написание имени. Без него канон —
+            // подпись из ленты, то есть латиница из Zoom, и русский конспект
+            // уезжал в латиницу нашими руками (`PersonCanon.written`).
             let named = PersonCanon.normalize(
                 extracted,
-                roster: RecapDocument.participants(fromTranscript: trimmed)
+                roster: RecapDocument.participants(fromTranscript: trimmed),
+                transcript: trimmed
             )
 
             let edited = await polished(
