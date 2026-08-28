@@ -995,12 +995,32 @@ public enum Tokens {
         /// Soft alpha fade where a long title meets the action cluster — same
         /// idea as the rail's list edge, sideways.
         public static let titleEdgeFade = Space.s24
-        /// Trailing cluster: `px-8 gap-6`.
-        public static let headerActionsPadding = Space.s8
+        /// Между кнопками кластера действий — `gap-6`. Собственного поля у
+        /// кластера больше нет: его даёт полоса, в которой он стоит.
         public static let headerActionsGap = Space.s6
         public static let headerButtonSide = Space.s32
         public static let headerButtonRadius = Radius.xs
         public static let headerIconSize: CGFloat = 13
+
+        // MARK: Навбар панели
+
+        /// Полоса над панелью: слева хром окна и два шеврона, справа действия
+        /// того, что открыто ниже.
+        ///
+        /// Своих чисел у неё нет и не должно быть: это **тот же ряд**, что
+        /// шапка рельса, и стоят они в одной строке окна. Разъехаться им можно
+        /// только молча — поэтому здесь ссылки, а не копии.
+        public enum NavBar {
+            public static let height = Sidebar.headerHeight
+            public static let hPadding = Sidebar.headerPadding
+            /// Между шевронами. Ноль, как между кнопками шапки рельса: воздух
+            /// даёт сама коробка 32, а зазор между соседними стрелками читался
+            /// бы как «это два разных дела».
+            public static let stepGap: CGFloat = 0
+            /// Шеврон, которому некуда идти. Не спрятан: слот, из которого
+            /// история ходит, не должен появляться и исчезать под курсором.
+            public static let stepQuiet = Paint.Text.disabled
+        }
 
         // MARK: Копирование саммари
 
@@ -1030,9 +1050,6 @@ public enum Tokens {
         public static let paneTopPadding = Space.s32
         /// Строка атрибутов → имя встречи → первый абзац: один шаг на оба стыка.
         public static let titleGap = Space.s16
-        /// Кнопки в правом верхнем углу панели — единственное место, где
-        /// горизонтальное поле не 40: они прижаты к кромке блока.
-        public static let paneActionsInset = Space.s8
         // MARK: Строка атрибутов — 312:11129
 
         public enum Meta {

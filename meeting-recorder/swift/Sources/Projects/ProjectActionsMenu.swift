@@ -22,23 +22,18 @@ struct ProjectActionsMenu: View {
     /// первой троеточие живёт в строке заголовка карточки, у второй — в строке
     /// заголовка страницы, и кегль там на пункт крупнее.
     var iconSize: CGFloat = Tokens.Projects.Typo.action.size
+    /// Где стоит меню. В карточке — свой тихий значок; в навбаре — ровно тот
+    /// же ярлык, что у встречи (`PaneIconLabel`), потому что это один и тот же
+    /// слот полосы, и две породы троеточия в нём читались бы как два разных
+    /// контрола.
+    var look: Look = .card
+
+    enum Look { case card, navBar }
 
     @State private var confirmingDelete = false
 
     var body: some View {
-        MinimalIconMenu(
-            systemName: "ellipsis",
-            iconSize: iconSize,
-            help: "Действия с проектом"
-        ) {
-            Button("Редактировать") { state.composeProject(editing: project) }
-            Divider()
-            Button(project.archived ? "Вернуть из архива" : "В архив") {
-                state.setProject(project.id, archived: !project.archived)
-            }
-            Divider()
-            Button("Удалить проект", role: .destructive) { confirmingDelete = true }
-        }
+        trigger
         .confirmationDialog(
             "Удалить проект «\(project.name)»?",
             isPresented: $confirmingDelete,
@@ -49,5 +44,38 @@ struct ProjectActionsMenu: View {
         } message: {
             Text("Встречи останутся на месте — с них снимется метка.")
         }
+    }
+
+    @ViewBuilder
+    private var trigger: some View {
+        switch look {
+        case .card:
+            MinimalIconMenu(systemName: "ellipsis", iconSize: iconSize, help: "Действия с проектом") {
+                items
+            }
+        case .navBar:
+            Menu {
+                items
+            } label: {
+                PaneIconLabel(symbol: "ellipsis")
+            }
+            // `.borderlessButton` перерисовал бы ярлык по-своему, и ховера у
+            // него не было бы вовсе — разобрано у той же кнопки во встрече.
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .help("Действия с проектом")
+        }
+    }
+
+    @ViewBuilder
+    private var items: some View {
+        Button("Редактировать") { state.composeProject(editing: project) }
+        Divider()
+        Button(project.archived ? "Вернуть из архива" : "В архив") {
+            state.setProject(project.id, archived: !project.archived)
+        }
+        Divider()
+        Button("Удалить проект", role: .destructive) { confirmingDelete = true }
     }
 }

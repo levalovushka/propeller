@@ -21,10 +21,7 @@ struct ProjectScreen: View {
     private var meetings: [RecordingEntry] { state.meetings(of: project.id) }
 
     var body: some View {
-        PanePage(project.name, titleGap: Tokens.Projects.Screen.headerGap, trailing: {
-            ProjectActionsMenu(state: state, project: project,
-                               iconSize: Tokens.Projects.Typo.title.size)
-        }) {
+        PanePage(project.name, titleGap: Tokens.Projects.Screen.headerGap) {
             VStack(alignment: .leading, spacing: Tokens.Projects.Screen.tabsGap) {
                 header
                 VStack(alignment: .leading, spacing: Tokens.Projects.Screen.listGap) {
@@ -46,7 +43,8 @@ struct ProjectScreen: View {
 
     /// Имя вынесено в `PanePage`: заголовок страницы и имя проекта — одна и та
     /// же строка, и рисовать её дважды значило бы разъехаться на первой же
-    /// правке отступов.
+    /// правке отступов. Меню проекта стоит **не здесь**, а в полосе над панелью
+    /// (`MainView.paneActions`): у действий над открытой сущностью одно место.
     @ViewBuilder
     private var header: some View {
         if !project.about.isEmpty {

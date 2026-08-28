@@ -47,73 +47,6 @@ final class SummaryPaneLayoutTests: XCTestCase {
         )
     }
 
-    /// Единственное место панели, где поле не 40: угол прижат к кромке блока.
-    @MainActor
-    func testTheButtonsHugTheBlocksCorner() throws {
-        let actions = try XCTUnwrap(probe()[PaneProbe.actions], "кнопки не измерены")
-        XCTAssertEqual(width - actions.maxX, 0, accuracy: 0.5)
-        XCTAssertEqual(actions.minY, 0, accuracy: 0.5)
-        // Инсет внутри самого кластера, не снаружи: так кнопка ловит нажатие
-        // до самой кромки.
-        XCTAssertEqual(actions.height, Tokens.Pane.headerButtonSide + Tokens.Pane.paneActionsInset * 2, accuracy: 0.5)
-    }
-
-    /// Кнопки принадлежат **окну**, а не блоку текста — решение владельца
-    /// 2026-08-27, перевернувшее решение ревью того же дня.
-    ///
-    /// На мере макета угол блока и угол окна — одна линия, поэтому проверка
-    /// выше ничего здесь не ловит: ширина взята заведомо больше меры. Красный
-    /// тест означает, что кнопки снова поехали к центру вместе с текстом.
-    @MainActor
-    func testTheButtonsHugTheWindowsCornerHoweverWideItGets() throws {
-        for wide: CGFloat in [Tokens.Pane.paneMeasure, 1200, 2400] {
-            let probes = probe(width: wide)
-            let actions = try XCTUnwrap(probes[PaneProbe.actions], "кнопки не измерены")
-            XCTAssertEqual(
-                wide - actions.maxX, 0, accuracy: 0.5,
-                "на ширине \(wide) кнопки отклеились от правой кромки"
-            )
-            XCTAssertEqual(actions.minY, 0, accuracy: 0.5, "на ширине \(wide) кнопки уехали вниз")
-        }
-    }
-
-    /// Копирование стоит слева от «Поделиться», а не где придётся.
-    ///
-    /// Порядок здесь смысловой, а не декоративный: слева то, что остаётся на
-    /// этой машине, справа то, что уходит наружу. Тест на порядок — потому что
-    /// в `HStack` он держится ровно тем, в каком порядке написаны две строки.
-    @MainActor
-    func testCopyStandsLeftOfShareAndInsideTheSameCluster() throws {
-        let probes = probe()
-        let copy = try XCTUnwrap(probes[PaneProbe.copy], "кнопка копирования не измерена")
-        let actions = try XCTUnwrap(probes[PaneProbe.actions], "кластер не измерен")
-
-        let share = try XCTUnwrap(probes[PaneProbe.share], "шер не измерен")
-        // Против самого шера, а не против кластера: кластер шире обоих на свой
-        // инсет, и сравнение с ним истинно при любом порядке — первая версия
-        // этой проверки была именно такой и мутацию не поймала.
-        XCTAssertLessThanOrEqual(copy.maxX, share.minX, "копирование оказалось правее шера")
-        XCTAssertEqual(copy.width, Tokens.Pane.headerButtonSide, accuracy: 0.5)
-        XCTAssertEqual(copy.height, Tokens.Pane.headerButtonSide, accuracy: 0.5)
-        // Внутри кластера, а не рядом с ним: иначе угол считался бы по шеру,
-        // а кнопка висела бы сама по себе.
-        XCTAssertGreaterThanOrEqual(copy.minX, actions.minX - 0.5)
-        XCTAssertLessThanOrEqual(copy.maxY, actions.maxY + 0.5)
-    }
-
-    /// Цена этого решения, названная вслух: на широком окне между именем
-    /// встречи и кнопками, которые её шерят, лежит уже не мера колонки, а
-    /// полокна. Тест не запрещает этого — он не даёт забыть, что так решили.
-    @MainActor
-    func testTheGapToTheTitleGrowsWithTheWindowAndThatIsTheDeal() throws {
-        let wide: CGFloat = 1200
-        let probes = probe(width: wide)
-        let actions = try XCTUnwrap(probes[PaneProbe.actions])
-        let title = try XCTUnwrap(probes[PaneProbe.title])
-        let blockRight = (wide + Tokens.Pane.paneMeasure) / 2
-        XCTAssertGreaterThan(actions.maxX, blockRight)
-    }
-
     // MARK: - Тело
 
     @MainActor
@@ -165,8 +98,6 @@ final class SummaryPaneLayoutTests: XCTestCase {
                     .init(name: "Участник \($0)", origin: $0 == 0 ? .owner : .call, label: nil)
                 })
             ),
-            share: .init("Поделиться") {},
-            copy: .init {},
             summary: Self.document
         )
         .frame(width: width, height: height)

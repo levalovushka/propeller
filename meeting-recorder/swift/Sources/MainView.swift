@@ -12,18 +12,14 @@ struct MainView: View {
     @State private var showSearchPalette = false
     @ObservedObject private var calendar = CalendarService.shared
 
-    /// Browser-style history over *meetings*, and only meetings.
+    /// Хождение по панели — два шеврона в навбаре.
     ///
-    /// It used to be `[String?]`, where `nil` meant «список встреч» — a
-    /// destination that stopped existing when the rail became the list. Its one
-    /// remaining effect was that «Назад» from the first meeting deselected
-    /// everything and left «Пока нет встреч» written across the pane while the
-    /// rail was full of them. A meeting is always open when there is one to
-    /// open, so the absent destination is gone from the type rather than
-    /// guarded at each use.
-    @State private var navStack: [String] = []
-    @State private var navIndex: Int = 0
-    @State private var suppressNavRecord = false
+    /// История помнит **места**, а не встречи: до 2026-08-28 в стек клались
+    /// только их id, и выйти «назад» из настроек было нечем — для этого рельс
+    /// держал свою вторую кнопку. Механика стека решаема и потому живёт в
+    /// `PropellerPure.NavHistory`, где её щупает тест; здесь только то, чем
+    /// место открывается.
+    @State private var history = NavHistory<PaneDestination>()
 
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -32,14 +28,10 @@ struct MainView: View {
         return f
     }()
 
-    /// Back is available whenever we can leave the meeting detail (or step history).
-    ///
-    /// Запись ничего из этого не запрещает: она идёт своим ходом, а окно всё это
+    /// Запись ничему из этого не мешает: она идёт своим ходом, а окно всё это
     /// время остаётся окном — можно уйти в другую встречу и вернуться.
-    private var canGoBack: Bool {
-        navIndex > 0
-    }
-    private var canGoForward: Bool { navIndex + 1 < navStack.count }
+    private var canGoBack: Bool { history.canGoBack }
+    private var canGoForward: Bool { history.canGoForward }
 
     /// The rail can be put away — Figma has a `nosidebar` frame for it, where the
     /// collapse toggle and the traffic lights move into the content header.
@@ -50,8 +42,6 @@ struct MainView: View {
     @State private var paneMode: MeetingPaneMode = .summary
     /// What is being typed into the notes composer.
     @State private var draftNote = ""
-    /// Raised by «Поделиться»; the anchor lowers it once the sheet is up.
-    @State private var showShareSheet = false
     /// Плита публикации по ссылке. Открыта — значит человек нажал «Поделиться»
     /// у этой встречи; закрывается по ✕, по Escape и по клику мимо.
     @State private var sharingMeetingID: String?
@@ -139,6 +129,9 @@ struct MainView: View {
             state.isWindowOpen = true
             NSApp.setActivationPolicy(.regular)
             selectNewestIfNothingChosen()
+            // Первое место сессии. Без него первый же переход дал бы историю
+            // из одного шага, и «Назад» с него вёл бы в никуда.
+            recordNav()
             switching.start(
                 // The rail's own order: the same list, filtered the same way, so
                 // walking it with the key and reading it with the eye agree.
@@ -154,6 +147,7 @@ struct MainView: View {
             // The first meeting to arrive in an empty archive opens itself; so
             // does the one that just finished recording.
             selectNewestIfNothingChosen()
+            forgetDeletedMeetings()
         }
         .onDisappear {
             flushSummarySave()
@@ -164,7 +158,12 @@ struct MainView: View {
         // Уход из встречи в раздел — тот же случай, что и переход к другой
         // встрече: отложенная запись принадлежит панели, которой на экране уже
         // нет, и через 0,8 с она легла бы поверх правки, сделанной в разделе.
-        .onChange(of: state.paneRoute) { _, _ in flushSummarySave() }
+        .onChange(of: state.paneRoute) { _, _ in
+            flushSummarySave()
+            // Раздел и проект — такие же места, как встреча: без этой строки
+            // «Назад» из настроек не работал бы вовсе.
+            recordNav()
+        }
         // Файл конспекта правят и мимо редактора — галочкой на экране проекта.
         // Своё разобранное саммари панель после этого обязана выбросить.
         .onChange(of: state.recapRevision) { _, _ in
@@ -180,7 +179,7 @@ struct MainView: View {
             // пересоздаётся при смене выбора, и без сброса `commitNote`
             // подошьёт её к встрече, на которую только что переключились.
             draftNote = ""
-            recordNav(to: newID)
+            recordNav()
             loadSummary()
         }
         // The summary lands when the worker finishes, and the pane is already
@@ -541,7 +540,6 @@ struct MainView: View {
                 showSearchPalette = true
                 Analytics.signal("Search.opened")
             },
-            onBack: { state.leaveSettings() },
             onFooterAction: { NSWorkspace.shared.open(Self.issuesURL) },
             onPromptAction: { id in
                 // The id comes back so the window is not guessing which question
@@ -723,7 +721,7 @@ struct MainView: View {
 
     private var paneSubjectContent: some View {
         VStack(spacing: 0) {
-            topBar
+            navBar
                 .zIndex(2)
             mainArea
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -746,66 +744,104 @@ struct MainView: View {
         return isBeingRecorded(entry) ? "recording-\(entry.id)" : "meeting-\(entry.id)"
     }
 
-    // MARK: - Top bar — Figma 31:4625 (48 tall, same row as the rail's header)
+    // MARK: - Навбар панели
 
-    /// With the rail up, the traffic lights live in *its* header and this bar
-    /// starts at the pane's own edge. With the rail away (Figma `nosidebar`,
-    /// 31:5083) the lights and the re-open toggle move here instead — the window
-    /// buttons never move, so something has to be beside them.
-    /// With a meeting open the pane's own header takes this row — Figma
-    /// 31:4625. The list has no such header in the comps, so it keeps the
-    /// navigation bar it already had.
+    /// Одна полоса на все маршруты — `PropellerUI/PaneNavBar.swift`, где
+    /// записано, почему она одна и почему в ней нет крошек.
+    ///
+    /// Здесь только то, что полосе нельзя знать самой: чем ходит история и
+    /// какие действия у того, что открыто ниже.
     @ViewBuilder
-    private var topBar: some View {
-        if state.paneRoute.isSection {
-            // Полосы у раздела нет вовсе, пока рельс на месте: в макете страница
-            // начинается от верха окна (254:1412 — `size-full` с полем 28), и
-            // пустые 48 pt над ней опускали заголовок раздела ровно на эти 48.
-            // Полоса возвращается только с убранным рельсом — светофору надо
-            // куда-то встать.
-            if !sidebarVisible {
-                HStack(spacing: 0) {
-                    collapsedChrome
-                    Spacer(minLength: 0)
+    private var navBar: some View {
+        if !state.paneRoute.isSection, let entry = state.selectedRecording, isBeingRecorded(entry) {
+            // Единственный маршрут с именем **в полосе**: тело идущей записи —
+            // живая лента, а не документ, и поставить имя туда некуда.
+            PaneNavBar(
+                back: .init(enabled: canGoBack) { goBack() },
+                forward: .init(enabled: canGoForward) { goForward() },
+                reservesWindowChrome: !sidebarVisible,
+                leading: {
+                    MeetingPaneIdentity(
+                        meetingID: entry.id,
+                        title: entry.title,
+                        onRename: { id, newTitle in state.renameRecording(id: id, to: newTitle) }
+                    )
+                },
+                trailing: {
+                    RecordingControls(
+                        elapsed: state.elapsedString,
+                        isPaused: state.isRecordingPaused,
+                        onPause: {
+                            if state.isRecordingPaused {
+                                state.resumeRecording()
+                            } else {
+                                state.pauseRecording()
+                            }
+                        },
+                        onStop: { state.stopRecording() }
+                    )
                 }
-                .frame(height: Tokens.Sidebar.headerHeight)
-            }
-        } else if let entry = state.selectedRecording, isBeingRecorded(entry) {
-            HStack(spacing: 0) {
-                if !sidebarVisible {
-                    collapsedChrome
-                }
-                RecordingPaneHeader(
-                    meetingID: entry.id,
-                    title: entry.title,
-                    elapsed: state.elapsedString,
-                    isPaused: state.isRecordingPaused,
-                    onRename: { id, newTitle in state.renameRecording(id: id, to: newTitle) },
-                    onPause: {
-                        if state.isRecordingPaused {
-                            state.resumeRecording()
-                        } else {
-                            state.pauseRecording()
-                        }
-                    },
-                    onStop: { state.stopRecording() }
-                )
-            }
-            .frame(height: Tokens.Sidebar.headerHeight)
-        } else if state.selectedRecording != nil {
-            // Готовая встреча носит своё имя в теле (312:11129), и полосы над
-            // ней нет — по той же причине, что у разделов: пустые 48 pt
-            // опускали бы заголовок ровно на эти 48. Со снятым рельсом полоса
-            // возвращается: иначе светофор лёг бы на имя встречи.
-            if !sidebarVisible {
-                HStack(spacing: 0) {
-                    collapsedChrome
-                    Spacer(minLength: 0)
-                }
-                .frame(height: Tokens.Sidebar.headerHeight)
-            }
+            )
         } else {
-            listTopBar
+            PaneNavBar(
+                back: .init(enabled: canGoBack) { goBack() },
+                forward: .init(enabled: canGoForward) { goForward() },
+                reservesWindowChrome: !sidebarVisible,
+                trailing: { paneActions }
+            )
+        }
+    }
+
+    /// Действия над тем, что открыто ниже.
+    ///
+    /// У раздела настроек их нет вовсе, и это не пропуск: со страницей делают
+    /// то, что на ней написано. Пустой правый слот — законное состояние полосы.
+    @ViewBuilder
+    private var paneActions: some View {
+        if let open = state.paneRoute.openProject,
+           let project = state.projects.first(where: { $0.id == open.id }) {
+            // Меню проекта переехало сюда из правого слота заголовка страницы
+            // (`PanePage.trailing`): действия над сущностью живут в полосе, где
+            // бы эта сущность ни рисовалась.
+            ProjectActionsMenu(state: state, project: project, look: .navBar)
+        } else if state.paneRoute.isProjects {
+            ProjectsActionButton("Новый проект") { state.composeProject() }
+        } else if !state.paneRoute.isSection, let entry = state.selectedRecording {
+            // Проверка маршрута не лишняя: выбранная встреча **остаётся**
+            // выбранной под разделом (`openSettings` её не трогает), и без неё
+            // над страницей настроек стояли бы действия встречи, которой на
+            // экране нет.
+            MeetingActions(
+                // Тот же `copySummary`, что у правого клика в рельсе: читаемый
+                // вид саммари живёт в `SummaryDocument.plainText` и должен
+                // остаться одним для обеих дверей.
+                copy: { copySummary(entry) },
+                share: {
+                    shareFailure = nil
+                    NetworkWatch.shared.start()
+                    sharingMeetingID = entry.id
+                },
+                menu: { meetingMenu(for: entry) }
+            )
+        }
+    }
+
+    /// «Ещё» открытой встречи. Содержимое меню живёт здесь, а не в панели: это
+    /// действия над встречей, и стоят они там же, где остальные, — в полосе.
+    @ViewBuilder
+    private func meetingMenu(for entry: RecordingEntry) -> some View {
+        Picker("Показать", selection: $paneMode) {
+            ForEach(MeetingPaneMode.allCases, id: \.self) { mode in
+                Text(mode.title).tag(mode)
+            }
+        }
+        Divider()
+        Button("Показать в Finder") { revealInFinder(entry) }
+        Button("Удалить аудио") { state.deleteAudioFile(entry) }
+            .disabled(!entry.audioFileExists)
+        Divider()
+        Button("Удалить встречу", role: .destructive) {
+            state.removeRecording(entry, undoManager: undoManager)
         }
     }
 
@@ -829,134 +865,55 @@ struct MainView: View {
         return plain.isEmpty ? nil : plain
     }
 
-    /// What a pane header leaves clear for the traffic lights and the toggle when
-    /// the rail is away. Space only — the toggle itself is `windowChrome`, drawn
-    /// over both columns at one fixed place.
-    private var collapsedChrome: some View {
-        Color.clear
-            .frame(width: Tokens.Window.chromeReserve, height: Tokens.Sidebar.toggleSide)
-    }
-
     /// The one rail toggle. Not in the rail and not in the pane's header: it is the
     /// window's, so the rail slides out from under it and the button neither moves
     /// nor loses the hover it is under at the moment you press it.
     ///
-    /// **Кроме разделов настроек.** Там этот же слот занимает «Назад»
-    /// (`SidebarBackButton`) — по макету и по смыслу: сворачивать в разделе
-    /// нечего, списка нет. Без этой ветки две кнопки рисовались одна поверх
-    /// другой, и видно было нижнюю.
-    @ViewBuilder
+    /// **В разделах тоже.** Здесь стояло исключение: слот занимала кнопка
+    /// «Назад» из шапки рельса, потому что в разделе сворачивать нечего. Обе
+    /// сняты 2026-08-28 — «назад» стало одним на всё приложение и переехало в
+    /// полосу, а рельс убирается из раздела ровно так же, как из архива.
     private var windowChrome: some View {
-        if !state.paneRoute.isSection || !sidebarVisible {
-            SidebarChromeButton(
-                symbol: "sidebar.left",
-                help: sidebarVisible ? "Скрыть список" : "Показать список"
-            ) {
-                sidebarVisible.toggle()
-            }
-            .padding(.leading, Tokens.Window.chromeToggleLeading)
-            .padding(.top, Tokens.Window.chromeToggleTop)
+        SidebarChromeButton(
+            symbol: "sidebar.left",
+            help: sidebarVisible ? "Скрыть список" : "Показать список"
+        ) {
+            sidebarVisible.toggle()
         }
+        .padding(.leading, Tokens.Window.chromeToggleLeading)
+        .padding(.top, Tokens.Window.chromeToggleTop)
     }
 
-    private var listTopBar: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 8) {
-                if !sidebarVisible {
-                    collapsedChrome
-                }
-
-                HStack(spacing: 0) {
-                    IconButton(
-                        systemName: "chevron.left",
-                        prominence: .minimal,
-                        iconSize: 14,
-                        weight: .regular,
-                        enabled: canGoBack
-                    ) { goBack() }
-                    .help("Назад")
-
-                    IconButton(
-                        systemName: "chevron.right",
-                        prominence: .minimal,
-                        iconSize: 14,
-                        weight: .regular,
-                        enabled: canGoForward
-                    ) { goForward() }
-                    .help("Вперёд")
-
-                    IconButton(
-                        systemName: "magnifyingglass",
-                        prominence: .minimal,
-                        iconSize: 14,
-                        weight: .regular
-                    ) {
-                        showSearchPalette = true
-                        Analytics.signal("Search.opened")
-                    }
-                    .help("Поиск (⌘K)")
-                }
-            }
-
-            Spacer(minLength: 8)
-
-            HStack(spacing: 14) {
-                if let status = topStatusText {
-                    Text(status)
-                        .typo(Tokens.Typography.Label.smRegular)
-                        .foregroundStyle(Tokens.Ink.tertiary)
-                        .lineLimit(1)
-                        .frame(height: 32)
-                }
-
-                IconButton(
-                    systemName: "gearshape.fill",
-                    prominence: .minimal,
-                    iconSize: 14,
-                    weight: .regular
-                ) { state.openSettings() }
-                .help("Настройки")
-            }
-        }
-        .frame(height: 32)
-        .padding(.horizontal, Tokens.Window.chromePadding)
-        .frame(height: Tokens.Sidebar.headerHeight, alignment: .center)
-    }
-
-    // MARK: - History navigation
+    // MARK: - Хождение по истории
 
     private func goBack() {
-        guard canGoBack else { return }
-        navIndex -= 1
-        applyNav()
+        guard let place = history.back() else { return }
+        state.go(to: place)
     }
 
     private func goForward() {
-        guard canGoForward else { return }
-        navIndex += 1
-        applyNav()
+        guard let place = history.forward() else { return }
+        state.go(to: place)
     }
 
-    private func applyNav() {
-        suppressNavRecord = true
-        defer { suppressNavRecord = false }
-        guard navStack.indices.contains(navIndex) else { return }
-        // Шаг истории на удалённую встречу ничего не делает: снимать выбор
-        // здесь значило бы вернуть то самое состояние без выбранной встречи, но
-        // теперь ещё и по кнопке «Назад».
-        guard let entry = recordingStore.recordings
-            .first(where: { $0.id == navStack[navIndex] }) else { return }
-        state.selectRecording(entry)
+    /// Запомнить, где панель оказалась.
+    ///
+    /// Зовётся на **каждое** изменение состояния панели, а не только на
+    /// переход, — флага «сейчас идём по истории» здесь нет и не нужно: шаг
+    /// назад приводит панель ровно в то место, которое уже стоит под пальцем,
+    /// и `NavHistory.record` такой повтор не пишет.
+    private func recordNav() {
+        guard let place = state.paneDestination else { return }
+        history.record(place)
     }
 
-    private func recordNav(to id: String?) {
-        guard !suppressNavRecord, let id else { return }
-        if navStack.indices.contains(navIndex), navStack[navIndex] == id { return }
-        if navIndex + 1 < navStack.count {
-            navStack = Array(navStack.prefix(navIndex + 1))
+    /// Забыть удалённые встречи. Иначе «Назад» открывал бы то, чего больше нет,
+    /// — то есть не делал бы ничего, оставаясь при этом активной кнопкой.
+    private func forgetDeletedMeetings() {
+        history.forget { place in
+            guard case .meeting(let id) = place else { return false }
+            return recordingStore.recording(for: id) == nil
         }
-        navStack.append(id)
-        navIndex = navStack.count - 1
     }
 
     private var topStatusText: String? {
@@ -1033,15 +990,6 @@ struct MainView: View {
                     people: peopleSlot(for: entry, speakers: turns.map(\.speaker)),
                     projects: projectSlot(for: entry)
                 ),
-                share: .init("Поделиться") {
-                    shareFailure = nil
-                    NetworkWatch.shared.start()
-                    sharingMeetingID = entry.id
-                },
-                // Тот же `copySummary`, что у правого клика в рельсе: читаемый
-                // вид саммари живёт в `SummaryDocument.plainText` и должен
-                // остаться одним для обеих дверей.
-                copy: .init { copySummary(entry) },
                 mode: paneMode,
                 summary: document,
                 turns: turns,
@@ -1063,43 +1011,26 @@ struct MainView: View {
                     : { document in scheduleSummarySave(document, for: entry) },
                 onSummaryRewrite: { rewrite, fragment in
                     runSummaryRewrite(rewrite, over: fragment, of: entry)
-                },
-                moreMenu: {
-                    Picker("Показать", selection: $paneMode) {
-                        ForEach(MeetingPaneMode.allCases, id: \.self) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    Divider()
-                    Button("Показать в Finder") { revealInFinder(entry) }
-                    Button("Удалить аудио") { state.deleteAudioFile(entry) }
-                        .disabled(!entry.audioFileExists)
-                    Divider()
-                    Button("Удалить встречу", role: .destructive) {
-                        state.removeRecording(entry, undoManager: undoManager)
-                    }
                 }
             )
-            // Якорь системного шера стоит там же, где кнопка: поднятый из
-            // левого верхнего угла окна, лист указывал бы в никуда.
-            .overlay(alignment: .topTrailing) {
-                ShareAnchor(isPresented: $showShareSheet) { shareItems(for: entry) }
-                    .frame(width: 1, height: 1)
-                    .padding(.trailing, Tokens.Pane.paneActionsInset)
-                    .padding(.top, Tokens.Pane.headerButtonSide)
-            }
             .frame(maxWidth: .infinity)
         } else {
-            // Недостижимо, и поэтому пусто. Пока в архиве есть хоть одна
-            // встреча, какая-то выбрана: историю больше нельзя отмотать в
-            // «ничего», а `selectNewestIfNothingChosen` чинит любой другой
-            // способ остаться без выбора. Пустой архив сюда не доходит — там
-            // окно занимает `FirstRunView`, ещё до колонок.
+            // Дойти сюда можно только из пустого архива, а он занят приглашением
+            // ещё до колонок (`showsFirstRun`) — то есть не дойти никак. Стоит
+            // здесь **то же приглашение**, а не пустота: если состояние всё-таки
+            // случится, человек увидит то, что этому состоянию отвечает.
             //
-            // Здесь стояло «Пока нет встреч», и это была единственная строка в
-            // приложении, которая врала прямым текстом: её видели, отмотав
+            // До 2026-08-28 у «встреча не выбрана» был свой экран: пустая панель
+            // и над ней своя полоса с «Назад», «Вперёд», поиском и шестернёй.
+            // Единственные двери в неё чинил `selectNewestIfNothingChosen`, то
+            // есть четыре контрола жили там, куда нельзя попасть. Полоса снята,
+            // навигация переехала в общую (`PaneNavBar`), поиск и настройки и без
+            // того есть в рельсе.
+            //
+            // А ещё раньше здесь стояло «Пока нет встреч» — единственная строка
+            // в приложении, которая врала прямым текстом: её видели, отмотав
             // «Назад» с полным рельсом встреч рядом.
-            Color.clear
+            FirstRunView(onAction: startFirstRecording)
         }
     }
 
@@ -1399,7 +1330,7 @@ struct MainView: View {
     }
 
     /// Share sheet for a rail row — hangs off the cursor, not the pane header.
-    /// The header button keeps its own `ShareAnchor`; right-click has no view
+    /// Правый клик в рельсе не имеет вида
     /// of its own, so the window's content view and the mouse location stand in.
     private func shareMeetingNearCursor(_ entry: RecordingEntry) {
         let items = shareItems(for: entry)

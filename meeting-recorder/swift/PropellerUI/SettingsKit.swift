@@ -38,10 +38,9 @@ import AppKit
 /// вторых отступов. Раздел «Проекты» стоит в той же колонке, с тем же полем 36,
 /// тем же 28 сверху и тем же заголовком 17 / 24; разъехаться им можно только
 /// молча, и только если чисел два комплекта.
-public struct PanePage<Content: View, Trailing: View>: View {
+public struct PanePage<Content: View>: View {
     private let title: String
     private let titleGap: CGFloat
-    private let trailing: () -> Trailing
     private let content: () -> Content
 
     /// `titleGap` — расстояние от заголовка до содержимого. У настроек это общий
@@ -50,25 +49,23 @@ public struct PanePage<Content: View, Trailing: View>: View {
     public init(
         _ title: String,
         titleGap: CGFloat = Tokens.Settings.blockGap,
-        @ViewBuilder trailing: @escaping () -> Trailing,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
         self.titleGap = titleGap
-        self.trailing = trailing
         self.content = content
     }
 
     public var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: titleGap) {
-                // Заголовок и то, что делают со страницей целиком. У настроек
-                // правого слота нет; у проекта в нём меню (256:7648).
-                HStack(alignment: .top, spacing: Tokens.Settings.cellGap) {
-                    Text(title)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    trailing()
-                }
+                // Только заголовок. Правый слот здесь был — в нём стояло меню
+                // проекта (256:7648); снят 2026-08-28: действия над открытой
+                // сущностью живут в полосе над панелью, одним местом на все
+                // маршруты, а два места для одного меню и были той самой
+                // неразберихой наверху.
+                Text(title)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .typo(Tokens.Settings.Typo.page)
                     .foregroundStyle(Tokens.Settings.title)
                     // Высота названа, а не выведена из шрифта. Макет даёт
@@ -107,7 +104,7 @@ public struct SettingsPage<Content: View>: View {
     }
 
     public var body: some View {
-        PanePage(title, trailing: { EmptyView() }) { content() }
+        PanePage(title) { content() }
     }
 }
 

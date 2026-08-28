@@ -34,22 +34,34 @@ final class SummaryPaneShotTests: XCTestCase {
             width = CGFloat(asked)
         }
         let size = CGSize(width: width, height: 760)
-        let root = MeetingPaneBody(
-            identity: .init(
-                meetingID: "shot",
-                title: "Базированный утренник",
-                onRename: { _, _ in }
-            ),
-            meta: .init(
-                date: Date(timeIntervalSince1970: 1_787_412_600),
-                // Шесть рядов, а не число: чип показывает длину списка, и снимок
-                // должен ломаться, если состав перестанет её давать.
-                people: .init(rows: Self.roster)
-            ),
-            share: .init("Поделиться") {},
-            copy: .init {},
-            summary: Self.summary
-        )
+        // Полоса входит в снимок: действия встречи живут в ней, и снимок без
+        // неё показывал бы экран, которого нет.
+        let root = VStack(spacing: 0) {
+            PaneNavBar(
+                back: .init(enabled: true) {},
+                forward: .init(enabled: false) {},
+                reservesWindowChrome: false,
+                trailing: {
+                    MeetingActions(copy: {}, share: {}) {
+                        Button("Показать в Finder") {}
+                    }
+                }
+            )
+            MeetingPaneBody(
+                identity: .init(
+                    meetingID: "shot",
+                    title: "Базированный утренник",
+                    onRename: { _, _ in }
+                ),
+                meta: .init(
+                    date: Date(timeIntervalSince1970: 1_787_412_600),
+                    // Шесть рядов, а не число: чип показывает длину списка, и снимок
+                    // должен ломаться, если состав перестанет её давать.
+                    people: .init(rows: Self.roster)
+                ),
+                summary: Self.summary
+            )
+        }
         .environment(\.colorScheme, .dark)
         .frame(width: size.width, height: size.height)
         .background(Tokens.Paint.Bg.page)

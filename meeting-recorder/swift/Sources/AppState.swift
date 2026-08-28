@@ -47,6 +47,24 @@ enum PaneRoute: Equatable {
     var isSection: Bool { isSettings || isProjectsArea }
 }
 
+/// Место, куда панель может вернуться, — то, что кладётся в историю.
+///
+/// Не `PaneRoute`: у маршрута встречи нет её id, а «Назад» без него открыл бы
+/// не ту встречу, а «какая выбрана сейчас». И не id встречи, как было до
+/// 2026-08-28: тогда в истории лежали только встречи, выйти «назад» из
+/// настроек было нечем, и рельс держал для этого свою вторую кнопку.
+///
+/// Вкладка проекта сюда **не входит** нарочно — по той же причине, по которой
+/// её отбрасывает `MainView.paneSubject`: смена вкладки это движение внутри
+/// экрана, а не переход, и «Назад» после неё обязан уводить с экрана проекта,
+/// а не листать его вкладки.
+enum PaneDestination: Equatable {
+    case meeting(String)
+    case settings(SettingsSection)
+    case projects
+    case project(String)
+}
+
 /// Что набрано в плите проекта. `editing` — id того, кого правят; nil значит,
 /// что проекта ещё нет.
 struct ProjectDraft: Equatable {
@@ -307,6 +325,36 @@ class AppState: ObservableObject {
     var selectedRecording: RecordingEntry? {
         guard let id = selectedRecordingID else { return nil }
         return recordingStore.recording(for: id)
+    }
+
+    /// Где панель стоит прямо сейчас — то, что пишется в историю навбара.
+    ///
+    /// nil ровно в одном случае: маршрут встречи, а встречи нет. Это пустой
+    /// архив, где вместо колонок стоит приглашение записать первую, — истории
+    /// там ещё неоткуда взяться.
+    var paneDestination: PaneDestination? {
+        switch paneRoute {
+        case .meeting:                 return selectedRecordingID.map(PaneDestination.meeting)
+        case .settings(let section):   return .settings(section)
+        case .projects:                return .projects
+        case .project(let id, _):      return .project(id)
+        }
+    }
+
+    /// Открыть место из истории. Обратная сторона `paneDestination`, и обе
+    /// живут рядом: разъехавшись, они дают «Назад», ведущий не туда.
+    func go(to destination: PaneDestination) {
+        switch destination {
+        case .meeting(let id):
+            guard let entry = recordingStore.recording(for: id) else { return }
+            selectRecording(entry)
+        case .settings(let section):
+            openSettings(section)
+        case .projects:
+            openProjects()
+        case .project(let id):
+            openProject(id)
+        }
     }
 
     // MARK: - Initialization

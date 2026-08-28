@@ -286,6 +286,19 @@ enum SidebarGallery {
         /// something nobody looks at until a user resizes the window.
         private func pane(_ scheme: ColorScheme, width: CGFloat) -> some View {
             VStack(spacing: 0) {
+                // Полоса — часть экрана, а не окна вокруг него: в ней стоят
+                // действия встречи, и доска без неё показывала бы панель,
+                // которой в приложении нет.
+                PaneNavBar(
+                    back: .init(enabled: true) {},
+                    forward: .init(enabled: false) {},
+                    reservesWindowChrome: false,
+                    trailing: {
+                        MeetingActions(copy: {}, share: {}) {
+                            Button("Показать в Finder") {}
+                        }
+                    }
+                )
                 MeetingPaneBody(
                     identity: .init(
                         meetingID: "gallery",
@@ -296,10 +309,16 @@ enum SidebarGallery {
                         // Фиксированные, а не «сейчас»: кадр галереи обязан
                         // быть одинаковым от съёмки к съёмке.
                         date: Date(timeIntervalSince1970: 1_787_412_600),
-                        people: 6
+                        // Ряды, а не число: чип показывает длину состава, и
+                        // числа он больше не принимает. Стояло `people: 6` и
+                        // не собиралось — ровно то гниение кода под
+                        // `#if GALLERY`, о котором предупреждает CLAUDE.md.
+                        people: .init(rows: (0..<6).map {
+                            .init(name: "Участник \($0)",
+                                  origin: $0 == 0 ? .owner : .call,
+                                  label: nil)
+                        })
                     ),
-                    share: .init("Поделиться") {},
-                    copy: .init {},
                     summary: Self.summary
                 )
             }

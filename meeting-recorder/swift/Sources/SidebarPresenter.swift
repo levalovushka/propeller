@@ -34,7 +34,7 @@ enum SidebarPresenter {
         if case .settings(let section) = state.paneRoute {
             return SidebarModel(
                 nav: sectionNav(current: section),
-                body: .section(back: "Назад", footer: footer())
+                body: .section(footer: footer())
             )
         }
         return SidebarModel(

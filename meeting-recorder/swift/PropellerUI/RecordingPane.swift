@@ -6,54 +6,41 @@ import PropellerPure
 ///
 /// Та же панель, что у готовой встречи, и это главное про неё. На месте саммари
 /// — то, что говорят прямо сейчас, и в той же ленте, на своих секундах, то, что
-/// человек записал сам. В шапке — имя встречи (переименовывается так же, как у
-/// готовой), а справа таймер и две кнопки: пауза и стоп. Внизу, поперёк колонки,
+/// человек записал сам. В полосе над панелью — имя встречи (переименовывается
+/// так же, как у готовой), справа таймер и две кнопки: пауза и стоп. Внизу,
+/// поперёк колонки,
 /// — поле заметки; оно живёт только пока идёт запись.
 ///
 /// Запись перестала быть отдельным режимом приложения. Встреча создаётся в
 /// рельсе в первую же секунду, и пока она пишется, можно уйти читать любую
 /// другую — эта панель просто одна из тех, между которыми переключаются.
 
-// MARK: - Шапка
+// MARK: - Действия идущей записи
 
-/// Имя встречи слева, время и управление справа.
-public struct RecordingPaneHeader: View {
-    private let meetingID: String
-    private let title: String
-    private let onRename: ((_ meetingID: String, _ newTitle: String) -> Void)?
+/// Таймер, пауза и стоп — правый слот навбара.
+///
+/// Раньше это была своя шапка панели (`RecordingPaneHeader`): имя слева,
+/// управление справа. Полоса теперь одна на все маршруты (`PaneNavBar`), имя
+/// стоит в её левом слоте, а здесь осталось ровно то, что делают **с записью**.
+public struct RecordingControls: View {
     private let elapsed: String
     private let isPaused: Bool
     private let onPause: () -> Void
     private let onStop: () -> Void
 
     public init(
-        meetingID: String,
-        title: String,
         elapsed: String,
         isPaused: Bool,
-        onRename: ((_ meetingID: String, _ newTitle: String) -> Void)? = nil,
         onPause: @escaping () -> Void,
         onStop: @escaping () -> Void
     ) {
-        self.meetingID = meetingID
-        self.title = title
         self.elapsed = elapsed
         self.isPaused = isPaused
-        self.onRename = onRename
         self.onPause = onPause
         self.onStop = onStop
     }
 
     public var body: some View {
-        HStack(spacing: 0) {
-            MeetingPaneIdentity(meetingID: meetingID, title: title, onRename: onRename)
-            Spacer(minLength: Tokens.Space.s8)
-            controls
-        }
-        .frame(height: Tokens.Pane.headerHeight)
-    }
-
-    private var controls: some View {
         HStack(spacing: Tokens.Pane.headerActionsGap) {
             timer
             PaneIconButton(
@@ -63,8 +50,6 @@ public struct RecordingPaneHeader: View {
             )
             PaneIconButton(symbol: "stop.fill", help: "Остановить запись (⌘.)", action: onStop)
         }
-        .padding(.horizontal, Tokens.Pane.headerActionsPadding)
-        .frame(height: Tokens.Pane.headerHeight)
         .fixedSize()
     }
 

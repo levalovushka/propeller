@@ -30,7 +30,7 @@ private enum HeaderTitle {
 /// and the one over the meeting being recorded. A recording is a meeting from
 /// the first second — it has a name, and that name is renamed the same way,
 /// with the same pencil in the same place.
-struct MeetingPaneIdentity: View {
+public struct MeetingPaneIdentity: View {
     let meetingID: String
     let title: String
     let onRename: ((_ meetingID: String, _ newTitle: String) -> Void)?
@@ -39,7 +39,19 @@ struct MeetingPaneIdentity: View {
     /// и тело панели готовой встречи.
     var look: Look = .paneHeader
 
-    struct Look {
+    public init(
+        meetingID: String,
+        title: String,
+        onRename: ((_ meetingID: String, _ newTitle: String) -> Void)? = nil,
+        look: Look = .paneHeader
+    ) {
+        self.meetingID = meetingID
+        self.title = title
+        self.onRename = onRename
+        self.look = look
+    }
+
+    public struct Look {
         let typo: Tokens.Typography.Style
         let maxWidth: CGFloat
         let hPadding: CGFloat
@@ -52,7 +64,7 @@ struct MeetingPaneIdentity: View {
         var boxHeight: CGFloat?
 
         /// Полоса 48 над идущей записью — 14/18 в поле 430.
-        static let paneHeader = Look(
+        public static let paneHeader = Look(
             typo: Tokens.Pane.Typo.headerTitle,
             maxWidth: Tokens.Pane.headerTitleWidth,
             hPadding: Tokens.Pane.headerHPadding,
@@ -60,7 +72,7 @@ struct MeetingPaneIdentity: View {
             boxHeight: nil
         )
         /// Имя в теле готовой встречи — 22/24 без полей: их уже дала колонка.
-        static let body = Look(
+        public static let body = Look(
             typo: Tokens.Pane.Typo.paneTitle,
             maxWidth: .infinity,
             hPadding: 0,
@@ -85,7 +97,7 @@ struct MeetingPaneIdentity: View {
     @State private var hovering = false
     @FocusState private var focused: Bool
 
-    var body: some View {
+    public var body: some View {
         identity
             // Picking another meeting mid-edit saves into the meeting you were
             // editing and shows the one you picked. It used to hand your text to
@@ -235,12 +247,14 @@ struct MeetingPaneIdentity: View {
 /// It carries the same hover chrome as `PaneIconButton` on purpose: it sits
 /// immediately beside one, and a control that lights up next to one that does
 /// not reads as broken rather than as a different kind of control.
-struct PaneIconLabel: View {
+public struct PaneIconLabel: View {
     let symbol: String
 
     @State private var hovering = false
 
-    var body: some View {
+    public init(symbol: String) { self.symbol = symbol }
+
+    public var body: some View {
         Image(systemName: symbol)
             .font(.system(size: Tokens.Pane.headerIconSize, weight: .regular))
             .foregroundStyle(hovering ? Tokens.Paint.Text.primary : Tokens.Pane.buttonIcon)
@@ -575,6 +589,58 @@ private struct MetaChip: View {
     }
 }
 
+/// Действия над встречей — правый слот навбара.
+///
+/// Стоят в полосе, а не плавающим оверлеем в углу окна, как до 2026-08-28: у
+/// действий над открытой сущностью в приложении одно место, и оно одно на все
+/// маршруты (`PaneNavBar`).
+///
+/// Порядок смысловой: сначала «ещё» — то, что ищут, когда ищут; потом
+/// копирование — то, что остаётся на этой машине; и справа «Поделиться» — то,
+/// что уходит наружу.
+public struct MeetingActions<MoreMenu: View>: View {
+    private let shareTitle: String
+    private let copy: () -> Void
+    private let share: () -> Void
+    private let moreMenu: () -> MoreMenu
+
+    public init(
+        shareTitle: String = "Поделиться",
+        copy: @escaping () -> Void,
+        share: @escaping () -> Void,
+        @ViewBuilder menu: @escaping () -> MoreMenu
+    ) {
+        self.shareTitle = shareTitle
+        self.copy = copy
+        self.share = share
+        self.moreMenu = menu
+    }
+
+    public var body: some View {
+        HStack(spacing: Tokens.Pane.headerActionsGap) {
+            // Троеточие — *меню*, а не кнопка: у «ещё» нет одного действия, и
+            // замыкание умело бы открыть его только где-то в другом месте.
+            Menu {
+                moreMenu()
+            } label: {
+                PaneIconLabel(symbol: "ellipsis")
+            }
+            // `.borderlessButton` рисует поверх ярлыка свой контрол, и ховер
+            // тогда не показывается вовсе — троеточие читается как украшение
+            // рядом с настоящей кнопкой. `.button` + `.plain` отдаёт вид ярлыку.
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .help("Ещё")
+            CopyButton(action: copy)
+                .paneProbe(PaneProbe.copy)
+            SharePill(title: shareTitle, action: share)
+                .paneProbe(PaneProbe.share)
+        }
+        .fixedSize()
+    }
+}
+
 /// «Поделиться» — сплошная белая пилюля, 312:11129.
 ///
 /// Единственная заливка на всей панели, и это сказано осознанно: остальные
@@ -597,14 +663,21 @@ struct SharePill: View {
                     hovering
                         ? Tokens.Paint.Interactive.Primary.hover
                         : Tokens.Paint.Interactive.Primary.rest,
-                    in: Capsule(style: .continuous)
+                    in: shape
                 )
-                .contentShape(Capsule(style: .continuous))
+                .contentShape(shape)
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
         .help(title)
+    }
+
+    /// Скругление 8, как у всех кнопок приложения, — решение владельца
+    /// 2026-08-28 **против макета**: в 312:11129 это капсула. Названо здесь, а
+    /// не выправлено молча: капсула была решением о форме, и её отмена — тоже.
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: Tokens.Pane.headerButtonRadius, style: .continuous)
     }
 }
 
@@ -635,35 +708,6 @@ struct PaneIconButton: View {
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
         .help(help)
         .accessibilityLabel(help)
-    }
-}
-
-/// Presents the system share sheet from the button that asked for it.
-///
-/// `NSSharingServicePicker` needs a real view to hang off — a share sheet that
-/// appears in the corner of the screen instead of under the button is the kind
-/// of thing that looks broken even when it works. So the button keeps an
-/// invisible AppKit anchor at its own position.
-public struct ShareAnchor: NSViewRepresentable {
-    private let items: () -> [Any]
-    @Binding private var isPresented: Bool
-
-    public init(isPresented: Binding<Bool>, items: @escaping () -> [Any]) {
-        self._isPresented = isPresented
-        self.items = items
-    }
-
-    public func makeNSView(context: Context) -> NSView { NSView() }
-
-    public func updateNSView(_ view: NSView, context: Context) {
-        guard isPresented else { return }
-        DispatchQueue.main.async {
-            isPresented = false
-            let payload = items()
-            guard !payload.isEmpty, view.window != nil else { return }
-            let picker = NSSharingServicePicker(items: payload)
-            picker.show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
-        }
     }
 }
 
@@ -988,46 +1032,6 @@ public enum MeetingPaneMode: String, CaseIterable, Equatable, Sendable {
     }
 }
 
-extension MeetingPaneBody where MoreMenu == EmptyView {
-    /// Панель без меню «ещё» — доска галереи и всё, что показывает саммари
-    /// само по себе.
-    public init(
-        identity: MeetingPane.Identity? = nil,
-        meta: MeetingPane.Meta? = nil,
-        share: MeetingPane.Share? = nil,
-        copy: MeetingPane.Copy? = nil,
-        mode: MeetingPaneMode = .summary,
-        summary: MeetingSummary,
-        turns: [MeetingTranscriptColumn.Turn] = [],
-        transcriptNotes: [TranscriptNote] = [],
-        summaryContent: SummaryColumnContent = .summary,
-        transcriptSource: TranscriptSource = .stored,
-        transcriptDisclosure: String? = nil,
-        summaryController: SummaryEditorController = SummaryEditorController(),
-        onSummaryChange: ((MeetingSummary) -> Void)? = nil,
-        onSummaryRewrite: ((SummaryRewrite, String) -> Void)? = nil
-    ) {
-        self.init(
-            identity: identity,
-            meta: meta,
-            share: share,
-            copy: copy,
-            hasMoreMenu: false,
-            mode: mode,
-            summary: summary,
-            turns: turns,
-            transcriptNotes: transcriptNotes,
-            summaryContent: summaryContent,
-            transcriptSource: transcriptSource,
-            transcriptDisclosure: transcriptDisclosure,
-            summaryController: summaryController,
-            onSummaryChange: onSummaryChange,
-            onSummaryRewrite: onSummaryRewrite,
-            moreMenu: { EmptyView() }
-        )
-    }
-}
-
 /// Замер панели для тестов геометрии.
 ///
 /// Прибор в продуктовом коде, как `MeetingsChromeMidYKey`: у SwiftUI-вью нет
@@ -1040,6 +1044,8 @@ public enum PaneProbe {
     public static let actions = "actions"
     public static let copy = "copy"
     public static let share = "share"
+    public static let back = "back"
+    public static let forward = "forward"
 }
 
 public struct PaneProbeKey: PreferenceKey {
@@ -1064,10 +1070,9 @@ extension View {
 
 /// Что панель встречи показывает о встрече помимо её текста.
 ///
-/// Отдельным пространством имён, а не вложенными типами: `MeetingPaneBody`
-/// параметризована меню «ещё», и вложенный тип у неё был бы разным для панели
-/// с меню и без — то есть вызывающему пришлось бы знать generic, чтобы назвать
-/// дату встречи.
+/// Отдельным пространством имён, а не вложенными типами: этими же моделями
+/// панель описывают галерея и тесты, и вложенные типы пришлось бы называть
+/// через вид, который их рисует.
 public enum MeetingPane {
 
 /// Встреча, чьё имя стоит над саммари.
@@ -1172,28 +1177,7 @@ public struct Meta {
     }
 }
 
-/// Кладёт саммари в буфер обмена — иконкой, без подписи.
-///
-/// Свой тип, а не `Share` без заголовка: у этих двух разные предметы. Шер
-/// выпускает ссылку наружу и потому подписан словом; копирование остаётся
-/// на этой машине и потому знак. Общий тип заставил бы объяснять, почему у
-/// одного заголовок пустой.
-public struct Copy {
-    public let handler: () -> Void
-    public init(handler: @escaping () -> Void) {
-        self.handler = handler
-    }
-}
 
-/// Поднимает системный шер из угла панели.
-public struct Share {
-    public let title: String
-    public let handler: () -> Void
-    public init(_ title: String, handler: @escaping () -> Void) {
-        self.title = title
-        self.handler = handler
-    }
-}
 }
 
 /// Панель готовой встречи: одна колонка, и в ней всё, что о встрече известно.
@@ -1202,17 +1186,11 @@ public struct Share {
 /// расшифровки на своей секунде, а после встречи — разделом в саммари, который
 /// правится как всё остальное в нём. Отдельный список рядом был третьим местом
 /// для одной и той же вещи и стоил трети окна.
-public struct MeetingPaneBody<MoreMenu: View>: View {
+public struct MeetingPaneBody: View {
     /// Имя встречи и то, как её переименовать. `nil` — доска галереи и всё,
     /// что показывает саммари без встречи за ним.
     private let identity: MeetingPane.Identity?
     private let meta: MeetingPane.Meta?
-    private let share: MeetingPane.Share?
-    private let copy: MeetingPane.Copy?
-    /// Троеточие — *меню*, а не кнопка: у «ещё» нет одного действия, и
-    /// замыкание умело бы открыть его только где-то в другом месте.
-    private let moreMenu: () -> MoreMenu
-    private let hasMoreMenu: Bool
     private let mode: MeetingPaneMode
     private let summary: MeetingSummary
     private let turns: [MeetingTranscriptColumn.Turn]
@@ -1245,9 +1223,6 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
     public init(
         identity: MeetingPane.Identity? = nil,
         meta: MeetingPane.Meta? = nil,
-        share: MeetingPane.Share? = nil,
-        copy: MeetingPane.Copy? = nil,
-        hasMoreMenu: Bool = true,
         mode: MeetingPaneMode = .summary,
         summary: MeetingSummary,
         turns: [MeetingTranscriptColumn.Turn] = [],
@@ -1257,15 +1232,10 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
         transcriptDisclosure: String? = nil,
         summaryController: SummaryEditorController = SummaryEditorController(),
         onSummaryChange: ((MeetingSummary) -> Void)? = nil,
-        onSummaryRewrite: ((SummaryRewrite, String) -> Void)? = nil,
-        @ViewBuilder moreMenu: @escaping () -> MoreMenu
+        onSummaryRewrite: ((SummaryRewrite, String) -> Void)? = nil
     ) {
         self.identity = identity
         self.meta = meta
-        self.share = share
-        self.copy = copy
-        self.hasMoreMenu = hasMoreMenu
-        self.moreMenu = moreMenu
         self.mode = mode
         self.summary = summary
         self.turns = turns
@@ -1292,21 +1262,6 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
         }
         .scrollIndicators(.hidden)
         .coordinateSpace(name: PaneProbe.space)
-        // Угол принадлежит **окну**, а не блоку текста: кнопки прижаты к правой
-        // верхней кромке панели на любой ширине.
-        //
-        // Макет этот спор не решает и решить не может: в 312:11129 блок 649
-        // стоит впритык к правому краю окна (264 рельса + 649 = 913), то есть
-        // «кромка блока» и «кромка окна» там — одна и та же линия. 27 августа
-        // ревью выбрало блок, в тот же день владелец выбрал окно: кнопка,
-        // отъезжающая от угла при расширении окна, читается как потерявшаяся,
-        // а не как принадлежащая тексту. Прежний довод (на широком окне
-        // «Поделиться» уезжает от имени встречи) остаётся правдой — он просто
-        // проиграл: у угла есть свой смысл, и он сильнее соседства.
-        //
-        // Инсет прежний и живёт внутри кластера (`paneActionsInset`), поэтому
-        // кнопка ловит нажатие до самой кромки.
-        .overlay(alignment: .topTrailing) { actions }
     }
 
     /// Имя встречи над саммари — 312:11129. Живёт *выше* смены колонок:
@@ -1333,42 +1288,6 @@ public struct MeetingPaneBody<MoreMenu: View>: View {
             }
             .padding(.horizontal, Tokens.Pane.summaryHPadding)
             .padding(.top, Tokens.Pane.paneTopPadding)
-        }
-    }
-
-    @ViewBuilder
-    private var actions: some View {
-        if hasMoreMenu || share != nil || copy != nil {
-            HStack(spacing: Tokens.Pane.headerActionsGap) {
-                if hasMoreMenu {
-                    Menu {
-                        moreMenu()
-                    } label: {
-                        PaneIconLabel(symbol: "ellipsis")
-                    }
-                    // `.borderlessButton` draws its own control over the label,
-                    // so the hover chrome never showed and the ellipsis read as
-                    // decoration beside a real button. `.button` + `.plain`
-                    // hands the whole appearance back to the label.
-                    .menuStyle(.button)
-                    .buttonStyle(.plain)
-                    .menuIndicator(.hidden)
-                    .help("Ещё")
-                }
-                // Копирование стоит слева от «Поделиться»: слева то, что
-                // остаётся на этой машине, справа то, что уходит наружу.
-                if let copy {
-                    CopyButton(action: copy.handler)
-                        .paneProbe(PaneProbe.copy)
-                }
-                if let share {
-                    SharePill(title: share.title, action: share.handler)
-                        .paneProbe(PaneProbe.share)
-                }
-            }
-            .padding(Tokens.Pane.paneActionsInset)
-            .fixedSize()
-            .paneProbe(PaneProbe.actions)
         }
     }
 

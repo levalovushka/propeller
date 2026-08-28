@@ -30,7 +30,7 @@ struct ProjectsPane: View {
     }
 
     private var page: some View {
-        PanePage("Проекты", trailing: { EmptyView() }) {
+        PanePage("Проекты") {
             VStack(alignment: .leading, spacing: Tokens.Projects.barGap) {
                 HStack(spacing: Tokens.Projects.cardGap) {
                     ProjectsSortMenu(selection: $order)

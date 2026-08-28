@@ -181,7 +181,10 @@ public enum SidebarBody: Equatable, Sendable {
     case archive(groups: [SidebarMeetingGroup], emptyMessage: String? = nil)
     /// `Type=Secondary` (307:6497): «← Назад» в шапке вместо кнопки рельса и
     /// подвал внизу вместо списка.
-    case section(back: String, footer: SidebarFooterModel)
+    /// Раздел: список его страниц вместо списка встреч. Кнопки «Назад» здесь
+    /// больше нет — «назад» одно на всё приложение и живёт в полосе над
+    /// панелью (`PaneNavBar`), а этот слот занимает тумблер рельса, как везде.
+    case section(footer: SidebarFooterModel)
 }
 
 public struct SidebarModel: Equatable, Sendable {
@@ -241,7 +244,6 @@ public struct PropellerSidebar: View {
     /// did not lead anywhere in the rail. Absent means no button.
     private let onSearch: (() -> Void)?
     /// Уйти из раздела обратно в архив. Есть только у `SidebarBody.section`.
-    private let onBack: (() -> Void)?
     /// «Помощь ↗» в подвале раздела.
     private let onFooterAction: (() -> Void)?
     /// Right-click actions, by meeting id. Absent means that item is omitted.
@@ -271,7 +273,6 @@ public struct PropellerSidebar: View {
         onDissolveFinished: (() -> Void)? = nil,
         onToggle: (() -> Void)? = nil,
         onSearch: (() -> Void)? = nil,
-        onBack: (() -> Void)? = nil,
         onFooterAction: (() -> Void)? = nil,
         onPromptAction: @escaping (String) -> Void = { _ in },
         onPromptSubmit: @escaping (String, String) -> Void = { _, _ in }
@@ -289,7 +290,6 @@ public struct PropellerSidebar: View {
         self.onDissolveFinished = onDissolveFinished
         self.onToggle = onToggle
         self.onSearch = onSearch
-        self.onBack = onBack
         self.onFooterAction = onFooterAction
         self.onPromptAction = onPromptAction
         self.onPromptSubmit = onPromptSubmit
@@ -343,12 +343,7 @@ public struct PropellerSidebar: View {
     private var header: some View {
         HStack(spacing: 0) {
             trafficLightSlot
-            // Кнопка рельса и «Назад» делят один слот намеренно: в разделе
-            // сворачивать нечего — там нет списка, — а «Назад» некуда деть в
-            // архиве, потому что из него не выходят.
-            if case .section(let back, _) = model.body, let onBack {
-                SidebarBackButton(title: back, action: onBack)
-            } else if let onToggle {
+            if let onToggle {
                 SidebarChromeButton(symbol: "sidebar.left", help: "Скрыть список", action: onToggle)
             } else {
                 Color.clear.frame(width: Tokens.Sidebar.toggleSide, height: Tokens.Sidebar.toggleSide)
@@ -419,7 +414,7 @@ public struct PropellerSidebar: View {
             switch model.body {
             case .archive:
                 meetingList
-            case .section(_, let footer):
+            case .section(let footer):
                 Spacer(minLength: 0)
                 SidebarFooter(model: footer, action: onFooterAction)
                     .padding(.horizontal, Tokens.Sidebar.bodyHPadding)
@@ -1323,39 +1318,6 @@ public struct SidebarMeetingRow: View {
     }
 }
 
-
-/// «← Назад» — Figma 307:6505.
-///
-/// Не иконка: путь назад из раздела — единственная навигация в этом рельсе, и
-/// стрелка без слова в ряду со светофором читается как ещё одна кнопка окна.
-struct SidebarBackButton: View {
-    let title: String
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: Tokens.Sidebar.backGap) {
-                Image(systemName: "arrow.left")
-                    .font(.system(size: Tokens.Sidebar.chromeIconSize, weight: .regular))
-                Text(title)
-                    .typo(Tokens.Sidebar.Typo.navLabel)
-            }
-            .foregroundStyle(hovering ? Tokens.Paint.Text.primary : Tokens.Sidebar.chromeIcon)
-            .padding(.horizontal, Tokens.Sidebar.backHPadding)
-            .frame(height: Tokens.Sidebar.toggleSide)
-            .background(
-                hovering ? Tokens.Sidebar.rowHover : .clear,
-                in: RoundedRectangle(cornerRadius: Tokens.Sidebar.chromeRadius, style: .continuous)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: Tokens.Sidebar.chromeRadius, style: .continuous))
-        }
-        .buttonStyle(.press)
-        .onHover { hovering = $0 }
-        .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
-    }
-}
 
 /// Подвал раздела — Figma `App Info Section` (307:6678).
 ///
