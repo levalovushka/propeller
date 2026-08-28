@@ -75,7 +75,6 @@ def main() -> int:
                 temperature=POLICY_TEMPERATURE,
                 min_reply_tokens=p.REPLY_TOKENS_FLOOR["recap"],
                 retry_temperature=p.RETRY_TEMPERATURE,
-                requires_discussion=True,
             )
         except Exception as error:                      # noqa: BLE001 — a failed meeting must not stop the batch
             print(f"{meeting}  · ОШИБКА: {error}")

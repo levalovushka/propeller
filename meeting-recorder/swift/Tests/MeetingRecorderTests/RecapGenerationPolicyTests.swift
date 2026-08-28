@@ -111,84 +111,10 @@ final class RecapGenerationPolicyTests: XCTestCase {
         XCTAssertNil(BoundaryResponses.chatReplyTokens(data: data))
     }
 
-    // MARK: - Дописанность, а не длина
-
-    private func reply(_ text: String, tokens: Int?) -> RecapGenerationPolicy.ModelReply {
-        .init(content: text, replyTokens: tokens)
-    }
-
-    private let whole = """
-    ## Итог
-    Собрались про смету.
-
-    ## Решения
-    - Отказались от диплинков.
-
-    ## Ход обсуждения
-    12:30 Спорили про хостинг.
-    """
-
-    private let cut = """
-    ## Итог
-    Собрались про смету.
-
-    ## Решения
-    - Отказались от диплинков.
-    """
-
-    /// Живой прогон встречи «Cетап Passwork»: 1782 символа — порога длины
-    /// хватило, «Хода обсуждения» нет. Замер по 24 прогонам: секция есть у
-    /// каждого ответа от 941 токена и ни у одного до 945, порог стоит на 800.
-    func testОтветБезХодаОбсужденияПроситПовторДажеБудучиДлинным() {
-        let long = reply(cut, tokens: 900)
-        XCTAssertFalse(RecapGenerationPolicy.collapsed(long, threshold: 800))
-        XCTAssertFalse(RecapGenerationPolicy.wantsRetry(first: long, threshold: 800))
-        XCTAssertTrue(RecapGenerationPolicy.wantsRetry(
-            first: long, threshold: 800, requiresDiscussion: true
-        ))
-    }
-
-    func testДописанныйОтветПовтораНеПросит() {
-        XCTAssertFalse(RecapGenerationPolicy.wantsRetry(
-            first: reply(whole, tokens: 900), threshold: 800, requiresDiscussion: true
-        ))
-    }
-
-    /// Дописанность важнее длины: короткий ответ с секцией побеждает длинный без.
-    func testОтветСХодомПобеждаетБолееДлинныйБезНего() {
-        let (winner, _) = RecapGenerationPolicy.resolved(
-            first: reply(cut, tokens: 900),
-            retry: reply(whole, tokens: 700),
-            threshold: 800,
-            requiresDiscussion: true
-        )
-        XCTAssertEqual(winner.content, whole)
-    }
-
-    /// А когда секцию не спрашивают, правило прежнее — длинный из двух.
-    func testБезВопросаОСекцииПобеждаетДлинный() {
-        let (winner, _) = RecapGenerationPolicy.resolved(
-            first: reply(cut, tokens: 900), retry: reply(whole, tokens: 700), threshold: 800
-        )
-        XCTAssertEqual(winner.content, cut)
-    }
-
-    /// Оба без секции — выбор снова по длине, и повтор не сгорает впустую.
-    func testЕслиНиОдинНеДописанБерётсяДлинный() {
-        let (winner, stats) = RecapGenerationPolicy.resolved(
-            first: reply(cut, tokens: 500), retry: reply(cut + "\n\nЕщё абзац.", tokens: 700),
-            threshold: 800, requiresDiscussion: true
-        )
-        XCTAssertEqual(winner.replyTokens, 700)
-        XCTAssertTrue(stats.retried)
-        XCTAssertTrue(stats.collapsed)
-    }
-
-    /// Заголовок приезжает и болдом — разбор терпимый, значит и этот вопрос тоже.
-    func testЖирныйЗаголовокСекцииСчитаетсяДописанным() {
-        let bold = whole.replacingOccurrences(
-            of: "## Ход обсуждения", with: "## **Ход обсуждения**"
-        )
-        XCTAssertFalse(RecapGenerationPolicy.missingDiscussion(reply(bold, tokens: 900)))
-    }
+    /// Структурный признак дописанности («нет «Хода обсуждения» — повтор»)
+    /// пробовали и сняли 2026-08-28: правило сработало на 9 первых ответах из
+    /// 12, а секции после повтора не было у 6 из 12 против 4–5 без правила.
+    /// Второй вызов на трёх четвертях встреч, ноль выигрыша — разбор в доке
+    /// `RecapGenerationPolicy.resolved`. Тесты снятого правила удалены вместе с
+    /// ним: тест на несуществующее поведение — это документация, которая врёт.
 }

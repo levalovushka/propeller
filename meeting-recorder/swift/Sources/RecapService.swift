@@ -91,17 +91,29 @@ actor RecapService {
     /// про состав — оба правила теперь стоят там, где известно, есть ли данные,
     /// о которых они говорят.
     ///
-    /// # «Ход обсуждения» защищён и правилом
+    /// # Цена формы, посчитанная честным прибором
     ///
-    /// Правка формы стоила самой длинной секции, и замер это показал только
-    /// после живого прогона. Без «Хода обсуждения» приезжало **4 конспекта из 8
-    /// против 1–2 до правки**, доля секции в документе 0,34–0,40 → 0,22–0,24, и
-    /// видно это на обоих прогонах каждого варианта, то есть не шум.
+    /// Первые оценки этой цены («секция пропадает вдвое чаще») сняты: они
+    /// получены лабораторией, которая слала t=0,2 без повтора, а приложение
+    /// шлёт t=0 с повтором при ответе короче 800 токенов. С починенным прибором
+    /// (12 встреч, по два прогона):
     ///
-    /// Читать это как «стало плотнее» — ошибка, которую я и совершил: короче
-    /// стал не пересказ, а документ, и ушла ровно та секция, которая несёт
-    /// контекст и аргументы. Правило «пустые секции опускай» модель применила к
-    /// самой большой, поэтому исключение стоит там же, где правило.
+    /// | | база | этот промпт |
+    /// |---|---|---|
+    /// | тема-ярлык | 35 · 41 | **18 · 18** |
+    /// | решение в форме задачи | 11 · 0 | **0 · 0** |
+    /// | решений | 55 · 51 | 49 · 49 |
+    /// | без «Хода обсуждения» | 3 · 4 из 12 | 4 · 5 из 12 |
+    /// | повторов из 12 | 4 | **9** |
+    ///
+    /// Форма стоит примерно одной встречей из двенадцати, потерявшей «Ход
+    /// обсуждения», несколькими процентами договорённостей — и **удвоением числа
+    /// повторов**. Повтор фоновый, человек его не ждёт, но это вдвое больше
+    /// машинного времени на конспект, и молчать об этом нельзя.
+    ///
+    /// Исключение для «Хода обсуждения» в правиле про пустые секции осталось:
+    /// доказать его отдельно нечем, но оно ничего не стоит и стоит там же, где
+    /// правило, которое модель к этой секции применяла.
     ///
     /// # Примеров-предложений здесь нет, и это дороже, чем кажется
     ///
@@ -357,8 +369,7 @@ actor RecapService {
                 let tracked = try await callOllamaTracked(
                     model: prefs.ollamaModel, system: prompt, user: userContent,
                     numCtx: window,
-                    minReplyTokens: RecapGenerationPolicy.recapMinReplyTokens,
-                    requiresDiscussion: true
+                    minReplyTokens: RecapGenerationPolicy.recapMinReplyTokens
                 )
                 draft = tracked.content
                 draftStats = tracked.stats
@@ -903,12 +914,7 @@ actor RecapService {
         user: String,
         jsonMode: Bool = false,
         numCtx: Int? = nil,
-        minReplyTokens: Int? = nil,
-        /// Спрашивать ли у ответа «Ход обсуждения» — признак дописанности,
-        /// которого длина не даёт (`RecapGenerationPolicy.missingDiscussion`).
-        /// Только у конспекта целиком: у извлечения из фрагмента такой секции
-        /// нет по построению.
-        requiresDiscussion: Bool = false
+        minReplyTokens: Int? = nil
     ) async throws -> (content: String, stats: RecapGenerationPolicy.CallStats) {
         let url = URL(string: "http://127.0.0.1:11434/api/chat")!
         var req = URLRequest(url: url)
@@ -993,16 +999,11 @@ actor RecapService {
         do {
             let first = try await once(temperature: RecapGenerationPolicy.temperature)
             var retry: RecapGenerationPolicy.ModelReply?
-            if RecapGenerationPolicy.wantsRetry(
-                first: first, threshold: minReplyTokens, requiresDiscussion: requiresDiscussion
-            ) {
+            if RecapGenerationPolicy.wantsRetry(first: first, threshold: minReplyTokens) {
                 try Task.checkCancellation()
-                let why = RecapGenerationPolicy.collapsed(first, threshold: minReplyTokens)
-                    ? "схлопнулся (\(first.replyTokens ?? -1) токенов при пороге \(minReplyTokens ?? 0))"
-                    : "дописан не до конца: нет «\(RecapDigest.discussionTitle)»"
                 NSLog("""
-                [RecapService] ответ \(why) — один повтор на \
-                t=\(RecapGenerationPolicy.retryTemperature)
+                [RecapService] ответ схлопнулся (\(first.replyTokens ?? -1) токенов при пороге \
+                \(minReplyTokens ?? 0)) — один повтор на t=\(RecapGenerationPolicy.retryTemperature)
                 """)
                 do {
                     retry = try await once(temperature: RecapGenerationPolicy.retryTemperature)
@@ -1015,8 +1016,7 @@ actor RecapService {
                 }
             }
             let (winner, stats) = RecapGenerationPolicy.resolved(
-                first: first, retry: retry, threshold: minReplyTokens,
-                requiresDiscussion: requiresDiscussion
+                first: first, retry: retry, threshold: minReplyTokens
             )
             if stats.retried {
                 NSLog("""

@@ -158,6 +158,18 @@ public enum PersonCanon {
             }
             // Целиком не совпало — пробуем слова внутри: «Марина Primer»
             // против состава «Marina Primer» лечится по слову.
+            //
+            // **Но только если состав узнаёт каждое слово.** Иначе замена
+            // делает мешаный алфавит внутри одного имени: модель написала
+            // «Полина Кременец» (обе части кириллицей), состав знает «Polina
+            // Kremenets», «Полина» → «Polina» совпало, «Кременец» нет — «ц»
+            // сворачивается в `c`, а в составе `ts`, — и в конспект уезжало
+            // «Polina Кременец». Один человек в двух алфавитах внутри одного
+            // имени, и написали это мы, а не модель: дефект найден владельцем в
+            // живом рекапе 2026-08-28. Половина имени, приведённая к составу, —
+            // хуже целого имени, не приведённого никуда.
+            var planned2: [(range: Range<String.Index>, replacement: String)] = []
+            var resolvedAll = true
             var index = range.lowerBound
             while index < range.upperBound {
                 guard recap[index].isLetter else {
@@ -170,10 +182,15 @@ public enum PersonCanon {
                 }
                 let word = recap[index..<end]
                 if let canon = planned(word) {
-                    edits.append((index..<end, canon))
+                    planned2.append((index..<end, canon))
+                } else if word.count >= 3, table[fold(String(word))] == nil {
+                    // Слово, которого состав не знает вовсе. Короткие («и»,
+                    // «на») не считаются: они не части имени.
+                    resolvedAll = false
                 }
                 index = end
             }
+            if resolvedAll { edits.append(contentsOf: planned2) }
         }
 
         guard !edits.isEmpty else { return recap }

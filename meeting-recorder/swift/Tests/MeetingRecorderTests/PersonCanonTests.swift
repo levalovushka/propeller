@@ -100,4 +100,43 @@ final class PersonCanonTests: XCTestCase {
         XCTAssertEqual(PersonCanon.fold("Пример"), PersonCanon.fold("Primer"))
         XCTAssertNotEqual(PersonCanon.fold("Марина"), PersonCanon.fold("Ирина"))
     }
+
+    /// Дефект, найденный владельцем в живом рекапе 2026-08-28. Модель пишет
+    /// «Полина Кременец» — обе части кириллицей; состав знает «Polina
+    /// Kremenets». «Полина» сворачивается в «polina» и совпадает, «Кременец» —
+    /// в «kremenec» против «kremenets» и не совпадает. До правки в конспект
+    /// уезжало «Polina Кременец»: один человек в двух алфавитах внутри одного
+    /// имени, и написали это мы, а не модель.
+    func testПолИмениНеПриводитсяКСоставу() {
+        let out = PersonCanon.normalize(
+            "## Задачи\n- **Полина Кременец** — написать заказчику.\n",
+            roster: ["Polina Kremenets", "Левон"]
+        )
+        XCTAssertTrue(out.contains("**Полина Кременец**"), out)
+        XCTAssertFalse(out.contains("Polina Кременец"))
+    }
+
+    /// И то же с фамилией, которую ASR услышал неверно: «Vlad Алодхин» при
+    /// составе «Vlad Aldokhin» — половину чинить нельзя.
+    func testНеузнаннаяФамилияОставляетИмяКакБыло() {
+        let out = PersonCanon.normalize(
+            "- **Влад Алодхин** — приехать на встречу.",
+            roster: ["Vlad Aldokhin"]
+        )
+        XCTAssertTrue(out.contains("**Влад Алодхин**"), out)
+        XCTAssertFalse(out.contains("Vlad Алодхин"))
+    }
+
+    /// Что правило не должно было сломать: одиночное имя по-прежнему приводится,
+    /// и двухсловное — когда состав узнаёт **оба** слова.
+    func testУзнанноеЦеликомИмяВсёЖеПриводится() {
+        XCTAssertTrue(
+            PersonCanon.normalize("- **Марина** — смета.", roster: ["Marina Primer"])
+                .contains("**Marina**")
+        )
+        XCTAssertTrue(
+            PersonCanon.normalize("- **Марина Primer** — смета.", roster: ["Marina Primer"])
+                .contains("**Marina Primer**")
+        )
+    }
 }

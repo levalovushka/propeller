@@ -104,35 +104,9 @@ public enum RecapGenerationPolicy {
         return tokens < threshold
     }
 
-    /// Ответ, у которого нет «Хода обсуждения», **дописан не до конца** — и
-    /// длиной это не ловится.
-    ///
-    /// Замер 2026-08-28 (`tools/recap-lab`, 24 прогона по 12 встречам, запрос
-    /// побайтово продовый): секция есть у **каждого** ответа от 941 токена и
-    /// нет ни у одного до 945, а порог схлопывания стоит на 800. То есть
-    /// документ на 814–945 токенов проходит стража длины и приезжает читателю
-    /// без самой большой своей секции — ровно это и случилось на живом прогоне
-    /// встречи «Cетап Passwork»: 1782 символа, порога хватило, «Хода» нет.
-    ///
-    /// Мерить структуру, а не длину, здесь дешевле и честнее: длина была
-    /// прокси, и прокси разошёлся с тем, что он замещал.
-    ///
-    /// Спрашивается **только у конспекта целиком**: у извлечения из фрагмента
-    /// такой секции нет по построению (`extractMinReplyTokens`), и требовать её
-    /// значило бы просить повтор на каждом фрагменте.
-    public static func missingDiscussion(_ reply: ModelReply) -> Bool {
-        let wanted = RecapDigest.foldTitle(RecapDigest.discussionTitle)
-        return !RecapDigest.parse(reply.content).sections.contains {
-            RecapDigest.foldTitle($0.title) == wanted
-        }
-    }
-
     /// Нужен ли повтор после первого ответа.
-    public static func wantsRetry(
-        first: ModelReply, threshold: Int?, requiresDiscussion: Bool = false
-    ) -> Bool {
-        if collapsed(first, threshold: threshold) { return true }
-        return requiresDiscussion && missingDiscussion(first)
+    public static func wantsRetry(first: ModelReply, threshold: Int?) -> Bool {
+        collapsed(first, threshold: threshold)
     }
 
     /// Свести первый ответ и (если был) повтор к тому, что уходит дальше.
@@ -140,21 +114,22 @@ public enum RecapGenerationPolicy {
     /// Правило выбора — длинный из двух, при равенстве первый: детерминизм
     /// первого вызова дороже, чем ничья.
     ///
-    /// **Дописанность важнее длины.** Когда секцию спрашивают, ответ с «Ходом
-    /// обсуждения» побеждает более длинный без него: длина была прокси
-    /// дописанности, и там, где прокси и предмет расходятся, прав предмет.
+    /// **Структурный признак дописанности здесь пробовали и сняли** (2026-08-28).
+    /// Ответ без «Хода обсуждения» дописан не до конца — это верно, и порог 800
+    /// такой документ пропускает (секция есть у каждого ответа от 941 токена и ни
+    /// у одного до 945). Но повтор её не возвращает: правило сработало на **9
+    /// первых ответах из 12**, а секции после повтора не было у **6 из 12** —
+    /// против 4–5 без правила. Длина ответа определяется входом, и повтор
+    /// пересэмплирует то же решение модели остановиться. Второй вызов на трёх
+    /// четвертях встреч, ноль выигрыша. Отдельный вызов ровно за эту секцию был
+    /// бы сборкой документа из кусков — закрыто решением владельца 2026-08-15.
     public static func resolved(
-        first: ModelReply, retry: ModelReply?, threshold: Int?,
-        requiresDiscussion: Bool = false
+        first: ModelReply, retry: ModelReply?, threshold: Int?
     ) -> (reply: ModelReply, stats: CallStats) {
         let collapsedFirst = collapsed(first, threshold: threshold)
         var winner = first
-        if let retry {
-            if requiresDiscussion, missingDiscussion(first) != missingDiscussion(retry) {
-                winner = missingDiscussion(first) ? retry : first
-            } else if (retry.replyTokens ?? 0) > (first.replyTokens ?? 0) {
-                winner = retry
-            }
+        if let retry, (retry.replyTokens ?? 0) > (first.replyTokens ?? 0) {
+            winner = retry
         }
         let stats = CallStats(
             firstReplyTokens: first.replyTokens,
