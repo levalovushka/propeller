@@ -54,7 +54,6 @@ final class ProjectsShotTests: XCTestCase {
 private struct ProjectsBoard: View {
     let state: String
 
-    @State private var order: ProjectOrder = .recent
     @State private var name = ""
     @State private var about = ""
 
@@ -92,26 +91,21 @@ private struct ProjectsBoard: View {
 
     private var grid: some View {
         PanePage("Проекты") {
-            VStack(alignment: .leading, spacing: Tokens.Projects.barGap) {
-                HStack(spacing: Tokens.Projects.cardGap) {
-                    ProjectsSortMenu(selection: $order)
-                    Spacer(minLength: 0)
-                    ProjectsActionButton("Новый проект", action: {})
-                }
-                LazyVGrid(
-                    columns: Array(
-                        repeating: GridItem(.flexible(), spacing: Tokens.Projects.gridGap),
-                        count: Tokens.Projects.columns
-                    ),
-                    spacing: Tokens.Projects.gridGap
-                ) {
-                    ForEach(cards, id: \.0) { card in
-                        ProjectCard(
-                            name: card.0, about: card.1, footer: card.2,
-                            open: {},
-                            menu: { EmptyView() }
-                        )
-                    }
+            // Полосы с выпадашкой и «Новым проектом» здесь больше нет: кнопка
+            // переехала в навбар, выбор порядка снят целиком.
+            LazyVGrid(
+                columns: Array(
+                    repeating: GridItem(.flexible(), spacing: Tokens.Projects.gridGap),
+                    count: Tokens.Projects.columns
+                ),
+                spacing: Tokens.Projects.gridGap
+            ) {
+                ForEach(cards, id: \.0) { card in
+                    ProjectCard(
+                        name: card.0, about: card.1, footer: card.2,
+                        open: {},
+                        menu: { EmptyView() }
+                    )
                 }
             }
         }

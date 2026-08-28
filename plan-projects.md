@@ -368,12 +368,13 @@ case-а, как у `.settings(SettingsSection)`, чтобы «проекты о�
 неизвестно» было невыразимо (`AppState.swift:8-16`). Сбросить в `.meeting` в
 `selectRecording` — иначе клик по встрече оставит панель на проектах.
 Пять мест дispatch-а: `performNav` (там уже стоит `break`), `paneSubject`,
-`topBar`, `mainArea`, `showsFirstRun`.
+`navBar` (бывший `topBar`), `mainArea`, `showsFirstRun`.
 2.2. `PropellerUI/ProjectsKit.swift` — карточка, сетка, модалка. Верстка без
 знания об `AppState`; проводка — в `Sources/Projects/`, как у настроек.
 2.3. **Что переиспользуется, а не пишется заново:** `SettingsField` (имя),
 `SettingsEditor` (описание), `SettingsButton` (`.prominent` / `.normal` в
-подвале модалки), `SettingsMenu` (сортировка «Сначала актуальные»),
+подвале модалки), `SettingsMenu` (сортировка «Сначала актуальные» — **снята 2026-08-28 вместе со
+всей полосой над сеткой**: порядок один, `ProjectOrder.entry`),
 `SummonedPlate` (стекло, тень, концентричный радиус — не выводить заново),
 `MinimalIconMenu` (троеточие на карточке; обычный `Menu` перекрашивает лейбл
 акцентом), `FlowLayout`, `@resultBuilder SettingsRows`.

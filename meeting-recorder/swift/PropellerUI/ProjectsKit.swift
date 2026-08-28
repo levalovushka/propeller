@@ -73,54 +73,6 @@ public struct ProjectsActionButton: View {
     }
 }
 
-// MARK: - Сортировка
-
-/// Триггер выбора порядка — Figma 255:5132. Список системный, по той же причине,
-/// по какой он системный у `SettingsMenu`.
-public struct ProjectsSortMenu: View {
-    @Binding private var selection: ProjectOrder
-
-    public init(selection: Binding<ProjectOrder>) {
-        self._selection = selection
-    }
-
-    public var body: some View {
-        Menu {
-            ForEach(ProjectOrder.allCases, id: \.self) { order in
-                Button {
-                    selection = order
-                } label: {
-                    if order == selection {
-                        Label(order.title, systemImage: "checkmark")
-                    } else {
-                        Text(order.title)
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: Tokens.Projects.cardGap) {
-                Text(selection.title)
-                    .foregroundStyle(Tokens.Projects.title)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: Tokens.Projects.Typo.action.size, weight: .regular))
-                    .foregroundStyle(Tokens.Projects.quiet)
-            }
-            .typo(Tokens.Projects.Typo.action)
-            .padding(.horizontal, Tokens.Projects.actionHPadding)
-            .frame(height: Tokens.Projects.actionHeight)
-            .background(
-                Tokens.Projects.sortFill,
-                in: RoundedRectangle(cornerRadius: Tokens.Projects.actionRadius, style: .continuous)
-            )
-            .contentShape(Rectangle())
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-    }
-}
-
 // MARK: - Карточка
 
 /// Карточка проекта — Figma 255:5082.

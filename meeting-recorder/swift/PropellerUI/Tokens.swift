@@ -1790,8 +1790,6 @@ public enum Tokens {
 
         public static let columns = 2
         public static let gridGap = Space.s10
-        /// Панель навигации → сетка.
-        public static let barGap = Space.s16
 
         // MARK: Карточка — 255:5082
 
