@@ -184,7 +184,7 @@ public struct SummaryDocument: Equatable, Sendable {
             if isLeadSection, !leadTaken {
                 leadTaken = true
                 leadHeading = section.raw
-                if body[0].kind == .body { body = promotingLead(body, nextID: nextID) }
+                if body[0].kind == .body { body = promotingLead(body) }
             } else if let title = section.title {
                 out.append(Block(id: nextID(), kind: .heading, spans: spans(inline: title)))
             }
@@ -253,22 +253,22 @@ public struct SummaryDocument: Equatable, Sendable {
         return present.isEmpty ? nil : present.joined(separator: "\n\n")
     }
 
-    /// Первый абзац «Итога» становится ведущим — и, если он единственный и
-    /// длинный, режется по концу первого предложения.
+    /// Первый абзац «Итога» становится ведущим. И только это.
     ///
-    /// Резать только когда абзац один — это то, что делает круг устойчивым.
-    /// Разрезав однажды, мы сохраняем два абзаца; на следующем разборе их уже
-    /// два, правило не срабатывает, и лид не съедается по предложению с каждым
-    /// сохранением.
-    private static func promotingLead(_ blocks: [Block], nextID: () -> String) -> [Block] {
+    /// **Резку по первому предложению сняли 2026-08-28.** Она была осмысленной,
+    /// пока лид был самым крупным текстом колонки и назывался «Заголовок»:
+    /// длинный абзац в этом кегле читался стеной. Сейчас `.lead` рисуется ровно
+    /// как `.body` (см. док к `Kind.lead`), поэтому резка делала из одного абзаца
+    /// два **визуально одинаковых** — и спорила с решением владельца 2026-08-27
+    /// «„Итог“ — ровно один абзац», которое `RecapFormCanon` гарантирует в файле.
+    /// Владелец увидел на панели два абзаца там, где в файле один, и спросил,
+    /// не бывший ли это заголовок. Бывший.
+    ///
+    /// Круг от этого только устойчивее: раньше первый разбор менял состав блоков,
+    /// теперь не меняет ни один.
+    private static func promotingLead(_ blocks: [Block]) -> [Block] {
         var blocks = blocks
-        let paragraphs = blocks.filter { $0.kind == .body }.count
         blocks[0].kind = .lead
-        guard paragraphs == 1 else { return blocks }
-        let (head, tail) = splitFirstSentence(blocks[0].spans)
-        guard !tail.isEmpty else { return blocks }
-        blocks[0].spans = head
-        blocks.insert(Block(id: nextID(), kind: .body, spans: tail), at: 1)
         return blocks
     }
 
@@ -346,25 +346,6 @@ public struct SummaryDocument: Equatable, Sendable {
     /// Первое предложение и всё, что за ним, — по цепочке отрезков, чтобы
     /// жирное слово не потеряло жирность на границе разреза.
     ///
-    /// Макет даёт лиду одно предложение в 20 pt, а рассуждению — абзац в 14.
-    /// Настоящие конспекты этого не обещают: «Итог» приходил одним абзацем во
-    /// всех двадцати одном, от 109 до 586 знаков. 586 знаков в 20 pt semibold —
-    /// это стена, поэтому абзац режется там, где кончается первое предложение.
-    ///
-    /// Предложение длиннее `leadLimit` остаётся целым: лид, оборванный посреди
-    /// мысли, хуже длинного.
-    static func splitFirstSentence(
-        _ spans: [Span], leadLimit: Int = 220
-    ) -> (head: [Span], tail: [Span]) {
-        let text = spans.map(\.text).joined()
-        guard text.count > leadLimit else { return (spans, []) }
-        guard let boundary = sentenceBoundary(in: text) else { return (spans, []) }
-        let head = trimmed(prefix(of: spans, upTo: boundary))
-        let tail = trimmed(suffix(of: spans, from: boundary))
-        guard !head.isEmpty, !tail.isEmpty else { return (spans, []) }
-        return (head, tail)
-    }
-
     /// Смещение сразу за первой точкой, которая действительно кончает
     /// предложение: точка внутри «т. д.» или в числе границей не считается.
     private static func sentenceBoundary(in text: String) -> Int? {

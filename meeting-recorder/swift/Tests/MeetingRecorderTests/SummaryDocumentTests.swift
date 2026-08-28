@@ -30,13 +30,16 @@ final class SummaryDocumentTests: XCTestCase {
         XCTAssertEqual(document.leadHeading, "## Итог")
     }
 
-    func testALongSingleParagraphIsCutAtItsFirstSentence() {
+    /// Резку длинного «Итога» по первому предложению сняли 2026-08-28: `.lead`
+    /// рисуется ровно как `.body`, поэтому она делала из одного абзаца два
+    /// визуально одинаковых — и спорила с решением «„Итог“ — ровно один абзац».
+    /// Владелец увидел два абзаца на панели там, где в файле один.
+    func testALongSingleParagraphStaysOneParagraph() {
         let long = "Решили переписать панель. "
             + String(repeating: "Дальше шло длинное обоснование этого решения. ", count: 6)
         let document = SummaryDocument.parse(markdown: "## Итог\n" + long)
-        XCTAssertEqual(kinds(document), [.lead, .body])
-        XCTAssertEqual(document.blocks[0].text, "Решили переписать панель.")
-        XCTAssertTrue(document.blocks[1].text.hasPrefix("Дальше шло"))
+        XCTAssertEqual(kinds(document), [.lead])
+        XCTAssertEqual(document.blocks[0].text, long.trimmingCharacters(in: .whitespaces))
     }
 
     func testAShortSummaryIsLeftWholeRatherThanSplit() {
@@ -192,16 +195,18 @@ final class SummaryDocumentTests: XCTestCase {
         XCTAssertEqual(once.markdown, twice.markdown)
     }
 
-    /// The one that would eat the summary a sentence at a time: a long «Итог»
-    /// is split once, and the halves must not be split again on every save.
-    func testASplitLeadIsNotSplitAgainOnTheNextSave() {
+    /// Тот, что съедал бы конспект по предложению за сохранение. Резки больше
+    /// нет вовсе, поэтому круг обязан быть неподвижным с **первого** разбора, а
+    /// не со второго.
+    func testTheLeadSurvivesEveryRoundTripUnchanged() {
         let long = "Решили переписать панель. "
             + String(repeating: "Дальше шло длинное обоснование этого решения. ", count: 6)
         let once = SummaryDocument.parse(markdown: "## Итог\n" + long)
         let twice = SummaryDocument.parse(markdown: once.markdown)
-        XCTAssertEqual(kinds(twice), [.lead, .body])
+        XCTAssertEqual(kinds(once), [.lead])
+        XCTAssertEqual(kinds(twice), [.lead])
         XCTAssertEqual(once.blocks[0].text, twice.blocks[0].text)
-        XCTAssertEqual(once.blocks[1].text, twice.blocks[1].text)
+        XCTAssertEqual(once.markdown, twice.markdown)
     }
 
     func testTheRecapsOwnHeadingIsPutBackWhereItWas() {
