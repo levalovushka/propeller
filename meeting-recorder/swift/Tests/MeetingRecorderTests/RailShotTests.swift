@@ -67,7 +67,7 @@ final class RailShotTests: XCTestCase {
                         state: SidebarRowState(activity: .stalled)
                     ),
                 ]),
-                SidebarMeetingGroup(id: "g1", header: "Четверг, 31 июля", rows: [
+                SidebarMeetingGroup(id: "g1", header: "31 июля", rows: [
                     SidebarMeetingRowModel(
                         id: "5", meta: "12:00 · 3 мин",
                         title: "Никто ничего не сказал",

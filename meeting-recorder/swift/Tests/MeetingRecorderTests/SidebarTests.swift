@@ -203,6 +203,32 @@ final class SidebarTests: XCTestCase {
         XCTAssertTrue(header!.hasPrefix("Вчера, "), "got \(header ?? "nil")")
     }
 
+    /// Дни недели ушли из рельса 2026-08-28. «Среда, 26 августа» стояла над
+    /// каждой группой моложе недели — слово длиннее даты, которое к дате
+    /// ничего не добавляет. Проверяем весь бывший диапазон, а не одну точку:
+    /// ветка была `days < 7`, и вернуться она может ровно там.
+    func testTheRailStoppedNamingWeekdays() {
+        let cal = Calendar.current
+        let now = cal.startOfDay(for: Date()).addingTimeInterval(12 * 3600)
+        let weekdays = ["понедельник", "вторник", "сред", "четверг",
+                        "пятниц", "суббот", "воскресень"]
+        for back in 2...6 {
+            let date = cal.date(byAdding: .day, value: -back, to: now)!
+            guard let header = SidebarDayGrouping.day(for: date, now: now).header else {
+                return XCTFail("−\(back) дней остался без заголовка")
+            }
+            for name in weekdays {
+                XCTAssertFalse(
+                    header.lowercased().contains(name),
+                    "«\(header)» на −\(back) дней всё ещё называет день недели"
+                )
+            }
+            // И это по-прежнему дата, а не пустота: числу и месяцу тут быть.
+            XCTAssertTrue(header.contains(" "), "«\(header)» не похож на дату")
+            XCTAssertFalse(header.contains(","), "«\(header)» держит запятую от снятого имени")
+        }
+    }
+
     func testAClockSkewedIntoTheFutureIsTreatedAsToday() {
         // A machine whose clock was wrong, or an import. «через −1 день» is not
         // a thing the rail is allowed to write.

@@ -8,6 +8,11 @@ import Foundation
 /// nobody reads. Everything older earns a date, because that is the moment the
 /// date stops being obvious.
 ///
+/// **Дней недели здесь нет** (решение владельца 2026-08-28). «Среда, 26
+/// августа» стояла над группами моложе недели: слово, которое ничего не
+/// добавляет к дате и при этом длиннее её. Осталось два имени — «Вчера», у
+/// которого имя короче даты и потому полезно, и ничего у сегодняшнего дня.
+///
 /// Pure, and here rather than in the view, because "which day is that" is all
 /// calendar arithmetic and time zones — the class of thing that is wrong twice a
 /// year and only for the people it happens to.
@@ -46,10 +51,6 @@ public enum SidebarDayGrouping {
         // an import. Treat them as today rather than writing «через −1 день».
         if days <= 0 { return nil }
         if days == 1 { return "Вчера, " + dayMonth.string(from: date) }
-        if days < 7 {
-            let weekday = weekdayName.string(from: date)
-            return weekday.prefix(1).uppercased() + weekday.dropFirst() + ", " + dayMonth.string(from: date)
-        }
         let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
         return sameYear ? dayMonth.string(from: date) : dayMonthYear.string(from: date)
     }
@@ -57,7 +58,6 @@ public enum SidebarDayGrouping {
     private static let keyFormatter: DateFormatter = formatter("yyyy-MM-dd", posix: true)
     private static let dayMonth: DateFormatter = formatter("d MMMM")
     private static let dayMonthYear: DateFormatter = formatter("d MMMM yyyy")
-    private static let weekdayName: DateFormatter = formatter("EEEE")
 
     private static func formatter(_ format: String, posix: Bool = false) -> DateFormatter {
         let f = DateFormatter()
