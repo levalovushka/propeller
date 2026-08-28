@@ -120,7 +120,7 @@ public enum RecapFormCanon {
             guard inTasks, let split = bullet(line) else { continue }
 
             var body = split.body
-            if let owner = canonicalOwner(body, names: names) {
+            if let owner = canonicalOwner(body, names: names, roster: roster) {
                 fixed.append(owner.quote)
                 body = owner.body
             }
@@ -350,7 +350,7 @@ public enum RecapFormCanon {
     /// Пункт с ответственным в канонической разметке — или `nil`, если чинить
     /// нечего и если чинить нечем.
     private static func canonicalOwner(
-        _ item: String, names: [String: String]
+        _ item: String, names: [String: String], roster: [String]
     ) -> (body: String, quote: String)? {
         guard !names.isEmpty else { return nil }
 
@@ -360,16 +360,70 @@ public enum RecapFormCanon {
         let leading = rest.prefix(while: { $0 == " " })
         rest = String(rest.dropFirst(leading.count))
 
-        guard let owner = ownerHead(rest, names: names) else { return nil }
+        guard let owner = ownerHead(rest) else { return nil }
+        // Человек ли это — спрашивается **в одном месте**: у состава. Он же
+        // отвечает, каким написанием этого человека звать.
+        guard let person = fullName(owner.name, roster: roster)
+            ?? names[PersonCanon.fold(owner.name)]
+        else { return nil }
         let tail = String(rest[owner.end...]).trimmingCharacters(in: .whitespaces)
         guard !tail.isEmpty else { return nil }
-        let canon = "**\(owner.name)** — " + tail
+        let canon = "**\(person)** — " + tail
         guard canon != rest else { return nil }
         return (box + leading + canon, String(rest.prefix(owner.quoteLength)))
     }
 
-    /// Два вида, которыми модель пишет ответственного мимо канона. Оба — строки
-    /// живого архива; порядок проверок от самого частого к самому редкому.
+    /// Участник состава целиком — по любому его слову, если слово принадлежит
+    /// ровно ему одному.
+    ///
+    /// # Почему в слоте ответственного стоит полное имя
+    ///
+    /// На одной встрече модель взяла из состава два имени и сделала с ними
+    /// противоположное: «Vlad Aldokhin» сократила до «Vlad» и оставила
+    /// латиницей, «Polina Kremenets» перевела в кириллицу целиком — «Полина
+    /// Кременец», причём слова «Кременец» в транскрипте нет ни разу. Оба
+    /// написания прошли `PersonCanon`: первое совпало со словом состава, второе
+    /// не разобралось. В документе оказались два человека, названные по двум
+    /// разным правилам, и владелец это заметил (2026-08-28).
+    ///
+    /// Правило было записано давно и не доходило до этого слота: **канон — это
+    /// написание из состава** (`PersonCanon`, «читатель конспекта должен найти
+    /// этого человека в расшифровке глазами»). Слот ответственного — то место,
+    /// где оно обязано выполняться буквально: это не проза, а поле, по которому
+    /// задачу связывают с человеком (`RecapAtom.assignee`, чип на экране
+    /// проекта, сверка `RecapLint.assigneesOutsideRoster`). Два написания одного
+    /// человека здесь стоят дороже длины строки.
+    ///
+    /// **Проза остаётся как написана.** Там имя стоит в падеже и внутри фразы,
+    /// и подстановка полного написания её ломает — то же ограничение, что у
+    /// `PersonCanon.normalize`.
+    ///
+    /// Спорное слово не считается: «Александр» при двух Александрах в составе не
+    /// значит ни одного из них (`PersonCanon.soleOwners` возвращает такое слово
+    /// пустым), и тогда имя остаётся как написано.
+    static func fullName(_ name: String, roster: [String]) -> String? {
+        let whole = PersonCanon.table(roster: roster)
+        let owners = PersonCanon.soleOwners(roster: roster)
+        if let entry = owners[PersonCanon.fold(name)] { return entry == name ? nil : entry }
+        // Целиком не совпало — ищем по словам: «Полина Кременец» опознаётся по
+        // «Полине», если «Кременец» состав не знает.
+        var found: String?
+        for word in PersonCanon.words(of: name) {
+            guard let entry = owners[PersonCanon.fold(word)] else { continue }
+            if let found, found != entry { return nil }   // два разных человека в одном имени
+            found = entry
+        }
+        guard let found, found != name else { return nil }
+        // Написание из состава, а не из текста: если само состав знает это имя
+        // как есть, менять нечего.
+        return whole[PersonCanon.fold(found)] ?? found
+    }
+
+    /// Два вида, которыми модель пишет ответственного. Оба — строки живого
+    /// архива; порядок проверок от самого частого к самому редкому.
+    ///
+    /// Разбор **не спрашивает, человек ли это**: он только достаёт голову пункта.
+    /// Заслонка живёт у вызывающего, у состава, и одна на оба вида.
     ///
     /// Третьего вида — `**Имя** глагол …` совсем без разделителя — здесь нет
     /// сознательно. В архиве таких четыре из 186, а отличить исполнителя от
@@ -377,23 +431,26 @@ public enum RecapFormCanon {
     /// соберут» превратилось бы в «**Левон** — и Саша соберут». Правило, которое
     /// держится на списке союзов, портит текст ради двух процентов пунктов.
     private static func ownerHead(
-        _ text: String, names: [String: String]
+        _ text: String
     ) -> (name: String, end: String.Index, quoteLength: Int)? {
-        // 1. `**Имя**:` или `**Имя** -`. Длинное и среднее тире уже канон, их
-        //    `RecapAtom` разбирает сам.
+        // 1. `**Имя**` и любой из четырёх разделителей. Длинное и среднее тире
+        //    уже канон по **разметке** — и всё равно разбираются: имя за ними
+        //    может стоять не тем написанием, что в составе, и это второе дело
+        //    этого слота (`fullName`). Не изменилось ничего — вызывающий вернёт
+        //    `nil` сам, сравнив собранную строку с исходной.
         if text.hasPrefix("**"),
            let closing = text.range(
                of: "**", range: text.index(text.startIndex, offsetBy: 2)..<text.endIndex
            ) {
             let name = String(text[text.index(text.startIndex, offsetBy: 2)..<closing.lowerBound])
                 .trimmingCharacters(in: .whitespaces)
-            guard let canon = names[PersonCanon.fold(name)] else { return nil }
+            guard !name.isEmpty else { return nil }
             var after = closing.upperBound
             while after < text.endIndex, text[after] == " " { after = text.index(after: after) }
-            guard after < text.endIndex, ":-".contains(text[after]) else { return nil }
+            guard after < text.endIndex, ":-—–".contains(text[after]) else { return nil }
             after = text.index(after: after)
             while after < text.endIndex, text[after] == " " { after = text.index(after: after) }
-            return (canon, after, text.distance(from: text.startIndex, to: after))
+            return (name, after, text.distance(from: text.startIndex, to: after))
         }
 
         // 2. `Имя — …` и `Имя: …` без жирного. Тире именно длинное или среднее:
@@ -408,11 +465,10 @@ public enum RecapFormCanon {
         let head = String(text[text.startIndex..<range.lowerBound])
             .trimmingCharacters(in: .whitespaces)
         guard !head.isEmpty, !head.contains("*"), head.count <= 60,
-              let first = head.first, first.isUppercase,
-              let canon = names[PersonCanon.fold(head)]
+              let first = head.first, first.isUppercase
         else { return nil }
         let end = range.upperBound
-        return (canon, end, text.distance(from: text.startIndex, to: end))
+        return (head, end, text.distance(from: text.startIndex, to: end))
     }
 
     // MARK: -

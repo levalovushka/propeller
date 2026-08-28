@@ -36,12 +36,13 @@ final class RecapFormCanonTests: XCTestCase {
         )
     }
 
-    /// Написание берётся из состава, а не из текста: тот же канон, что у
-    /// `PersonCanon`, — иначе один человек уезжает в архив двумя способами.
-    func testНаписаниеБерётсяИзСостава() {
+    /// Написание берётся из состава, а не из текста, и берётся **целиком**:
+    /// иначе один человек уезжает в архив двумя способами — ровно это владелец
+    /// и увидел 2026-08-28 («Vlad» против «Полина Кременец» в одном файле).
+    func testНаписаниеБерётсяИзСоставаЦеликом() {
         XCTAssertEqual(
             canon("## Задачи\n- Марина — собрать смету.\n"),
-            "## Задачи\n- **Marina** — собрать смету.\n"
+            "## Задачи\n- **Marina Primer** — собрать смету.\n"
         )
     }
 
@@ -260,6 +261,56 @@ final class RecapFormCanonTests: XCTestCase {
         XCTAssertTrue(result.recap.contains("## Итог\n\nРаз. Два."))
         XCTAssertTrue(result.recap.contains("- **Левон** — прислать доки."))
         XCTAssertEqual(result.fixed, ["«Итог» из 2 абзацев", "Левон: "])
+    }
+
+    // MARK: - Одно написание имени в слоте ответственного
+
+    /// Живой файл 2026-08-28: модель взяла из состава два имени и сделала с ними
+    /// противоположное — «Vlad Aldokhin» сократила до «Vlad» и оставила
+    /// латиницей, «Polina Kremenets» перевела в кириллицу целиком («Полина
+    /// Кременец», причём слова «Кременец» в транскрипте нет ни разу). Владелец
+    /// спросил, почему в задаче «Vlad», а не «Влад Алдохин», и попросил единое
+    /// правило. Правило было записано давно и не доходило до этого слота: канон
+    /// — написание из состава.
+    func testВСлотеОтветственногоСтоитИмяИзСостава() {
+        let roster = ["Polina Kremenets", "Vlad Aldokhin", "Левон", "Анастасия"]
+        let out = RecapFormCanon.canonical("""
+        ## Задачи
+        - **Vlad** — подготовить запись встречи.
+        - **Полина Кременец** — составить план следующей встречи.
+        """, roster: roster).recap
+        XCTAssertTrue(out.contains("- **Vlad Aldokhin** — подготовить запись встречи."), out)
+        XCTAssertTrue(out.contains("- **Polina Kremenets** — составить план следующей встречи."), out)
+    }
+
+    /// Проза остаётся как написана: там имя стоит в падеже и внутри фразы.
+    func testВПрозеИмяНеПодменяется() {
+        let roster = ["Vlad Aldokhin"]
+        let recap = "## Ход обсуждения\n12:30 Vlad предложил не ждать концепта.\n"
+        XCTAssertEqual(RecapFormCanon.canonical(recap, roster: roster).recap, recap)
+    }
+
+    /// Спорное слово не считается: «Александр» при двух Александрах не значит
+    /// ни одного из них.
+    func testОбщееИмяДвухУчастниковНеРазрешается() {
+        let roster = ["Александр Яшин", "Александр Образцов"]
+        let recap = "## Задачи\n- **Александр** — собрать смету.\n"
+        XCTAssertEqual(RecapFormCanon.canonical(recap, roster: roster).recap, recap)
+    }
+
+    /// Роль ответственным не становится и полного имени не получает.
+    func testРольНеПревращаетсяВУчастника() {
+        let recap = "## Задачи\n- **Команда** — обсудить стек.\n"
+        XCTAssertEqual(RecapFormCanon.canonical(recap, roster: ["Vlad Aldokhin"]).recap, recap)
+    }
+
+    /// Имя, уже стоящее по канону, не трогается — и в `fixed` не попадает.
+    func testИмяПоКанонуНеПерезаписывается() {
+        let result = RecapFormCanon.canonical(
+            "## Задачи\n- **Vlad Aldokhin** — подготовить запись.\n", roster: ["Vlad Aldokhin"]
+        )
+        XCTAssertEqual(result.recap, "## Задачи\n- **Vlad Aldokhin** — подготовить запись.\n")
+        XCTAssertTrue(result.fixed.isEmpty, "\(result.fixed)")
     }
 
     // MARK: - Чекбокс
