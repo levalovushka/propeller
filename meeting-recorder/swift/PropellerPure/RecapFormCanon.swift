@@ -84,18 +84,20 @@ public enum RecapFormCanon {
     ///
     /// `roster` — подписи ленты (`RecapDocument.participants`), те же, что
     /// уходят в промпт и в `PersonCanon`.
-    public static func canonical(_ recap: String, roster: [String]) -> Result {
+    public static func canonical(
+        _ recap: String, roster: [String], transcript: String = ""
+    ) -> Result {
         guard !recap.isEmpty else { return Result(recap: recap, fixed: []) }
         let names = PersonCanon.table(roster: roster)
         let joined = joiningSummary(recap)
         let heads = decisionHeads(in: joined.recap, names: names, fixed: joined.fixed)
-        return owners(in: heads.recap, roster: roster, fixed: heads.fixed)
+        return owners(in: heads.recap, roster: roster, transcript: transcript, fixed: heads.fixed)
     }
 
     // MARK: - Ответственный
 
     private static func owners(
-        in recap: String, roster: [String], fixed carried: [String]
+        in recap: String, roster: [String], transcript: String, fixed carried: [String]
     ) -> Result {
 
         let names = PersonCanon.table(roster: roster)
@@ -120,7 +122,7 @@ public enum RecapFormCanon {
             guard inTasks, let split = bullet(line) else { continue }
 
             var body = split.body
-            if let owner = canonicalOwner(body, names: names, roster: roster) {
+            if let owner = canonicalOwner(body, names: names, roster: roster, transcript: transcript) {
                 fixed.append(owner.quote)
                 body = owner.body
             }
@@ -350,7 +352,7 @@ public enum RecapFormCanon {
     /// Пункт с ответственным в канонической разметке — или `nil`, если чинить
     /// нечего и если чинить нечем.
     private static func canonicalOwner(
-        _ item: String, names: [String: String], roster: [String]
+        _ item: String, names: [String: String], roster: [String], transcript: String
     ) -> (body: String, quote: String)? {
         guard !names.isEmpty else { return nil }
 
@@ -362,9 +364,9 @@ public enum RecapFormCanon {
 
         guard let owner = ownerHead(rest) else { return nil }
         // Человек ли это — спрашивается **в одном месте**: у состава. Он же
-        // отвечает, каким написанием этого человека звать.
-        guard let person = fullName(owner.name, roster: roster)
-            ?? names[PersonCanon.fold(owner.name)]
+        // отвечает, каким написанием этого человека звать. Ничего не изменилось —
+        // это увидит сравнение собранной строки ниже, а не запасная таблица.
+        guard let person = assigneeName(owner.name, roster: roster, transcript: transcript)
         else { return nil }
         let tail = String(rest[owner.end...]).trimmingCharacters(in: .whitespaces)
         guard !tail.isEmpty else { return nil }
@@ -401,22 +403,76 @@ public enum RecapFormCanon {
     /// Спорное слово не считается: «Александр» при двух Александрах в составе не
     /// значит ни одного из них (`PersonCanon.soleOwners` возвращает такое слово
     /// пустым), и тогда имя остаётся как написано.
-    static func fullName(_ name: String, roster: [String]) -> String? {
-        let whole = PersonCanon.table(roster: roster)
+    static func assigneeName(
+        _ name: String, roster: [String], transcript: String
+    ) -> String? {
         let owners = PersonCanon.soleOwners(roster: roster)
-        if let entry = owners[PersonCanon.fold(name)] { return entry == name ? nil : entry }
-        // Целиком не совпало — ищем по словам: «Полина Кременец» опознаётся по
-        // «Полине», если «Кременец» состав не знает.
-        var found: String?
-        for word in PersonCanon.words(of: name) {
-            guard let entry = owners[PersonCanon.fold(word)] else { continue }
-            if let found, found != entry { return nil }   // два разных человека в одном имени
-            found = entry
+        var entry = owners[PersonCanon.fold(name)]
+        if entry == nil {
+            // Целиком не совпало — ищем по словам: «Полина Кременец» опознаётся
+            // по «Полине», если «Кременец» состав не знает.
+            for word in PersonCanon.words(of: name) {
+                guard let owner = owners[PersonCanon.fold(word)] else { continue }
+                if let entry, entry != owner { return nil }   // два человека в одном имени
+                entry = owner
+            }
         }
-        guard let found, found != name else { return nil }
-        // Написание из состава, а не из текста: если само состав знает это имя
-        // как есть, менять нечего.
-        return whole[PersonCanon.fold(found)] ?? found
+        guard let entry else { return nil }
+        // Возвращается **всегда**, даже когда совпало с написанным: «ничего не
+        // менять» и «это не человек» — разные ответы, и различать их обязан этот
+        // метод. Раньше он на совпадении отдавал `nil`, вызывающий шёл в
+        // запасную таблицу и получал оттуда **слово состава** — то есть «Марина»
+        // превращалась в «Marina» ровно там, где менять было нечего.
+        return personal(of: entry, roster: roster, transcript: transcript) ?? entry
+    }
+
+    /// Кириллическое личное имя участника — или `nil`, и тогда зовут по составу
+    /// целиком.
+    ///
+    /// # Три условия, и каждое снимает свой способ соврать
+    ///
+    /// 1. **Личное имя принадлежит одному участнику.** Двое Александров — и
+    ///    «Александр» не значит ни одного из них (`PersonCanon.soleOwners`).
+    /// 2. **Транслитерация точная.** Обратная схема — инверсия `translit`
+    ///    (`PersonCanon.cyrillic`), и её результат обязан свернуться в то же, что
+    ///    исходник, иначе имя станет «исполнителем вне состава» для линтера.
+    /// 3. **Написание подтверждено транскриптом.** Это главное условие, потому
+    ///    что второе проходит и неверное написание: «Mikhail» → «Микхаил»
+    ///    сворачивается в `mikhail` и проверку сворачивания проходит. Поэтому
+    ///    имя ищется в тексте самой встречи — там люди зовут друг друга по
+    ///    имени, и «Влад», «Полина», «Анастасия» стоят по-русски. Не нашлось —
+    ///    не подставляем: **транслитерация предлагает, транскрипт подтверждает.**
+    ///
+    /// Фамилию не транслитерируем никогда. «Aldokhin» — это «Алдохин» или
+    /// «Алдёхин»? В транскрипте её нет ни в одном написании (замер по живой
+    /// встрече: «Кременец» и «Алдохин» — ноль вхождений), то есть подтвердить
+    /// нечем, а угадать чужую фамилию дороже, чем звать человека полным
+    /// написанием из состава.
+    static func personal(
+        of entry: String, roster: [String], transcript: String
+    ) -> String? {
+        guard let first = PersonCanon.words(of: entry).first else { return nil }
+        // Личное имя должно принадлежать этому участнику одному.
+        guard PersonCanon.soleOwners(roster: roster)[PersonCanon.fold(first)] == entry
+        else { return nil }
+
+        if first.unicodeScalars.allSatisfy({ !($0.value < 128 && CharacterSet.letters.contains($0)) }) {
+            return first   // состав и так по-русски: «Левон», «Анастасия»
+        }
+        guard let cyrillic = PersonCanon.cyrillic(first),
+              attested(cyrillic, in: transcript)
+        else { return nil }
+        return cyrillic
+    }
+
+    /// Стоит ли это написание в тексте встречи. Сравнение по началу слова:
+    /// «Полина» в транскрипте живёт и как «Полины», и как «Полине».
+    private static func attested(_ name: String, in transcript: String) -> Bool {
+        let hay = transcript.lowercased().replacingOccurrences(of: "ё", with: "е")
+        let word = name.lowercased().replacingOccurrences(of: "ё", with: "е")
+        let stem = String(word.prefix(max(4, word.count - 2)))
+        guard stem.count >= 4 else { return false }
+        return hay.contains(stem)
     }
 
     /// Два вида, которыми модель пишет ответственного. Оба — строки живого

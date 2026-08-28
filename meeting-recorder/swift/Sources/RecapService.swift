@@ -426,7 +426,12 @@ actor RecapService {
             // редактуры, а не до: редактор иначе сам съедает чекбоксы, которые
             // ему велено не трогать, и правку пришлось бы делать дважды.
             let canonical = RecapFormCanon.canonical(
-                grounded.recap, roster: RecapDocument.participants(fromTranscript: trimmed)
+                grounded.recap,
+                roster: RecapDocument.participants(fromTranscript: trimmed),
+                // Транскрипт — не украшение: им подтверждается кириллическое
+                // написание личного имени, иначе оно было бы догадкой
+                // (`RecapFormCanon.personal`).
+                transcript: trimmed
             )
             if !canonical.fixed.isEmpty {
                 NSLog("[RecapService] разметка приведена к канону: \(canonical.fixed.joined(separator: " · "))")

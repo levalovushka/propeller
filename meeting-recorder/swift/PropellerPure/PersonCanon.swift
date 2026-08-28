@@ -131,6 +131,46 @@ public enum PersonCanon {
         return owners.compactMapValues { $0.count == 1 ? $0.first : nil }
     }
 
+    /// Латиница обратно в кириллицу — **точная инверсия** `translit`.
+    ///
+    /// Нужна затем, что состав это то, что человек набрал в Zoom («Vlad
+    /// Aldokhin»), а конспект пишется по-русски. Инверсия именно точная: свёртка
+    /// полученного слова обязана совпасть со свёрткой исходного, иначе имя
+    /// станет «исполнителем вне состава» для `RecapLint`, то есть починка формы
+    /// сломала бы сверку людей.
+    ///
+    /// **И этого мало.** Инверсия round-trip'ится и на неверном написании:
+    /// «Mikhail» → «Микхаил» свернётся в `mikhail` и проверку пройдёт, а имени
+    /// такого нет. Поэтому одна эта функция ничего не решает — тот, кто её
+    /// зовёт, обязан подтвердить результат текстом встречи
+    /// (`RecapFormCanon.assigneeName`). Транслитерация предлагает, транскрипт
+    /// подтверждает.
+    ///
+    /// `nil` — в слове есть буква, которой в схеме нет (`j`, `q`, `w`, `x`):
+    /// гадать про неё не за что.
+    static func cyrillic(_ latin: String) -> String? {
+        // Длинные сочетания первыми, иначе «sch» разберётся как «s» + «ch».
+        let pairs: [(String, String)] = [
+            ("sch", "щ"), ("zh", "ж"), ("ch", "ч"), ("sh", "ш"), ("yu", "ю"), ("ya", "я"),
+            ("a", "а"), ("b", "б"), ("v", "в"), ("g", "г"), ("d", "д"), ("e", "е"),
+            ("z", "з"), ("i", "и"), ("k", "к"), ("l", "л"), ("m", "м"), ("n", "н"),
+            ("o", "о"), ("p", "п"), ("r", "р"), ("s", "с"), ("t", "т"), ("u", "у"),
+            ("f", "ф"), ("h", "х"), ("c", "ц"), ("y", "ы"),
+        ]
+        var rest = Substring(latin.lowercased())
+        var out = ""
+        outer: while !rest.isEmpty {
+            for (from, to) in pairs where rest.hasPrefix(from) {
+                out += to
+                rest = rest.dropFirst(from.count)
+                continue outer
+            }
+            return nil
+        }
+        guard !out.isEmpty, fold(out) == fold(latin) else { return nil }
+        return out.prefix(1).uppercased() + out.dropFirst()
+    }
+
     /// Слово с заглавной, до трёх слов подряд — кандидат на имя.
     private static let candidates = try! NSRegularExpression(
         pattern: #"\p{Lu}\p{L}+(?:[  ]\p{Lu}\p{L}+){0,2}"#
