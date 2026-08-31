@@ -174,6 +174,48 @@ final class SummaryDocumentTests: XCTestCase {
         XCTAssertEqual(document.blocks[1].text, "Прочее")
     }
 
+    /// Заголовок над **подразделами** — не заголовок над пустотой.
+    ///
+    /// `## Ход обсуждения`, под которым сразу `### Обед с курьером`: своих
+    /// строк у него нет, и разбор выбрасывал его вместе со строкой. Дальше
+    /// сохранение писало результат поверх файла — строка пропадала навсегда.
+    /// На живом архиве так съедены два последних конспекта (28 и 29 августа).
+    func testAHeadingOverSubsectionsSurvivesEvenWithNoLinesOfItsOwn() {
+        let document = SummaryDocument.parse(markdown: """
+        ## Итог
+        Всё решили.
+
+        ## Ход обсуждения
+        ### Обед с курьером
+        Приехал вовремя.
+        """)
+        XCTAssertEqual(kinds(document), [.lead, .heading, .heading, .body])
+        XCTAssertEqual(document.blocks[1].text, "Ход обсуждения")
+        XCTAssertEqual(document.blocks[2].text, "Обед с курьером")
+    }
+
+    /// Тот же случай, но сравнение — с текстом, а не с самим собой: круг
+    /// «разобрали → записали» проверяется против **исходной строки**, потому
+    /// что именно её приложение перезаписывает на диске.
+    ///
+    /// Уровень решётки при этом теряется — `###` выходит как `##`; это
+    /// зафиксировано отдельно (`RecapItemEditTests`) и здесь не чинится.
+    /// Пропадать заголовок больше не имеет права.
+    func testWritingBackASubheadingKeepsBothHeadingLines() {
+        let markdown = "## Итог\nВсё решили.\n\n## Ход обсуждения\n### Обед с курьером\nПриехал вовремя.\n"
+        XCTAssertEqual(
+            SummaryDocument.parse(markdown: markdown).markdown,
+            "## Итог\n\nВсё решили.\n\n## Ход обсуждения\n\n## Обед с курьером\n\nПриехал вовремя.\n"
+        )
+    }
+
+    /// Конспект, уже написанный в нашей же форме, обязан вернуться байт в байт
+    /// — не «так же, как во второй раз», а так же, как лежал.
+    func testARecapAlreadyInOurOwnShapeComesBackByteForByte() {
+        let markdown = "## Итог\n\nВсё решили.\n\n## Решения\n\n- Первое\n- Второе\n"
+        XCTAssertEqual(SummaryDocument.parse(markdown: markdown).markdown, markdown)
+    }
+
     // MARK: - Writing it back
 
     func testAnUneditedRecapComesBackAsTheSameDocument() {

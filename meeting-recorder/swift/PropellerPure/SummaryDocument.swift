@@ -164,14 +164,18 @@ public struct SummaryDocument: Equatable, Sendable {
             }
         }
 
-        // Пас 2 — разделы в блоки.
+        // Пас 2 — какие разделы вообще попадут в документ.
+        let survives = sectionsThatSurvive(sections)
+
+        // Пас 3 — разделы в блоки.
         var out: [Block] = []
         var leadHeading: String?
         var leadTaken = false
         var counter = 0
         func nextID() -> String { defer { counter += 1 }; return "b\(counter)" }
 
-        for section in sections {
+        for (index, section) in sections.enumerated() {
+            guard survives[index] else { continue }
             let isLeadSection = section.title.map { leadHeadings.contains($0.lowercased()) } ?? true
             let isNotes = section.title?.lowercased() == notesTitle
             var body = blocks(
@@ -179,12 +183,11 @@ public struct SummaryDocument: Equatable, Sendable {
                 startsABlock: isNotes ? MeetingNotes.startsANote : { _ in false },
                 nextID: nextID
             )
-            guard !body.isEmpty else { continue }   // заголовок ни над чем не рисуем
 
             if isLeadSection, !leadTaken {
                 leadTaken = true
                 leadHeading = section.raw
-                if body[0].kind == .body { body = promotingLead(body) }
+                if body.first?.kind == .body { body = promotingLead(body) }
             } else if let title = section.title {
                 out.append(Block(id: nextID(), kind: .heading, spans: spans(inline: title)))
             }
@@ -192,6 +195,63 @@ public struct SummaryDocument: Equatable, Sendable {
         }
 
         return SummaryDocument(blocks: out, leadHeading: kept(frontmatter, documentTitle, leadHeading))
+    }
+
+    /// Какие разделы доживут до документа.
+    ///
+    /// Заголовок, под которым ничего нет, не рисуем — рисовать не над чем, и
+    /// это верно: `## Задачи` с пустым телом на экране был бы обещанием списка,
+    /// которого не будет.
+    ///
+    /// Но «своих строк нет» и «под заголовком ничего нет» — разные вещи, и
+    /// раньше разбор их путал. `## Ход обсуждения`, под которым сразу
+    /// `### Обед с курьером`, своих строк не имеет — у него есть подразделы.
+    /// Такой раздел выбрасывался целиком, вместе со строкой заголовка, а
+    /// `AppState.saveSummary` писала результат поверх файла: первая же правка
+    /// саммари стирала `## Ход обсуждения` навсегда. На живом архиве это два
+    /// последних конспекта (28 и 29 августа) — новый промпт начал выдавать
+    /// `###`, и дальше так будут выглядеть все.
+    ///
+    /// Правило: раздел остаётся, если у него есть свои строки — или если он
+    /// **размечен решётками** и хотя бы один из идущих под ним более глубоких
+    /// разделов остаётся сам. Решётки здесь обязательны: неразмеченный
+    /// заголовок мы узнаём по догадке (`headingTitle`), и держать на догадке
+    /// ещё и пустую строку значило бы городить догадку на догадке.
+    ///
+    /// Считается с конца — чтобы `##` над пустым `###` над текстом дожил
+    /// вместе со всей цепочкой.
+    private static func sectionsThatSurvive(
+        _ sections: [(title: String?, raw: String?, lines: [String])]
+    ) -> [Bool] {
+        // То же, что «`blocks(_:)` вернёт хоть один блок», но без расхода
+        // идентификаторов: `---` и пустая строка блока не дают.
+        func hasOwnLines(_ lines: [String]) -> Bool {
+            lines.contains { !$0.isEmpty && $0 != "---" }
+        }
+        let depths = sections.map { depth(of: $0.raw) }
+        var out = [Bool](repeating: false, count: sections.count)
+        for index in sections.indices.reversed() {
+            if hasOwnLines(sections[index].lines) {
+                out[index] = true
+                continue
+            }
+            guard sections[index].raw?.hasPrefix("#") ?? false else { continue }
+            var probe = index + 1
+            while probe < sections.count, depths[probe] > depths[index] {
+                if out[probe] { out[index] = true; break }
+                probe += 1
+            }
+        }
+        return out
+    }
+
+    /// Насколько раздел глубоко вложен. Текст до первого заголовка — 0, он не
+    /// раздел ничей. Неразмеченный заголовок — 2: столько решёток ему поставит
+    /// `markdown`.
+    private static func depth(of raw: String?) -> Int {
+        guard let raw else { return 0 }
+        let hashes = raw.prefix(while: { $0 == "#" }).count
+        return hashes > 0 ? hashes : 2
     }
 
     /// Снять YAML-шапку с начала файла — дословно, ничего в ней не разбирая.
