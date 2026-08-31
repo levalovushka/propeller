@@ -44,7 +44,12 @@ final class MeetingErasureTests: XCTestCase {
                 .appendingPathComponent("propeller-erasure-\(UUID().uuidString)", isDirectory: true)
             layout = ArchiveLayout(
                 recordings: root.appendingPathComponent("recordings", isDirectory: true),
-                meetings: root.appendingPathComponent("meetings", isDirectory: true)
+                meetings: root.appendingPathComponent("meetings", isDirectory: true),
+                // В бою `shares.json` лежит в Application Support, а не в архиве.
+                // Здесь — внутри фикстуры, чтобы обход по содержанию его видел:
+                // запись о публикации несёт id встречи и обязана попасть в
+                // проверку наравне с остальными следами.
+                shares: root.appendingPathComponent("shares.json")
             )
             for dir in [layout.recordings, layout.meetings] {
                 try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -92,7 +97,25 @@ final class MeetingErasureTests: XCTestCase {
                 )
             case .tombstone:
                 TombstoneFile.mark(meeting.id, in: layout, at: Date(timeIntervalSince1970: 0))
+            case .publishedShare:
+                publish(meeting, expiresAt: Date().addingTimeInterval(30 * 86400))
             }
+        }
+
+        /// Опубликованное саммари: запись с токеном отзыва в `shares.json`.
+        /// Через чтение-слияние, а не перезапись: у соседней встречи публикация
+        /// тоже может быть, и затирать её нечем.
+        func publish(_ meeting: Meeting, expiresAt: Date, erasedAt: Date? = nil) {
+            var records = ShareStore.read(layout.shares)
+            records[meeting.id] = ShareRecord(
+                id: "aZ09-_aZ09-_aZ09-_aZ0\(records.count)",
+                token: "token-\(meeting.id)",
+                key: ShareLink.base64url(Data(repeating: 0xAB, count: 32)),
+                expiresAt: expiresAt,
+                title: "Синк с Иваном Петровым",
+                erasedAt: erasedAt
+            )
+            ShareStore.write(records, to: layout.shares)
         }
 
         func plantEverything(for meeting: Meeting) {
@@ -199,7 +222,11 @@ final class MeetingErasureTests: XCTestCase {
 
     // MARK: - Свойство
 
-    func testПослеСтиранияВстречиНеОстаётсяНиОдногоЕёСледа() throws {
+    /// Один след после стирания остаётся законно: копия саммари на сервере.
+    /// Убрать её можно только по сети, а удаление сети не ждёт, — поэтому запись
+    /// в `shares.json` переживает встречу и остаётся тем, чем публикацию ещё
+    /// можно снять. Всё остальное обязано исчезнуть.
+    func testПослеСтиранияНеОстаётсяНиОдногоСледаКромеНеснятойПубликации() throws {
         let fx = Fixture()
         fx.plantEverything(for: victim)
         let future = fx.plantFutureDerivative(for: victim)
@@ -219,8 +246,15 @@ final class MeetingErasureTests: XCTestCase {
 
         let left = ArchiveEraser.erase(meeting: victim.id, in: fx.layout)
 
-        XCTAssertTrue(left.isEmpty, "осталось: \(left.summary)")
-        XCTAssertEqual(fx.grep(victim.id), [], "id встречи всё ещё лежит в архиве")
+        XCTAssertEqual(
+            left.kinds, [.publishedShare],
+            "с диска обязано уйти всё: осталось \(left.summary)"
+        )
+        XCTAssertEqual(left.unclassifiedFiles, [])
+        XCTAssertEqual(
+            fx.grep(victim.id), ["shares.json"],
+            "единственный уцелевший след — запись, по которой публикацию ещё можно снять"
+        )
         XCTAssertEqual(
             fx.grep(victim.sentinel), [],
             "содержимое встречи всё ещё лежит в архиве"
@@ -358,8 +392,115 @@ final class MeetingErasureTests: XCTestCase {
         ArchiveEraser.erase(meeting: victim.id, in: fx.layout)
         let second = ArchiveEraser.erase(meeting: victim.id, in: fx.layout)
 
-        XCTAssertTrue(second.isEmpty)
+        // Неснятая публикация — не повод заводить всё заново: она уже помечена,
+        // и второй заход не ставит камня, а повторяет тот же отчёт.
+        XCTAssertEqual(second.kinds, [.publishedShare])
         XCTAssertEqual(TombstoneFile.read(fx.layout.tombstonesURL).map(\.id), [])
+    }
+
+    // MARK: - Публикация
+
+    /// Порог задачи: удаление встречи с живой публикацией обязано оставить след,
+    /// по которому её можно отозвать, и сказать об этом в отчёте.
+    ///
+    /// До этого `shares.json` не знал ни `ArchiveEraser`, ни `RecordingStore`:
+    /// человек публиковал саммари на месяц, слал ссылку коллегам, удалял встречу
+    /// — и `residue` отдавал пусто. Копия жила на сервере до конца срока, ссылка
+    /// работала, а снять её было уже нечем: `unpublish` звался ровно из кнопки в
+    /// плите встречи, а плиты больше нет.
+    func testУдалениеВстречиОставляетТоЧемПубликациюМожноСнять() throws {
+        let fx = Fixture()
+        fx.plantEverything(for: victim)
+        let token = try XCTUnwrap(ShareStore.read(fx.layout.shares)[victim.id]).token
+
+        let left = ArchiveEraser.erase(meeting: victim.id, in: fx.layout)
+
+        XCTAssertTrue(
+            left.kinds.contains(.publishedShare),
+            "отчёт обязан сказать, что копия саммари осталась на сервере"
+        )
+        let queue = ShareStore.awaitingRevocation(at: fx.layout.shares)
+        let kept = try XCTUnwrap(queue[victim.id], "очередь отзыва пуста — снимать публикацию нечем")
+        XCTAssertEqual(kept.token, token, "токен отзыва обязан пережить встречу")
+        XCTAssertNotNil(kept.url, "по записи обязана собираться та же ссылка")
+        XCTAssertNotNil(kept.erasedAt, "запись обязана помнить, что встречу стёрли")
+    }
+
+    /// Камень остаётся ради дочистки, а дочистка в сеть не ходит. Держать его
+    /// над неснятой публикацией значит оставить его на весь срок ссылки — и
+    /// заново заводить стирание на каждом скане сирот.
+    func testНеснятаяПубликацияНеДержитНадгробие() {
+        let fx = Fixture()
+        fx.plantEverything(for: victim)
+
+        ArchiveEraser.erase(meeting: victim.id, in: fx.layout)
+
+        XCTAssertEqual(TombstoneFile.read(fx.layout.tombstonesURL).map(\.id), [])
+        XCTAssertEqual(
+            ArchiveEraser.finishPendingErasures(in: fx.layout), [],
+            "дочищать нечего: локально всё стёрто, а публикацию она снять не может"
+        )
+    }
+
+    /// Удаление не имеет права ждать сети: сети может не быть вовсе. Здесь это
+    /// проверяется единственным способом, который вообще существует со стороны
+    /// стирания, — `erase` синхронный, `await` ему взять неоткуда, и он
+    /// возвращается сразу. Сам отзыв заводит `RecordingStore` уже после.
+    func testСтираниеНеЖдётСети() {
+        let fx = Fixture()
+        fx.plantEverything(for: victim)
+
+        let started = Date()
+        let left = ArchiveEraser.erase(meeting: victim.id, in: fx.layout)
+        let elapsed = Date().timeIntervalSince(started)
+
+        XCTAssertLessThan(elapsed, 1.0, "стирание ушло куда-то ждать: \(elapsed) с")
+        XCTAssertEqual(left.kinds, [.publishedShare])
+        XCTAssertEqual(fx.grep(victim.sentinel), [], "файлы стёрты, а не отложены до сети")
+    }
+
+    /// Сборка без публикаций (`Bench`, MCP, чужая фикстура) — `shares` не задан.
+    /// Стирание обязано работать ровно как раньше и не спотыкаться об отсутствие
+    /// файла, которого в этой сборке и не бывает.
+    func testБезСпискаПубликацийСтираниеРаботаетКакРаньше() {
+        let fx = Fixture()
+        let bare = ArchiveLayout(recordings: fx.layout.recordings, meetings: fx.layout.meetings)
+        fx.plant(.indexEntry, for: victim)
+        fx.plant(.audioMix, for: victim)
+
+        let left = ArchiveEraser.erase(meeting: victim.id, in: bare)
+
+        XCTAssertTrue(left.isEmpty, left.summary)
+        XCTAssertEqual(fx.grep(victim.id), [])
+    }
+
+    /// Просроченная ссылка — не след: бэкапов у сервера нет осознанно, копии уже
+    /// не существует, отзывать нечего. Метить такую запись стиранием тоже
+    /// незачем — её выметает сервис.
+    func testПросроченнаяПубликацияСледомНеСчитается() {
+        let fx = Fixture()
+        fx.plant(.indexEntry, for: victim)
+        fx.publish(victim, expiresAt: Date().addingTimeInterval(-3600))
+
+        let left = ArchiveEraser.erase(meeting: victim.id, in: fx.layout)
+
+        XCTAssertTrue(left.isEmpty, left.summary)
+        XCTAssertNil(ShareStore.read(fx.layout.shares)[victim.id]?.erasedAt)
+        XCTAssertEqual(ShareStore.awaitingRevocation(at: fx.layout.shares).count, 0)
+    }
+
+    func testСтираниеОднойВстречиНеТрогаетПубликациюСоседней() throws {
+        let fx = Fixture()
+        fx.plantEverything(for: victim)
+        fx.plantEverything(for: bystander)
+
+        ArchiveEraser.erase(meeting: victim.id, in: fx.layout)
+
+        let neighbour = try XCTUnwrap(ShareStore.read(fx.layout.shares)[bystander.id])
+        XCTAssertNil(neighbour.erasedAt)
+        XCTAssertEqual(
+            ShareStore.awaitingRevocation(at: fx.layout.shares).map(\.key), [victim.id]
+        )
     }
 
     // MARK: - Правило принадлежности

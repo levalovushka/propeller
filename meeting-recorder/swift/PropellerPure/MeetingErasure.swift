@@ -57,6 +57,17 @@ public enum MeetingTrace: String, CaseIterable, Sendable {
     /// он говорит, что встреча с таким временем была. Уходит последним и только
     /// когда не осталось ничего другого.
     case tombstone
+    /// Копия саммари на сервере: запись в `shares.json` (`ShareStore`), чей срок
+    /// ещё не вышел. Единственный след, который лежит **не** на этой машине, и
+    /// единственный, который стирание убрать не может: снять публикацию — это
+    /// сеть, а удаление встречи ждать сети не имеет права.
+    ///
+    /// Поэтому он ведёт себя иначе всех: стирание его не уносит, а помечает
+    /// (`ShareStore.markErased`) и **докладывает как оставшийся**. Соврать «следов
+    /// нет» про саммари, которое лежит на сервере и открывается по ссылке,
+    /// разосланной коллегам, нельзя — это ровно тот случай, ради которого
+    /// `residue` вообще существует.
+    case publishedShare
 }
 
 /// Где лежит архив. Один тип вместо двух строк из настроек, разбросанных по
@@ -65,16 +76,24 @@ public enum MeetingTrace: String, CaseIterable, Sendable {
 public struct ArchiveLayout: Equatable, Sendable {
     public let recordings: URL
     public let meetings: URL
+    /// Список публикаций (`shares.json`). Единственный путь, который не выводится
+    /// из папки архива: файл живёт в Application Support, потому что токены
+    /// отзыва привязаны к машине, а папку архива человек переносит и
+    /// переименовывает. `nil` — сборка без публикаций (тесты, `Bench`, MCP):
+    /// тогда следа этого вида просто не бывает.
+    public let shares: URL?
 
-    public init(recordings: URL, meetings: URL) {
+    public init(recordings: URL, meetings: URL, shares: URL? = nil) {
         self.recordings = recordings
         self.meetings = meetings
+        self.shares = shares
     }
 
-    public init(recordingsPath: String, meetingsPath: String) {
+    public init(recordingsPath: String, meetingsPath: String, shares: URL? = nil) {
         self.init(
             recordings: URL(fileURLWithPath: recordingsPath),
-            meetings: URL(fileURLWithPath: meetingsPath)
+            meetings: URL(fileURLWithPath: meetingsPath),
+            shares: shares
         )
     }
 
@@ -140,19 +159,24 @@ public struct MeetingTraceSurvey: Equatable, Sendable {
     public var snapshotIDs: [String]
     /// id из `deleted.json`.
     public var tombstoneIDs: [String]
+    /// id, чья копия саммари сейчас лежит на сервере: непросроченная запись в
+    /// `shares.json`. Стёртая встреча отсюда не исчезает — в этом весь смысл.
+    public var publishedIDs: [String]
 
     public init(
         recordingsFiles: [String] = [],
         meetingsFiles: [String] = [],
         indexIDs: [String] = [],
         snapshotIDs: [String] = [],
-        tombstoneIDs: [String] = []
+        tombstoneIDs: [String] = [],
+        publishedIDs: [String] = []
     ) {
         self.recordingsFiles = recordingsFiles
         self.meetingsFiles = meetingsFiles
         self.indexIDs = indexIDs
         self.snapshotIDs = snapshotIDs
         self.tombstoneIDs = tombstoneIDs
+        self.publishedIDs = publishedIDs
     }
 }
 
@@ -216,6 +240,8 @@ public enum MeetingErasure {
                 present = survey.snapshotIDs.contains(id)
             case .tombstone:
                 present = survey.tombstoneIDs.contains(id)
+            case .publishedShare:
+                present = survey.publishedIDs.contains(id)
             }
             if present { kinds.insert(trace) }
         }

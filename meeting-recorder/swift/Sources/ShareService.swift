@@ -15,6 +15,13 @@ import PropellerPure
 /// будет нечем. Это названо вслух, а не спрятано: цена того, что на сервере
 /// нет аккаунтов.
 ///
+/// Из этого же следует, что запись **переживает встречу**. Человек публиковал
+/// саммари на месяц, рассылал ссылку и удалял встречу — приложение молчало, а
+/// копия жила на сервере до истечения срока: `unpublish` звался ровно из одной
+/// кнопки в плите встречи, а плиты больше нет. Теперь стирание записи не
+/// уносит, а помечает (`ShareStore.markErased`), и она становится очередью
+/// отзыва: `finishPendingRevocations`.
+///
 /// UI сюда не входит. Модалку «Поделиться ссылкой» (Figma 298:26408) рисует
 /// своя сессия; ей нужны ровно три вещи — `publish`, `unpublish` и `link(for:)`.
 @MainActor
@@ -39,23 +46,10 @@ final class ShareService: ObservableObject {
         }
     }
 
-    struct Record: Codable, Equatable {
-        let id: String
-        /// Токен отзыва. На сервере лежит только его хеш — значит, снять
-        /// публикацию может ровно эта машина и никто больше.
-        let token: String
-        /// Ключ шифрования, base64url. Хранится, потому что ссылку надо уметь
-        /// показать ещё раз («Скопировать», «Перейти»), а восстановить ключ
-        /// неоткуда: у сервера его нет.
-        let key: String
-        let expiresAt: Date
-        let title: String
-
-        var url: URL? {
-            guard let raw = ShareLink.data(base64url: key) else { return nil }
-            return ShareLink.url(id: id, key: raw, title: title)
-        }
-    }
+    /// Запись живёт в `PropellerPure` (`ShareRecord`), потому что читателей у
+    /// неё двое: этот сервис — чтобы показать ссылку, и стирание встречи —
+    /// чтобы не соврать «следов не осталось» про саммари, лежащее на сервере.
+    typealias Record = ShareRecord
 
     @Published private(set) var records: [String: Record] = [:]
 
@@ -64,18 +58,24 @@ final class ShareService: ObservableObject {
 
     init(client: ShareClient = ShareClient(), storeURL: URL? = nil) {
         self.client = client
-        self.storeURL = storeURL ?? Self.defaultStoreURL
-        self.records = Self.load(from: self.storeURL)
+        self.storeURL = storeURL ?? ShareStore.defaultURL
+        self.records = ShareStore.read(self.storeURL)
     }
 
     // MARK: - Что знает приложение
 
-    /// Живая публикация этой встречи — или nil, если её нет или срок вышел.
+    /// Живая публикация **существующей** встречи — или nil.
     ///
-    /// Просроченная запись не показывается и не удаляется: удалять её здесь
-    /// значило бы менять файл при чтении. Её подметает следующая публикация.
+    /// Просроченная запись не показывается и не удаляется здесь: удалять при
+    /// чтении значило бы менять файл под тем, кто просто смотрит. Её выметает
+    /// `sweepExpired()`, у которого есть право писать.
+    ///
+    /// Запись стёртой встречи тоже не показывается, но по другой причине:
+    /// показывать её некому — плиты у стёртой встречи нет. Она осталась не для
+    /// экрана, а как очередь отзыва (`pendingRevocations`).
     func record(for meetingID: String, now: Date = Date()) -> Record? {
-        guard let record = records[meetingID], record.expiresAt > now else { return nil }
+        guard let record = records[meetingID], record.isLive(at: now),
+              !record.awaitsRevocation else { return nil }
         return record
     }
 
@@ -146,33 +146,79 @@ final class ShareService: ObservableObject {
         save()
     }
 
-    // MARK: - Файл со списком
+    // MARK: - Публикации стёртых встреч
 
-    private static var defaultStoreURL: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Meeting Recorder", isDirectory: true)
-            .appendingPathComponent("shares.json")
+    /// Что осталось отозвать: встречи уже нет, а копия саммари лежит на сервере.
+    ///
+    /// Кнопки для этого нет и быть не может — плита живёт в строке встречи, а
+    /// строки больше нет. Поэтому очередь, а не кнопка.
+    func pendingRevocations(now: Date = Date()) -> [String: Record] {
+        records.filter { $0.value.awaitsRevocation && $0.value.isLive(at: now) }
     }
 
-    private static func load(from url: URL) -> [String: Record] {
-        guard let data = try? Data(contentsOf: url) else { return [:] }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .secondsSince1970
-        return (try? decoder.decode([String: Record].self, from: data)) ?? [:]
+    /// Довести отзывы, оставшиеся от стёртых встреч. Возвращает id встреч, чью
+    /// публикацию сервер подтвердил снятой.
+    ///
+    /// Зовётся сразу после удаления и потом на каждом скане архива
+    /// (`RecordingStore`), потому что первая попытка приходится ровно на тот
+    /// момент, когда сети может не быть, а удаление её не ждало.
+    ///
+    /// Неудача — не потеря: запись с токеном остаётся на месте, и следующий
+    /// заход попробует снова. Забывается запись только по подтверждению сервера
+    /// (404 он тоже считает подтверждением — `ShareClient.revoke`) или когда
+    /// срок ссылки вышел сам.
+    @discardableResult
+    func finishPendingRevocations(now: Date = Date()) async -> [String] {
+        // Метку `erasedAt` ставит стирание, прямо в файл. Без перечитывания мы
+        // бы её не увидели, а сохранив свой старый список — стёрли.
+        reload()
+        sweepExpired(now: now)
+
+        var revoked: [String] = []
+        for (meetingID, record) in records where record.awaitsRevocation {
+            do { try await client.revoke(id: record.id, token: record.token) } catch { continue }
+            revoked.append(meetingID)
+        }
+        guard !revoked.isEmpty else { return [] }
+
+        // Пока ходили в сеть, файл могли поправить — перечитываем и вынимаем
+        // только подтверждённое.
+        reload()
+        for id in revoked { records[id] = nil }
+        save()
+        return revoked
+    }
+
+    /// Выбросить записи, чей срок вышел. Возвращает выброшенные id.
+    ///
+    /// Отзывать там нечего: бэкапов у сервера нет осознанно (`SERVER.md` §1), и
+    /// по истечении срока копии не существует. А запись оставалась и делала
+    /// вид, что публикация есть: экран показывал «Опубликовать» (`record(for:)`
+    /// уже отдавал nil), а файл — что встреча опубликована. Разъезд ровно там,
+    /// где потом ищут, живая ли ссылка.
+    @discardableResult
+    func sweepExpired(now: Date = Date()) -> [String] {
+        let dead = ShareStore.expiredIDs(in: records, now: now)
+        guard !dead.isEmpty else { return [] }
+        for id in dead { records[id] = nil }
+        save()
+        return dead
+    }
+
+    // MARK: - Файл со списком
+
+    /// Перечитать файл с диска.
+    ///
+    /// Нужен, потому что писателей у `shares.json` теперь двое: этот сервис и
+    /// стирание встречи (`ArchiveEraser` ставит метку `erasedAt`). Список в
+    /// памяти после стирания устарел, и `save()` без перечитывания затёр бы
+    /// чужую метку — то есть выбросил бы очередь отзыва.
+    func reload() {
+        records = ShareStore.read(storeURL)
     }
 
     private func save() {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .secondsSince1970
-        guard let data = try? encoder.encode(records) else { return }
-        try? FileManager.default.createDirectory(
-            at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true
-        )
-        // Файл держит токены отзыва — читать его посторонним незачем.
-        try? data.write(to: storeURL, options: [.atomic])
-        try? FileManager.default.setAttributes(
-            [.posixPermissions: 0o600], ofItemAtPath: storeURL.path
-        )
+        ShareStore.write(records, to: storeURL)
     }
 }
 

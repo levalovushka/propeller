@@ -192,6 +192,107 @@ final class ShareTests: XCTestCase {
         XCTAssertEqual(try ShareCrypto.open(blob: sealed.blob, key: sealed.key), long)
     }
 
+    // MARK: - Список публикаций
+
+    private func tempSharesURL(_ label: String = #function) -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("propeller-shares-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("shares.json")
+    }
+
+    private func record(
+        expiresIn seconds: TimeInterval, title: String = "Ретро", erasedAt: Date? = nil
+    ) -> ShareRecord {
+        ShareRecord(
+            id: "aZ09-_aZ09-_aZ09-_aZ09",
+            token: "revoke-token",
+            key: ShareLink.base64url(Data(repeating: 0x11, count: 32)),
+            expiresAt: Date().addingTimeInterval(seconds),
+            title: title,
+            erasedAt: erasedAt
+        )
+    }
+
+    /// `shares.json`, написанный прежними сборками, поля `erasedAt` не знает.
+    /// Файл с токенами отзыва не имеет права перестать читаться из-за нового
+    /// поля: не прочитали — значит потеряли ключ от живой ссылки.
+    func testAnOlderSharesFileStillReads() throws {
+        let url = tempSharesURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let legacy = #"{"20260101_120000":{"id":"aZ09-_aZ09-_aZ09-_aZ09","token":"t","#
+            + #""key":"AAAA","expiresAt":4102444800,"title":"Ретро"}}"#
+        try Data(legacy.utf8).write(to: url)
+
+        let records = ShareStore.read(url)
+        XCTAssertEqual(records["20260101_120000"]?.token, "t")
+        XCTAssertNil(records["20260101_120000"]?.erasedAt, "старая запись ничего не ждёт")
+    }
+
+    /// Метка стирания обязана долететь до диска целиком: без токена и ключа
+    /// запись — не очередь отзыва, а мусор.
+    func testTheErasedMarkKeepsTheRevokeToken() throws {
+        let url = tempSharesURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        ShareStore.write(["m1": record(expiresIn: 86_400)], to: url)
+
+        XCTAssertTrue(ShareStore.markErased("m1", at: url, now: Date()))
+
+        let kept = try XCTUnwrap(ShareStore.awaitingRevocation(at: url)["m1"])
+        XCTAssertEqual(kept.token, "revoke-token")
+        XCTAssertNotNil(kept.url)
+        XCTAssertNotNil(kept.erasedAt)
+    }
+
+    /// Второе стирание той же встречи не имеет права переписать дату: по ней
+    /// видно, когда ссылка осталась без хозяина.
+    func testMarkingTwiceKeepsTheFirstDate() throws {
+        let url = tempSharesURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        ShareStore.write(["m1": record(expiresIn: 86_400)], to: url)
+        let first = Date(timeIntervalSince1970: 1_000_000)
+
+        ShareStore.markErased("m1", at: url, now: first)
+        ShareStore.markErased("m1", at: url, now: first.addingTimeInterval(3600))
+
+        XCTAssertEqual(
+            ShareStore.read(url)["m1"]?.erasedAt?.timeIntervalSince1970, first.timeIntervalSince1970
+        )
+    }
+
+    /// Просроченная ссылка — не очередь: копии на сервере уже нет (`SERVER.md`
+    /// §1, бэкапов нет). Раньше такая запись оставалась в файле навсегда, и
+    /// «Опубликовано» на экране расходилось с тем, что лежит на диске.
+    func testAnExpiredShareIsNeitherLiveNorQueued() {
+        let url = tempSharesURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let records = [
+            "dead": record(expiresIn: -60),
+            "alive": record(expiresIn: 86_400),
+        ]
+        ShareStore.write(records, to: url)
+
+        XCTAssertEqual(ShareStore.liveIDs(at: url), ["alive"])
+        XCTAssertEqual(ShareStore.expiredIDs(in: records, now: Date()), ["dead"])
+        // Метить просроченную незачем — отзывать нечего.
+        ShareStore.markErased("dead", at: url, now: Date())
+        XCTAssertEqual(ShareStore.awaitingRevocation(at: url).count, 0)
+    }
+
+    /// Файл держит токены отзыва — читать его посторонним незачем.
+    func testTheSharesFileIsNotWorldReadable() throws {
+        let url = tempSharesURL()
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        ShareStore.write(["m1": record(expiresIn: 86_400)], to: url)
+
+        let mode = try XCTUnwrap(
+            FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
+        )
+        XCTAssertEqual(mode.int16Value & 0o077, 0, "права \(String(mode.intValue, radix: 8))")
+    }
+
     // MARK: - Контракт с браузером
 
     /// Кладёт живой блоб и ключ на диск — чтобы страницу расшифровал настоящий

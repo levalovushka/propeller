@@ -24,15 +24,23 @@ import Foundation
 ///    остальных** встреч, и стирание одной не имеет права его уносить. Снимок,
 ///    не разбирающийся в массив объектов вовсе, докладывается как оставшийся
 ///    след: соврать «следов нет» про нечитаемый файл нельзя.
-/// 5. **Камень снимается последним и только если больше ничего не осталось.**
-///    Не удалось что-то стереть — камень остаётся, и скан сирот доведёт дело.
+/// 5. **Публикация — метка, а не удаление.** Копию саммари с сервера снимает
+///    только сеть, а удаление встречи ждать сети не имеет права. Поэтому запись
+///    в `shares.json` не уходит вместе со встречей: она получает `erasedAt` и
+///    остаётся списком того, что осталось отозвать (`ShareStore`). В отчёт этот
+///    след идёт как оставшийся — потому что он и правда остался.
+/// 6. **Камень снимается последним и только если больше ничего не осталось** —
+///    ничего из того, что стирание умеет убрать. Не удалось стереть файл — камень
+///    остаётся, и скан сирот доведёт дело. Осталась одна публикация — камень
+///    уходит: скан сирот в сеть не ходит и довести её не может, а держать камень
+///    ради чужой работы значит оставить его навсегда.
 public enum ArchiveEraser {
 
     // MARK: - Снимок архива
 
     /// Что сейчас лежит в архиве. Один проход по двум каталогам плюс чтение
     /// индекса, его копий и надгробий.
-    public static func survey(_ layout: ArchiveLayout) -> MeetingTraceSurvey {
+    public static func survey(_ layout: ArchiveLayout, at now: Date = Date()) -> MeetingTraceSurvey {
         let recordingsFiles = filenames(in: layout.recordings)
         let meetingsFiles = filenames(in: layout.meetings)
 
@@ -47,32 +55,53 @@ public enum ArchiveEraser {
             meetingsFiles: meetingsFiles,
             indexIDs: IndexFile.ids(at: layout.indexURL),
             snapshotIDs: Array(snapshotIDs),
-            tombstoneIDs: TombstoneFile.read(layout.tombstonesURL).map(\.id)
+            tombstoneIDs: TombstoneFile.read(layout.tombstonesURL).map(\.id),
+            publishedIDs: ShareStore.liveIDs(at: layout.shares, now: now)
         )
     }
 
     /// Что от встречи осталось. То же, что вернуло стирание, — и то, что
     /// проверяет тест.
-    public static func residue(of id: String, in layout: ArchiveLayout) -> MeetingResidue {
-        MeetingErasure.residue(of: id, in: survey(layout))
+    public static func residue(of id: String, in layout: ArchiveLayout, at now: Date = Date()) -> MeetingResidue {
+        MeetingErasure.residue(of: id, in: survey(layout, at: now))
     }
 
     // MARK: - Стереть одну встречу
 
-    /// Стереть встречу целиком. Возвращает то, что стереть не удалось; пусто —
+    /// Стереть встречу целиком. Возвращает то, что после этого осталось; пусто —
     /// значит следов не осталось нигде.
     ///
+    /// Остаток бывает двух пород, и они разные. Не удалось стереть файл — это
+    /// сбой, камень остаётся, дочистка придёт. Осталась `.publishedShare` — это
+    /// не сбой: копия саммари лежит на сервере, снять её можно только по сети, и
+    /// вызывающий обязан завести отзыв (`ShareService.finishPendingRevocations`),
+    /// а не считать удаление незаконченным.
+    ///
     /// Идемпотентно: повторный вызов на уже стёртой встрече не пишет ни байта и
-    /// возвращает пустой остаток.
+    /// возвращает либо пусто, либо ту же неснятую публикацию.
     @discardableResult
     public static func erase(meeting id: String, in layout: ArchiveLayout, at now: Date = Date()) -> MeetingResidue {
         guard !id.isEmpty else { return MeetingResidue() }
-        let before = survey(layout)
+        let before = survey(layout, at: now)
         let residueBefore = MeetingErasure.residue(of: id, in: before)
         guard !residueBefore.isEmpty else { return MeetingResidue() }
+        // Осталась одна публикация, и она уже помечена — локально сделано всё,
+        // дальше очередь сети. Без этой ветки повторный вызов ставил бы и снимал
+        // камень на каждом скане сирот до самого истечения срока ссылки.
+        if residueBefore.kinds == [.publishedShare], residueBefore.unclassifiedFiles.isEmpty,
+           ShareStore.isAwaitingRevocation(id, at: layout.shares) {
+            return residueBefore
+        }
 
         // 1. Камень — до того, как тронули хоть один файл.
         TombstoneFile.mark(id, in: layout, at: now)
+
+        // 1a. Публикация: снять её можно только по сети, а удаление сети не ждёт.
+        //     Метка синхронная, как и камень; запись с токеном остаётся жить и
+        //     служит очередью отзыва (`ShareService.finishPendingRevocations`).
+        //     Не вышло пометить — врать не пришлось: запись осталась на месте,
+        //     значит `.publishedShare` всё равно уедет в отчёт ниже.
+        ShareStore.markErased(id, at: layout.shares, now: now)
 
         // 2. Файлы: правило по имени, поэтому производная, появившаяся после
         //    этого кода, уходит вместе со всеми.
@@ -91,12 +120,18 @@ public enum ArchiveEraser {
         // 4. Копии индекса.
         scrubSnapshots(ids: [id], in: layout)
 
-        // 5. Камень уходит, только если больше ничего не осталось.
-        var after = MeetingErasure.residue(of: id, in: survey(layout))
+        // 5. Камень уходит, только если не осталось ничего, что стирание умеет
+        //    убрать. Публикация в этот счёт не входит: её снимает сеть, а скан
+        //    сирот, ради которого камень и лежит, в сеть не ходит. Камень над
+        //    ней стоял бы до истечения срока ссылки и ничего бы не двигал.
+        var after = MeetingErasure.residue(of: id, in: survey(layout, at: now))
         after.kinds.remove(.tombstone)
-        if after.isEmpty {
+        let erasable = after.kinds.subtracting([.publishedShare])
+        if erasable.isEmpty, after.unclassifiedFiles.isEmpty {
             TombstoneFile.unmark(id, in: layout)
-            return MeetingResidue()
+            // Пусто, если публикации не было; иначе — она одна, и отчёт о ней
+            // говорит: ссылка ещё жива, отозвать её есть чем.
+            return after
         }
         after.kinds.insert(.tombstone)
         return after
@@ -122,7 +157,9 @@ public enum ArchiveEraser {
             // Один только камень — стирание уже доведено; `erase` в этом случае
             // ничего не удаляет и просто снимает камень, поэтому отдельной ветки
             // тут нет. Считается доделанным только то, где что-то и правда было.
-            let hadMore = before.kinds.subtracting([.tombstone]).isEmpty == false
+            // Публикация из счёта исключена: `erase` её не убирает, и считать
+            // доделанным то, чего не делали, значит писать в лог неправду.
+            let hadMore = before.kinds.subtracting([.tombstone, .publishedShare]).isEmpty == false
                 || !before.unclassifiedFiles.isEmpty
             erase(meeting: stone.id, in: layout, at: stone.at)
             if hadMore { finished.append(stone.id) }

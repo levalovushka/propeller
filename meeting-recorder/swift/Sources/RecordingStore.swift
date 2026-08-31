@@ -28,7 +28,11 @@ class RecordingStore: ObservableObject {
     private var layout: ArchiveLayout {
         ArchiveLayout(
             recordingsPath: Preferences.shared.recordingsPath,
-            meetingsPath: Preferences.shared.meetingsPath
+            meetingsPath: Preferences.shared.meetingsPath,
+            // Список публикаций — тоже след встречи, только лежащий на сервере.
+            // Без этого пути стирание его не видело и отдавало «следов нет» про
+            // саммари, открытое по разосланной ссылке.
+            shares: ShareStore.defaultURL
         )
     }
 
@@ -388,6 +392,24 @@ class RecordingStore: ObservableObject {
             // «стёрто» про то, что осталось, нельзя.
             NSLog("[RecordingStore] \(entry.id): стёрто не всё — \(residue.summary)")
         }
+        // Публикация снимается **после** удаления и не задерживает его: сети
+        // может не быть, а удаление, ждущее сети, — это удаление, которое не
+        // случилось. Токен уже помечен в `shares.json`, так что неудача сейчас
+        // означает лишь «попробуем на следующем скане», а не потерянную ссылку.
+        if residue.kinds.contains(.publishedShare) { revokeErasedPublications() }
+    }
+
+    /// Довести отзыв публикаций, оставшихся от стёртых встреч.
+    ///
+    /// Отдельным `Task`, потому что зовущие — синхронные: `remove` и скан
+    /// архива. Оба обязаны вернуться сразу.
+    private func revokeErasedPublications() {
+        Task { @MainActor in
+            let revoked = await ShareService.shared.finishPendingRevocations()
+            if !revoked.isEmpty {
+                NSLog("[RecordingStore] Снято публикаций стёртых встреч: \(revoked.count)")
+            }
+        }
     }
 
     /// Take a meeting out of the list but leave its audio alone.
@@ -741,6 +763,13 @@ class RecordingStore: ObservableObject {
             for id in finished { wavs.removeValue(forKey: id) }
         }
         loadTombstones()
+
+        // Второй заход на отзыв публикаций: первый был в момент удаления, и
+        // ровно тогда сети могло не быть. Скан бегает не только на запуске —
+        // это и есть та повторная попытка, которой у отзыва не было вовсе.
+        // Без условия: тот же заход выметает записи с истёкшим сроком, а их
+        // не выметал никто, и файл расходился с экраном.
+        revokeErasedPublications()
 
         let adoptableIDs = OrphanAdoption.adoptable(
             fileIDs: Array(wavs.keys),
