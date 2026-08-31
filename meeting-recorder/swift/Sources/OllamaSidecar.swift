@@ -37,6 +37,14 @@ final class OllamaSidecar: @unchecked Sendable {
     private var intentionalStop = false
     private var ensureTask: Task<Void, Error>?
     private var idleStopWork: DispatchWorkItem?
+    /// Кто работает на движке прямо сейчас и что из этого следует для таймера
+    /// простоя (`EngineIdleStop`). Заводится на всю попытку выдачи: пул модели
+    /// идёт десятки минут и **вне** конвейера, а гасил движок именно конвейер,
+    /// на каждой законченной фазе.
+    private var idleUse = EngineIdleStop()
+    /// Чем кончилась последняя настоящая попытка поднять сервер в этом
+    /// запуске. Не пишется на диск — запуск сам по себе сигнал.
+    private var serveVerdict: ModelProvisioning.EngineVerdict = .unknown
 
     private init() {}
 
@@ -58,6 +66,13 @@ final class OllamaSidecar: @unchecked Sendable {
             defer { lock.unlock() }
             if let existing = ensureTask { return (existing, false) }
             let created = Task<Void, Error> {
+                // Скобка занятости на всю попытку, включая пул: пока она
+                // открыта, таймер простоя переносится, а не гасит сервер.
+                // `defer`, а не парный вызов на каждом выходе, — выходов три
+                // (успех, отказ, отмена), и незакрытая скобка оставила бы 3,4 ГБ
+                // в памяти навсегда, то есть ровно тот вред наоборот.
+                self.beginEngineUse()
+                defer { self.endEngineUse() }
                 do {
                     try await self.runEnsureReady(model: model, statusCallback: statusCallback)
                 } catch {
@@ -93,7 +108,7 @@ final class OllamaSidecar: @unchecked Sendable {
         // two started generating immediately, and the timer fired straight through
         // the middle of it — a lost minute of GPU and a retry, per meeting.
         cancelIdleStop()
-        if await probeAPI() { return }
+        if await probeAPI() { recordServe(.up); return }
         // "A file exists" is not "the right version exists". This door asked only
         // whether the binary was there, so a raised `releaseTag` never reached anyone
         // through it — and it is the door the summary path uses (`RecapService`), which
@@ -109,17 +124,64 @@ final class OllamaSidecar: @unchecked Sendable {
             do {
                 try await ensureBinaryInstalled(statusCallback: nil)
             } catch {
-                NSLog("[OllamaSidecar] unpack for serve failed: \(error.localizedDescription)")
+                // Проглатывать эти отказы молча было полбеды; вторая половина —
+                // что о них не узнавал и владелец обязательства. Наружу
+                // по-прежнему не уходит ничего: вердикт читает
+                // `AppState.ensureSummaryModel`, деталь ложится в местный журнал.
+                failedToServe("unpack", error)
                 return
             }
         }
-        guard FileManager.default.isExecutableFile(atPath: binaryURL.path) else { return }
+        guard FileManager.default.isExecutableFile(atPath: binaryURL.path) else {
+            failedToServe("binary", nil)
+            return
+        }
         do {
             try await startServeIfNeeded(statusCallback: nil)
             try await waitUntilHealthy(timeout: 30, statusCallback: nil)
+            recordServe(.up)
         } catch {
-            NSLog("[OllamaSidecar] ensureServerRunning failed: \(error.localizedDescription)")
+            failedToServe("serve", error)
         }
+    }
+
+    /// Вердикт последней попытки поднять сервер — единственный дешёвый признак
+    /// «саммари действительно возможно». Читается владельцем обязательства
+    /// (`AppState.ensureSummaryModel`) вместо «файл на диске есть».
+    var lastServeVerdict: ModelProvisioning.EngineVerdict {
+        lock.lock(); defer { lock.unlock() }
+        return serveVerdict
+    }
+
+    /// Движок распакован и **той самой** версии. Файловый вопрос, без запуска:
+    /// пара обращений к диску против `ollama serve` на каждый чих вигиля.
+    var engineInstalled: Bool {
+        FileManager.default.isExecutableFile(atPath: binaryURL.path)
+            && installedVersion == Self.releaseTag
+    }
+
+    private func recordServe(_ verdict: ModelProvisioning.EngineVerdict) {
+        lock.lock()
+        serveVerdict = verdict
+        lock.unlock()
+    }
+
+    private func failedToServe(_ stage: String, _ error: Error?) {
+        recordServe(.failed)
+        let detail = error.map { ": \($0.localizedDescription)" } ?? ""
+        NSLog("[OllamaSidecar] serve failed at \(stage)\(detail)")
+        recordProvisioning("serve fail \(stage)\(detail)")
+    }
+
+    private func beginEngineUse() {
+        lock.lock(); idleUse.begin(); lock.unlock()
+        // Работа началась поверх уже заведённого гашения — снимаем его сразу,
+        // не дожидаясь, пока таймер дозвонит и сам себя перенесёт.
+        cancelIdleStop()
+    }
+
+    private func endEngineUse() {
+        lock.lock(); idleUse.end(); lock.unlock()
     }
 
     func stop() {
@@ -142,20 +204,45 @@ final class OllamaSidecar: @unchecked Sendable {
     }
 
     /// Drop the serve process after idle so qwen doesn't sit in VRAM between meetings.
+    ///
+    /// «Простой» считался по конвейеру, и это было неверно: самая длинная
+    /// работа движка — первая выдача модели, а она идёт **вне** конвейера,
+    /// десятками минут. Заводил гашение `AppState.endPipelineWork` на каждом
+    /// обнулении глубины работы, то есть после каждой законченной фазы, — и
+    /// через 30 секунд `ollama serve` получал SIGTERM под живым пулом на
+    /// 3,4 ГБ. Блобы Ollama докачиваются, поэтому это не «никогда», а «первая
+    /// модель едет неделю» у того, кто чаще всех записывает встречи. Решение и
+    /// цифры — в `EngineIdleStop`; тот же ответ уже стоит у двойника на движке
+    /// речи (`GigasttSidecar.stopAfterIdle`).
     func stopAfterIdle(_ grace: TimeInterval = 45) {
         cancelIdleStop()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
+            guard self.idleAction == .stop else {
+                // Не отмена, а перенос: движок погаснет, когда работа кончится,
+                // а не останется в памяти до конца дня.
+                NSLog("[OllamaSidecar] idle-stop отложен — на движке идёт работа")
+                self.stopAfterIdle(grace)
+                return
+            }
             NSLog("[OllamaSidecar] idle-stop after \(Int(grace))s")
             self.stop()
         }
-        idleStopWork = work
+        lock.lock(); idleStopWork = work; lock.unlock()
         DispatchQueue.global().asyncAfter(deadline: .now() + grace, execute: work)
     }
 
+    private var idleAction: EngineIdleStop.Action {
+        lock.lock(); defer { lock.unlock() }
+        return idleUse.whenTimerFires
+    }
+
     private func cancelIdleStop() {
-        idleStopWork?.cancel()
+        lock.lock()
+        let pending = idleStopWork
         idleStopWork = nil
+        lock.unlock()
+        pending?.cancel()
     }
 
     /// Is the model already on disk? Answers without spawning `ollama serve`,
@@ -200,11 +287,18 @@ final class OllamaSidecar: @unchecked Sendable {
     ) async throws {
         if await probeAPI() {
             statusCallback?("Ollama уже запущен")
+            recordServe(.up)
         } else {
             try await ensureBinaryInstalled(statusCallback: statusCallback)
             statusCallback?("Запуск Ollama…")
             try await startServeIfNeeded(statusCallback: statusCallback)
-            try await waitUntilHealthy(timeout: 90, statusCallback: statusCallback)
+            do {
+                try await waitUntilHealthy(timeout: 90, statusCallback: statusCallback)
+            } catch {
+                recordServe(.failed)
+                throw error
+            }
+            recordServe(.up)
         }
 
         if await modelPresent(model) {

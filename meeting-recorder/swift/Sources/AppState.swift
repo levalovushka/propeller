@@ -2605,7 +2605,21 @@ class AppState: ObservableObject {
             model.isEmpty ? OllamaSidecar.defaultModel : model
         )
         localRecapModelReady = installed
-        guard installed == false else {
+        // «Файл на диске» принимали за «саммари возможно». Саммари требует
+        // большего — `RecapService.ollamaUsable` после весов поднимает сервер и
+        // стучится в него, — а обязательство снималось по весам. Модель лежит,
+        // сервер не встаёт, лестница снята, монитор сети снят, и починить это
+        // некому: остаётся только `.blocked` в конвейере с потолком в полчаса,
+        // вечно тыкающий в тот же неподнимающийся сервер. Решение — в
+        // `ModelProvisioning.summaryPossible`, и оно нарочно дешёвое: ни одного
+        // запуска сервера, только вердикт того, кто уже пробовал, и два
+        // обращения к диску.
+        let readiness = ModelProvisioning.Readiness(
+            modelInstalled: installed,
+            engineInstalled: OllamaSidecar.shared.engineInstalled,
+            lastServe: OllamaSidecar.shared.lastServeVerdict
+        )
+        guard ModelProvisioning.summaryPossible(readiness) == .owed else {
             // Delivered — possibly by somebody else's pull (a hand-run curl, a
             // system Ollama): whoever delivered it, nothing is owed any more.
             settleProvisioning()
@@ -2622,7 +2636,11 @@ class AppState: ObservableObject {
                 reason: Preferences.shared.localRecapModelRequested ? "repair" : "provision"
             )
         }
-        NSLog("[AppState] summary model missing — fetching it")
+        // Отдельная строка на каждую причину: «модели нет» и «модель есть, а
+        // движок не встаёт» лечатся одним путём, но выглядят в журнале
+        // одинаково, и это уже один раз стоило неверного диагноза.
+        NSLog("[AppState] summary not possible yet (model=\(installed) "
+              + "engine=\(readiness.engineInstalled) serve=\(readiness.lastServe.rawValue)) — provisioning")
         startOllamaRuntimeDownload()
     }
 
@@ -3273,7 +3291,15 @@ class AppState: ObservableObject {
             // each of the call sites that finish work. `ensureServerRunning`
             // cancels it again the moment something does need the server, so a
             // backlog drains on one warm server rather than one per meeting.
-            OllamaSidecar.shared.stopAfterIdle(30)
+            //
+            // «Конвейер затих» и «движок свободен» — не одно и то же, и разница
+            // стоила восьмерым людям всех их конспектов: выдача модели идёт вне
+            // конвейера, десятками минут, и гасла на первой же законченной фазе
+            // (`EngineIdleStop`). Здесь гашение просто не заводится, а
+            // заведённое раньше переносит сам таймер.
+            if EngineIdleStop.mayArm(provisioningInFlight: provisioningAttemptRunning) {
+                OllamaSidecar.shared.stopAfterIdle(30)
+            }
         }
         // I1: nothing running ⇒ nothing claiming to run.
         checkInvariant("i1.idle-after-work", pipelineWorkDepth > 0 || activity.isIdle)
