@@ -71,8 +71,24 @@ struct SidebarPromptBlock: View {
                 .strokeBorder(Tokens.RailPrompt.border, lineWidth: 0.5)
         }
         .clipShape(RoundedRectangle(cornerRadius: Tokens.RailPrompt.radius, style: .continuous))
-        // Re-arm for the next question rather than carrying the last one's text.
+        // Смена вопроса **стирает** набранное — и это сознательно наоборот к
+        // `MeetingPaneIdentity`, которая на той же развилке сначала коммитит.
+        // Там смена — это «то же поле, другая встреча», и текст принадлежит
+        // прошлой. Здесь шаги идут строго по возрастанию (`SetupPrompt.index`),
+        // и вопрос про имя уходит с экрана ровно тогда, когда на него ответили
+        // **где-то ещё** — полем в настройках. Коммит на этой развилке затирал
+        // бы только что названное имя недонабранным.
         .onChange(of: model.id) { _, _ in typed = "" }
+        // А снос блока — это не ответ ни от кого, и вот тут набранное надо
+        // сохранить: блок сносит тумблер рельса и любой уход с экрана, где он
+        // стоит, а поле у него одно и своего «Отменить» нет.
+        //
+        // Уходом каретки не коммитим, и это отличие от поля тега в настройках
+        // названо вслух: там подтверждение добавляет слово в список, который
+        // человек тут же видит, а здесь оно закрывает шаг мастера и запекает имя
+        // во все будущие расшифровки. Блок при этом от клика мимо никуда не
+        // девается и продолжает спрашивать — с набранным текстом на месте.
+        .onDisappear { submit() }
     }
 
     private var head: some View {
@@ -147,12 +163,22 @@ struct SidebarPromptBlock: View {
             .foregroundStyle(Tokens.RailPrompt.fieldPlaceholder)
     }
 
-    private var trimmed: String { typed.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var canSubmit: Bool { !trimmed.isEmpty }
+    /// Набранное как ответ, или `nil` — отвечать нечем.
+    static func resolve(_ typed: String) -> String? {
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private var answer: String? { Self.resolve(typed) }
+    private var canSubmit: Bool { answer != nil }
 
     private func submit() {
-        guard canSubmit else { return }
-        onSubmit(model.id, trimmed)
+        guard let answer else { return }
+        // Черновик израсходован **до** того, как ответ уйдёт наружу: ответ
+        // меняет шаг и обычно сносит сам блок, а `onDisappear` читает `typed` —
+        // оставленный там текст уехал бы вторым ответом, которого никто не давал.
+        typed = ""
+        onSubmit(model.id, answer)
     }
 }
 

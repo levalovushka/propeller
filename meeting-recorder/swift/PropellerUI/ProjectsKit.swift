@@ -229,6 +229,20 @@ public struct ProjectComposer: View {
     private let cancel: () -> Void
 
     @FocusState private var nameFocused: Bool
+    /// Поле описания знает про фокус не ради каретки, а ради Escape: SwiftUI
+    /// разносит `onExitCommand` по **своему** фокусу, а не по первому
+    /// отвечающему AppKit, и на вьюхе без `focused` обработчик остался бы
+    /// украшением.
+    ///
+    /// **Не проверено.** Каретку в `TextEditor` тест поставить не может:
+    /// `makeFirstResponder` двигает первого отвечающего AppKit, а фокус SwiftUI
+    /// остаётся на поле имени (замерено — мутация «снять `onExitCommand` с
+    /// описания» теста не роняла, отвечало соседнее поле), клик же в
+    /// `NSTextView` вешает процесс теста насмерть: его `mouseDown` крутит
+    /// собственный цикл выборки событий, мимо которого синтетические события
+    /// идут. Так что Escape из описания — обещание, а не факт, пока кто-нибудь
+    /// не нажмёт его рукой.
+    @FocusState private var aboutFocused: Bool
 
     public init(
         title: String = "Создайте проект",
@@ -250,6 +264,17 @@ public struct ProjectComposer: View {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Escape закрывает плиту — обработчик стоит **на каждом поле**, а не на
+    /// плите.
+    ///
+    /// Комментарий в `MainView` утверждал, что Escape её закрывает, и до сегодня
+    /// это было неправдой: выходов было три — крестик, «Отменить» и клик в
+    /// затемнение. Повесить один `onExitCommand` на плиту не помогает, и это
+    /// замерено: с кареткой в поле обработчик предка не зовут ни разу, зовут
+    /// только обработчик самого поля. Поэтому их два, по числу мест, где может
+    /// стоять каретка, — ровно как у `MeetingPaneIdentity`, где он висит на
+    /// поле имени, а не на шапке. Из этих двух тестом закрыт один (`имя`);
+    /// почему второй не закрыт — в комментарии у `aboutFocused`.
     public var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Projects.Modal.blockGap) {
                 header
@@ -258,6 +283,7 @@ public struct ProjectComposer: View {
                         .textFieldStyle(.plain)
                         .focused($nameFocused)
                         .onSubmit { if canSubmit { submit() } }
+                        .onExitCommand(perform: cancel)
                         .typo(Tokens.Projects.Typo.action)
                         .foregroundStyle(Tokens.Projects.title)
                         .padding(.horizontal, Tokens.Projects.Modal.fieldHPadding)
@@ -327,6 +353,8 @@ public struct ProjectComposer: View {
             ))
             .scrollContentBackground(.hidden)
             .textEditorStyle(.plain)
+            .focused($aboutFocused)
+            .onExitCommand(perform: cancel)
             .typo(Tokens.Projects.Typo.action)
             .foregroundStyle(Tokens.Projects.title)
             // `TextEditor` носит свои внутренние поля (5 pt по горизонтали) и
@@ -605,6 +633,26 @@ public struct ProjectAtomRow: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+        // Уход каретки — тоже подтверждение, тот же уговор, что у поля тега в
+        // настройках (`SettingsTagField.draftChip`). Без него клик мимо строки
+        // оставлял её в правке **без каретки**: набранное стояло на экране, не
+        // было ни в файле, ни помечено ничем, и следующая перерисовка карточки
+        // его уносила.
+        .onChange(of: focused) { _, isFocused in
+            guard !isFocused, editing else { return }
+            commit()
+        }
+        // И на снос строки. Сносит её не только уход с экрана проекта: у
+        // `AppState.AtomItem` идентичность — «индекс|текст», поэтому правка или
+        // удаление соседа **выше** по списку пересобирает всё, что ниже, вместе
+        // с этим полем.
+        //
+        // Обещание здесь ровно одно и оно меньше, чем у `MeetingPaneIdentity`:
+        // набранное уходит в тот пункт, в который его печатали, **или не уходит
+        // никуда**. Куда именно — решает не эта вьюха: `AppState.editAtom`
+        // сверяет текст строки с файлом (`RecapItemEdit.Target`), и правка по
+        // разъехавшемуся индексу отвергается, а не пишется в чужое предложение.
+        .onDisappear { if editing { commit() } }
     }
 
     /// Кружок — и только он. Не кнопка: нажимать не на что, а значок, который
@@ -621,6 +669,10 @@ public struct ProjectAtomRow: View {
     /// Правка формулировки прямо в строке. Поле растёт вниз, а не уезжает
     /// вбок: пункт бывает в четыре строки, и править его в однострочном окне
     /// значило бы править вслепую.
+    ///
+    /// Что делает ⏎ у поля с `axis: .vertical` — перенос строки или `onSubmit` —
+    /// здесь не проверено. Это и не решается больше здесь: сохранение висит на
+    /// уходе каретки, и оно отвечает одинаково, как бы ни ответил ⏎.
     private var field: some View {
         TextField("", text: $draft, axis: .vertical)
             .textFieldStyle(.plain)
@@ -647,15 +699,30 @@ public struct ProjectAtomRow: View {
         .accessibilityLabel(label)
     }
 
+    /// Что значит набранное: строка, которую надо записать, или `nil` —
+    /// записывать нечего.
+    ///
     /// Пустая правка — отказ, а не удаление: удаляют корзиной, и подменять её
-    /// стёртым текстом значило бы прятать необратимое за опечаткой.
-    private func commit() {
+    /// стёртым текстом значило бы прятать необратимое за опечаткой. Тот же
+    /// текст — тоже не правка: перезаписывать пункт им самим значит менять файл
+    /// встречи, которую никто не трогал.
+    ///
+    /// Вынесено из `commit` отдельной функцией не ради красоты: каретку в это
+    /// поле тест поставить не может (карандаш, который его открывает, живёт под
+    /// курсором, а `onHover` на синтетических событиях не срабатывает —
+    /// замерено), и это единственная часть правки, которую проверить можно.
+    static func resolve(draft: String, replacing text: String) -> String? {
         // Перенос строки складывается в пробел, а не отвергается: пункт — одна
         // строка файла, и вставленный из письма абзац должен доехать, а не
         // молча не сохраниться.
         let flat = draft.split(whereSeparator: \.isNewline).joined(separator: " ")
         let trimmed = flat.trimmingCharacters(in: .whitespaces)
-        if !trimmed.isEmpty, trimmed != text { edit?(trimmed) }
+        guard !trimmed.isEmpty, trimmed != text else { return nil }
+        return trimmed
+    }
+
+    private func commit() {
+        if let line = Self.resolve(draft: draft, replacing: text) { edit?(line) }
         cancel()
     }
 
@@ -773,15 +840,47 @@ public struct ProjectAtomAddRow: View {
             typing = true
             focused = true
         }
+        // Клик мимо — не отмена. Набранная и оставленная задача добавляется:
+        // раньше она исчезала молча, и человек узнавал об этом только по тому,
+        // что её нет в списке.
+        .onChange(of: focused) { _, isFocused in
+            guard !isFocused else { return }
+            leave()
+        }
+        // То же и на снос строки: карточку пересобирает любая правка пунктов
+        // над ней, а уход с экрана проекта сносит её целиком.
+        .onDisappear { leave() }
     }
 
-    private func commit() {
+    /// Что значит набранное: строка, которую надо добавить, или `nil` — пусто.
+    static func resolve(_ text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return dismiss() }
-        add(trimmed)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// ⏎ — добавить и продолжить.
+    private func commit() {
+        guard let line = Self.resolve(text) else { return dismiss() }
+        add(line)
         // Поле остаётся открытым и пустым: пункты добавляют пачкой, и закрывать
         // его после каждого значило бы просить ещё один клик на каждую строку.
         text = ""
+    }
+
+    /// Уход каретки — добавить и закрыться.
+    ///
+    /// Открытым поле остаётся только под ⏎: оно стоит пустым ради **следующей**
+    /// задачи, а без каретки печатать в него нечем, и пустая строка ввода без
+    /// курсора читается как сломанная.
+    private func leave() {
+        guard typing else { return }
+        let pending = Self.resolve(text)
+        // Закрыться до `add`: он перестраивает список пунктов, и повторный заход
+        // сюда посреди перестройки не должен найти тот же текст второй раз.
+        text = ""
+        typing = false
+        focused = false
+        if let pending { add(pending) }
     }
 
     private func dismiss() {
