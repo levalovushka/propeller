@@ -89,6 +89,17 @@ class TranscriptionService {
         try? Data("\(attempts.unfinished)".utf8).write(to: url, options: .atomic)
     }
 
+    /// Доложить о смертях процесса на кластеризации, которые уже случились.
+    ///
+    /// Зовётся на старте приложения, потому что это единственный момент, когда
+    /// о смерти вообще можно рассказать: метка на диске её переживает, а сам
+    /// умирающий процесс не успевает ничего — сигнал не перехватить, телеметрия
+    /// уходит батчем и асинхронно. Гарантии, что о каждой смерти узнают, здесь
+    /// нет: узнают о тех, после которых приложение ещё раз запустили.
+    static func reportUnreturnedDiarization() {
+        Analytics.diarizerUnreturned(readDiarizerAttempts().unfinished)
+    }
+
     private static func loadDiarizerModels(into dia: OfflineDiarizerManager) async throws {
         let directory = OfflineDiarizerModels.defaultModelsDirectory().standardizedFileURL
         let configuration = engineConfiguration(for: readDiarizerAttempts().plan)

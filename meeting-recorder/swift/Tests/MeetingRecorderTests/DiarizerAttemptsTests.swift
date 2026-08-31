@@ -72,4 +72,50 @@ final class DiarizerAttemptsTests: XCTestCase {
         let stuck = DiarizerAttempts(unfinished: DiarizerAttempts.limit + 3)
         XCTAssertFalse(stuck.mayRun)
     }
+
+    // MARK: - Дефект 4: первые две смерти процесса были невидимы
+
+    /// Метка ставится **до** вызова, который на macOS 14 убивает процесс
+    /// сигналом. Сигнал не перехватить, телеметрия уходит батчем и асинхронно —
+    /// значит из умирающего процесса рассказать нельзя ничем, и первые две
+    /// смерти не оставляли следа: `disabled_after_crash` приходил только на
+    /// третьем заходе. Наблюдено 6 таких событий у 2 человек, то есть минимум
+    /// 12 ненаблюдаемых смертей, каждая из которых снаружи выглядела как
+    /// «расшифровка не запускалась».
+    ///
+    /// Достижимо здесь ровно одно: рассказать задним числом. Метка смерть
+    /// переживает, и следующий живой процесс её читает.
+    func testНезакрытаяПопыткаПревращаетсяВСтупеньДляТелеметрии() {
+        XCTAssertNil(DiarizerAttempts.deathStage(unfinished: 0), "рассказывать не о чем")
+        XCTAssertEqual(DiarizerAttempts.deathStage(unfinished: 1), "died_once")
+        XCTAssertEqual(DiarizerAttempts.deathStage(unfinished: 2), "died_twice")
+        XCTAssertEqual(
+            DiarizerAttempts.deathStage(unfinished: DiarizerAttempts.limit + 5), "died_twice",
+            "выше предела ступени нет — кластеризация уже выключена"
+        )
+    }
+
+    /// Каждая ступень обязана иметь имя: молчание на какой-нибудь из них и есть
+    /// та самая невидимая смерть.
+    func testУКаждойСмертиЕстьИмя() {
+        for n in 1...(DiarizerAttempts.limit + 3) {
+            XCTAssertNotNil(DiarizerAttempts.deathStage(unfinished: n), "молчим на \(n)")
+        }
+    }
+
+    /// Счётчик у выключенной кластеризации стоит двойкой навсегда: докладывать о
+    /// нём на каждом запуске значило бы делать самый безнадёжный случай самым
+    /// громким в статистике — ровно то, от чего лечит `TelemetryNoise`.
+    func testОСмертиДокладываютОдинРазНаИнцидент() {
+        XCTAssertTrue(TelemetryNoise.reportsDiarizerDeath(unfinished: 1, lastReported: nil))
+        XCTAssertFalse(TelemetryNoise.reportsDiarizerDeath(unfinished: 1, lastReported: 1))
+        XCTAssertTrue(
+            TelemetryNoise.reportsDiarizerDeath(unfinished: 2, lastReported: 1),
+            "вторая смерть — другой инцидент"
+        )
+        XCTAssertFalse(
+            TelemetryNoise.reportsDiarizerDeath(unfinished: 0, lastReported: nil),
+            "живой возврат — не смерть"
+        )
+    }
 }

@@ -179,13 +179,54 @@ enum Analytics {
         signal("Recording.cancelled", parameters: params, value: age)
     }
 
-    static func transcriptionFinished(ok: Bool, reason: String? = nil) {
+    /// `reason` у отказа — корзина `PipelineRetry.cause`, а не литерал.
+    ///
+    /// До 31 августа в общем `catch` у `runASR` стояло
+    /// `reason: phase == .diarizing ? "diarize" : "error"`: настоящий текст
+    /// ошибки был посчитан строкой рядом, уходил в `recordFailure` и в `NSLog`,
+    /// а в телеметрию ехало слово «error». То есть единственный сигнал о том,
+    /// почему расшифровка не вышла, не нёс причины вовсе — при том что разложить
+    /// сообщение по пятнадцати корзинам умеет функция, которую тот же путь и
+    /// зовёт секундой позже.
+    ///
+    /// `phase` — отдельным параметром, а не именем сигнала и не подменой
+    /// причины: «на чём» и «почему» это две оси, и складывать их в одну строку
+    /// значило бы потерять обе (то же правило, что у `noticeShown`).
+    static func transcriptionFinished(ok: Bool, reason: String? = nil, phase: String? = nil) {
         var params = ["result": ok ? "ok" : "fail"]
         if let reason, !reason.isEmpty {
             params["reason"] = String(reason.prefix(40))
         }
+        if let phase, !phase.isEmpty { params["phase"] = phase }
         signal("Transcription.finished", parameters: params)
     }
+
+    /// Планировщик не выдал работу, хотя она причитается.
+    ///
+    /// Во всём блоке планировщика не было ни одного вызова телеметрии, кроме
+    /// `noteDayBoundary` и `modelFetch`, — поэтому «стоит в паузе» и «нечего
+    /// делать» выглядели снаружи одинаково. Человек с 29 записями и ни одной
+    /// расшифровкой за одиннадцать дней был неотличим от человека с полностью
+    /// обработанным архивом: всё, что от него приходило, — `Recording.finished`
+    /// и `Notch.bladeStall`.
+    ///
+    /// `nil` значит «инцидент кончился» и ничего не шлёт — только снимает
+    /// дедупликацию, чтобы следующий простой был слышен.
+    static func pipelineIdle(reason: String?) {
+        guard let reason else {
+            lastReportedStall = nil
+            return
+        }
+        guard TelemetryNoise.reportsStall(
+            reason: reason, lastReported: lastReportedStall
+        ) else { return }
+        lastReportedStall = reason
+        signal("Pipeline.idle", parameters: ["reason": reason])
+    }
+
+    /// Причина последнего сообщённого простоя — на процесс: цикл будится раз в
+    /// пять минут, и без этого сигнал шёл бы навсегда с той же строкой.
+    private static var lastReportedStall: String?
 
     /// `first` — первый ли это конспект для встречи.
     ///
@@ -340,6 +381,36 @@ enum Analytics {
     /// Диаризация отступила: на какой ступени и почему нет кластеризации.
     static func diarizeFallback(stage: String) {
         signal("Diarize.fallback", parameters: ["stage": stage])
+    }
+
+    /// Из кластеризации не вернулись — рассказано задним числом.
+    ///
+    /// На macOS 14 она убивает процесс сигналом. Сигнал не перехватить, а
+    /// телеметрия уходит асинхронно и батчем, поэтому **из умирающего процесса
+    /// сообщить нельзя ничем**: первые две смерти следа не оставляли, и
+    /// `disabled_after_crash` приходил только на третьем заходе. Метка на диске
+    /// (`DiarizerAttempts`) смерть переживает — её и читает следующий живой
+    /// процесс.
+    ///
+    /// Отметка о доложенном лежит в `UserDefaults`, а не рядом со счётчиком:
+    /// пишет её здоровый процесс, которому есть когда долететь до диска, и
+    /// сохранность её нужна только чтобы не докладывать одно и то же на каждом
+    /// запуске (счётчик у выключенной кластеризации стоит двойкой навсегда).
+    static func diarizerUnreturned(_ unfinished: Int) {
+        guard unfinished > 0 else {
+            lastReportedDiarizerDeaths = nil
+            return
+        }
+        guard TelemetryNoise.reportsDiarizerDeath(
+            unfinished: unfinished, lastReported: lastReportedDiarizerDeaths
+        ), let stage = DiarizerAttempts.deathStage(unfinished: unfinished) else { return }
+        lastReportedDiarizerDeaths = unfinished
+        diarizeFallback(stage: stage)
+    }
+
+    private static var lastReportedDiarizerDeaths: Int? {
+        get { UserDefaults.standard.object(forKey: "analyticsDiarizerDeaths") as? Int }
+        set { UserDefaults.standard.set(newValue, forKey: "analyticsDiarizerDeaths") }
     }
 
     /// Один сюжет — подключение ассистента, — а не четыре сигнала на четыре

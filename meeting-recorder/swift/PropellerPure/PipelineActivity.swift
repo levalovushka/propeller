@@ -265,6 +265,127 @@ public struct WorkerPolicy: Equatable, Sendable {
     )
 }
 
+/// # Сколько живёт «идёт звонок»
+///
+/// `WorkerPolicy.inCall` — единственный гейт воркера без собственного срока
+/// жизни. Ставится он на начало звонка, а снимается **только** на его конец: на
+/// событие детектора, которого может не быть вовсе. Детектор моргнул, Zoom
+/// убили `kill -9`, машина уснула посреди созвона — и флаг остаётся поднятым
+/// навсегда. `PipelineDrain.policyRecheck` будит цикл каждые пять минут, цикл
+/// снова видит паузу и снова засыпает; весь архив стоит, и в телеметрии этого
+/// не видно ни по одному сигналу.
+///
+/// Отсюда правило: **пауза по звонку — это утверждение, которое надо
+/// подтверждать.** Два подтверждения, и оба дешёвые.
+///
+/// - Конференц-приложений не осталось ни одного. Тогда звонка нет по
+///   построению: детектор смотрит только на них (`MeetingPlatform.live`), и
+///   единственное, что могло остаться, — наш собственный флаг. Тот же вопрос
+///   и тем же способом задаёт `AppState.handleCallEnded`, снимая липкое
+///   «не записывать этот звонок».
+/// - Прошёл потолок. Приложение, открытое сутками, — обычное дело: Zoom и Slack
+///   живут в доке неделями, и первая проверка у таких людей не сработает
+///   никогда. Потолок здесь — единственное, что вообще может сработать.
+public enum CallPause {
+
+    /// Дольше этого «звонок» — не звонок.
+    ///
+    /// Шесть часов: длиннее любой настоящей встречи и короче рабочего дня, в
+    /// который флаг успевает застрять. Цена ошибки несимметрична и потому
+    /// выбрана в эту сторону — ошибиться рано значит один раз занять GPU при
+    /// живом созвоне, ошибиться поздно значит потерять весь архив, и второе
+    /// уже случилось: одиннадцать дней, 29 записей, ни одной расшифровки.
+    ///
+    /// Соседнее число — `AppState.maxRecordingSeconds` (8 ч): столько живёт
+    /// сама запись. Пауза не обязана жить дольше того, что она защищает.
+    public static let ceiling: TimeInterval = 6 * 3600
+
+    /// Держится ли ещё пауза по звонку.
+    ///
+    /// - Parameters:
+    ///   - detected: что говорит детектор — сырой флаг, как он есть.
+    ///   - since: когда звонок начался. `nil` — начало неизвестно (флаг подняли
+    ///     не через `.started`, а перечитав состояние детектора), и тогда
+    ///     потолок отмерять не от чего: остаётся только проверка приложений.
+    ///   - conferencingAppRunning: `MeetingDetector.isAnyConferencingAppRunning()`.
+    public static func holds(
+        detected: Bool,
+        since: Date?,
+        now: Date,
+        conferencingAppRunning: Bool
+    ) -> Bool {
+        guard detected else { return false }
+        guard conferencingAppRunning else { return false }
+        guard let since else { return true }
+        return now.timeIntervalSince(since) < ceiling
+    }
+}
+
+/// # Планировщик не выдал работу — и почему
+///
+/// У всего блока планировщика не было ни одного сигнала телеметрии, и из-за
+/// этого «стоит в паузе» и «нечего делать» выглядели снаружи одинаково: тишиной.
+/// Человек, записавший 29 встреч за одиннадцать дней и не получивший ни одной
+/// расшифровки, был для нас неотличим от человека с полностью обработанным
+/// архивом.
+///
+/// Это наблюдение, а не сообщение: на экран отсюда не уходит ничего.
+///
+/// Шумность — по правилу `TelemetryNoise`: **инцидент, а не попытка.** Цикл
+/// просыпается раз в пять минут, и сигнал на каждое пробуждение дал бы ту же
+/// картину, что `Notch.bladeStall` (14 тысяч событий), — чем безнадёжнее случай,
+/// тем громче он в статистике.
+public enum PipelineStall {
+
+    /// Почему работы не выдали. Ровно те состояния, из которых сегодня нет
+    /// выхода без внешнего события.
+    public enum Reason: String, Equatable, Sendable, CaseIterable {
+        /// `WorkerPolicy.mayWork == false`: звонок, запись, жара, перепись архива.
+        case policy
+        /// Причитается фаза по звуку, а микса нет (`PipelineOutlook.awaitingAudio`).
+        case noAudio = "no_audio"
+        /// Работа причитается, но вся ждёт своей ступени лестницы ретраев.
+        case retryWait = "retry_wait"
+        /// Воркер занят так долго, что это больше похоже на зависание, чем на фазу.
+        case workerBusy = "worker_busy"
+    }
+
+    /// Через сколько работающая фаза перестаёт быть работой и становится
+    /// подозрением.
+    ///
+    /// Час — **догадка, не замер**: сколько занимает ASR трёхчасовой встречи на
+    /// чужой машине, мы не мерили. Выбран так, чтобы не задеть ни одну реальную
+    /// фазу и всё же поймать `kickPipeline`, который навсегда глохнет о
+    /// `guard workerTask == nil`.
+    public static let workerSuspectAfter: TimeInterval = 3600
+
+    /// Стоит ли сообщать о простое, и о каком.
+    ///
+    /// - Parameters:
+    ///   - outlook: расклад планировщика. `nil` — его не считали: воркер занят,
+    ///     и спрашивать было незачем.
+    ///   - workerRunningFor: сколько идёт текущая фаза, или `nil`, если воркер
+    ///     не занят.
+    /// - Returns: причина или `nil` — «всё в порядке, инцидента нет». `nil` тоже
+    ///   значимо: он закрывает предыдущий инцидент у того, кто держит дедупликацию.
+    public static func reason(
+        outlook: PipelineOutlook?,
+        workerRunningFor: TimeInterval?
+    ) -> Reason? {
+        // Работающий воркер — это прогресс, а не простой. Кроме случая, когда он
+        // работает слишком долго: тогда все последующие кики уже проглочены.
+        if let running = workerRunningFor {
+            return running >= workerSuspectAfter ? .workerBusy : nil
+        }
+        guard let outlook else { return nil }
+        guard outlook.job == nil else { return nil }
+        if outlook.pausedByPolicy { return .policy }
+        if outlook.awaitingAudio > 0 { return .noAudio }
+        if outlook.owed > 0 { return .retryWait }
+        return nil
+    }
+}
+
 extension RecordingStage {
     /// The phase that moves this stage forward, or nil when nothing is owed.
     public var nextPhase: PipelineActivity.Phase? {
@@ -326,12 +447,28 @@ public struct PipelineOutlook: Equatable, Sendable {
     public let wakeAt: Date?
     /// Work is owed and runnable, but the policy says not now.
     public let pausedByPolicy: Bool
+    /// Встречи, которым причитается фаза по звуку, а звука нет.
+    ///
+    /// Отдельно от `owed`, потому что это долг **другого рода**: работу нельзя
+    /// выдать не потому, что не время, а потому, что вход ещё не собран. До
+    /// 31 августа такая встреча не считалась вовсе — `owedPhase` возвращала nil,
+    /// `owed` оставался нулём, таймер не заводился, и встреча исчезала из
+    /// очереди навсегда, хотя стемы лежали рядом и микс из них собирается
+    /// (`RecordingStore.recoverMissingFinalMixes`).
+    public let awaitingAudio: Int
 
-    public init(job: PipelineJob?, owed: Int, wakeAt: Date?, pausedByPolicy: Bool) {
+    public init(
+        job: PipelineJob?,
+        owed: Int,
+        wakeAt: Date?,
+        pausedByPolicy: Bool,
+        awaitingAudio: Int = 0
+    ) {
         self.job = job
         self.owed = owed
         self.wakeAt = wakeAt
         self.pausedByPolicy = pausedByPolicy
+        self.awaitingAudio = awaitingAudio
     }
 
     public static let nothingToDo = PipelineOutlook(
@@ -365,11 +502,23 @@ public func pipelineOutlook(
     preferring requestedID: String? = nil
 ) -> PipelineOutlook {
     var owed = 0
+    var awaitingAudio = 0
     var wakeAt: Date?
     var best: (id: String, date: Date, phase: PipelineActivity.Phase, requested: Bool)?
 
     for candidate in candidates {
         guard let phase = candidate.owedPhase(summariesEnabled: policy.summariesEnabled) else {
+            // «Файла микса нет» — это обязательство, а не факт. Встреча, которой
+            // причитается расшифровка и у которой нет звука, молча выпадала из
+            // всех счётчиков сразу: ни `owed`, ни `wakeAt`, ни строки в логе, —
+            // и никто уже не приходил ни собрать микс из стемов, ни объявить,
+            // что собирать не из чего.
+            if let blocked = candidate.status.nextPhase,
+               blocked.needsAudio,
+               !candidate.audioAvailable,
+               candidate.lastFailure?.isTerminal != true {
+                awaitingAudio += 1
+            }
             continue
         }
         if let failure = candidate.lastFailure {
@@ -401,7 +550,8 @@ public func pipelineOutlook(
         job: policy.mayWork ? runnable : nil,
         owed: owed,
         wakeAt: wakeAt,
-        pausedByPolicy: !policy.mayWork && runnable != nil
+        pausedByPolicy: !policy.mayWork && runnable != nil,
+        awaitingAudio: awaitingAudio
     )
 }
 

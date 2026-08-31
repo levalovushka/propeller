@@ -397,6 +397,9 @@ class AppState: ObservableObject {
         // nothing to do about it. Each of those meetings is in the list with its
         // own state; that is where it belongs.
         _ = recordingStore.recoverInterruptedRecordings()
+        // Смерти процесса на кластеризации видны только отсюда: метка на диске
+        // их пережила, а сам умерший процесс рассказать не успел.
+        TranscriptionService.reportUnreturnedDiarization()
         // Пока микса нет, `audioAvailable` ложно, фаза встрече не причитается и
         // таймер не заводится вовсе — так что запуск, собравший микс, сам её и
         // не обработает, если об этом не сказать. Молчание здесь и было тем
@@ -592,15 +595,20 @@ class AppState: ObservableObject {
         if mode == .off {
             meetingDetector.stop()
             meetingDetected = false
+            callDetectedAt = nil
             ignoredDetectedCall = false
         } else {
             meetingDetector.start()
             meetingDetected = meetingDetector.isInMeeting
+            // Начало здесь не наблюдали — состояние детектора перечитали.
+            // Отмерять потолок не от чего, и `CallPause` про это знает.
+            callDetectedAt = meetingDetected ? callDetectedAt : nil
         }
     }
 
     private func handleCallStarted() {
         meetingDetected = true
+        callDetectedAt = Date()
         // A 4 GB model must not stay on the GPU for the duration of a call.
         pausePipeline()
         // Do NOT clear ignoredDetectedCall here — sticky for this call (G3).
@@ -628,6 +636,7 @@ class AppState: ObservableObject {
 
     private func handleCallEnded() {
         meetingDetected = false
+        callDetectedAt = nil
         if isRecording && recordingLinkedToCall {
             stopRecording(auto: true)
         }
@@ -1105,6 +1114,24 @@ class AppState: ObservableObject {
             // (checked 2026-08-22), so telemetry is the only place a mic-only meeting
             // is visible at all — `STATE.md`, часть 0е.
             Analytics.recordingFinished(duration: result.duration, micOnly: micOnly)
+
+            // Промах по кнопке отсекается здесь, до очереди. Тот же порог, что
+            // и после ASR (`SilentRecording.slipSeconds`), только раньше на
+            // целую расшифровку: трёхсекундный автостарт поднимал сайдкар на
+            // 981 МБ, тратил секунду на тишину и только потом сносился. У
+            // двенадцати человек таких записей 29 из 45.
+            if let fresh = recordingStore.recording(for: result.id),
+               SilentRecording.slipsBeforeQueue(
+                   duration: result.duration,
+                   autoStarted: activeRecordingSource == "auto",
+                   hasTranscript: fresh.transcript?.isEmpty == false,
+                   hasNotes: MeetingNotes.resolved(
+                       items: fresh.noteItems, blob: fresh.notes
+                   ).isEmpty == false
+               ) {
+                discardSlipRecording(fresh, when: "before_queue")
+                return
+            }
 
             if runPipeline {
                 // Only an automatic stop is news. Telling someone that they
@@ -2267,7 +2294,7 @@ class AppState: ObservableObject {
         let thermal = ProcessInfo.processInfo.thermalState
         return WorkerPolicy(
             isRecording: isRecording,
-            inCall: meetingDetected,
+            inCall: callPauseHolds,
             isThermallyStressed: thermal == .serious || thermal == .critical,
             // Саммари — не опция: воркеру всегда причитается эта фаза.
             summariesEnabled: true,
@@ -2279,6 +2306,44 @@ class AppState: ObservableObject {
     /// папку. Ставится и снимается только в `quiescingArchive`, где его и
     /// объяснение.
     private var isArchiveBusy = false
+
+    /// Когда начался звонок, из-за которого стоит воркер.
+    ///
+    /// Отдельно от `meetingDetected`, потому что вопросы разные: тот говорит,
+    /// что видит детектор, а этот — с какого момента мы держим паузу. Потолок
+    /// отмеряется отсюда.
+    private var callDetectedAt: Date?
+
+    /// Держится ли ещё пауза по звонку — с проверкой, а не на слово.
+    ///
+    /// `meetingDetected` снимался **только** в `handleCallEnded`, то есть на
+    /// событие, которого может не быть: детектор моргнул, конференс-приложение
+    /// убили, машина уснула посреди созвона — и весь архив вставал навсегда,
+    /// молча. `PipelineDrain.policyRecheck` будил цикл каждые пять минут, цикл
+    /// снова видел паузу и снова засыпал. Правило самоснятия — в `CallPause`,
+    /// где его проверяет тест.
+    ///
+    /// Сам флаг тут не трогается: он про то, что видит детектор, и врать в него
+    /// правкой из воркера значит завести второй источник правды. Здесь только
+    /// ответ на вопрос воркера.
+    private var callPauseHolds: Bool {
+        // Дешёвый случай вперёд: без звонка ни один список процессов не нужен.
+        guard meetingDetected else { return false }
+        return CallPause.holds(
+            detected: true,
+            since: callDetectedAt,
+            now: Date(),
+            conferencingAppRunning: MeetingDetector.isAnyConferencingAppRunning()
+        )
+    }
+
+    /// Когда началась фаза, которую воркер выполняет прямо сейчас. Нужна только
+    /// телеметрии простоя: `kickPipeline` глохнет о `guard workerTask == nil`,
+    /// и без этой отметки зависший воркер неотличим от работающего.
+    private var workerStartedAt: Date?
+
+    /// Пересборка миксов уже идёт — второй заход только повторит ту же работу.
+    private var mixRepairInFlight = false
 
     /// The meeting the user asked for by hand. Outranks recency for as long as
     /// it owes work, then stops mattering — pressing «Повторить» on a meeting
@@ -2317,15 +2382,31 @@ class AppState: ObservableObject {
 #if GALLERY
         if galleryFrozen { return }
 #endif
-        guard workerTask == nil else { return }
+        guard workerTask == nil else {
+            // Расклад здесь нарочно не считается: гейт существует затем, чтобы
+            // повторный кик стоил ничего. Но зависший воркер глушит все
+            // последующие кики, и снаружи это выглядит как тишина, — поэтому
+            // фазу, которая идёт слишком долго, замечаем именно тут.
+            reportPipelineStall(
+                nil, workerRunningFor: workerStartedAt.map { Date().timeIntervalSince($0) }
+            )
+            return
+        }
         // The common case at launch is an archive with nothing owed. It should
         // cost one pass over an array — no task, no sidecar, no timer left over.
         let now = outlook
+        reportPipelineStall(now, workerRunningFor: nil)
         guard now.job != nil else {
             if now.owed > 0 {
                 debugLog("[pipeline] \(reason): \(now.owed) owed, nothing runnable"
                     + (now.pausedByPolicy ? " (paused: \(workerPolicy))" : ""))
             }
+            // Микса нет — значит фаза не причитается, `owed` нулевой и таймер не
+            // заводится вовсе: встреча просто исчезает из очереди. Собрать микс
+            // из стемов умеет `recoverMissingFinalMixes`, но до 31 августа его
+            // звал только запуск приложения — то есть человек, который и не
+            // знает, что приложение надо перезапустить.
+            if now.awaitingAudio > 0 { repairMissingAudio() }
             // `outlook.wakeAt` is only retry deadlines. A policy pause (call /
             // recording / heat) used to leave it nil here and rely solely on
             // `onMeetingEnded` — a missed hang-up then stranded the archive.
@@ -2337,10 +2418,12 @@ class AppState: ObservableObject {
             return
         }
         debugLog("[pipeline] \(reason): starting, \(now.owed) owed")
+        workerStartedAt = Date()
         workerTask = Task { [weak self] in
             await self?.runPipelineLoop()
             await MainActor.run {
                 self?.workerTask = nil
+                self?.workerStartedAt = nil
                 // Прежде чем разойтись — посмотреть на диск. «Больше нечего
                 // делать» это единственный вывод, ошибиться в котором дорого: он
                 // гасит таймер, и подобрать потерянный файл будет уже некому до
@@ -2350,6 +2433,48 @@ class AppState: ObservableObject {
                 if let adopted = self?.adoptOrphans(), adopted > 0 {
                     self?.kickPipeline("подобрано с диска: \(adopted)")
                 }
+            }
+        }
+    }
+
+    /// Сказать телеметрии, простаивает ли конвейер и почему.
+    ///
+    /// Наблюдение, а не сообщение: на экран отсюда не уходит ничего. Решение,
+    /// что считать простоем, — в `PipelineStall`; сколько раз об этом говорить —
+    /// в `TelemetryNoise` (инцидент, а не попытка), иначе цикл, просыпающийся
+    /// раз в пять минут, дал бы вторую `Notch.bladeStall` на 14 тысяч событий.
+    private func reportPipelineStall(
+        _ outlook: PipelineOutlook?,
+        workerRunningFor: TimeInterval?
+    ) {
+        Analytics.pipelineIdle(
+            reason: PipelineStall.reason(
+                outlook: outlook, workerRunningFor: workerRunningFor
+            )?.rawValue
+        )
+    }
+
+    /// Собрать миксы тем, у кого их нет, и дать таким встречам ход.
+    ///
+    /// Механизм не новый — новый только момент, когда его зовут. Запись, у
+    /// которой `Recording.finished` уже ушло, а микса на диске ещё нет (оно
+    /// шлётся раньше, чем микс подтверждён), не причитается ни одной фазе:
+    /// `audioAvailable` ложно, `owed` нулевой, таймера нет. До 31 августа
+    /// вернуть её в очередь мог только следующий запуск приложения.
+    ///
+    /// Второго захода при неудаче не будет и не надо: у встречи, которой нечего
+    /// пересобирать, нет и мик-стема, и весь заход — два `stat` на запись.
+    private func repairMissingAudio() {
+        guard !mixRepairInFlight else { return }
+        mixRepairInFlight = true
+        Task { [weak self] in
+            let rebuilt = await self?.recordingStore.recoverMissingFinalMixes() ?? 0
+            await MainActor.run {
+                guard let self else { return }
+                self.mixRepairInFlight = false
+                guard rebuilt > 0 else { return }
+                self.refreshStorageUsage()
+                self.kickPipeline("микс пересобран из стемов: \(rebuilt)")
             }
         }
     }
@@ -2513,6 +2638,10 @@ class AppState: ObservableObject {
             perform: { [weak self] job in
                 guard let self else { return .blocked }
                 debugLog("[pipeline] → \(job.recordingID) \(job.phase)")
+                // Отметка «сколько идёт фаза», а не «сколько идёт дрейн»: догон
+                // по двадцати встречам законно длится дольше часа, одна фаза —
+                // нет.
+                self.workerStartedAt = Date()
                 return await self.run(job)
             }
         )
@@ -2585,7 +2714,9 @@ class AppState: ObservableObject {
         let quickAnswer = ModelProvisioning.decide(.init(
             usesLocalModel: ModelProvisioning.usesLocalModel(providerRawValue: provider),
             modelInstalled: false,                    // not asked yet
-            busyWithAudio: isRecording || meetingDetected || isTranscribing,
+            // Тот же залипший флаг, тот же вечный простой: пока он стоял,
+            // модель саммари не качалась вовсе.
+            busyWithAudio: isRecording || callPauseHolds || isTranscribing,
             downloadInFlight: provisioningAttemptRunning
         ))
         switch quickAnswer {
@@ -2804,6 +2935,17 @@ class AppState: ObservableObject {
             // It used to record a terminal failure, which put «Аудио удалено» on
             // a row whose transcript was sitting right there — an absurd thing to
             // tell someone about a meeting they can read.
+            // Молчать здесь правильно ровно в одном случае: транскрипт уже
+            // есть, аудио убрали ради места, и встреча читается как обычная.
+            // Если транскрипта нет — это встреча, которая не будет расшифрована
+            // никогда, и до 31 августа она уходила отсюда без единого следа: та
+            // самая форма, в которой 36 записей у 7 человек не имеют события
+            // расшифровки вовсе.
+            if rec.transcript?.isEmpty != false {
+                Analytics.transcriptionFinished(
+                    ok: false, reason: "audio_missing", phase: phase.rawValue
+                )
+            }
             debugLog("[pipeline] \(recordingID) has no audio — nothing owed")
             return
         }
@@ -2914,7 +3056,8 @@ class AppState: ObservableObject {
             clearFailure(recordingID)
             Analytics.transcriptionFinished(
                 ok: true,
-                reason: phase == .diarizing ? "diarize_resume" : nil
+                reason: phase == .diarizing ? "diarize_resume" : nil,
+                phase: phase.rawValue
             )
             // The markdown is written here, in the same pass, because a transcript
             // that exists and is not on disk is a promise the app has already made
@@ -2949,7 +3092,9 @@ class AppState: ObservableObject {
             // сообщению этого делать не имеет права.
             modelDownloadProgress = nil
             restoreStageAfterInterruptedASR(recordingID, phase: phase)
-            Analytics.transcriptionFinished(ok: false, reason: "no_speech")
+            Analytics.transcriptionFinished(
+                ok: false, reason: "no_speech", phase: phase.rawValue
+            )
             settleSilentRecording(recordingID)
             NSLog("[AppState] \(phase): в \(recordingID) не нашлось речи — \(error.localizedDescription)")
         } catch {
@@ -2960,7 +3105,14 @@ class AppState: ObservableObject {
                 debugLog("[pipeline] \(recordingID) исчезла во время \(phase) — не сбой")
             } else {
                 let msg = error.localizedDescription
-                Analytics.transcriptionFinished(ok: false, reason: phase == .diarizing ? "diarize" : "error")
+                // Причина считалась строкой рядом и уходила в `recordFailure` и
+                // в лог, а в телеметрию ехал литерал «error»: единственный
+                // сигнал о том, почему расшифровка не вышла, причины не нёс.
+                // Разложить сообщение по пятнадцати корзинам умеет тот же
+                // `PipelineRetry`, которого этот путь зовёт строкой ниже.
+                Analytics.transcriptionFinished(
+                    ok: false, reason: PipelineRetry.cause(msg), phase: phase.rawValue
+                )
                 restoreStageAfterInterruptedASR(recordingID, phase: phase)
                 let failure = recordFailure(recordingID, phase: phase, message: msg)
                 report(failure, for: recordingID)
@@ -3002,19 +3154,29 @@ class AppState: ObservableObject {
         )
         switch verdict {
         case .discard:
-            // Без ⌘Z и без анимации пепла: это не удаление, сделанное человеком,
-            // а уборка следа от нажатой мимо кнопки. Предложить вернуть пустой
-            // wav значило бы сообщить о нём — то самое сообщение, которого в
-            // приложении нет (`design/notifications.md` §3).
-            Analytics.signal("Pipeline.silentDiscarded")
-            NSLog("[AppState] \(recordingID) — \(Int(rec.duration))s тишины, удаляем")
-            if selectedRecordingID == recordingID { selectNeighbor(afterRemoving: rec) }
-            recordingStore.remove(rec)
-            refreshStorageUsage()
+            discardSlipRecording(rec, when: "after_asr")
         case .rest:
             Analytics.signal("Pipeline.silentRested")
             recordTerminal(recordingID, phase: .transcribing, reason: .noSpeech)
         }
+    }
+
+    /// Убрать след от нажатой мимо кнопки.
+    ///
+    /// Без ⌘Z и без анимации пепла: это не удаление, сделанное человеком, а
+    /// уборка. Предложить вернуть пустой wav значило бы сообщить о нём — то
+    /// самое сообщение, которого в приложении нет (`design/notifications.md` §3).
+    ///
+    /// `when` — единственное, чем две двери сюда различаются, и различие это
+    /// измеряемое: `before_queue` значит, что расшифровки не было вовсе, а
+    /// `after_asr` — что сайдкар успел отработать вхолостую.
+    private func discardSlipRecording(_ rec: RecordingEntry, when: String) {
+        Analytics.signal("Pipeline.silentDiscarded", parameters: ["when": when])
+        NSLog("[AppState] \(rec.id) — \(Int(rec.duration))s тишины, удаляем (\(when))")
+        awaitedRecordingIDs.remove(rec.id)
+        if selectedRecordingID == rec.id { selectNeighbor(afterRemoving: rec) }
+        recordingStore.remove(rec)
+        refreshStorageUsage()
     }
 
     /// Put the stage back where an unfinished ASR pass leaves it — never below

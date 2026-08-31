@@ -108,4 +108,69 @@ final class SilentRecordingTests: XCTestCase {
             .rests
         )
     }
+
+    // MARK: - Дефект 5: промах по кнопке отсекается до очереди
+
+    /// 29 из 45 записей у двенадцати человек короче минуты, и все автоматические
+    /// (по парку доля вдвое ниже — 28 %). Такая запись сносилась, но **только
+    /// после расшифровки**: сайдкар на 981 МБ поднимался ради трёх секунд
+    /// тишины, а `SilentRecording.verdict` звался уже после того, как ASR
+    /// отработал вхолостую.
+    func testАвтостартКорочеПорогаОтсекаетсяДоОчереди() {
+        XCTAssertTrue(SilentRecording.slipsBeforeQueue(
+            duration: 3, autoStarted: true, hasTranscript: false, hasNotes: false
+        ))
+        XCTAssertFalse(
+            SilentRecording.slipsBeforeQueue(
+                duration: SilentRecording.slipSeconds,
+                autoStarted: true, hasTranscript: false, hasNotes: false
+            ),
+            "порог тот же, что и после ASR, — на границе запись живёт"
+        )
+    }
+
+    /// «Человек нажал и быстро закончил» — настоящая короткая запись. Он что-то
+    /// этим имел в виду, и его три секунды идут в очередь, как шли: отсекается
+    /// только то, что приложение начало само по ложному детекту.
+    func testРучнаяКороткаяЗаписьИдётВОчередьКакШла() {
+        XCTAssertFalse(SilentRecording.slipsBeforeQueue(
+            duration: 3, autoStarted: false, hasTranscript: false, hasNotes: false
+        ))
+    }
+
+    /// Заметку написали руками, транскрипт остался от удачного прохода. Ни то ни
+    /// другое не стирается, какой бы короткой запись ни была.
+    func testЗаметкиИТранскриптНеСъедаютсяВместеСПромахом() {
+        XCTAssertFalse(SilentRecording.slipsBeforeQueue(
+            duration: 3, autoStarted: true, hasTranscript: false, hasNotes: true
+        ))
+        XCTAssertFalse(SilentRecording.slipsBeforeQueue(
+            duration: 3, autoStarted: true, hasTranscript: true, hasNotes: false
+        ))
+    }
+
+    /// Ноль — это «не знаю», а не «нуль секунд»: длительность приходит из
+    /// индекса, и разбор заголовка wav уже один раз врал на всех записях
+    /// (`JUNK` перед `fmt `). Двадцатиминутная встреча не имеет права уйти
+    /// из-за неудавшегося чтения заголовка — тем более до расшифровки.
+    func testНеизвестнаяДлительностьНеПоводУдалять() {
+        XCTAssertFalse(SilentRecording.slipsBeforeQueue(
+            duration: 0, autoStarted: true, hasTranscript: false, hasNotes: false
+        ))
+    }
+
+    /// Порог у обеих дверей один: правка переносит решение раньше, а не меняет
+    /// его. Разойдись они — приложение стирало бы до расшифровки то, что после
+    /// расшифровки оставляло.
+    func testДоОчередиИПослеASRСудятПоОдномуПорогу() {
+        for seconds in stride(from: 0.5, through: 30.0, by: 0.5) {
+            let before = SilentRecording.slipsBeforeQueue(
+                duration: seconds, autoStarted: true, hasTranscript: false, hasNotes: false
+            )
+            let after = SilentRecording.verdict(
+                duration: seconds, hasTranscript: false, hasNotes: false
+            ) == .discard
+            XCTAssertEqual(before, after, "разошлись на \(seconds)s")
+        }
+    }
 }
