@@ -58,7 +58,16 @@ printf '%s\n' "$changed" | grep -qx "$log_file" && exit 0
 # Keyed on the entry date, not on "the previous commit touched the file" — that
 # would hand a free pass to the first commit of the next piece of work.
 today="$(date +%F)"
-if git show "HEAD:$log_file" 2>/dev/null | grep -q "^##[[:space:]]*${today}"; then
+# Не через `git show … | grep -q`: под `pipefail` это фейлится закрыто, и тем
+# вернее, чем длиннее лог. `grep -q` выходит на первом совпадении — а совпадение
+# здесь всегда в первых строках, лог ведётся новейшим сверху, — `git show`
+# дописывает остаток в закрытую трубу, получает SIGPIPE, и статус конвейера
+# становится ненулевым при найденной записи. На логе в 676 КБ это блокировало
+# каждый второй коммит дня; шапка этого файла обещает ровно обратное —
+# «сломанный гвард не должен заклинивать работу». Найдено 2026-08-31, когда
+# гвард не пустил вторую часть волны после ревью.
+todays_entry="$(git show "HEAD:$log_file" 2>/dev/null | grep -m1 "^##[[:space:]]*${today}" || true)"
+if [[ -n "$todays_entry" ]]; then
   exit 0
 fi
 
