@@ -72,10 +72,46 @@ public struct CaptureCursor {
     /// Сколько кадров отброшено как повтор.
     public private(set) var droppedOverlapFrames: Int = 0
 
-    private let sampleRate: Double
+    /// Сколько времени записано, в секундах.
+    ///
+    /// Кадры на секунды поделить нельзя — не одним числом. Частота меняется
+    /// посреди встречи (воткнули AirPods на 16 кГц, вынули к концу), и кадры
+    /// накоплены по разным её значениям. Длительность считалась как
+    /// `framesWritten / последняяЧастота`, и на живом архиве это дало ровно
+    /// то, что и должно было: встреча на 2849 с лежала в индексе как 1340,7 с —
+    /// половина кадров была снята на 16 кГц и поделена на 48 кГц.
+    ///
+    /// Поэтому секунды копятся **в момент приёма**, пока частота ещё та самая.
+    /// Кадровая арифметика при этом не тронута: на ней держится выравнивание
+    /// дорожек, и оно работает.
+    public private(set) var secondsWritten: Double = 0
+
+    /// Частота устройства, по которой считается всё, что выражено во времени.
+    /// Не `let`, потому что агрегат пересобирается на смене устройства, и новая
+    /// частота — факт о том, что придёт дальше, а не о том, что уже записано.
+    private var sampleRate: Double
 
     public init(sampleRate: Double) {
         self.sampleRate = sampleRate > 0 ? sampleRate : 1
+    }
+
+    /// Устройство сменилось: дальше кадры идут с другой частотой.
+    ///
+    /// Зовётся при пересборке агрегата. Без этого протухшую частоту наследовали
+    /// сразу трое: длительность, потолок `maxPadSeconds` (на 96 кГц «тридцать
+    /// секунд» становились пятнадцатью) и `padGap`, который отдавал вызывающему
+    /// вдвое меньше кадров, чем просил, — а кладутся они в кольцо, размеченное
+    /// уже по новой частоте.
+    public mutating func retune(sampleRate: Double) {
+        guard sampleRate > 0 else { return }
+        self.sampleRate = sampleRate
+    }
+
+    /// Единственное место, где счётчики двигаются: кадры и секунды обязаны
+    /// расходиться только на округление, а не на забытый инкремент.
+    private mutating func advance(frames: Int) {
+        framesWritten += frames
+        secondsWritten += Double(frames) / sampleRate
     }
 
     /// Пропуск/наложение меньше полукадра — это округление, а не событие.
@@ -97,7 +133,7 @@ public struct CaptureCursor {
         guard let expected = expectedSampleTime else {
             // Первый буфер задаёт нулевую отметку записи.
             expectedSampleTime = sampleTime + Double(frameCount)
-            framesWritten += frameCount
+            advance(frames: frameCount)
             return CapturePlacement(
                 silenceFrames: 0, skipFrames: 0, writeFrames: frameCount, reanchored: false
             )
@@ -107,7 +143,7 @@ public struct CaptureCursor {
 
         if abs(delta) < Self.tolerance {
             expectedSampleTime = sampleTime + Double(frameCount)
-            framesWritten += frameCount
+            advance(frames: frameCount)
             return CapturePlacement(
                 silenceFrames: 0, skipFrames: 0, writeFrames: frameCount, reanchored: false
             )
@@ -119,7 +155,7 @@ public struct CaptureCursor {
                 return appendBlind(frameCount: frameCount, sampleTime: sampleTime)
             }
             paddedSilenceFrames += gap
-            framesWritten += gap + frameCount
+            advance(frames: gap + frameCount)
             expectedSampleTime = sampleTime + Double(frameCount)
             return CapturePlacement(
                 silenceFrames: gap, skipFrames: 0, writeFrames: frameCount, reanchored: false
@@ -141,7 +177,7 @@ public struct CaptureCursor {
         }
         droppedOverlapFrames += overlap
         let write = frameCount - overlap
-        framesWritten += write
+        advance(frames: write)
         expectedSampleTime = sampleTime + Double(frameCount)
         return CapturePlacement(
             silenceFrames: 0, skipFrames: overlap, writeFrames: write, reanchored: false
@@ -174,14 +210,14 @@ public struct CaptureCursor {
         guard seconds.isFinite, seconds > 0 else { return 0 }
         let frames = min(Int((seconds * sampleRate).rounded()), Int(Self.maxPadSeconds * sampleRate))
         paddedSilenceFrames += frames
-        framesWritten += frames
+        advance(frames: frames)
         return frames
     }
 
     private mutating func appendBlind(frameCount: Int, sampleTime: Double? = nil) -> CapturePlacement {
         reanchorCount += 1
         expectedSampleTime = sampleTime.map { $0 + Double(frameCount) }
-        framesWritten += frameCount
+        advance(frames: frameCount)
         return CapturePlacement(
             silenceFrames: 0, skipFrames: 0, writeFrames: frameCount, reanchored: true
         )

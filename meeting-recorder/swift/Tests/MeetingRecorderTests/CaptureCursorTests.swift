@@ -131,6 +131,81 @@ final class CaptureCursorTests: XCTestCase {
         XCTAssertEqual(cursor.reanchorCount, 1)
     }
 
+    // MARK: - Устройство сменилось посреди записи
+
+    /// Воткнули AirPods (16 кГц) на середине и вынули к концу (48 кГц).
+    ///
+    /// Длительность обязана выйти **суммой настоящих секунд** — 10 + 10, — а не
+    /// частным «все кадры / последняя частота». На живом архиве это частное дало
+    /// 1340,7 с там, где транскрипт кончается на 2849-й секунде: половина
+    /// кадров была снята на 16 кГц, а поделена на 48 кГц.
+    ///
+    /// Кадры при этом остаются кадрами: их сумма — то, что легло в кольцо, и на
+    /// ней держится выравнивание дорожек. Проверяются обе величины сразу, чтобы
+    /// не вышло, что починили одну ценой другой.
+    func testСменаЧастотыПосредиЗаписиНеПеречитываетУжеЗаписанноеВремя() {
+        var cursor = CaptureCursor(sampleRate: 16_000)
+        var time: Double = 0
+        for _ in 0..<10 {                      // десять секунд на 16 кГц
+            _ = cursor.place(sampleTime: time, frameCount: 16_000)
+            time += 16_000
+        }
+
+        // Пересборка агрегата: часы чужие, частота другая.
+        cursor.retune(sampleRate: 48_000)
+        cursor.reanchor()
+        time = 5_000_000
+        for _ in 0..<10 {                      // и десять секунд на 48 кГц
+            _ = cursor.place(sampleTime: time, frameCount: 48_000)
+            time += 48_000
+        }
+
+        XCTAssertEqual(cursor.secondsWritten, 20, accuracy: 0.001)
+        XCTAssertEqual(cursor.framesWritten, 160_000 + 480_000)
+        // То самое неверное число, ради которого тест и написан.
+        XCTAssertEqual(Double(cursor.framesWritten) / 48_000, 13.33, accuracy: 0.01)
+    }
+
+    /// Потолок добивки и `padGap` названы в секундах, а считаются в кадрах —
+    /// значит после смены частоты они обязаны считаться по новой.
+    ///
+    /// До этого `padGap(seconds:)` на 48 кГц после 16 кГц отдавал вызывающему
+    /// втрое меньше кадров, чем просил, — и клал их в кольцо, размеченное уже по
+    /// 48 кГц: запись выходила короче того, что курсор считал записанным.
+    func testПослеСменыЧастотыПропускДобиваетсяПоНовойЧастоте() {
+        var cursor = CaptureCursor(sampleRate: 16_000)
+        _ = cursor.place(sampleTime: 0, frameCount: 16_000)
+
+        cursor.retune(sampleRate: 48_000)
+        cursor.reanchor()
+        XCTAssertEqual(cursor.padGap(seconds: 0.4), 19_200)
+        XCTAssertEqual(cursor.secondsWritten, 1.4, accuracy: 0.001)
+
+        // Потолок «тридцать секунд» — тоже в новых кадрах: пропуск в 29 с
+        // добивается тишиной, а не превращается в привязку вслепую.
+        let placement = cursor.place(sampleTime: 1_000_000, frameCount: 480)
+        XCTAssertTrue(placement.isContinuous)
+        let afterGap = cursor.place(sampleTime: 1_000_480 + 29 * 48_000, frameCount: 480)
+        XCTAssertEqual(afterGap.silenceFrames, 29 * 48_000)
+        XCTAssertFalse(afterGap.reanchored)
+    }
+
+    /// Секунды и кадры — два счётчика одного и того же, и разойтись им не на
+    /// чем, пока частота одна. Иначе забытый инкремент в одном из шести мест
+    /// проявился бы тихо: длительность просто немного не та.
+    func testСекундыИКадрыНеРасходятсяНиНаОдномИзПутей() {
+        var cursor = CaptureCursor(sampleRate: rate)
+        _ = cursor.place(sampleTime: 0, frameCount: 512)              // первый буфер
+        _ = cursor.place(sampleTime: 512, frameCount: 512)            // ровно встык
+        _ = cursor.place(sampleTime: 1024 + 48_000, frameCount: 512)  // пропуск с добивкой
+        _ = cursor.place(sampleTime: 1024 + 48_000 + 256, frameCount: 512) // наложение
+        _ = cursor.place(sampleTime: .nan, frameCount: 512)           // буфер без часов
+        cursor.padGap(seconds: 0.5)                                   // явная дыра
+        XCTAssertEqual(
+            cursor.secondsWritten, Double(cursor.framesWritten) / rate, accuracy: 1e-9
+        )
+    }
+
     /// Восьмичасовая встреча — наш собственный потолок авто-стопа, и на 48 кГц
     /// это 1.38 млрд кадров. До переполнения 32-битного счётчика (12.4 часа)
     /// остаётся четыре часа запаса, а авто-стоп — это политика, а не гарантия:

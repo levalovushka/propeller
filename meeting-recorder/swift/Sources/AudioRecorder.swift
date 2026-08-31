@@ -331,7 +331,10 @@ class AudioRecorder: ObservableObject {
         let recordingsDir = finalURL.deletingLastPathComponent()
         let micURL = recordingsDir.appendingPathComponent("\(id).mic.wav")
         let sysURL = systemAudioURL
-        let wallClock = Date().timeIntervalSince(startTime ?? Date())
+        // Стенные часы за вычетом пауз — перекрёстная проверка для часов
+        // захвата. Снимается до `isRecording = false`, потому что `elapsed`
+        // после этого возвращает ноль.
+        let wallClock = elapsed
 
         isRecording = false
         tapCapture = nil
@@ -346,10 +349,26 @@ class AudioRecorder: ObservableObject {
         // Длительность берём у часов захвата, а не у стенных: это то же число,
         // что лежит в файле, и расхождение между ними — как раз то, что раньше
         // приходилось вылавливать по остаточным признакам.
-        let captured = report.deviceSampleRate > 0
-            ? Double(report.framesCaptured) / report.deviceSampleRate : 0
+        //
+        // Именно `capturedSeconds`, а не `framesCaptured / deviceSampleRate`:
+        // второе делит кадры, снятые по разным частотам, на частоту того
+        // устройства, которое оказалось последним. На живом архиве это дало
+        // ×1.4–2.1 расхождения с транскриптом на четырёх встречах из 94.
+        let captured = report.capturedSeconds
         let dur = captured > 0 ? captured : wallClock
         duration = dur
+
+        // Стенные часы минус паузы — независимый свидетель. Совпадать до
+        // секунды они не обязаны (запись начинается на кадр позже нажатия), но
+        // разошедшись всерьёз они означают, что часы захвата врут, — и молчать
+        // об этом нельзя: именно молчание оставило неверную длительность в
+        // индексе на месяцы.
+        if captured > 0, wallClock > 0, abs(captured - wallClock) > max(5, wallClock * 0.05) {
+            NSLog(
+                "[AudioRecorder] WARNING: часы захвата %.1f с против стенных %.1f с — расхождение %.1f с",
+                captured, wallClock, abs(captured - wallClock)
+            )
+        }
 
         // Сдвига нет по построению — стемы складываются с нулевого кадра.
         lastStopSystemStemOffset = 0
@@ -377,9 +396,7 @@ class AudioRecorder: ObservableObject {
             guard let self, self.isRecording else { return }
             let progressed: TimeInterval
             if let capture = self.tapCapture as? ProcessTapCapture {
-                let report = capture.report()
-                progressed = report.deviceSampleRate > 0
-                    ? Double(report.framesCaptured) / report.deviceSampleRate : 0
+                progressed = capture.report().capturedSeconds
             } else if let rec = self.avRecorder {
                 progressed = rec.currentTime
             } else {

@@ -43,6 +43,11 @@ final class ProcessTapCapture {
         let scopedToCall: Bool
         let deviceSampleRate: Double
         let framesCaptured: Int
+        /// Длительность записи в секундах — сумма, накопленная курсором по той
+        /// частоте, что была в момент приёма. Делить `framesCaptured` на
+        /// `deviceSampleRate` нельзя: после смены устройства это частота
+        /// последнего из них, а кадры сняты по разным (`CaptureCursor`).
+        let capturedSeconds: Double
         let paddedSilenceFrames: Int
         let droppedOverlapFrames: Int
         let reanchorCount: Int
@@ -64,11 +69,11 @@ final class ProcessTapCapture {
         var logLine: String {
             String(
                 format: """
-                composition=%@ scope=%@ rate=%.0f frames=%d padded=%d dropped=%d \
+                composition=%@ scope=%@ rate=%.0f frames=%d secs=%.1f padded=%d dropped=%d \
                 reanchors=%d ringOverflow=%d deviceNotes=%d restarts=%d gaveUp=%@ maxMic=%.5f maxSys=%.5f
                 """,
                 compositionName, scopedToCall ? "call" : "machine", deviceSampleRate,
-                framesCaptured, paddedSilenceFrames, droppedOverlapFrames,
+                framesCaptured, capturedSeconds, paddedSilenceFrames, droppedOverlapFrames,
                 reanchorCount, ringOverflowFrames, deviceNotifications, deviceRestarts,
                 gaveUpOnDeviceChanges ? "yes" : "no", maxMicLevel, maxSystemLevel
             )
@@ -385,6 +390,7 @@ final class ProcessTapCapture {
             scopedToCall: scopedToCall,
             deviceSampleRate: deviceSampleRate,
             framesCaptured: cursor.framesWritten,
+            capturedSeconds: cursor.secondsWritten,
             paddedSilenceFrames: cursor.paddedSilenceFrames,
             droppedOverlapFrames: cursor.droppedOverlapFrames,
             reanchorCount: cursor.reanchorCount,
@@ -585,6 +591,14 @@ final class ProcessTapCapture {
         }
         channelMap = expected
         deviceSampleRate = CoreAudioObjects.nominalSampleRate(aggregate) ?? 48_000
+        // Курсор пересборка не пересоздаёт — он и есть общая шкала записи, —
+        // поэтому новую частоту ему сообщают здесь, до первого буфера с неё.
+        // Иначе всё, что курсор выражает во времени (длительность, потолок
+        // добивки, `padGap`), осталось бы посчитанным по частоте предыдущего
+        // устройства.
+        lock.lock()
+        cursor.retune(sampleRate: deviceSampleRate)
+        lock.unlock()
         allocateRing()
 
         try startIO()
