@@ -109,7 +109,7 @@ struct ProjectScreen: View {
     /// оставить на экране обрубок со строчной буквы. Поэтому у решения имя не
     /// отрывается вовсе: строка показывается целиком, как в файле, — «Vlad —
     /// зайдёт в Figma…». Разбор при этом тот же, разная только сборка на экран.
-    private var carriesAssignee: Bool { tab.itemsAreCheckable }
+    private var carriesAssignee: Bool { tab.itemsCarryAssignee }
 
     private func row(
         _ item: AppState.AtomItem, of meeting: RecordingEntry, section: String
@@ -117,16 +117,12 @@ struct ProjectScreen: View {
         let atom = item.atom
         let inlineOwner = atom.assignee.map { "\($0) — " } ?? ""
         return ProjectAtomRow(
-            checkbox: tab.itemsAreCheckable,
             done: atom.isDone,
             text: carriesAssignee ? atom.body : inlineOwner + atom.body,
             assignee: carriesAssignee ? atom.assignee : nil,
             // Предлагаются те, кого проект знает по своим встречам, а не по этой
             // одной: задачу дают и тому, кого сегодня не было.
             people: carriesAssignee ? state.roster(of: project.id).map(\.name) : [],
-            toggle: tab.itemsAreCheckable ? {
-                write(item, of: meeting, section: section, to: atom.toggled().item)
-            } : nil,
             dropAssignee: carriesAssignee && atom.assignee != nil ? {
                 write(item, of: meeting, section: section, to: atom.withoutAssignee().item)
             } : nil,

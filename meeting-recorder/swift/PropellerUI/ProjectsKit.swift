@@ -517,16 +517,17 @@ public struct ProjectPersonRow: View {
 /// Пункт конспекта на экране проекта — Figma 297:25131 (задача) и 297:25207
 /// (решение).
 ///
-/// Один компонент на оба: различает их только маркер. У задачи он настоящий
-/// чекбокс, у решения — кружок, и кружок этот **маркер списка, а не состояние**
-/// (решение владельца 2026-08-27): чекбокса у решения в markdown не заводится.
+/// Один компонент на оба, и теперь без единой разницы в маркере: у обоих
+/// кружок, и кружок этот **маркер списка, а не состояние** (решение владельца
+/// 2026-08-27). Квадрат-чекбокс у задачи снят: он был единственным, что
+/// ставило галочку, и ставил он её прямо в файл встречи. Задачи с созвона —
+/// не наш таск-трекер (VISION §4, MISSION §6), а строка, которую человек
+/// прочитает.
 public struct ProjectAtomRow: View {
-    private let checkbox: Bool
     private let done: Bool
     private let text: String
     private let assignee: String?
     private let people: [String]
-    private let toggle: (() -> Void)?
     private let dropAssignee: (() -> Void)?
     private let setAssignee: ((String) -> Void)?
     private let edit: ((String) -> Void)?
@@ -538,43 +539,28 @@ public struct ProjectAtomRow: View {
     @FocusState private var focused: Bool
 
     public init(
-        checkbox: Bool,
         done: Bool,
         text: String,
         assignee: String?,
         people: [String] = [],
-        toggle: (() -> Void)? = nil,
         dropAssignee: (() -> Void)? = nil,
         setAssignee: ((String) -> Void)? = nil,
         edit: ((String) -> Void)? = nil,
         remove: @escaping () -> Void
     ) {
-        self.checkbox = checkbox
         self.done = done
         self.text = text
         self.assignee = assignee
         self.people = people
-        self.toggle = toggle
         self.dropAssignee = dropAssignee
         self.setAssignee = setAssignee
         self.edit = edit
         self.remove = remove
     }
 
-    private var marker: String {
-        guard checkbox else { return "circle" }
-        return done ? "checkmark.square.fill" : "square"
-    }
-
     public var body: some View {
         HStack(alignment: .top, spacing: Tokens.Projects.Atom.markerGap) {
-            Group {
-                if let toggle {
-                    Button(action: toggle) { markerGlyph }.buttonStyle(.press)
-                } else {
-                    markerGlyph
-                }
-            }
+            markerGlyph
             VStack(alignment: .leading, spacing: Tokens.Projects.Atom.chipGap) {
                 if editing {
                     field
@@ -621,8 +607,10 @@ public struct ProjectAtomRow: View {
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
     }
 
+    /// Кружок — и только он. Не кнопка: нажимать не на что, а значок, который
+    /// выглядит нажимаемым и ничего не делает, — тупик (`design/no-dead-ends.md`).
     private var markerGlyph: some View {
-        Image(systemName: marker)
+        Image(systemName: "circle")
             .font(.system(size: Tokens.Projects.Typo.title.size, weight: .regular))
             .foregroundStyle(Tokens.Projects.quiet)
             .frame(width: Tokens.Projects.Atom.markerSide,

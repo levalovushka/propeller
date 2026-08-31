@@ -61,11 +61,10 @@ final class RecapAtomTests: XCTestCase {
 
     func testРазобранноеСобираетсяОбратноБайтВБайт() {
         let lines = [
-            "[ ] **Левон** — написать Дену; до 19:00 завтра",
-            "[x] **Ilyas Aitkulov** — обновить макеты",
-            "[ ] обсудить flow демоскирования",
+            "**Ilyas Aitkulov** — обновить макеты",
+            "обсудить flow демоскирования",
             "Каталог остаётся единым до конца года",
-            "[ ] **Каталог** остаётся единым до конца года",
+            "**Каталог** остаётся единым до конца года",
             "Левон — написать Дену",
         ]
         for line in lines {
@@ -73,27 +72,28 @@ final class RecapAtomTests: XCTestCase {
         }
     }
 
-    func testГалочкаПереставляетсяИПоявляетсяТамГдеЕёНеБыло() {
+    /// Скобки читаются, но обратно в файл не уезжают.
+    ///
+    /// Ставить их было нечему с тех пор, как со вкладки «Задачи» сняли квадрат:
+    /// задачи с созвона — не наш таск-трекер (VISION §4, MISSION §6). Разбор
+    /// остался, потому что старый файл со скобками надо уметь прочитать; сборка
+    /// их не возвращает, и правленая строка выходит без них.
+    func testСкобкиЧитаютсяНоНеПишутся() {
+        XCTAssertEqual(RecapAtom.parse("[ ] **Левон** — написать Дену").checkbox, .todo)
         XCTAssertEqual(
-            RecapAtom.parse("[ ] **Левон** — написать Дену").toggled().item,
-            "[x] **Левон** — написать Дену"
+            RecapAtom.parse("[ ] **Левон** — написать Дену").item,
+            "**Левон** — написать Дену"
         )
         XCTAssertEqual(
-            RecapAtom.parse("[x] **Левон** — написать Дену").toggled().item,
-            "[ ] **Левон** — написать Дену"
-        )
-        // У строки без скобок галочка появляется: вкладка «Задачи» показывает
-        // квадрат каждой строке, а строки старых конспектов написаны прозой.
-        XCTAssertEqual(
-            RecapAtom.parse("обсудить flow").toggled().item,
-            "[x] обсудить flow"
+            RecapAtom.parse("[x] обсудить flow").with(body: "обсудить flow демо").item,
+            "обсудить flow демо"
         )
     }
 
     func testСнятыйОтветственныйУходитВместеСТире() {
         XCTAssertEqual(
-            RecapAtom.parse("[ ] **Левон** — написать Дену").withoutAssignee().item,
-            "[ ] написать Дену"
+            RecapAtom.parse("**Левон** — написать Дену").withoutAssignee().item,
+            "написать Дену"
         )
     }
 
@@ -128,13 +128,13 @@ final class RecapAtomTests: XCTestCase {
 
     /// Правка задачи через хирургический модуль меняет одну строку файла и
     /// ничего больше — ради этого он и заведён.
-    func testГалочкаЧерезХирургическийМодульМеняетОднуСтроку() {
+    func testПравкаЧерезХирургическийМодульМеняетОднуСтроку() {
         let text = """
         # Синк — рекап
 
         ## Задачи
-        - [ ] **Левон** — написать Дену
-        - [ ] обсудить flow
+        - **Левон** — написать Дену
+        - обсудить flow
 
         ## Открытые вопросы
         - кто владелец
@@ -145,14 +145,14 @@ final class RecapAtomTests: XCTestCase {
         let edited = RecapItemEdit.replacing(
             .init(section: RecapDigest.tasksTitle, index: 0, text: items[0]),
             in: text,
-            with: RecapAtom.parse(items[0]).toggled().item
+            with: RecapAtom.parse(items[0]).with(assignee: "Дена").item
         )
         XCTAssertEqual(edited, """
         # Синк — рекап
 
         ## Задачи
-        - [x] **Левон** — написать Дену
-        - [ ] обсудить flow
+        - **Дена** — написать Дену
+        - обсудить flow
 
         ## Открытые вопросы
         - кто владелец
@@ -161,12 +161,13 @@ final class RecapAtomTests: XCTestCase {
 
     // MARK: - Правка одного пункта
 
-    /// Карандаш правит формулировку и **не трогает** ни галочку, ни
-    /// ответственного: правят слова, а не то, кто отвечает и сделано ли.
-    func testПравкаТекстаНеТрогаетГалочкуИОтветственного() {
+    /// Карандаш правит формулировку и **не трогает** ответственного: правят
+    /// слова, а не то, кто отвечает. Прочитанная галочка тоже остаётся в
+    /// разборе — просто обратно в файл её больше никто не пишет.
+    func testПравкаТекстаНеТрогаетОтветственного() {
         let atom = RecapAtom.parse("[x] **Левон** — написать Дену")
         let edited = atom.with(body: "  написать Дене и Ане  ")
-        XCTAssertEqual(edited.item, "[x] **Левон** — написать Дене и Ане")
+        XCTAssertEqual(edited.item, "**Левон** — написать Дене и Ане")
         XCTAssertEqual(edited.checkbox, .done)
         XCTAssertEqual(edited.assignee, "Левон")
     }
@@ -181,8 +182,8 @@ final class RecapAtomTests: XCTestCase {
     /// Назначение ответственного пишет имя жирным перед длинным тире — ровно в
     /// той разметке, из которой разбор его потом и узнает.
     func testНазначенныйОтветственныйЧитаетсяОбратно() {
-        let assigned = RecapAtom.parse("[ ] обсудить flow").with(assignee: "  Марина  ")
-        XCTAssertEqual(assigned.item, "[ ] **Марина** — обсудить flow")
+        let assigned = RecapAtom.parse("обсудить flow").with(assignee: "  Марина  ")
+        XCTAssertEqual(assigned.item, "**Марина** — обсудить flow")
         XCTAssertEqual(RecapAtom.parse(assigned.item).assignee, "Марина")
     }
 
@@ -197,8 +198,8 @@ final class RecapAtomTests: XCTestCase {
     /// Пустое имя — это снятие ответственного, а не ответственный без имени:
     /// `**` вокруг пустоты дали бы строку, которую разбор прочтёт как текст.
     func testПустоеИмяСнимаетОтветственного() {
-        let cleared = RecapAtom.parse("[ ] **Левон** — написать Дену").with(assignee: "   ")
+        let cleared = RecapAtom.parse("**Левон** — написать Дену").with(assignee: "   ")
         XCTAssertNil(cleared.assignee)
-        XCTAssertEqual(cleared.item, "[ ] написать Дену")
+        XCTAssertEqual(cleared.item, "написать Дену")
     }
 }

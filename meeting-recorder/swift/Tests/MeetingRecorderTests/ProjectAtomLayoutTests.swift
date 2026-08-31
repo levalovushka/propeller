@@ -67,7 +67,7 @@ final class ProjectAtomLayoutTests: XCTestCase {
     private var card: some View {
         ProjectAtomCard {
             ProjectAtomRow(
-                checkbox: true, done: false,
+                done: false,
                 text: "Уточнить у Арины детали оплаты",
                 assignee: "Даня Москаленко",
                 remove: {}

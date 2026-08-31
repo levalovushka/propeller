@@ -103,10 +103,12 @@ final class ProjectRosterTests: XCTestCase {
         }
     }
 
-    /// Чекбокс есть только у задачи. Кружок у решения — маркер списка, а не
-    /// состояние, и в markdown у решения скобок не заводится.
-    func testЧекбоксЕстьТолькоУЗадачи() {
-        XCTAssertEqual(ProjectTab.allCases.filter(\.itemsAreCheckable), [.tasks])
+    /// Ответственный отрывается чипом только у задачи. Галочки нет ни у кого:
+    /// понятия «чекбокс» у вкладки больше нет вовсе — задачи с созвона не наш
+    /// таск-трекер (VISION §4, MISSION §6), и ставить `[x]` в файл встречи
+    /// стало нечему.
+    func testОтветственныйЕстьТолькоУЗадачиАГалочкиНиУКого() {
+        XCTAssertEqual(ProjectTab.allCases.filter(\.itemsCarryAssignee), [.tasks])
         XCTAssertEqual(ProjectTab.decisions.recapSection, RecapDigest.decisionsTitle)
         XCTAssertEqual(ProjectTab.tasks.recapSection, RecapDigest.tasksTitle)
         XCTAssertNil(ProjectTab.meetings.recapSection)
