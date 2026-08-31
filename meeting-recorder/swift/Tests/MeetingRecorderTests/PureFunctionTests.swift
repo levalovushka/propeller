@@ -181,6 +181,25 @@ final class PureFunctionTests: XCTestCase {
                        "BuiltinHotwords.terms drifted from vocab/hotwords-core.txt")
     }
 
+    /// Regression for 2026-08-31: client names and the studio's own internal
+    /// codes (`Прагматика`, `Авиасейлс`, `Ситимолл`, `ЦД`/`КД`/`БП`/`ПГ`/`РНД`,
+    /// `сбердевайсы`…) shipped in the baseline list and were readable straight
+    /// out of the installed binary with `grep -a -o`. A word that identifies
+    /// one client has no business riding along in every other user's DMG.
+    func testBuiltinHotwordsHasNoStudioClientNames() {
+        let banned = [
+            "ЦД", "КД", "БП", "ПГ", "Прагматика", "РНД", "ЦА", "СДВГ",
+            "сбердевайсы", "сберкот", "билайновскими", "Рамблер", "тбанк",
+            "Авиасейлс", "Эмбаси", "Фотон", "Пропеллер", "Ситимолл",
+            "Зиларт", "петроге", "спотик", "Солидс", "Филс", "Кикс", "билик",
+        ]
+        let lowered = Set(BuiltinHotwords.terms.map { $0.lowercased() })
+        for term in banned {
+            XCTAssertFalse(lowered.contains(term.lowercased()),
+                           "\(term) is a studio client name/internal code — belongs in Preferences.domainTerms, not the shared baseline")
+        }
+    }
+
     func testMergedHotwordsAppendUserTermsAndDedupe() {
         let merged = BuiltinHotwords.merged(withUserTerms: ["Пропеллер", "  ", "Газпромнефть", "ДЕЙЛИК"])
         // User's own term lands after the baseline…
@@ -367,6 +386,82 @@ final class PureFunctionTests: XCTestCase {
         try data.write(to: url)
 
         XCTAssertEqual(WavHeader.duration(url: url), 1.0, accuracy: 0.01)
+    }
+
+    /// Настоящий файл от `AVAudioFile`, а не канонические 44 байта.
+    ///
+    /// Так выглядит каждый wav в архиве: `RIFF … WAVE`, потом выравнивающий
+    /// `JUNK` (28 байт), потом `fmt `, потом `FLLR` на 4008 байт, и только
+    /// после — `data`. Пока поля читались по смещениям 22/24/34, они попадали в
+    /// тело `JUNK`, где нули, и длительность выходила нулём на всех 22 финальных
+    /// записях живого архива. Байты головы взяты с
+    /// `~/.meeting-recorder/recordings/20260820_213214.wav`.
+    func testНастоящийФайлСЧанкомJUNKПередFmtЧитаетсяПоЧанкам() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("propeller-test-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let dataBytes = 16_000 * 2 * 3          // три секунды моно 16 кГц Int16
+        try Self.wavLikeAVAudioFile(dataBytes: dataBytes).write(to: url)
+
+        XCTAssertEqual(WavHeader.duration(url: url), 3.0, accuracy: 0.001)
+        XCTAssertEqual(
+            WavHeader.read(url: url),
+            WavHeader.Format(sampleRate: 16_000, channels: 1, bitsPerSample: 16, dataBytes: dataBytes)
+        )
+    }
+
+    /// Запись, оборванная падением: `AVAudioFile` не успел дописать длину
+    /// `data`, и в заголовке ноль. Считать такую встречу пустой нельзя — байты
+    /// на диске лежат, и по ним длительность видна.
+    func testОборваннаяЗаписьСНулевойДлинойDataМеряетсяПоФайлу() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("propeller-test-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let dataBytes = 16_000 * 2 * 5
+        try Self.wavLikeAVAudioFile(dataBytes: dataBytes, declaredDataSize: 0).write(to: url)
+
+        XCTAssertEqual(WavHeader.duration(url: url), 5.0, accuracy: 0.001)
+    }
+
+    /// Нечитаемая голова обязана остаться нулём — на нём стоит развилка
+    /// `SilentRecording`, и «не знаю» там уже не значит «ноль секунд».
+    func testФайлБезЧанкаDataНеПритворяетсяДлительностью() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("propeller-test-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data("RIFF....WAVEfmt ".utf8).write(to: url)
+        XCTAssertEqual(WavHeader.duration(url: url), 0)
+        XCTAssertNil(WavHeader.read(url: url))
+    }
+
+    /// Голова ровно та, что пишет `AVAudioFile` 16 кГц/моно/Int16:
+    /// `JUNK` 28 байт перед `fmt `, `FLLR` 4008 после него.
+    private static func wavLikeAVAudioFile(
+        dataBytes: Int, declaredDataSize: UInt32? = nil
+    ) -> Data {
+        var out = Data()
+        func u32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { out.append(contentsOf: $0) } }
+        func u16(_ v: UInt16) { withUnsafeBytes(of: v.littleEndian) { out.append(contentsOf: $0) } }
+
+        let junkBody = 28, fillerBody = 4008
+        out.append(contentsOf: "RIFF".utf8)
+        u32(UInt32(4 + (8 + junkBody) + (8 + 16) + (8 + fillerBody) + 8 + dataBytes))
+        out.append(contentsOf: "WAVE".utf8)
+
+        out.append(contentsOf: "JUNK".utf8); u32(UInt32(junkBody))
+        out.append(Data(count: junkBody))
+
+        out.append(contentsOf: "fmt ".utf8); u32(16)
+        u16(1); u16(1); u32(16_000); u32(32_000); u16(2); u16(16)
+
+        out.append(contentsOf: "FLLR".utf8); u32(UInt32(fillerBody))
+        out.append(Data(count: fillerBody))
+
+        out.append(contentsOf: "data".utf8); u32(declaredDataSize ?? UInt32(dataBytes))
+        out.append(Data(count: dataBytes))
+        return out
     }
 
     // MARK: - RecordingRecovery

@@ -365,21 +365,117 @@ public enum MixGain {
     }
 }
 
+/// # Сколько времени лежит в wav
+///
+/// Разбор идёт **по чанкам RIFF**, а не по смещениям канонического
+/// сорокачетырёхбайтного заголовка. Это не педантизм: `AVAudioFile`, которым
+/// пишет всё приложение, кладёт перед `fmt ` выравнивающий чанк `JUNK` (у нас —
+/// 28 байт тела), а иногда `FLLR`. Пока поля читались по фиксированным 22/24/34,
+/// они попадали в тело `JUNK`, где нули, и функция возвращала 0 **на всех до
+/// одного** настоящих файлах архива — при том что синтетический wav из теста
+/// разбирался верно и держал эту неправду зелёной.
+///
+/// Ноль отсюда стоил дорого: `RecordingStore` не мог дозаполнить длительность
+/// («Fill in missing durations» не чинил ничего никогда), `GigasttChunking`
+/// решал по нулю, что резать нечего, а `SilentRecording.verdict` при нуле
+/// говорил «промах по кнопке» — и подобранная с диска немая встреча удалялась
+/// вместе с аудио.
+///
+/// Модуль остаётся на одном `Foundation`. `AVAudioFile` ответил бы на тот же
+/// вопрос одной строкой (так делает `Bench/Harness.swift`), но `PropellerPure`
+/// чист не случайно: он весь про решения, которые проверяются тестом без
+/// звуковой подсистемы. Обход списка чанков — десяток строк, и он остаётся
+/// здесь, рядом с теми, кто по нему решает.
 public enum WavHeader {
-    /// Duration in seconds from a standard PCM WAV header (44-byte).
+
+    /// Длительность в секундах. Ноль означает «прочитать не удалось» — и ни один
+    /// вызывающий не имеет права понять его как «файл пустой».
     public static func duration(url: URL) -> Double {
-        guard let fh = try? FileHandle(forReadingFrom: url) else { return 0 }
+        guard let format = read(url: url) else { return 0 }
+        let bytesPerFrame = format.bitsPerSample / 8 * format.channels
+        guard bytesPerFrame > 0, format.sampleRate > 0 else { return 0 }
+        return Double(format.dataBytes) / Double(bytesPerFrame) / Double(format.sampleRate)
+    }
+
+    /// То, что нашлось в заголовке. Отдельно от `duration`, потому что частота и
+    /// каналы — сами по себе ответ на вопрос «то ли это, что мы писали».
+    public struct Format: Equatable {
+        public let sampleRate: Int
+        public let channels: Int
+        public let bitsPerSample: Int
+        public let dataBytes: Int
+
+        public init(sampleRate: Int, channels: Int, bitsPerSample: Int, dataBytes: Int) {
+            self.sampleRate = sampleRate
+            self.channels = channels
+            self.bitsPerSample = bitsPerSample
+            self.dataBytes = dataBytes
+        }
+    }
+
+    public static func read(url: URL) -> Format? {
+        guard let fh = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? fh.close() }
-        guard let header = try? fh.read(upToCount: 44), header.count >= 44 else { return 0 }
-        let sampleRate = header.subdata(in: 24..<28).withUnsafeBytes { $0.load(as: UInt32.self) }
-        let bitsPerSample = header.subdata(in: 34..<36).withUnsafeBytes { $0.load(as: UInt16.self) }
-        let numChannels = header.subdata(in: 22..<24).withUnsafeBytes { $0.load(as: UInt16.self) }
-        guard sampleRate > 0, bitsPerSample > 0, numChannels > 0 else { return 0 }
-        let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
-        let dataSize = max(0, Int(fileSize) - 44)
-        let bytesPerSample = Int(bitsPerSample) / 8 * Int(numChannels)
-        guard bytesPerSample > 0 else { return 0 }
-        return Double(dataSize) / Double(bytesPerSample) / Double(sampleRate)
+        let fileSize = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int64) ?? 0
+        guard fileSize > 12 else { return nil }
+
+        guard let riff = try? fh.read(upToCount: 12), riff.count == 12,
+              matches(riff, at: 0, "RIFF"), matches(riff, at: 8, "WAVE")
+        else { return nil }
+
+        var sampleRate = 0, channels = 0, bitsPerSample = 0
+        var dataBytes = -1
+        var offset: UInt64 = 12
+
+        while offset + 8 <= UInt64(fileSize) {
+            guard (try? fh.seek(toOffset: offset)) != nil,
+                  let head = try? fh.read(upToCount: 8), head.count == 8
+            else { break }
+            let declared = UInt64(u32(head, 4))
+            let body = offset + 8
+
+            if matches(head, at: 0, "fmt "), declared >= 16 {
+                guard let fmt = try? fh.read(upToCount: 16), fmt.count == 16 else { break }
+                channels = Int(u16(fmt, 2))
+                sampleRate = Int(u32(fmt, 4))
+                bitsPerSample = Int(u16(fmt, 14))
+            } else if matches(head, at: 0, "data") {
+                // Длина `data` объявлена в заголовке, но её дописывают при
+                // закрытии файла: у записи, оборванной падением, там ноль или
+                // мусор. Тогда считаем по тому, сколько байт реально лежит —
+                // иначе оборванная встреча выглядела бы пустой.
+                let available = UInt64(fileSize) - body
+                dataBytes = Int(declared > 0 && declared <= available ? declared : available)
+                break
+            }
+
+            // Чанки выровнены по чётной границе — нечётное тело добито байтом.
+            offset = body + declared + (declared % 2)
+        }
+
+        guard sampleRate > 0, channels > 0, bitsPerSample > 0, dataBytes >= 0 else { return nil }
+        return Format(
+            sampleRate: sampleRate, channels: channels,
+            bitsPerSample: bitsPerSample, dataBytes: dataBytes
+        )
+    }
+
+    private static func matches(_ d: Data, at i: Int, _ tag: String) -> Bool {
+        let start = d.startIndex + i
+        guard start + 4 <= d.endIndex else { return false }
+        return d[start..<start + 4].elementsEqual(tag.utf8)
+    }
+
+    /// Порядок байт в RIFF — little-endian всегда, поэтому он собирается руками,
+    /// а не `load(as:)`: тот зависит от выравнивания буфера и от машины.
+    private static func u32(_ d: Data, _ i: Int) -> UInt32 {
+        let s = d.startIndex + i
+        return UInt32(d[s]) | UInt32(d[s + 1]) << 8 | UInt32(d[s + 2]) << 16 | UInt32(d[s + 3]) << 24
+    }
+
+    private static func u16(_ d: Data, _ i: Int) -> UInt16 {
+        let s = d.startIndex + i
+        return UInt16(d[s]) | UInt16(d[s + 1]) << 8
     }
 }
 

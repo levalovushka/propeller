@@ -51,6 +51,23 @@ final class SilentRecordingTests: XCTestCase {
         )
     }
 
+    func testНулеваяДлительностьЭтоНеЗнаюАНеНольСекунд() {
+        // Ноль приходит не от записи, а от неудавшегося чтения заголовка wav:
+        // именно так выглядела **каждая** подобранная с диска встреча, пока
+        // `WavHeader` разбирал файл по фиксированным смещениям. На ветке
+        // `.discard` `AppState.settleSilentRecording` зовёт `remove` — без
+        // надгробия и без ⌘Z, — то есть двадцатиминутный созвон уходил вместе с
+        // аудио. Убирать можно только за тем промахом, который измерен.
+        XCTAssertEqual(
+            SilentRecording.verdict(duration: 0, hasTranscript: false, hasNotes: false),
+            .rest
+        )
+        XCTAssertEqual(
+            SilentRecording.verdict(duration: -1, hasTranscript: false, hasNotes: false),
+            .rest
+        )
+    }
+
     func testРасшифровкуОтУдачногоПроходаПустойОтветASRНеСтирает() {
         // Встречу отправили на переобработку, и на этот раз ASR вернул ноль.
         // Удалить её значило бы потерять текст, который уже был прочитан.
