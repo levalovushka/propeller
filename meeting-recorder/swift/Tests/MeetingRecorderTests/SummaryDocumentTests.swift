@@ -97,6 +97,10 @@ final class SummaryDocumentTests: XCTestCase {
     }
 
     /// The rule that rescues the drifted recaps must not start eating prose.
+    ///
+    /// С 2026-08-31 соседние строки не склеиваются: каждая — свой абзац. Тест
+    /// остаётся про то, ради чего написан, — проза под заголовком не должна
+    /// стать пунктами списка, — и только состав блоков теперь другой.
     func testProseUnderAHeadingStaysProseRatherThanBecomingBullets() {
         let document = SummaryDocument.parse(markdown: """
         ## Итог
@@ -106,8 +110,9 @@ final class SummaryDocumentTests: XCTestCase {
         Начали с бюджета.
         Потом перешли к срокам.
         """)
-        XCTAssertEqual(kinds(document), [.lead, .heading, .body])
-        XCTAssertEqual(document.blocks[2].text, "Начали с бюджета. Потом перешли к срокам.")
+        XCTAssertEqual(kinds(document), [.lead, .heading, .body, .body])
+        XCTAssertEqual(document.blocks[2].text, "Начали с бюджета.")
+        XCTAssertEqual(document.blocks[3].text, "Потом перешли к срокам.")
     }
 
     // MARK: - Emphasis survives instead of being stripped
@@ -485,14 +490,49 @@ final class SummaryDocumentTests: XCTestCase {
         XCTAssertEqual(once, twice)
     }
 
-    /// Вне «Заметок» перенос строки по-прежнему означает ширину строки.
-    func testOutsideTheNotesLinesAreStillJoined() {
+    /// Вне «Заметок» перенос строки — тоже перенос, а не ширина строки.
+    ///
+    /// Тест перевёрнут 2026-08-31 вместе с правилом, и перевёрнут замером, а не
+    /// вкусом: из 144 пар соседних строк прозы в живом архиве на перенос по
+    /// ширине не похожа ни одна вне «Заметок». Зато 38 вторых строк начинались
+    /// с таймкода и 14 — с `**Имя** — `, то есть склейка сливала отдельные темы
+    /// и отдельные задачи в один абзац. Вход ниже — единственная форма, ради
+    /// которой старое правило существовало (фраза, разорванная запятой), и
+    /// теперь она даёт два абзаца: цена, заплаченная сознательно.
+    func testOutsideTheNotesLinesAreEachTheirOwnParagraph() {
         let document = SummaryDocument.parse(markdown: """
         ## Решения
         Отказались от идеи барабана,
         потому что за пределами главного экрана он не обоснован.
         """)
-        XCTAssertEqual(document.blocks.filter { $0.kind == .body }.count, 1)
+        XCTAssertEqual(document.blocks.filter { $0.kind == .body }.count, 2)
+    }
+
+    /// То, ради чего правило переворачивали: тема с таймкодом и её описание —
+    /// два разных абзаца, а не один. Так пишет модель весь «Ход обсуждения».
+    func testATopicAndItsDescriptionDoNotBecomeOneWall() {
+        let document = SummaryDocument.parse(markdown: """
+        ## Ход обсуждения
+        **[01:48] Концепция каталога:**
+        Обсудили, зачем он нужен и кому.
+        **[02:35] Бэклинки:**
+        Введены ссылки назад к сущностям уровня выше.
+        """)
+        let bodies = document.blocks.filter { $0.kind == .body }.map(\.text)
+        XCTAssertEqual(bodies.count, 4)
+        XCTAssertEqual(bodies[0], "[01:48] Концепция каталога:")
+        XCTAssertEqual(bodies[2], "[02:35] Бэклинки:")
+    }
+
+    /// И то же для задач: три исполнителя не становятся одним абзацем.
+    func testTasksWrittenAsProseStayThreeTasksNotOneParagraph() {
+        let document = SummaryDocument.parse(markdown: """
+        ## Задачи
+        **Левон** — подготовить доступы.
+        **Радик** — описать прототипы.
+        **Полина** — согласовать план встреч.
+        """)
+        XCTAssertEqual(document.blocks.filter { $0.kind == .body }.count, 3)
     }
 
     private func notes(of markdown: String) -> [String] {
