@@ -120,11 +120,14 @@ public enum PersonErasure {
     /// бы с ним.
     public static func contains(_ text: String, name: PersonName) -> Bool {
         guard !name.isEmpty, !text.isEmpty else { return false }
-        let chars = Array(text)
-        let folded = chars.map(fold)
-        let needles = name.stems.map { Array($0).map(fold) }
-        for i in chars.indices {
-            guard isWordChar(chars[i]), i == 0 || !isWordChar(chars[i - 1]) else { continue }
+        // Только свёрнутая копия, без исходной: свёртка не меняет ни букву на
+        // не-букву, ни наоборот, поэтому границу слова видно и по ней. Вторая
+        // копия шестимегабайтной трассы стоила бы 100 МБ памяти ни за что.
+        var folder = Folder()
+        let folded = folder.map(text)
+        let needles = name.stems.map { folder.map($0) }
+        for i in folded.indices {
+            guard isWordChar(folded[i]), i == 0 || !isWordChar(folded[i - 1]) else { continue }
             if matchLength(at: i, folded: folded, needles: needles) != nil { return true }
         }
         return false
@@ -136,8 +139,9 @@ public enum PersonErasure {
     ) -> String {
         guard !name.isEmpty, !text.isEmpty else { return text }
         let chars = Array(text)
-        let folded = chars.map(fold)
-        let needles = name.stems.map { Array($0).map(fold) }
+        var folder = Folder()
+        let folded = folder.map(chars)
+        let needles = name.stems.map { folder.map($0) }
 
         var out = String()
         out.reserveCapacity(text.count)
@@ -179,14 +183,49 @@ public enum PersonErasure {
 
     private static func isWordChar(_ c: Character) -> Bool { c.isLetter || c.isNumber }
 
-    /// Регистр и диакритика снимаются посимвольно, чтобы индексы совпадали с
+    /// Регистр и диакритика снимаются **посимвольно**, чтобы индексы совпадали с
     /// исходной строкой: свернуть строку целиком значит потерять соответствие
     /// позиций там, где длина изменилась. Заодно «ё» становится «е» — «Алёна» и
     /// «Алена» один человек.
-    private static func fold(_ c: Character) -> Character {
-        let s = String(c).folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-        if s.count == 1, let first = s.first { return first }
-        return String(c).lowercased().first ?? c
+    ///
+    /// Свёртка помнит, что уже считала. Правило от этого не меняется ни на
+    /// символ — меняется цена: `folding(options:)` вместе с оборачиванием
+    /// символа в строку стоит аллокации на каждый символ, а с приходом трасс
+    /// окна звонилки (52 МБ против 4,9 МБ всей папки `meetings/`) стирание
+    /// одного человека перевалило за две минуты — замер 2026-08-31 на живом
+    /// архиве. Алфавит у любого текста — сотни символов, а платили за них
+    /// десятки миллионов раз.
+    ///
+    /// Память у свёртки локальная, не статическая: глобальное мутабельное
+    /// состояние в чистом слое не `Sendable`, и экономия на аллокации не стоит
+    /// гонки.
+    struct Folder {
+        private var cache: [Character: Character] = [:]
+
+        mutating func callAsFunction(_ c: Character) -> Character {
+            // ASCII: диакритики в нём нет, а регистр снимается битом — ни
+            // словаря, ни аллокации, и это большая часть любого JSON.
+            if let ascii = c.asciiValue {
+                let lowered = (ascii >= 65 && ascii <= 90) ? ascii + 32 : ascii
+                return Character(UnicodeScalar(lowered))
+            }
+            if let known = cache[c] { return known }
+            let s = String(c).folding(
+                options: [.caseInsensitive, .diacriticInsensitive], locale: nil
+            )
+            let folded = (s.count == 1 ? s.first : nil) ?? String(c).lowercased().first ?? c
+            cache[c] = folded
+            return folded
+        }
+
+        mutating func map(_ text: String) -> [Character] { map(Array(text)) }
+
+        mutating func map(_ chars: [Character]) -> [Character] {
+            var out = [Character]()
+            out.reserveCapacity(chars.count)
+            for c in chars { out.append(self(c)) }
+            return out
+        }
     }
 
     // MARK: - Имя файла

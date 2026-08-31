@@ -173,6 +173,153 @@ final class PersonErasureTests: XCTestCase {
         XCTAssertEqual(ArchiveEraser.filenames(in: fx.layout.recordings).sorted(), before)
     }
 
+
+    // MARK: - Трасса окна звонилки
+
+    func testИмяУходитИзТрассыОкнаЗвонилки() {
+        // 22 трассы на 52 МБ против 4,9 МБ всей папки `meetings/` — и до
+        // 2026-08-31 стирание в них не заглядывало вовсе. Замер на живом
+        // архиве: по одному человеку стиралось 3 348 вхождений и оставалось
+        // 54 388 в восьми трассах.
+        let fx = Fixture()
+        fx.plantMeeting(id: "20260101_120000", slug: "sink")
+        fx.plantCallTrace(id: "20260101_120000")
+
+        let report = ArchivePersonEraser.erase(person: ivan, in: fx.layout)
+
+        XCTAssertEqual(fx.grep(ivan), [], "имя ещё лежит в архиве")
+        XCTAssertTrue(report.isComplete, "осталось: \(report.remaining)")
+        XCTAssertTrue(
+            report.filesChanged.contains("20260101_120000.calltrace.jsonl"),
+            "\(report.filesChanged)"
+        )
+    }
+
+    func testПроверкаНаходитИмяВТрассеЕслиЕгоНеСтёрли() {
+        // `remaining` обязан смотреть туда же, куда смотрит стирание. Раньше
+        // он смотрел мимо трассы — и `isComplete` был правдой про неполный
+        // список мест, а не про архив.
+        let fx = Fixture()
+        fx.plantCallTrace(id: "20260101_120000")
+
+        XCTAssertEqual(
+            ArchivePersonEraser.remaining(person: ivan, in: fx.layout),
+            ["20260101_120000.calltrace.jsonl"]
+        )
+    }
+
+    func testПослеСтиранияЖурналСчитаетТеЖеВердиктыПодНейтральнойПодписью() {
+        // Почему подмена имени, а не удаление плитки: состав опроса — вход
+        // правил `CallWindowJournal.verdict`. Убрав плитку, мы поменяли бы
+        // вердикт про **других** людей: у геометрии есть порог в две названные
+        // плитки, у метки Zoom — счёт помеченных.
+        let fx = Fixture()
+        fx.plantCallTrace(id: "20260101_120000")
+        let url = fx.layout.recordings.appendingPathComponent("20260101_120000.calltrace.jsonl")
+        let before = CallWindowJournal.polls(fromJSONL: (try? Data(contentsOf: url)) ?? Data())
+
+        ArchivePersonEraser.erase(person: ivan, in: fx.layout)
+
+        let after = CallWindowJournal.polls(fromJSONL: (try? Data(contentsOf: url)) ?? Data())
+        XCTAssertEqual(after.count, before.count, "трасса обязана остаться той же записью")
+        XCTAssertEqual(
+            after.map { $0.tiles.count }, before.map { $0.tiles.count },
+            "число плиток менять нельзя — от него зависит вердикт"
+        )
+        XCTAssertEqual(
+            CallWindowJournal.verdict(in: before[0]), .speaker("Иван Петров")
+        )
+        XCTAssertEqual(
+            CallWindowJournal.verdict(in: after[0]), .speaker(PersonErasure.defaultReplacement),
+            "тот же вердикт, только подпись нейтральная"
+        )
+        // Владелец на второй плитке — на месте: стирание одного не трогает всех.
+        XCTAssertTrue(
+            after[0].tiles.contains { $0.description.hasPrefix(owner) }, "\(after[0].tiles)"
+        )
+    }
+
+    func testОборваннаяСтрокаТрассыВсёРавноЧистится() {
+        // Трасса — запись, и убитый процесс оставляет недописанный хвост.
+        // `CallWindowJournal.polls` такую строку пропускает; стирание не имеет
+        // права, иначе имя переживёт стирание в куске, который «всё равно не
+        // читается».
+        let fx = Fixture()
+        fx.plantCallTrace(id: "20260101_120000", tornTail: true)
+
+        let report = ArchivePersonEraser.erase(person: ivan, in: fx.layout)
+
+        XCTAssertEqual(fx.grep(ivan), [])
+        XCTAssertTrue(report.isComplete, "осталось: \(report.remaining)")
+    }
+
+    // MARK: - Честность отчёта
+
+    func testОтчётНеОбъявляетПолнотуПокаИмяХотьГдеТоЛежит() {
+        // Снимок, не разбирающийся в массив объектов, вынуть запись не даёт —
+        // и это ровно тот случай, когда соврать «стёрто везде» дороже всего.
+        let fx = Fixture()
+        fx.plantMeeting(id: "20260101_120000", slug: "sink")
+        fx.plantBrokenSnapshot()
+
+        let report = ArchivePersonEraser.erase(person: ivan, in: fx.layout)
+
+        XCTAssertFalse(report.isComplete, "отчёт обязан признаться")
+        XCTAssertEqual(report.remaining, ["recordings.json.corrupt-1"])
+    }
+
+    // MARK: - Проекты и заглушенные связки
+
+    func testЗаглушеннаяСвязкаТеряетИмяВместеСЗаголовком() {
+        // Ключ — свёрнутый заголовок. Заголовок после стирания стал
+        // «1x1 с Участник», значит и ключ обязан стать таким же свёрнутым,
+        // иначе «больше не предлагать» перестанет совпадать и связка всплывёт.
+        let fx = Fixture()
+        fx.plantSilenced(key: "title:1x1 с иваном")
+
+        ArchivePersonEraser.erase(person: ivan, in: fx.layout)
+
+        XCTAssertEqual(
+            SilencedProjects.read(fx.layout.silencedProjectsURL),
+            ["title:1x1 с " + ArchiveSearch.fold(PersonErasure.defaultReplacement)]
+        )
+        XCTAssertEqual(fx.grep("иваном"), [])
+    }
+
+    func testИмяПроектаТеряетЧеловекаАСамПроектОстаётся() {
+        let fx = Fixture()
+        fx.plantProject(name: "1x1 с Иваном")
+
+        let report = ArchivePersonEraser.erase(person: ivan, in: fx.layout)
+
+        XCTAssertTrue(report.filesChanged.contains(ArchiveLayout.projectsName))
+        let text = (try? String(contentsOf: fx.layout.projectsURL, encoding: .utf8)) ?? ""
+        XCTAssertTrue(text.contains("1x1 с Участник"), text)
+        XCTAssertTrue(text.contains("P-1"), "id проекта — не текст про человека: \(text)")
+    }
+
+    // MARK: - Обход
+
+    func testКаждыйВидСледаЕстьВФикстуреИНиОдинНеЗабыт() {
+        // Тот же сторож, что у `MeetingTrace`: новый вид следа не пройдёт мимо
+        // теста молча. Пока вид не посажен в фикстуру, тест красный, а значит
+        // никто не добавит место, которое стирание обходит стороной.
+        let fx = Fixture()
+        fx.plantMeeting(id: "20260101_120000", slug: "sink")
+        fx.plantSnapshot(id: "20260202_090000")
+        fx.plantCallTrace(id: "20260101_120000")
+        fx.plantProject(name: "1x1 с Иваном")
+        fx.plantSilenced(key: "title:1x1 с иваном")
+        fx.plantTombstone(id: "20260303_100000")
+
+        for trace in PersonTrace.allCases {
+            XCTAssertFalse(
+                trace.places(in: fx.layout).isEmpty,
+                "вид следа \(trace.rawValue) не посажен в фикстуру"
+            )
+        }
+    }
+
     // MARK: - Фикстура
 
     final class Fixture {
@@ -217,6 +364,56 @@ final class PersonErasureTests: XCTestCase {
                 to: layout.recordings.appendingPathComponent("\(id).wav")
             )
             append(entry(id: id), to: layout.indexURL)
+        }
+
+
+        /// Трасса окна звонилки: заголовок `meta`, дальше опросы. Формат — тот
+        /// же, что пишет `axprobe trace`: в `description` имя вместе с
+        /// состоянием звука и видео.
+        func plantCallTrace(id: String, tornTail: Bool = false) {
+            func tile(_ description: String, width: Double, marker: String) -> String {
+                """
+                {"role":"AXTabGroup","description":"\(description), \(marker)",\
+                "width":\(width),"height":414,"window":"Конференция Zoom",\
+                "process":"zoom.us","order":1}
+                """
+            }
+            let speaking = tile("Иван Петров", width: 736, marker: "говорит, Video on")
+            let listening = tile("Левон Лобанов", width: 200, marker: "Video off")
+            var lines = [#"{"meta":{"anchorUnix":1787230814.226375,"interval":0.4}}"#]
+            for t in stride(from: 0.0, to: 2.0, by: 0.5) {
+                lines.append(#"{"t":\#(t),"tiles":[\#(speaking),\#(listening)]}"#)
+            }
+            if tornTail {
+                // Ровно то, что остаётся от убитого процесса: полстроки.
+                lines.append(#"{"t":2.5,"tiles":[{"description":"Иван Петров, гово"#)
+            }
+            try? Data((lines.joined(separator: "\n") + "\n").utf8).write(
+                to: layout.recordings.appendingPathComponent("\(id).calltrace.jsonl")
+            )
+        }
+
+        /// Снимок индекса, который не разбирается в массив объектов: запись из
+        /// него вынуть нечем, а имя в нём лежит.
+        func plantBrokenSnapshot() {
+            try? Data(#"{"oops": "Синк с Иваном Петровым"#.utf8).write(
+                to: layout.recordings.appendingPathComponent("recordings.json.corrupt-1")
+            )
+        }
+
+        func plantProject(name: String) {
+            IndexFile.write(
+                [["id": "P-1", "name": name, "createdAt": "2026-01-01T12:00:00Z"]],
+                to: layout.projectsURL
+            )
+        }
+
+        func plantSilenced(key: String) {
+            SilencedProjects.write([key], to: layout.silencedProjectsURL)
+        }
+
+        func plantTombstone(id: String) {
+            TombstoneFile.mark(id, in: layout)
         }
 
         func plantSnapshot(id: String) {
