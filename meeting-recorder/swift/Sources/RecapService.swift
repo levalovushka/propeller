@@ -1096,7 +1096,12 @@ actor RecapService {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        // Ключ через `usableKey`: с `\n` на конце Foundation выбрасывает весь
+        // заголовок и запрос уходит неподписанным (см. `RecapBackendChoice`).
+        req.setValue(
+            "Bearer \(RecapBackendChoice.usableKey(apiKey) ?? "")",
+            forHTTPHeaderField: "Authorization"
+        )
         if url == Self.openRouterChatURL {
             // Атрибуция в дашборде OpenRouter: без неё в списке приложений
             // человек видит безымянный ключ и не знает, что его тратит.
@@ -1128,7 +1133,8 @@ actor RecapService {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+        // То же, что у OpenAI: перевод строки в значении стоит целого заголовка.
+        req.setValue(RecapBackendChoice.usableKey(apiKey) ?? "", forHTTPHeaderField: "x-api-key")
         req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         let payload: [String: Any] = [
             "model": model,

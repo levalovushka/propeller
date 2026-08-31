@@ -302,6 +302,38 @@ final class PipelineRetryTests: XCTestCase {
         )
     }
 
+    /// Отказ по ключу обязан быть видно.
+    ///
+    /// 401 и 403 попадали в `other` и складывались в одну кучу с неизвестным:
+    /// человек с опечаткой в ключе крутил лестницу вечно и молча, а по
+    /// телеметрии это выглядело как «что-то случилось». Тексты — те, что
+    /// действительно приходят: наш `RecapError.httpStatus` и тела ответов
+    /// OpenAI, Anthropic и OpenRouter.
+    func testAKeyRejectedByTheProviderHasItsOwnBucket() {
+        let cases = [
+            "LLM HTTP 401: {\"error\":{\"message\":\"Incorrect API key provided: sk-…\",\"code\":\"invalid_api_key\"}}",
+            "LLM HTTP 403: forbidden",
+            "LLM HTTP 401: {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"invalid x-api-key\"}}",
+            "LLM HTTP 401: {\"error\":{\"message\":\"No auth credentials found\",\"code\":401}}",
+        ]
+        for message in cases {
+            XCTAssertEqual(PipelineRetry.cause(message), "auth", message)
+        }
+    }
+
+    /// Корзина `auth` не делает отказ нашим: ключ чинит тот, чей он. Лестница
+    /// остаётся прежней — она и была единственным, что здесь работало.
+    func testARejectedKeyIsStillNotOurFault() {
+        XCTAssertEqual(PipelineRetry.classify("LLM HTTP 401: invalid_api_key"), .transient)
+    }
+
+    /// Трёхзначное число в тексте — не приговор: маркеры стоят с «http»
+    /// намеренно, иначе любое сообщение с числом 401 внутри стало бы отказом
+    /// по ключу.
+    func testAPlainNumberIsNotAKeyRejection() {
+        XCTAssertEqual(PipelineRetry.cause("прочитано 4015 сегментов"), "other")
+    }
+
     /// Незнакомое не притворяется знакомым: `other` — честный ответ, и по его
     /// доле в телеметрии видно, что таблица отстала от кода.
     func testAnUnknownMessageIsOtherRatherThanAGuess() {

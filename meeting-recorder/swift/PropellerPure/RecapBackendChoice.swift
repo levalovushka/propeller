@@ -96,7 +96,8 @@ public enum RecapBackendChoice {
     /// после каждой записи). Спросить это можно только у сайдкара, поэтому
     /// вопрос задаёт вызывающий, а выбор считается здесь.
     ///
-    /// Ключ у облачных: пустая строка — это отсутствие ключа, а не ключ.
+    /// Ключ у облачных: пустая строка — это отсутствие ключа, а не ключ. Строка
+    /// из пробелов и переводов строки — тоже (`usableKey`).
     public static func resolve(
         kind: RecapProviderKind,
         ollamaUsable: Bool,
@@ -119,7 +120,26 @@ public enum RecapBackendChoice {
     private static func keyed(
         _ backend: String, _ key: String?
     ) -> Result<String, RecapSkipReason> {
-        (key?.isEmpty == false) ? .success(backend) : .failure(.noProvider)
+        (usableKey(key) != nil) ? .success(backend) : .failure(.noProvider)
+    }
+
+    /// Ключ, который можно отправить, — или ничего.
+    ///
+    /// Пробелы и переводы строки по краям срезаются не ради опрятности. Ключ
+    /// попадает в приложение вставкой, а вставленный из терминала или из файла
+    /// он приезжает с `\n` на конце — и Foundation тогда молча выбрасывает
+    /// **весь заголовок**: замер 2026-08-31,
+    /// `req.setValue("Bearer sk-test\n", forHTTPHeaderField: "Authorization")`
+    /// оставляет `allHTTPHeaderFields` пустым, без ошибки и без предупреждения.
+    /// Запрос уходит вообще без `Authorization`, провайдер отвечает 401, а
+    /// человек видит ключ в поле настроек и ждёт конспекта вечно.
+    ///
+    /// Поэтому обрезка стоит здесь, а не у поля ввода: строка из одних пробелов
+    /// — то же самое, что пустая, и решать это должен тот, кто отвечает на
+    /// вопрос «есть ли ключ», а не тот, кто рисует настройки.
+    public static func usableKey(_ key: String?) -> String? {
+        let trimmed = key?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// Ответ, который нельзя считать ответом.

@@ -71,6 +71,35 @@ final class RecapBackendChoiceTests: XCTestCase {
         )
     }
 
+    /// Ключ из одних пробелов — тоже не ключ, и это не придирка к вводу.
+    /// Вставленный из терминала ключ приезжает с `\n` на конце, а Foundation на
+    /// переводе строки в значении выбрасывает **весь заголовок**: запрос уходит
+    /// без `Authorization`, провайдер отвечает 401, и человек ждёт вечно, видя
+    /// ключ в поле настроек.
+    func testAKeyOfNothingButWhitespaceIsNotAKey() {
+        for blank in [" ", "\n", "  \n\t", "\r\n"] {
+            XCTAssertEqual(
+                RecapBackendChoice.resolve(
+                    kind: .openai, ollamaUsable: false,
+                    openAIKey: blank, claudeKey: nil, openRouterKey: nil
+                ),
+                .failure(.noProvider),
+                "«\(blank.debugDescription)» — не ключ"
+            )
+        }
+    }
+
+    /// Края срезаются до отправки, а не только при проверке: иначе проверка
+    /// сказала бы «ключ есть», а в заголовок ушло бы то же самое с `\n`.
+    func testTheKeyThatGoesOutHasNoEdges() {
+        XCTAssertEqual(RecapBackendChoice.usableKey("sk-test\n"), "sk-test")
+        XCTAssertEqual(RecapBackendChoice.usableKey("  sk-test  "), "sk-test")
+        XCTAssertEqual(RecapBackendChoice.usableKey("sk-test"), "sk-test")
+        XCTAssertNil(RecapBackendChoice.usableKey(nil))
+        XCTAssertNil(RecapBackendChoice.usableKey(""))
+        XCTAssertNil(RecapBackendChoice.usableKey(" \n "))
+    }
+
     // MARK: - Каким путём пойдёт встреча
 
     /// Порог был покрыт тестами, а то, что им **пользуются**, — нет: выбор пути
