@@ -147,7 +147,7 @@ class AppState: ObservableObject {
     /// a «Вернуть» row — ⌘Z restores. Kept so gallery reset can clear the slot.
     func galleryPoseDeletion(_ entry: RecordingEntry?) { pendingDeletion = entry }
 
-    func galleryPoseMicDenied(_ denied: Bool) { micAccessDenied = denied }
+    func galleryPoseMicDenied(_ denied: Bool) { recordingRefusal = denied ? .microphone : nil }
 
     /// Dock one of the rail's two questions. The real answer is derived from
     /// `Preferences`, which a screenshot run may not write — and the pose has to
@@ -231,13 +231,20 @@ class AppState: ObservableObject {
     /// записала бы его поверх моей.
     @Published private(set) var recapRevision: Int = 0
 
-    /// Recording was asked for and the microphone is not ours to open.
+    /// Recording was asked for and did not happen.
     ///
     /// An attribute of recording, not a message about it: the row that starts a
-    /// recording says so itself, and clicking it goes where the permission is.
-    /// A message would have to be read at the moment it appeared — which is the
+    /// recording says so itself, and clicking it goes where the fix is. A
+    /// message would have to be read at the moment it appeared — which is the
     /// moment the user is in a call and not looking at this window.
-    @Published private(set) var micAccessDenied = false
+    ///
+    /// Раньше здесь был только микрофон, а отказ самого захвата не оставлял
+    /// вообще ничего (`beginRecording`, `catch`). Оба случая — одно и то же для
+    /// человека, поэтому одно поле: разъехавшись, они разъехались бы молча.
+    @Published private(set) var recordingRefusal: RecordingRefusal?
+
+    /// Прежнее имя того же вопроса — его читают окно и политика уведомлений.
+    var micAccessDenied: Bool { recordingRefusal == .microphone }
 
     // Window
     @Published var isWindowOpen = false {
@@ -732,7 +739,7 @@ class AppState: ObservableObject {
             refuseForMicrophone()
             return
         case .authorized:
-            micAccessDenied = false
+            break
         @unknown default:
             break
         }
@@ -747,13 +754,30 @@ class AppState: ObservableObject {
     /// changes. The push exists because the window is usually closed at this
     /// moment — the user is in the call that asked for the recording.
     private func refuseForMicrophone() {
-        autoStartedFromMeeting = false
-        recordingLinkedToCall = false
-        micAccessDenied = true
+        refuse(.microphone)
         notify(.micDenied, body: "Нет доступа к\u{00A0}микрофону — встреча не записывается")
     }
 
+    /// Единственный выход из «просили записать, а записи нет».
+    ///
+    /// Один на оба входа — отнятый микрофон и упавший захват, — потому что
+    /// забыть здесь можно ровно три вещи, и каждую уже забывали: снять признак
+    /// авто-старта, снять привязку к звонку и **вернуть воркера**. Последнее
+    /// стоило архиву простоя до следующего события: `pausePipeline()` стоит
+    /// внутри `beginRecording`, а его `catch` кика назад не делал.
+    private func refuse(_ refusal: RecordingRefusal) {
+        autoStartedFromMeeting = false
+        recordingLinkedToCall = false
+        recordingRefusal = refusal
+        NSLog("[AppState] запись не началась: \(refusal.rawValue)")
+        Analytics.signal("Recording.refused." + refusal.rawValue)
+        if refusal.leavesPipelinePaused { kickPipeline("recording did not start") }
+    }
+
     private func startRecordingAfterPermission() {
+        // Новая попытка стирает прошлый отказ: пока она идёт, рельс не должен
+        // объяснять, чем кончилась предыдущая.
+        recordingRefusal = nil
         noteDiskSpace()
         beginRecording()
     }
@@ -873,8 +897,13 @@ class AppState: ObservableObject {
             }
             autoStartedFromMeeting = false
         } catch {
-            recordingLinkedToCall = false
-            autoStartedFromMeeting = false
+            // Захват не поднялся — устройство отобрали, вход занят, файл не
+            // открылся. Это не «ошибка пайплайна», а невозможность записать
+            // встречу, которая идёт прямо сейчас, поэтому она садится на
+            // приложение и ждёт в рельсе, как отнятый микрофон. Раньше здесь
+            // не оставалось ничего: ни строки, ни лога, ни воркера.
+            NSLog("[AppState] recorder.start() failed: \(error.localizedDescription)")
+            refuse(.captureFailed)
         }
     }
 
@@ -2634,6 +2663,14 @@ class AppState: ObservableObject {
     /// удалось определить темы» would be the app reporting a cosmetic gap as a
     /// broken meeting, which is the opposite of the point. Empty topics mean
     /// "ran, found nothing", so the meeting is done and stops being asked about.
+    ///
+    /// «Потом принять» сторожил `failure.isTerminal`, и эта ветка не исполнялась
+    /// ни разу: отказ записан с `kind: .transient`, а терминальным становится
+    /// только `.terminal` (`PipelineRetry.nextAttempt`). То есть встреча с
+    /// готовым саммари оставалась на `.saved` навсегда, раз в час поднимая
+    /// модель на 3,4 ГБ ради промпта, который уже провалился, — и всё это время
+    /// показывалась как незаконченная. Потолок попыток теперь спрашивают у
+    /// `PipelineRetry.acceptsGap`, у которого он есть.
     private func finishMetadata(_ recordingID: String) -> PhaseOutcome {
         guard recordingStore.recording(for: recordingID)?.topics == nil else {
             clearFailure(recordingID)
@@ -2644,7 +2681,12 @@ class AppState: ObservableObject {
             recordingID, phase: .summarizing,
             message: "Не удалось определить темы встречи", kind: .transient
         )
-        guard failure.isTerminal else { return .advanced }   // a retry is due
+        // Единственная фаза, которая не звала `report`. Из-за этого корзина
+        // «topics» в телеметрии пустовала не потому, что случая не было, а
+        // потому, что о нём никто не докладывал.
+        report(failure, for: recordingID)
+        // Ещё есть что попробовать — ждём своей ступени лестницы.
+        guard PipelineRetry.acceptsGap(afterAttempt: failure.attempt) else { return .advanced }
         clearFailure(recordingID)
         recordingStore.update(
             id: recordingID,

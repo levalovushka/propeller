@@ -108,6 +108,69 @@ final class PipelineRetryTests: XCTestCase {
         }
     }
 
+    // MARK: - Украшение, которого не вышло
+
+    /// Встреча, у которой саммари уже написано и читается, а темы не выходят.
+    ///
+    /// Модель `AppState.finishMetadata`. Ветка «принять и закончить» сторожила
+    /// `failure.isTerminal` — и не исполнялась ни разу: терминалом становится
+    /// только `kind == .terminal`, а отказ пишется `.transient`. Значит встреча
+    /// оставалась на `.saved` навсегда: раз в час поднимала модель на 3,4 ГБ
+    /// ради промпта, который уже провалился, и всё это время показывалась как
+    /// незаконченная.
+    func testТемыПерестаютТребоватьПослеКонечногоЧислаПопыток() {
+        var stage = RecordingStage.saved
+        var previous: PipelineFailure?
+        var acceptedOn: Int?
+        // Ограниченный прогон, а не `while stage != .summarized`: тест, который
+        // зависает вместо того чтобы покраснеть, не отличим от сломанной сборки.
+        for pass in 1...100 where stage != .summarized {
+            let failure = PipelineFailure(
+                phase: .summarizing, message: "Не удалось определить темы встречи",
+                at: t0, previous: previous, kind: .transient
+            )
+            previous = failure
+            if PipelineRetry.acceptsGap(afterAttempt: failure.attempt) {
+                stage = .summarized
+                acceptedOn = pass
+            }
+        }
+        XCTAssertEqual(stage, .summarized, "встреча с готовым саммари застряла на .saved")
+        XCTAssertEqual(acceptedOn, PipelineRetry.cosmeticAttempts)
+    }
+
+    func testОтказНаТемахТерминальнымНеСтановитсяНикогда() {
+        // То, чего ждал прежний сторож. Он ждал этого зря — и на тринадцатой
+        // попытке тоже.
+        var failure = PipelineFailure(
+            phase: .summarizing, message: "Не удалось определить темы встречи",
+            at: t0, kind: .transient
+        )
+        for attempt in 2...13 {
+            failure = PipelineFailure(
+                phase: .summarizing, message: failure.message,
+                at: t0, previous: failure, kind: .transient
+            )
+            XCTAssertEqual(failure.attempt, attempt)
+            XCTAssertFalse(failure.isTerminal, "попытка \(attempt)")
+        }
+    }
+
+    func testПотолокНеРаспространяетсяНаНастоящуюРаботу() {
+        // Потолок принадлежит украшению, а не лестнице. Расшифровка и саммари —
+        // то, ради чего встреча существует, и сдаваться на них по счётчику
+        // значит вернуть тупик, который убирали.
+        XCTAssertFalse(PipelineRetry.acceptsGap(afterAttempt: 2))
+        for phase in PipelineActivity.Phase.allCases {
+            XCTAssertNotNil(
+                PipelineRetry.nextAttempt(
+                    kind: .transient, attempt: 99, phase: phase, after: t0
+                ),
+                "\(phase): у настоящей работы потолка попыток нет"
+            )
+        }
+    }
+
     func testProviderRecheckWalksOutAndStopsGrowing() {
         let waits = (1...6).map { PipelineRetry.providerRecheck(afterBlockedStreak: $0) }
         XCTAssertEqual(waits, [60, 300, 900, 1800, 1800, 1800])

@@ -30,9 +30,9 @@ final class GigasttSidecar: @unchecked Sendable {
     private var meetingTerms: [String] = []
     private var loadedTerms: [String]?
     /// Сколько живых сессий сейчас висит на сервере. Пока хоть одна открыта,
-    /// перезапуск запрещён: он убил бы ленту идущей встречи и расшифровку,
-    /// которая может идти фоном по прошлой.
-    private var liveUsers = 0
+    /// сервер не трогают ни ради нового словаря, ни по простою: он не
+    /// простаивает — на нём идёт лента встречи (`SidecarLiveUse`).
+    private var liveUse = SidecarLiveUse()
 
     private init() {}
 
@@ -51,11 +51,20 @@ final class GigasttSidecar: @unchecked Sendable {
     /// Живая сессия открылась/закрылась. Скобки нужны ровно затем, чтобы
     /// перезапуск ради словаря не случился под ней.
     func beginLiveUse() {
-        lock.lock(); liveUsers += 1; lock.unlock()
+        lock.lock(); liveUse.begin(); lock.unlock()
+        // Живая сессия открылась поверх запланированного гашения: снимаем его
+        // сразу, не дожидаясь, пока таймер дозвонит и сам себя переставит.
+        cancelIdleStop()
     }
 
     func endLiveUse() {
-        lock.lock(); liveUsers = max(0, liveUsers - 1); lock.unlock()
+        lock.lock(); liveUse.end(); lock.unlock()
+    }
+
+    /// Слушает ли кто-нибудь сервер прямо сейчас.
+    private var isLive: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return liveUse.isBusy
     }
 
     /// Нужен ли перезапуск здорового сервера: слова разошлись и никто не слушает.
@@ -64,7 +73,7 @@ final class GigasttSidecar: @unchecked Sendable {
     private func restartForNewTerms() -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard let loadedTerms, loadedTerms != meetingTerms else { return false }
-        if liveUsers > 0 {
+        if !liveUse.mayRestartForTerms {
             NSLog("[GigasttSidecar] словарь встречи сменился, но идёт живая сессия — оставляем прежний")
             return false
         }
@@ -162,20 +171,38 @@ final class GigasttSidecar: @unchecked Sendable {
     /// Schedule a graceful stop after `grace` seconds of idle. Cancelled by
     /// `ensureReady` / `stop`. Lets the ASR model leave RAM between meetings
     /// without thrashing on rapid back-to-back transcriptions (plan-optimization E1).
+    ///
+    /// «Простой» здесь считался только по офлайн-проходу, и это было неверно:
+    /// `TranscriptionService.releaseHeavyResources` зовётся в конце `runASR`
+    /// безусловно, **включая ветку отмены**, а отменяет догон начало следующей
+    /// встречи (`beginRecording` → `pausePipeline`). Получалось: встреча Б
+    /// началась, догон по встрече А упал по отмене, поставил гашение — и на
+    /// 45-й секунде Б сервер получал SIGTERM вместе с лентой живого текста.
+    /// Поэтому таймер спрашивает у `SidecarLiveUse`, а не гасит вслепую.
     func stopAfterIdle(_ grace: TimeInterval = 45) {
         cancelIdleStop()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
+            guard !self.isLive else {
+                // Не отмена, а перенос: сервер погаснет, когда лента кончится,
+                // а не останется висеть в памяти до конца дня.
+                NSLog("[GigasttSidecar] idle-stop отложен — идёт живая сессия")
+                self.stopAfterIdle(grace)
+                return
+            }
             NSLog("[GigasttSidecar] idle-stop after \(Int(grace))s")
             self.stop()
         }
-        idleStopWork = work
+        lock.lock(); idleStopWork = work; lock.unlock()
         DispatchQueue.global().asyncAfter(deadline: .now() + grace, execute: work)
     }
 
     private func cancelIdleStop() {
-        idleStopWork?.cancel()
+        lock.lock()
+        let pending = idleStopWork
         idleStopWork = nil
+        lock.unlock()
+        pending?.cancel()
     }
 
     /// Restart the server so an updated hotwords file takes effect — hotwords

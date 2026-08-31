@@ -165,12 +165,17 @@ enum SidebarPresenter {
     /// is closed.
     /// This waits, in the place a person goes when they wonder why nothing was
     /// recorded, and clicking it opens the pane that grants the access.
+    ///
+    /// Тем же местом теперь говорит и упавший захват (`RecordingRefusal`): для
+    /// человека это один случай — нажал «Новая запись», встречи нет, — и разница
+    /// только в том, куда ведёт клик. По микрофону — в разрешение, по захвату —
+    /// во вторую попытку, потому что она бесплатна и часто срабатывает.
     private static func recordRow(state: AppState) -> SidebarNavItem {
-        if state.micAccessDenied, !state.isRecording {
+        if let refusal = state.recordingRefusal, !state.isRecording {
             return SidebarNavItem(
-                id: NavAction.micAccess.rawValue,
-                symbol: "mic.slash",
-                title: "Нет доступа к\u{00A0}микрофону"
+                id: (refusal.retryStartsRecording ? NavAction.record : .micAccess).rawValue,
+                symbol: refusal.railSymbol,
+                title: refusal.railTitle
             )
         }
         // Always «Новая запись» — stop lives in the recording pane (and ⌘.).
