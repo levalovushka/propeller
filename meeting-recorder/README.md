@@ -15,17 +15,19 @@ Fork of [tonton-golio/meeting-recorder](https://github.com/tonton-golio/meeting-
 - **Speaker diarization** — FluidAudio → consistent `Speaker N`; mic-dominant speaker labeled with the owner's name (no voice library)
 - **Auto-record** — starts when a call is detected (`MeetingPlatform`); notification lets you decline; stops when the call ends
 - **Live transcript** — two WS sessions to gigastt off the shared-clock capture, owner and far side kept apart, drawn while the meeting runs
-- **LLM summary** — Ollama (bundled runtime) / OpenAI / Claude; edited in place, with «Короче» / «Подробнее» over a selection; auto title / topics / tags
+- **LLM summary** — Ollama (bundled runtime) / OpenAI / Claude / OpenRouter; edited in place, with «Короче» / «Подробнее» over a selection; auto title / topics / tags
 - **Calendar** — read-only via EventKit (no OAuth); names recordings
 - **Markdown export** — Simple (default) or Obsidian; copy-for-chat
-- **Quick notes** — ⌃⌥N overlay during recording (timestamped)
+- **Notes while recording** — a field at the foot of the recording column, timestamped against the recorder's own clock; the note sits in the transcript feed at its second. The ⌃⌥N floating overlay it replaced was removed with the notch redesign 2026-08-26
+- **Projects** — meetings grouped into one page; decisions and tasks are parsed out of the meetings' own summary files, never stored twice
+- **Share by link** — summary encrypted before upload, key travels in the URL fragment, so the server never sees the content; week or month, no permanent link
 - **Crash recovery** — ASR checkpoint (`transcribed_raw`) before diarization
 
 ## Requirements
 
 - macOS 14.4+, Apple Silicon
 - Xcode 15.3+ / Swift 5.10+ to build
-- Permissions: Microphone (required), Notifications (so auto-record can be declined). Calendar and Accessibility are optional; Screen Recording is not used
+- Permissions: Microphone (required), Notifications (so auto-record can be declined). Calendar (meeting titles) and Accessibility (speaker names read off the Zoom window — without it the transcript says «Участник 1») are optional; Screen Recording is not used
 
 ## Build & Install
 
