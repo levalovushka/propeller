@@ -83,4 +83,73 @@ final class AudioReclaimTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - «Удалить аудио» рукой
+
+    /// Пункт меню встречи спрашивал только «есть ли файл» — и у
+    /// нерасшифрованной встречи был активен. Нажатие уносило её из списка
+    /// навсегда: текста нет, записи нет, файла больше нет, значит
+    /// `hasSomethingToShow` ложно во всех трёх ветках, строка уходит из рельса,
+    /// а из индекса встреча не уходит. Двери назад нет ни одной.
+    func testУНерасшифрованнойВстречиПунктНеактивен() {
+        XCTAssertFalse(
+            AudioReclaim.isManuallyDeletable(
+                stage: .recorded, hasTranscript: false, audioExists: true
+            )
+        )
+    }
+
+    /// Та же коварная ступень, что и у чистки: текст есть, а звук ещё читает
+    /// диаризация.
+    func testПередДиаризациейПунктНеактивенДажеСТекстом() {
+        XCTAssertFalse(
+            AudioReclaim.isManuallyDeletable(
+                stage: .transcribedRaw, hasTranscript: true, audioExists: true
+            )
+        )
+    }
+
+    /// Идущая запись пишет ровно в этот файл.
+    func testУИдущейЗаписиПунктНеактивен() {
+        XCTAssertFalse(
+            AudioReclaim.isManuallyDeletable(
+                stage: .recording, hasTranscript: false, audioExists: true
+            )
+        )
+    }
+
+    /// Удалять нечего — пункту нечего делать. Это единственная проверка,
+    /// которая тут была, и одна она пропускала всё остальное.
+    func testБезФайлаПунктНеактивен() {
+        XCTAssertFalse(
+            AudioReclaim.isManuallyDeletable(
+                stage: .summarized, hasTranscript: true, audioExists: false
+            )
+        )
+    }
+
+    /// И единственный случай, когда пункт работает.
+    func testУДоделаннойВстречиСФайломПунктАктивен() {
+        XCTAssertTrue(
+            AudioReclaim.isManuallyDeletable(
+                stage: .summarized, hasTranscript: true, audioExists: true
+            )
+        )
+    }
+
+    /// Рука и автоматика отвечают одинаково: расхождение между ними и было
+    /// дефектом. Разница ровно одна — руке нужен ещё и файл.
+    func testРукаНеРасходитсяСАвтоматикой() {
+        for stage in RecordingStage.allCases {
+            for hasTranscript in [true, false] {
+                XCTAssertEqual(
+                    AudioReclaim.isManuallyDeletable(
+                        stage: stage, hasTranscript: hasTranscript, audioExists: true
+                    ),
+                    AudioReclaim.isExpendable(stage: stage, hasTranscript: hasTranscript),
+                    "\(stage.rawValue), текст: \(hasTranscript)"
+                )
+            }
+        }
+    }
 }

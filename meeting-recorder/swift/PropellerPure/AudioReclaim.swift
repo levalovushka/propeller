@@ -35,4 +35,23 @@ public enum AudioReclaim {
         guard hasTranscript else { return false }
         return stage.nextPhase?.needsAudio != true
     }
+
+    /// Можно ли предложить «Удалить аудио» рукой, в меню встречи.
+    ///
+    /// Тот же вопрос, что у ретеншена и у «Очистить», плюс один: есть ли что
+    /// удалять. До 2026-08-31 пункт меню спрашивал **только** второе — и у
+    /// нерасшифрованной встречи был активен. Нажатие уносило файл: текста нет,
+    /// записи нет, аудио нет, значит `hasSomethingToShow` ложно во всех трёх
+    /// ветках — строка уходила из рельса, работа переставала причитаться
+    /// (`audioAvailable`), а из индекса встреча не уходила. Двери назад не было
+    /// ни одной.
+    ///
+    /// Автоматические пути этой ошибки не знали, потому что оба спрашивали
+    /// `isExpendable`. Рука не спрашивала никого — и именно у руки цена ошибки
+    /// выше: там встреча выбрана человеком поимённо.
+    public static func isManuallyDeletable(
+        stage: RecordingStage, hasTranscript: Bool, audioExists: Bool
+    ) -> Bool {
+        audioExists && isExpendable(stage: stage, hasTranscript: hasTranscript)
+    }
 }

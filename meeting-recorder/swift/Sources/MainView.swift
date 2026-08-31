@@ -128,6 +128,11 @@ struct MainView: View {
         .onAppear {
             state.isWindowOpen = true
             NSApp.setActivationPolicy(.regular)
+            // Ненаписанное этого окна — туда, где его найдёт выход из
+            // приложения. Ключ один на окно, и повторная регистрация заменяет
+            // прежнюю: замыкание держит `@State` этого окна, и старое писало бы
+            // правку окна, которого уже нет.
+            state.pendingEdits.register(Self.pendingEditsKey) { flushUnwritten() }
             selectNewestIfNothingChosen()
             // Первое место сессии. Без него первый же переход дал бы историю
             // из одного шага, и «Назад» с него вёл бы в никуда.
@@ -150,7 +155,8 @@ struct MainView: View {
             forgetDeletedMeetings()
         }
         .onDisappear {
-            flushSummarySave()
+            flushUnwritten()
+            state.pendingEdits.unregister(Self.pendingEditsKey)
             switching.stop()
             state.isWindowOpen = false
             NSApp.setActivationPolicy(.accessory)
@@ -837,8 +843,19 @@ struct MainView: View {
         }
         Divider()
         Button("Показать в Finder") { revealInFinder(entry) }
+        // Не «есть ли файл», а «можно ли его забрать» — тот же вопрос, которым
+        // живут ретеншен и «Очистить». По одному лишь наличию файла пункт был
+        // активен у нерасшифрованной встречи, и нажатие уносило её из списка
+        // навсегда: ни текста, ни аудио, ни записи — `hasSomethingToShow` ложно,
+        // строка уходит из рельса, а из индекса встреча не уходит. Неактивен, а
+        // не с вопросом: у пункта, который может только сломать встречу,
+        // спрашивать нечего.
         Button("Удалить аудио") { state.deleteAudioFile(entry) }
-            .disabled(!entry.audioFileExists)
+            .disabled(!AudioReclaim.isManuallyDeletable(
+                stage: entry.status,
+                hasTranscript: entry.transcript?.isEmpty == false,
+                audioExists: entry.audioFileExists
+            ))
         Divider()
         Button("Удалить встречу", role: .destructive) {
             state.removeRecording(entry, undoManager: undoManager)
@@ -1297,7 +1314,12 @@ struct MainView: View {
     }
 
     private func commitNote(for entry: RecordingEntry) {
-        let text = draftNote
+        // Пустое — не заметка, и правило это одно на все двери: ⏎, кнопка,
+        // закрытое окно, ⌘Q (`NoteBar.resolve`). Раньше здесь проверки не было
+        // вовсе — `appendNote` молча отбрасывал пустое, — а на пути с выхода из
+        // приложения тихий отброс значил бы, что черновик потерян и никто не
+        // знает, был ли он.
+        guard let text = NoteBar.resolve(draftNote) else { return }
         draftNote = ""
         // Тот же вопрос, что и у чёлки: идёт ли эта встреча прямо сейчас.
         // Поле есть только у идущей записи, но спрашивать всё равно надо: у
@@ -1307,6 +1329,23 @@ struct MainView: View {
             text: text,
             offsetSeconds: state.noteOffset(for: entry.id)
         )
+    }
+
+    /// Ключ этого окна в `AppState.pendingEdits`.
+    private static let pendingEditsKey = "MainView"
+
+    /// Всё, что человек набрал и что ещё не на диске.
+    ///
+    /// Две вещи, и обе жили в `@State` окна: правка саммари, отложенная на
+    /// 0,8 с, и заметка, которую отправлял только ⏎. Обе теряло ⌘Q — при
+    /// `terminate` вьюхи не разбирают, `onDisappear` не приходит, — и заметку
+    /// терял ещё и закрытый крестиком экран записи.
+    ///
+    /// Саммари первым: оно пишет файл встречи, заметка пишет индекс, и один
+    /// `flush()` индекса на выходе застаёт обе.
+    private func flushUnwritten() {
+        flushSummarySave()
+        if let entry = state.selectedRecording { commitNote(for: entry) }
     }
 
     /// The old meetings list — the pre-redesign screen — used to live here:

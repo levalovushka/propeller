@@ -83,6 +83,16 @@ struct ProjectDraft: Equatable {
 class AppState: ObservableObject {
     @Published var isRecording = false
 
+    /// Набранное, но ещё не записанное: правка саммари, ждущая своих 0,8 с, и
+    /// заметка, стоящая в поле без ⏎ (`PendingEdits`).
+    ///
+    /// Живёт здесь по тому же доводу, что и `commitPendingDeletion`: спросить
+    /// об этом надо на выходе из приложения, а на выходе из приложения есть
+    /// только `AppStateRegistry`. До `@State` окна оттуда не дотянуться, и
+    /// `onDisappear`, который обычно всё это записывает, при `terminate` не
+    /// приходит — SwiftUI вьюхи не разбирает.
+    let pendingEdits = PendingEdits()
+
     // Recording
     @Published var recorder = AudioRecorder()
     /// Что слышно прямо сейчас — живой транскрипт идущей встречи. Отдельный
@@ -2173,10 +2183,17 @@ class AppState: ObservableObject {
     /// не встреча.
     ///
     /// Возвращает отчёт, а не `Bool`: у необратимой операции «получилось» — это
-    /// перечисление того, где имя ещё осталось, а не обещание.
+    /// перечисление того, где имя ещё осталось, а не обещание. Отчёт поэтому и
+    /// доезжает до вызывающего через `await`, а не теряется в задаче.
+    ///
+    /// `async`, потому что разбор архива стоит 25 с на живых данных (замер на
+    /// копии всех 27 трасс, 67 МБ). Раньше это было незаметно — трассы не
+    /// разбирались вовсе, — а теперь такой вызов заморозил бы окно.
     @discardableResult
-    func erasePerson(named name: String) -> PersonErasureReport {
-        let report = recordingStore.erasePerson(named: name)
+    func erasePerson(named name: String) async -> PersonErasureReport {
+        let report = await quiescingArchive {
+            await recordingStore.erasePerson(named: name)
+        }
         // Текст выбранной встречи в окне — копия из индекса, снятая при выборе.
         // После правки на диске она устарела, и без этого на экране осталось бы
         // стёртое имя до следующего переключения встречи.
@@ -2184,6 +2201,41 @@ class AppState: ObservableObject {
             selectRecording(entry)
         }
         return report
+    }
+
+    /// Остановить всех писателей архива на время операции над архивом целиком.
+    ///
+    /// Три писателя, и одного `pausePipeline()` хватает ровно на треть первого:
+    ///
+    /// 1. **Воркер.** Отмена только снимает цикл — фаза в полёте добегает до
+    ///    своего `catch` и успевает дописать результат. Поэтому её ждут
+    ///    (`await running?.value`), тем же приёмом, которым её ждёт удаление
+    ///    встречи во время работы.
+    /// 2. **Он же, поднявшийся заново.** Снятый цикл возвращается от любого
+    ///    `kickPipeline`, а зовут его и таймер пробуждения, и наблюдатели за
+    ///    миром. Отсюда флаг, который читает `workerPolicy`: пока архив занят,
+    ///    `outlook.job` пуст, кто бы ни дёрнул.
+    /// 3. **Отложенная запись индекса.** Она не в воркере: `scheduleSave()`
+    ///    ставит `DispatchWorkItem` на 0,2 с, и он сработал бы посреди
+    ///    операции. `flush()` дописывает её здесь, до первого сдвинутого байта.
+    ///
+    /// Идущая запись сюда не входит намеренно: её не останавливают, а операции
+    /// над архивом при ней отказывают (`ArchiveRelocation.Obstacle.sourceIsBusy`).
+    func quiescingArchive<T>(_ body: () async -> T) async -> T {
+        isArchiveBusy = true
+        // Через `defer`, а не строкой в конце: флаг, залипший в «занят», это
+        // архив, который больше никогда не обрабатывают — и заметить это можно
+        // только по тому, что саммари не приходят. Выход отсюда один, но цена
+        // ошибки такая, что полагаться на это незачем.
+        defer {
+            isArchiveBusy = false
+            kickPipeline("архив снова свободен")
+        }
+        let running = workerTask
+        pausePipeline()
+        await running?.value
+        recordingStore.flush()
+        return await body()
     }
 
     /// «Очистить» в настройках: аудио уходит у всех, у кого оно уже лишнее.
@@ -2218,9 +2270,15 @@ class AppState: ObservableObject {
             inCall: meetingDetected,
             isThermallyStressed: thermal == .serious || thermal == .critical,
             // Саммари — не опция: воркеру всегда причитается эта фаза.
-            summariesEnabled: true
+            summariesEnabled: true,
+            isArchiveBusy: isArchiveBusy
         )
     }
+
+    /// Архив переписывают целиком — стирают человека или переносят в другую
+    /// папку. Ставится и снимается только в `quiescingArchive`, где его и
+    /// объяснение.
+    private var isArchiveBusy = false
 
     /// The meeting the user asked for by hand. Outranks recency for as long as
     /// it owes work, then stops mattering — pressing «Повторить» on a meeting

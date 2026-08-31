@@ -298,6 +298,43 @@ final class PersonErasureTests: XCTestCase {
         XCTAssertTrue(text.contains("P-1"), "id проекта — не текст про человека: \(text)")
     }
 
+    // MARK: - Якорь владельца
+
+    /// Единственное место архива, куда сквозняк не дотягивается: Zoom-имя
+    /// владельца лежит в `UserDefaults`, а не в файле. Стёрли человека, чьё имя
+    /// там записано, — имя оставалось.
+    func testЯкорьВладельцаСнимаетсяВместеСЧеловеком() {
+        XCTAssertNil(
+            PersonErasure.clearedAnchor("Levon Lobanov", name: PersonName("Levon Lobanov"))
+        )
+        // Часть имени — тот же человек, тем же правилом, что и везде.
+        XCTAssertNil(PersonErasure.clearedAnchor("Левон Лобанов", name: PersonName("Левон")))
+    }
+
+    /// Стёрли не того, кто в якоре, — якорь на месте. Иначе первое же стирание
+    /// сбрасывало бы опознание своей плитки у всех подряд.
+    func testЧужоеСтираниеЯкорьНеТрогает() {
+        XCTAssertEqual(
+            PersonErasure.clearedAnchor("Levon Lobanov", name: PersonName(ivan)),
+            "Levon Lobanov"
+        )
+    }
+
+    /// Замена якорю не годится. «Участник» после стирания носит **каждый**
+    /// стёртый, и такой якорь объявил бы владельцем чужую плитку на следующей
+    /// же встрече — а `MeetingRoster` схлопнул бы этого человека в ряд владельца
+    /// задним числом по всему архиву.
+    func testЯкорьСнимаетсяАНеЗаменяетсяНейтральнымИменем() {
+        let cleared = PersonErasure.clearedAnchor("Иван Петров", name: PersonName(ivan))
+        XCTAssertNil(cleared)
+        XCTAssertNotEqual(cleared, PersonErasure.defaultReplacement)
+    }
+
+    func testПустогоЯкоряНеБывает() {
+        XCTAssertNil(PersonErasure.clearedAnchor(nil, name: PersonName(ivan)))
+        XCTAssertNil(PersonErasure.clearedAnchor("", name: PersonName(ivan)))
+    }
+
     // MARK: - Обход
 
     func testКаждыйВидСледаЕстьВФикстуреИНиОдинНеЗабыт() {

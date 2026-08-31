@@ -87,6 +87,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if isTerminatingAfterFlush { return .terminateNow }
         Task { @MainActor in
+            // Раньше всего остального: правка саммари ждёт своих 0,8 с в
+            // `DispatchWorkItem`, заметка стоит в поле без ⏎, и записывал их
+            // только `onDisappear` окна — а при `terminate` SwiftUI вьюхи не
+            // разбирает, и он не приходит. Дописанный абзац уходил вместе с
+            // процессом. Место именно здесь, а не в `applicationWillTerminate`:
+            // тот уже точка невозврата, а `.terminateLater` даёт время. Заметка
+            // при этом пишется в индекс, который флашится строкой ниже.
+            AppStateRegistry.shared?.pendingEdits.flush()
             if let state = AppStateRegistry.shared, state.isRecording {
                 await state.stopRecordingAndWait(runPipeline: false)
             }

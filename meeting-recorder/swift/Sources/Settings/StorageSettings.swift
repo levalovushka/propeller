@@ -273,7 +273,12 @@ struct StorageSettingsPage: View {
         let target = url.path
         switch ArchiveRelocation.verdict(
             from: ArchiveRelocation.survey(source),
-            to: ArchiveRelocation.survey(target)
+            to: ArchiveRelocation.survey(target),
+            // Рекордер пишет в файл в старой папке прямо сейчас, и ждать его
+            // нечему: встреча кончится тогда, когда кончится. Конвейер на время
+            // переноса останавливают (`AppState.quiescingArchive`), запись —
+            // нет, поэтому здесь отказ.
+            sourceIsBusy: state.isRecording
         ) {
         case .sameFolder:
             // Ткнули в ту же папку — говорить не о чем.
@@ -294,14 +299,22 @@ struct StorageSettingsPage: View {
     /// Путь переключается **после** переноса и только если доехало всё:
     /// путь, указывающий на половину архива, — это то самое молчание, ради
     /// которого всё и переделано.
+    ///
+    /// И под остановленным конвейером. Порядок переноса (`ArchiveRelocation.ordered`)
+    /// один гонку не закрывал: фаза, дошедшая до `save()` посреди переноса,
+    /// писала индекс в старую папку — то есть возвращала туда архив, который
+    /// уже уехал. `quiescingArchive` снимает воркера, дожидается фазу в полёте,
+    /// дописывает отложенную запись индекса и держит конвейер снятым до конца.
     @MainActor
     private func startMove(_ move: PendingMove) {
         movingSlot = move.slot
         let (plan, source, target) = (move.plan, move.source, move.target)
         Task {
-            let outcome = await Task.detached(priority: .userInitiated) {
-                ArchiveRelocation.perform(plan, from: source, to: target)
-            }.value
+            let outcome = await state.quiescingArchive {
+                await Task.detached(priority: .userInitiated) {
+                    ArchiveRelocation.perform(plan, from: source, to: target)
+                }.value
+            }
             movingSlot = nil
             if outcome.isComplete {
                 commit(move.slot, target)
@@ -345,6 +358,13 @@ struct StorageSettingsPage: View {
                     + "\(sample(colliding)). Перенос затёр бы их, а вместе с recordings.json — "
                     + "и все расшифровки, которые лежат строками в нём. "
                     + "Выберите пустую папку; архив остался в \(source)."
+            )
+        case .sourceIsBusy:
+            return Notice(
+                title: "Сейчас идёт запись",
+                message: "Встреча пишется в \(source), и унести файл из-под рекордера "
+                    + "значит потерять её. Папка не изменилась — остановите запись "
+                    + "и перенесите архив после неё."
             )
         }
     }

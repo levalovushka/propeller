@@ -217,6 +217,37 @@ final class PipelineActivityTests: XCTestCase {
         XCTAssertNotNil(nextJob(from: queue, policy: .unrestricted))
     }
 
+    /// Пока архив переписывают целиком — стирают человека, переносят в другую
+    /// папку — воркер не работает. Одной отмены задачи для этого мало: снятый
+    /// цикл возвращается от любого `kickPipeline`, а его зовут и таймер, и
+    /// наблюдатели за миром. Без флага фаза дописывала бы результат в старую
+    /// папку или клала имя обратно в уже вычищенный файл.
+    func testWorkerStaysOffWhileTheArchiveIsRewritten() {
+        let queue = [candidate("A", .saved, minutesAgo: 5)]
+        let busy = WorkerPolicy(
+            isRecording: false, inCall: false, isThermallyStressed: false,
+            isArchiveBusy: true
+        )
+        XCTAssertFalse(busy.mayWork)
+        XCTAssertNil(nextJob(from: queue, policy: busy))
+    }
+
+    /// Не «нечего делать», а «не сейчас»: работа причитается, и после операции
+    /// её обязан подобрать тот же кик, который её и разбудит.
+    func testARewrittenArchiveStillOwesItsWork() {
+        let queue = [candidate("A", .saved, minutesAgo: 5)]
+        let outlook = pipelineOutlook(
+            from: queue,
+            policy: WorkerPolicy(
+                isRecording: false, inCall: false, isThermallyStressed: false,
+                isArchiveBusy: true
+            )
+        )
+        XCTAssertEqual(outlook.owed, 1)
+        XCTAssertTrue(outlook.pausedByPolicy)
+        XCTAssertNotNil(nextJob(from: queue, policy: .unrestricted), "работа не вернулась")
+    }
+
     func testNothingToDoOnAnEmptyOrFinishedArchive() {
         XCTAssertNil(nextJob(from: []))
         XCTAssertNil(nextJob(from: [candidate("A", .summarized, minutesAgo: 5)]))

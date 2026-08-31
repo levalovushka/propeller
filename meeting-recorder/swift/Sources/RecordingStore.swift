@@ -551,16 +551,46 @@ class RecordingStore: ObservableObject {
     /// копии и человек в них тот же. Поэтому после стирания массив
     /// перечитывается: иначе в памяти остался бы прежний текст, и первый же
     /// `save()` вернул бы имя обратно.
+    /// Разбор идёт вне главного актора: на живом архиве это 25 с (замер на
+    /// копии всех 27 трасс, 67 МБ), и раньше столько же стояло окно. Функция
+    /// чистая и не привязана к актору, так что уезжает в `Task.detached`
+    /// целиком — тем же приёмом, что и досчёт состава по трассам
+    /// (`AppState.backfillCallRosters`).
+    ///
+    /// Снимок путей снимается **здесь**, до отъезда: `layout` читает настройки,
+    /// а за 25 с человек успевает сменить папку архива, и тогда вторая половина
+    /// стирания ушла бы в другое место.
     @discardableResult
-    func erasePerson(named name: String) -> PersonErasureReport {
+    func erasePerson(named name: String) async -> PersonErasureReport {
         flush()
-        let report = ArchivePersonEraser.erase(person: name, in: layout)
+        let layout = self.layout
+        let report = await Task.detached(priority: .userInitiated) {
+            ArchivePersonEraser.erase(person: name, in: layout)
+        }.value
+        clearOwnerAnchorIfErased(name)
         guard !report.filesChanged.isEmpty else { return report }
         load()
         if !report.isComplete {
             NSLog("[RecordingStore] «\(name)» остался в: \(report.remaining.joined(separator: ", "))")
         }
         return report
+    }
+
+    /// Единственное место архива, куда `ArchivePersonEraser` не дотягивается:
+    /// Zoom-имя владельца в `UserDefaults`. Чистый слой до настроек не достаёт,
+    /// поэтому правило лежит в `PersonErasure.clearedAnchor`, а применяется
+    /// тут.
+    ///
+    /// Снимается, а не заменяется на «Участник»: якорь — это опознание «какая
+    /// плитка моя», и нейтральное имя в нём объявило бы владельцем каждого
+    /// следующего стёртого.
+    private func clearOwnerAnchorIfErased(_ name: String) {
+        let anchor = Preferences.shared.ownerZoomName
+        guard anchor != nil,
+              PersonErasure.clearedAnchor(anchor, name: PersonName(name)) == nil
+        else { return }
+        Preferences.shared.ownerZoomName = nil
+        NSLog("[RecordingStore] «\(name)» был Zoom-именем владельца — якорь снят")
     }
 
     /// Drop parked failures for one phase across the archive, returning how many

@@ -95,6 +95,25 @@ final class UnsubmittedTextTests: XCTestCase {
         pump(0.25)
     }
 
+    /// Клавиатурный тест держится на том, что окно стенда стало key.
+    ///
+    /// `onExitCommand` разносит SwiftUI по **своему** фокусу, а фокус он ставит
+    /// только у ключевого окна. Ключ достаётся не всегда: другое приложение
+    /// впереди (у нас это был запущенный Propeller), сессия без графики, CI.
+    /// Тогда Escape уходит в никуда, и тест краснеет не про код, а про среду —
+    /// а красный, который ничего не значит, отравляет весь набор.
+    ///
+    /// Поэтому проверка своего условия стоит **до** утверждения: ключ есть —
+    /// тест настоящий и мутацию ловит; ключа нет — тест честно говорит, что не
+    /// проверил, вместо того чтобы соврать в любую из двух сторон.
+    private func requireKeyWindow(_ window: NSWindow) throws {
+        try XCTSkipUnless(
+            window.isKeyWindow,
+            "окно стенда не стало ключевым — клавиатуру проверить нечем "
+            + "(впереди другое приложение, либо сессия без графики)"
+        )
+    }
+
     private func escape(_ window: NSWindow) {
         if let event = NSEvent.keyEvent(
             with: .keyDown, location: .zero, modifierFlags: [],
@@ -210,7 +229,7 @@ final class UnsubmittedTextTests: XCTestCase {
 
     /// Escape закрывает плиту из поля имени. До сегодня обработчика не было ни
     /// одного, хотя комментарий в `MainView` утверждал обратное.
-    func testEscapeИзПоляИмениЗакрываетПлиту() {
+    func testEscapeИзПоляИмениЗакрываетПлиту() throws {
         var name = ""
         var about = ""
         var cancelled = 0
@@ -222,6 +241,7 @@ final class UnsubmittedTextTests: XCTestCase {
             ),
             size: NSSize(width: 480, height: 460)
         )
+        try requireKeyWindow(window)
         escape(window)
 
         XCTAssertEqual(cancelled, 1)

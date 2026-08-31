@@ -154,6 +154,71 @@ final class ArchiveRelocationTests: XCTestCase {
         )
     }
 
+    // MARK: - Кто ещё пишет в архив, пока он едет
+
+    /// Идущая запись — отказ, а не очередь. Конвейер на время переноса
+    /// останавливают (`AppState.quiescingArchive`), а рекордер остановить
+    /// нечем: файл пишется прямо сейчас, и уехавший из-под него — потерянная
+    /// встреча.
+    func testПокаИдётЗаписьАрхивНеПереносится() {
+        XCTAssertEqual(
+            ArchiveRelocation.verdict(
+                from: .init(path: "/a", filenames: ["recordings.json", "20260821_103440.wav"]),
+                to: .init(path: "/b", filenames: []),
+                sourceIsBusy: true
+            ),
+            .refused(.sourceIsBusy)
+        )
+    }
+
+    /// Отказ про источник, поэтому раньше всего, что выясняется про цель: цель
+    /// может быть какой угодно, ответ один.
+    func testОтказПоЗаписиНеЗависитОтТогоЧтоВЦелевойПапке() {
+        for target in [
+            ArchiveRelocation.Folder(path: "/b", filenames: []),
+            .init(path: "/b", filenames: ["recordings.json"]),
+            .init(path: "/b", filenames: [], isWritable: false),
+        ] {
+            XCTAssertEqual(
+                ArchiveRelocation.verdict(
+                    from: .init(path: "/a", filenames: ["recordings.json"]),
+                    to: target,
+                    sourceIsBusy: true
+                ),
+                .refused(.sourceIsBusy),
+                target.path + " \(target.filenames)"
+            )
+        }
+    }
+
+    /// Кроме одного: ткнули в ту же папку — не происходит ничего, и отказывать
+    /// не в чем. Отказ здесь читался бы как поломка.
+    func testТаЖеПапкаВоВремяЗаписиНеОтказ() {
+        XCTAssertEqual(
+            ArchiveRelocation.verdict(
+                from: .init(path: "/a", filenames: ["recordings.json"]),
+                to: .init(path: "/a", filenames: ["recordings.json"]),
+                sourceIsBusy: true
+            ),
+            .sameFolder
+        )
+    }
+
+    /// Записи нет — всё как было. Значение по умолчанию не меняет ни одного
+    /// прежнего ответа.
+    func testБезЗаписиВердиктПрежний() {
+        let folders = (
+            source: ArchiveRelocation.Folder(path: "/a", filenames: ["recordings.json"]),
+            target: ArchiveRelocation.Folder(path: "/b", filenames: [])
+        )
+        XCTAssertEqual(
+            ArchiveRelocation.verdict(from: folders.source, to: folders.target),
+            ArchiveRelocation.verdict(
+                from: folders.source, to: folders.target, sourceIsBusy: false
+            )
+        )
+    }
+
     // MARK: - Перенос на настоящем каталоге
 
     /// Каталоги во временной папке. Ничего вне `root` не создаётся и не читается.

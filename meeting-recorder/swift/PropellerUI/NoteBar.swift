@@ -208,10 +208,24 @@ public struct NoteBar: View {
         text.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Во что превращается набранное в поле. Nil — заметки здесь нет.
+    ///
     /// Пустое — не заметка. Enter в пустом поле не создаёт запись и не отнимает
     /// каретку: человек промахнулся, а не передумал.
+    ///
+    /// Статикой и снаружи, потому что спрашивают об этом теперь двое. Второй —
+    /// выход из приложения: черновик живёт в `@State` окна, ⌘Q его не разбирает
+    /// (SwiftUI при `terminate` вьюхи не сносит, `onDisappear` не приходит), и
+    /// дописать за человека набранное обязан кто-то снаружи поля. «Пустое — не
+    /// заметка» на этом пути ровно то же самое, и второй копией этого правила
+    /// быть не должно.
+    public static func resolve(_ draft: String) -> String? {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     private func commit() {
-        guard !trimmed.isEmpty else { return }
+        guard Self.resolve(text.wrappedValue) != nil else { return }
         onCommit()
     }
 }

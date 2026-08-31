@@ -227,19 +227,38 @@ public struct WorkerPolicy: Equatable, Sendable {
     /// never going to run.
     public let summariesEnabled: Bool
 
+    /// Архив прямо сейчас переписывают целиком: стирают человека
+    /// (`ArchivePersonEraser`) или переносят в другую папку
+    /// (`ArchiveRelocation`). Обе операции идут вне главного потока, длятся
+    /// десятки секунд и трогают те же файлы, что и воркер, — индекс, документы
+    /// встреч, трассы окна звонилки.
+    ///
+    /// Гейт, а не вычитание фазы, и это разница по смыслу: работа никуда не
+    /// делась, её нельзя делать **сейчас**. Фаза, дописавшая свой результат
+    /// посреди переноса, уходит в старую папку; посреди стирания — кладёт имя
+    /// обратно в уже вычищенный файл.
+    ///
+    /// Одного `pausePipeline()` для этого мало: снятый цикл поднимется от
+    /// любого `kickPipeline`, а его зовут и таймер, и наблюдатели за миром.
+    public let isArchiveBusy: Bool
+
     public init(
         isRecording: Bool,
         inCall: Bool,
         isThermallyStressed: Bool,
-        summariesEnabled: Bool = true
+        summariesEnabled: Bool = true,
+        isArchiveBusy: Bool = false
     ) {
         self.isRecording = isRecording
         self.inCall = inCall
         self.isThermallyStressed = isThermallyStressed
         self.summariesEnabled = summariesEnabled
+        self.isArchiveBusy = isArchiveBusy
     }
 
-    public var mayWork: Bool { !isRecording && !inCall && !isThermallyStressed }
+    public var mayWork: Bool {
+        !isRecording && !inCall && !isThermallyStressed && !isArchiveBusy
+    }
 
     public static let unrestricted = WorkerPolicy(
         isRecording: false, inCall: false, isThermallyStressed: false
