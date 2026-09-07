@@ -23,10 +23,17 @@
   Это записано в самом `CHANGELOG.md`, чтобы следующий раз стоил дешевле.
 
 - **Проверено.** `swift test` — `Executed 1524 tests, with 11 tests skipped and
-  0 failures`. Предпосылки релиза сверены до сборки: Developer ID ×1,
-  notary-профиль `propbuild`, ключ Sparkle, `gh` авторизован. Сборку пришлось
-  отложить на час: `build.sh:63` — `rm -rf /Applications/Propeller.app`, а в
-  12:03–13:09 шла живая запись.
+  0 failures`. Оба артефакта нотаризованы и застейплены (`Accepted`, Gatekeeper
+  `source=Notarized Developer ID`). Четыре дельты собраны и **проверены
+  применением**: каждая наложена на образ, который патчит, результат сверён с
+  выложенным бандлом — `bundle identical to the shipped one (105 files hashed)`,
+  `codesign: valid, notarization ticket: present`. Фид живьём:
+  `curl` по `releases/latest/download/appcast.xml` отдаёт `1.17.0`,
+  `<sparkle:criticalUpdate sparkle:version="1.17.0"/>` и четыре `deltaFrom`; все
+  семь ассетов — `200`. Релиз не черновик и не pre-release. Установленная сборка
+  запущена, `CFBundleShortVersionString` = 1.17.0.
+  Сборку пришлось отложить на час: `build.sh:63` — `rm -rf
+  /Applications/Propeller.app`, а в 12:03–13:09 шла живая запись.
 
 - **Осталось.** Дельта-путь ни разу не проезжал по живому фиду (`STATE.md`:664):
   патчи проверены применением локально, но первый настоящий апдейт по патчу
