@@ -167,4 +167,23 @@ final class ASRModelSweepTests: XCTestCase {
         let stale = ASRModelSweep.stalePaths(existing: installed, bundled: next)
         XCTAssertEqual(stale, ["wespeaker_resnet34.onnx"])
     }
+
+    func testДиаризаторGigasttУбранБезЗаменыИУходитСДиска() {
+        // 1.17 и раньше везли `wespeaker_resnet34.onnx` (26 МБ), который не звал
+        // никто: диаризация у нас FluidAudio. Бандл без него — первый запуск
+        // обновления снимает копию и не трогает ничего из распознавания.
+        let next = bundled.subtracting(["wespeaker_resnet34.onnx"])
+        XCTAssertEqual(
+            ASRModelSweep.stalePaths(existing: installed, bundled: next),
+            ["wespeaker_resnet34.onnx"]
+        )
+        let nextWithSizes = bundledWithSizes.filter { $0.name != "wespeaker_resnet34.onnx" }
+        var installedNow = installedMatching
+        installedNow[ASRModelSweep.presenceMarker] = 0
+        XCTAssertEqual(
+            ASRModelSweep.outdatedPaths(bundled: nextWithSizes, installed: installedNow),
+            [],
+            "оставшиеся веса совпадают по размеру — переписывать их незачем"
+        )
+    }
 }

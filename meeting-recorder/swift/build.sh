@@ -161,17 +161,22 @@ else
     exit 1
 fi
 
-# Bundle GigaAM ASR weights (~247 MB, INT8 set only).
+# Bundle GigaAM ASR weights (~222 MB, INT8 set only).
 # Shipping these removes the whole first-run ASR download: no progress bar to
 # strand on a flaky link, no disk gate, and transcription works offline from
 # the first launch. The FP32 encoder (885 MB) is deliberately NOT bundled --
 # gigastt loads the INT8 one and only checks the FP32 filename for existence,
 # which GigasttSidecar satisfies with a zero-byte marker.
+# Nor is wespeaker_resnet34.onnx (26 MB): it serves gigastt's own diarization,
+# which we never request (diarization is FluidAudio), and it is CC BY 4.0, so
+# shipping it would owe an attribution. Without it serve logs one WARN and
+# transcribes the same bytes (2.14 and 2.22, checked 2026-10-29). Copies left
+# by earlier versions are removed by ASRModelSweep.stalePaths.
 MODELS_SRC=""
 for candidate in "../../tools/gigastt/models-e2e" "../tools/gigastt/models-e2e" "$HOME/Desktop/Propeller/tools/gigastt/models-e2e"; do
     if [ -d "$candidate" ]; then MODELS_SRC="$candidate"; break; fi
 done
-MODEL_FILES="v3_e2e_rnnt_encoder_int8.onnx v3_e2e_rnnt_decoder.onnx v3_e2e_rnnt_joint.onnx v3_e2e_rnnt_vocab.txt wespeaker_resnet34.onnx"
+MODEL_FILES="v3_e2e_rnnt_encoder_int8.onnx v3_e2e_rnnt_decoder.onnx v3_e2e_rnnt_joint.onnx v3_e2e_rnnt_vocab.txt"
 if [ -n "$MODELS_SRC" ]; then
     MODELS_DST="$APP/Contents/Resources/gigastt-models"
     mkdir -p "$MODELS_DST"
