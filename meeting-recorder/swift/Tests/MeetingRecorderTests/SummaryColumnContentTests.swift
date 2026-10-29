@@ -55,9 +55,22 @@ final class SummaryColumnContentTests: XCTestCase {
         )
     }
 
-    func testБезРасшифровкиНечегоПоказатьИТакИСказано() {
+    /// Встречу только что остановили: расшифровки ещё нет, живого текста
+    /// больше нет. Колонка называет ступень, на которой встреча, а не
+    /// отсутствие саммари.
+    func testОстановленнаяВстречаГоворитЧтоЕёРасшифровывают() {
         XCTAssertEqual(decide(rest: .waiting(.working)),
-                       .nothing(SummaryColumnContent.defaultNothing))
+                       .nothing(SummaryColumnContent.transcribing))
+        XCTAssertEqual(decide(rest: .waiting(.queued)),
+                       .nothing(SummaryColumnContent.transcribing))
+    }
+
+    /// Ожидание с именем называет своё имя и без расшифровки — строка про
+    /// расшифровку его не перекрывает.
+    func testНазванноеОжиданиеБезРасшифровкиОстаётсяСвоимИменем() {
+        XCTAssertEqual(decide(rest: .waiting(.model)),
+                       .nothing("Саммари появится, когда докачается модель"))
+        XCTAssertEqual(decide(rest: .waiting(.network)), .nothing("Ждём ответа сервиса"))
     }
 
     /// Доведённая встреча без файла саммари — не экран, а работа для бэкфилла.

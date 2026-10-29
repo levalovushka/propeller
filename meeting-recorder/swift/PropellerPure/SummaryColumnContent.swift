@@ -23,6 +23,16 @@ public enum SummaryColumnContent: Equatable, Sendable {
     /// Ничего не готово и причины нет: встреча только начала свой путь.
     public static let defaultNothing = "Саммари пока нет"
 
+    /// Расшифровки ещё нет, и её делают или она следующая в очереди.
+    ///
+    /// Пока был живой транскрипт, эту минуту закрывал он: только что
+    /// кончившаяся встреча показывала то, что человек читал во время звонка.
+    /// Его сняли 2026-10-29, и колонка встречи, которую только что
+    /// остановили, без этой строки говорила бы «Саммари пока нет» — правду, но
+    /// не про то, что происходит: дело сейчас не в саммари. Состояние, а не
+    /// обещание срока и не многоточие (`design/notifications.md` §3).
+    public static let transcribing = "Встреча расшифровывается"
+
     public static func decide(
         hasSummary: Bool,
         hasTranscript: Bool,
@@ -57,6 +67,11 @@ public enum SummaryColumnContent: Equatable, Sendable {
         // сказал» приходит следующей строкой.
         if hasTranscript { return .transcript }
         // Расшифровки нет. Вот тут строка — всё, что колонка может дать.
-        return .nothing(rest.disclosure ?? defaultNothing)
+        switch rest {
+        case .waiting(.queued), .waiting(.working):
+            return .nothing(transcribing)
+        default:
+            return .nothing(rest.disclosure ?? defaultNothing)
+        }
     }
 }
