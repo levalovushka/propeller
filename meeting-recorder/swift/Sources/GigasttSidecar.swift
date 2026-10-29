@@ -426,8 +426,11 @@ final class GigasttSidecar: @unchecked Sendable {
             "--body-limit-bytes", "\(GigasttChunking.serverBodyLimitBytes)",
             // Long chunks on CPU can exceed the 600s default inference cap.
             "--inference-timeout-secs", "0",
-            // Curated Russian brand/acronym lexicon — always-on, free win with
-            // no effect unless a term actually shows up in the audio.
+            // Curated Russian brand/acronym lexicon, always on. "No effect unless
+            // a term shows up" was false before gigastt 2.17: on 2.14 a glossary
+            // boosted the space token and split or stuttered words — it moved
+            // 9.2 % of the words on 48 min of real meetings. On 2.22 the same
+            // glossary moves 0.4 % (A/B 2026-10-29, WORKLOG).
             "--hotwords-default",
             // Every fetch belongs to `downloadModels`, where there is a progress
             // bar and a disk check. Without this, serve quietly pulls 885 MB
@@ -536,9 +539,11 @@ final class GigasttSidecar: @unchecked Sendable {
     ) async throws {
         let proc = Process()
         proc.executableURL = binary
+        // No `--prequantized`: gigastt is INT8-only since 2.17, and 2.22 rejects
+        // the flag outright (`error: unexpected argument '--prequantized'`), so
+        // this fallback would fail on every machine that ever reached it.
         proc.arguments = [
             "download",
-            "--prequantized",
             "--model-variant", Self.variant,
             "--model-dir", modelDir.path,
             "--progress", "json",
@@ -932,8 +937,11 @@ final class GigasttSidecar: @unchecked Sendable {
     /// satisfies an existence test — it is never opened. Combined with `--offline`
     /// on serve, this keeps every download inside our own progress-reported step.
     ///
-    /// Re-check when bumping gigastt: if a release makes serve accept an
-    /// INT8-only directory, delete this and the `--offline` flag together.
+    /// Re-checked 2026-10-29 on 2.22.0: serve now accepts an INT8-only directory
+    /// ("Using existing E2eRnnt model"), so the marker is no longer needed — and
+    /// still harmless, the A/B for that release ran with it in place. Deleting
+    /// it is a separate change. `--offline` stays regardless: it also blocks the
+    /// punctuation / diarization / VAD auto-fetch.
     private func ensureEncoderPresenceMarker(in dir: URL) {
         let fp32 = dir.appendingPathComponent("v3_e2e_rnnt_encoder.onnx")
         let fm = FileManager.default

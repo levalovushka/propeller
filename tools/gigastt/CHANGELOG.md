@@ -5,7 +5,1042 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+A few versions (0.3.0, 0.4.0–0.4.2, 0.9.6, 2.0.0–2.0.2, 2.2.0–2.2.1, 2.9.0, 2.14.1)
+were released without a git tag, so their headings carry no compare link.
+Versions 0.1.0 and 0.1.1 were published to crates.io on 2026-04-09 and yanked
+(0.1.2, tagged the same day, was yanked from crates.io as well), so 0.1.0 and
+0.1.1 have no changelog entries of their own.
+
 ## [Unreleased]
+
+## [2.22.0] - 2026-10-04
+
+### Documentation
+
+- Publish verified five-language reading benchmarks, Kazakh/Uzbek conversational
+  results and matched ready-model comparisons, with language selection guidance,
+  raw evidence and offline score verification. No model defaults were changed.
+
+### Performance
+
+- Accelerate full model-content hashing and external-data marker scanning,
+  restoring fast startup while preserving optimized-cache invalidation for
+  same-size, same-timestamp replacements and locally quantized INT8 files.
+  See [startup measurements](docs/model-hashing.md).
+
+- Skip confidence normalization for discarded CTC blanks and repeated labels,
+  and RNN-T blanks and tokens beyond the per-frame cap. Emitted confidence still
+  uses the original model logits.
+
+### Changed
+
+- Prepare raw PCMU/PCMA/G.722 uploads with duration checks before codec allocation
+  and cancellation checks during resampling. Clips up to 30 seconds bypass the
+  temporary WAV container with identical PCM16 precision; longer clips retain
+  compact PCM16 WAV storage to avoid doubling retained audio memory. See
+  [raw telephony measurements](docs/raw-telephony-pcm.md).
+- Add cross-mode transcription contract checks for observable REST/job overrides, cancelled job registration, and real RNN-T numerical parity across file and channel source representations.
+
+- Poll cancellation during channel scanning and buffered audio decode, between offline diarization steps, and across speaker-loading and text-postprocessing boundaries. Preserve readable partial transcripts and document the synchronous calls that can delay worker/resource release.
+
+- Run a bounded, serial model smoke gate on every PR: pinned CPU encoder and
+  exact transcription oracle plus real-speech WebSocket finalization coverage.
+- Keep internal planning files local, publish benchmark and edge protocols under
+  `docs/`, and check public content and Git metadata for internal identifiers,
+  including prose labels and placeholders.
+- Reuse FFT scratch storage during mel feature extraction instead of allocating
+  it for every audio frame; streaming keeps the storage in its existing buffer.
+- Withhold primary four-domain `rnnt` WER and ranking claims until raw results
+  and complete run provenance are retrievable; distinguish historical reports
+  from the older published `e2e_rnnt` artifacts.
+- Reuse RNN-T decoder and joiner output buffers directly at the ONNX Runtime
+  boundary, removing intermediate owned tensor copies during token decoding.
+- Assign speakers with a linear cursor for ordered, non-overlapping turns;
+  preserve first-match behavior for overlaps, unsorted inputs and boundaries.
+- Publish file-transcription snapshots from replacement suffixes instead of
+  rebuilding the accumulated transcript after every window. Readers still get
+  complete owned transcripts; completed split channels share their stored words.
+  See [snapshot allocation measurements](docs/transcript-snapshot-memory.md).
+- Reuse the stereo Opus PCM already decoded during channel detection for VAD
+  transcription. Mono fallback, streaming scans for other formats, duration
+  limits and speaker mapping are unchanged.
+- Job status polling copies only status metadata, avoiding completed transcript
+  copies under the shared queue lock. Result downloads retain owned snapshots.
+- Clarify that stable-prefix streaming windows have a soft slide trigger, not
+  a hard retained-audio bound; document deterministic counterexamples and a
+  resource-limit correction contract without changing commitment behavior.
+- Add opt-in live-window research measurements for decode cadence, window
+  geometry, concurrency and frontend reuse; production defaults are unchanged.
+- Add opt-in [sidecar contention measurements](docs/sidecar-contention.md) for
+  mixed interactive and batch recognition, separating cold use, lock waits and warm execution. Production
+  sidecar sharing and inference defaults are unchanged.
+
+- Document Linux OpenSSL build prerequisites and custom-prefix discovery for
+  the ONNX Runtime downloader, including the environment used by Git hooks.
+- Require Symphonia 0.6.1 and remove the vendored metadata and Matroska
+  patches. Upstream now handles APEv2 size overflow and unknown-size WebM
+  Clusters; the fuzz workspace uses the same upstream fixes.
+- **polyvoice 0.19.0 → 1.0.0.** Diarization still uses `FbankOnnxExtractor` /
+  `LegacyPipeline` / `StreamingPipeline` / EnergyVad and the same
+  `wespeaker_resnet34.onnx` file. Upstream dropped the `onnx` (ort) feature;
+  the extractor now runs on tract (`backend-tract`). The lockfile no longer
+  carries a second `ryf 0.3.2` copy. Upstream compares the duration ceiling in
+  `f64` and marks the pipeline error enums `non_exhaustive`. Cosine AHC
+  defaults are unchanged.
+- **Streaming corpus WER gap is historical.** The 2026-08-14 100-clip
+  stream-minus-file figures (crowd +14.49 pp, far-field +10.60 pp) were
+  measured before `--stream-stable-prefix` (default on since 2.19.0).
+  [docs/benchmarks.md](docs/benchmarks.md#streaming-measurement-protocol)
+  labels that table historical. No current corpus Δ is published; this
+  revision does not include a rerun.
+
+### Added
+
+- Reproducible CTC hotword beam allocation profiling with real speech logits,
+  separate encoder timings and an ambiguity stress case; the eight-beam
+  decoder remains unchanged. See [the profile](docs/ctc-beam-profile.md).
+- Reproducible file-window thread-launch and mixed live/batch scheduling
+  measurements, including shared-pool waiting and dedicated-pool tradeoffs.
+  See [the scheduling profile](docs/file-window-scheduling.md).
+
+- **`gigastt quantize --skip-conv`.** Packaging rebuild that leaves
+  convolutions in FP32 and still quantizes `MatMul` and `Gemm`. The
+  published INT8 bundle is unchanged. If an INT8 encoder is already in
+  the directory, the flag requires `--force`; otherwise it exits with
+  an error and leaves that file in place.
+- **Author-package oracle for rnnt INT8.** On a 4-second Golos clip the greedy
+  transcript matches the author `gigaam` FP32 package exactly, and the INT8
+  encoder activation has cosine 0.9985 against that package. On FLEURS-ru,
+  INT8 is 0.102 pp above the author package on the 770 clips both sides decode.
+  The competitor table is unchanged. See
+  [docs/benchmarks.md](docs/benchmarks.md#author-package-oracle).
+- **Speaker attribution on short public meetings.** Four VoxConverse clips
+  (CC BY 4.0) do not reproduce a 14-cluster outcome for five speakers.
+  Current defaults are within +2 speakers. Details:
+  [docs/speaker-attribution.md](docs/speaker-attribution.md).
+- **Long-recording limits.** [docs/long-recordings.md](docs/long-recordings.md)
+  records a 20-minute file on the existing transcribe and jobs APIs: the
+  50 MiB body cap, server RSS separate from the client, and that cancel or
+  restart means sending the file again. No durable queue.
+- **Short-note latency on a two-CPU pin.** Fifteen labelled Golos commands,
+  including Telegram-style Ogg/Opus and browser-style WebM/Opus, measured
+  with the release binary pinned to two logical CPUs. Warm RTF is about 0.06;
+  punctuation and ITN are not the warm-request cost. This is a desktop
+  substitute, not the reported two-vCPU Xeon. See
+  [docs/short-recording-latency.md](docs/short-recording-latency.md).
+- **`--optimized-cache-dir <PATH>`** (env `GIGASTT_OPTIMIZED_CACHE_DIR`) on
+  `serve` and `cache-gc`: where the CPU encoder writes/reads the ORT
+  optimized-graph cache (`*_optimized.ort`). Default unchanged:
+  `<model-dir>/optimized_cache`. `cache-gc` prunes the directory given here.
+- **App-owned server lifecycle.**
+  [managed-lifecycle.md](docs/managed-lifecycle.md) and
+  `scripts/managed_server_lifecycle.sh` show how a downstream app supervises
+  `gigastt serve`: INT8 model, writable ORT cache outside the model directory,
+  loopback bind, `/health` versus `/ready`, a startup failure that names the
+  missing INT8 path, offline restart, and shutdown that reaps the child. The
+  same note explains how to drop `--fp32`, `--prequantized`,
+  `--skip-quantize`, and stub FP32 encoder filenames without deleting
+  unrelated models or user data.
+
+### Fixed
+
+- Ignore local Serena, Codex, Cursor and Aider state and reject local agent and
+  editor paths in commit, push and CI publication checks, including forced
+  additions, nested paths and files removed by later commits.
+
+- Give the four-client REST load test four explicit pool slots, matching bounded
+  upload admission, and validate complete transcription responses from a synchronized burst.
+
+- Validate the complete replacement history when a push event references an old
+  commit unavailable after a history rewrite, including reverted private content.
+  Missing or invalid new commit tips still fail the publication check.
+
+- Keep CPU and CUDA Docker dependency-cache stubs aligned with the new benchmark
+  targets, with a fast manifest regression check before image builds.
+
+- Resolve Homebrew updates from validated release-run metadata so a manual Release
+  dispatched from main can publish a different existing tag and still propose its
+  formula pins. Reject stale attempt metadata and retain the manual fallback.
+
+- Wait for operational readiness in the CLI server smoke test before checking
+  metrics, and reap the owned subprocess on assertion failures. Startup and
+  metrics time budgets are unchanged.
+- Package Android ONNX Runtime 1.27.0 to satisfy the Rust binding API, with
+  checksum, C header, ABI archive checks, and a dependency compatibility CI gate.
+
+- Build Android release AARs from the validated tag commit and use its version
+  consistently for native source, Gradle publication, and release filenames.
+  Tagged runs require an existing release; untagged dispatches build artifacts only.
+- Allow releases without the optional minisign secret while keeping mandatory
+  artifact checks; signed releases require every expected detached signature.
+
+- Resolve and validate release tags before building artifacts. Manual dispatch,
+  binary packages, SBOMs and container images now share one immutable source
+  commit, with workflow and artifact source recorded separately in provenance.
+- Propose validated Homebrew release pins through a protected pull request instead
+  of pushing directly to main; document the required bot-PR workflow approval.
+- Apply the no-progress timeout to native and OpenAI file streams, close timed-out responses independently of native calls, and retain upload and pool ownership until the worker exits.
+
+- Provision punctuation and VAD sidecars before model-backed coverage tests,
+  including recognition-only cache hits. Pin the encoder oracle to CPU/rnnt,
+  record model provenance, and calibrate its maximum-error bound against the
+  observed CI runner while retaining cosine and exact-transcript checks.
+- Enforce request duration limits for predecoded mono and split-channel PCM
+  before inference, matching encoded-source boundaries without imposing an
+  encoded-buffer allocation ceiling on caller-owned samples.
+
+- Preserve per-request punctuation, ITN, VAD, and hotword settings when channel
+  splitting falls back to mono or uses per-channel VAD processing.
+- Keep split-channel transcription progress monotonic across channels so healthy
+  long requests do not hit false inference timeouts. Jobs retain processed time
+  for unknown-duration files and scale split-channel completion correctly.
+  The no-progress watchdog now checks every 100 ms instead of once per timeout.
+- Make asynchronous job transitions and SSE subscriptions atomic so cancellation,
+  completion and concurrent listeners cannot produce conflicting or missing terminal
+  events. Concurrent queue-capacity rejections now return HTTP 429 with retry hints.
+- Load the lazy speaker model for WebSocket Configure on a blocking worker,
+  keeping async workers responsive and honoring shutdown and disconnect while
+  initialization is in progress.
+- Preserve streaming tail-decode failures instead of reporting successful completion.
+  WebSocket and file SSE return an error while retaining readable partial text;
+  failed OpenAI streams no longer emit completion markers. The additive
+  `Engine::try_finish_stream` exposes finalization errors, and C, Node, and UniFFI
+  flush calls decode pending audio and propagate failures. Successful flushes
+  remain reusable.
+- Bound concurrent HTTP uploads before body buffering across REST, SSE, OpenAI
+  multipart and jobs. Excess uploads receive 503 with a retry hint; retained
+  inputs keep their admission permit until blocking work finishes.
+
+- Cancel stalled native and OpenAI file SSE producers after a 30-second output
+  wait, and interrupt full-queue sends on shutdown or disconnect so unread
+  responses cannot indefinitely retain inference slots.
+- Bind CPU optimized graph caches to encoder content and ORT configuration,
+  preventing stale inference after same-name or timestamp-preserving model
+  replacements. Legacy caches are rebuilt; cache GC retains installed content
+  across configurations. Models with possible external tensors bypass caching.
+
+- Clear reused mel output for empty and sub-frame audio so it matches fresh
+  computation instead of retaining features from the previous input.
+- **WebSocket sessions no longer panic on startup when
+  `GIGASTT_MAX_SESSION_SECS=0`.** Previously, the unlimited-session deadline
+  was computed as `Instant::now() + Duration::from_secs(u64::MAX / 2)`, which
+  overflows `Instant` and panics with `overflow when adding duration to
+  instant`. The deadline is now parked ≈30 years out (same horizon as
+  `tokio::time::Instant::far_future()`), and non-zero caps use
+  `Instant::checked_add`, so an extremely large value disables the cap
+  instead of panicking.
+- **WebM/Opus with a non-48 kHz container rate.** Opus always decodes at
+  48 kHz. The file resampler used the container tag instead, so a browser
+  WebM whose `SamplingFrequency` is 16 kHz (the capture rate) was passed
+  through unresampled — about 3× too many samples, and a transcript of
+  time-stretched audio. Ogg input-sample-rate is unaffected (the demuxer
+  already reports 48 kHz). Flat file decode, windowed decode, and
+  `channels=split` now resample from 48 kHz. The length budget on the
+  split path does too.
+- **A session cap or shutdown no longer looks like a failed empty stream.**
+  The WebSocket `final` (and the SSE shutdown `final`) is sent before the
+  error and carries `truncated: true`. Recognized text stays in
+  `committed`. A normal `stop` is unchanged and does not set the flag.
+  File long-form stitching is unchanged.
+- **Fail-closed execution provider.** `--execution-provider` (env
+  `GIGASTT_EXECUTION_PROVIDER`, default `auto`) selects `auto`, `cpu`,
+  `coreml`, or `cuda`. `auto` may still fall back to CPU. An exact provider
+  fails boot when it is not compiled in, or when CoreML warmup would
+  otherwise rebuild the pool on CPU. The provider that actually loaded is
+  logged and returned by `GET /v1/models` as `execution_provider`.
+- Long-file decoding no longer ends with a short trailing window. A window
+  that can reach the end of the input within the 30-second single-pass
+  ceiling absorbs the remainder; a longer remainder that is still shorter
+  than the 24-second window (30 s on ANE) becomes a full window anchored to
+  the end of the input, and the seam with its predecessor sits in the middle
+  of their actual overlap. Window-parallel decoding, VAD and files up to
+  30 seconds are unchanged. The shift-dependent readings reported in #349 were traced to the
+  encoder itself (a full-context decode of the same recording flips the same
+  words; a warmed RNN-T predictor changes none of them), so this removes the
+  one structural cause and documents the rest; see
+  [long-form measurements](docs/longform-stitching.md).
+
+- Long-file overlap stitching aligns matching words before choosing a cut,
+  preventing timestamp jitter from dropping or duplicating boundary words.
+  Repeated words retain their order and count; an empty next hypothesis keeps
+  the available preceding tail. See [long-form measurements](docs/longform-stitching.md).
+
+- **Boot failure with a read-only model directory** (#336). The shipped
+  systemd unit installs models under `/usr/share/gigastt/models` with
+  `ProtectSystem=strict`, but the CPU encoder load path wrote the ORT
+  optimized-graph cache into `<model-dir>/optimized_cache` and a failed
+  `create_dir_all` was fatal — the service restart-looped with EROFS. The
+  unit now sets `CacheDirectory=gigastt` and points the cache there via
+  `Environment=GIGASTT_OPTIMIZED_CACHE_DIR=/var/cache/gigastt` (overridable
+  in `/etc/gigastt/gigastt.env`), and the loader degrades
+  gracefully: when the cache directory cannot be created or is not writable,
+  the server logs a warning and starts without the cache (slower cold start,
+  higher per-session RAM) instead of failing.
+
+### Docs
+
+- **Transcript fields are mapped to the endpoint that returns them.**
+  `docs/api.md` now tables text, word timings, segments, speaker labels, and
+  stream completion for `POST /v1/transcribe`, `POST /v1/transcribe/stream`,
+  `GET /v1/ws`, and `POST /v1/audio/transcriptions`. Speaker integers stay on
+  the native file route (`diarization=true`, or real stereo `channels=split`)
+  and on WebSocket when `ready.diarization` is true. The OpenAI-compatible
+  route still accepts and ignores `model` and does not return a speaker field.
+  The `no_speaker_model` example message matches the server
+  (`diarization was requested but no speaker model is loaded`).
+
+## [2.21.0] - 2026-09-06
+
+### Added
+
+- **Optional long-form window parallelism (`--file-window-concurrency`).** File
+  transcription still defaults to one pooled triplet per request (serial 24 s
+  windows). `N>1` `try_checkout`s idle extra batch-pool slots and decodes
+  independent windows concurrently (`std::thread::scope`); if no slot is free
+  the file stays serial. Never waits for a second slot (two long files each
+  holding one triplet would otherwise deadlock). A closed pool cancels the
+  file instead of falling back to serial. Unused extras are released before
+  a short last wave. WebSocket is unchanged. Env
+  `GIGASTT_FILE_WINDOW_CONCURRENCY`. Offline `transcribe` loads `N` triplets
+  so a single long file can actually use them.
+
+### Changed
+
+- **ryf 0.7.2.** WAVE ingest follows the current crate. GSM 06.10 in WAV
+  (wav49 / tag `0x0031`) decodes natively (8 kHz mono, resampled to 16 kHz).
+  ffmpeg-odd WAVE headers (data-before-fmt, long `fact`, RIFF size 0) no
+  longer reject. Headerless GSM is still not a `?codec=` option.
+
+## [2.20.0] - 2026-09-03
+
+### Changed
+
+- **WAVE ingest via [ryf](https://crates.io/crates/ryf) 0.4.** File WAV
+  (PCM/IEEE, G.711, G.722 tags `0x0064`/`0x0065`/`0x028F`, MS/IMA ADPCM,
+  RF64/RIFX/BW64/Wave64) and headerless `?codec=pcmu|pcma|g722` decode
+  through ryf instead of symphonia + `audio-codec`. G.722-in-WAV is
+  windowed like other containers (no 30-minute eager cap). MP3/M4A/FLAC/OGG/Opus
+  stay on symphonia / `opus-rs`. `audio-codec` remains a test-only encoder
+  for telephony fixtures.
+
+### Fixed
+
+- **Publish dry-run after a version bump.** `gigastt-quantize` is on
+  crates.io (so the old "no matching package" exception never fired), but
+  `cargo publish --dry-run` for `gigastt-core` / `gigastt` still cannot
+  resolve the just-bumped workspace version until that crate is actually
+  published. The job now accepts that version-select miss as well (match
+  `gigastt-quantize = "^X.Y.Z"`, not a closing backtick right after the
+  crate name).
+- **Docker dep-cache layer** stubs `benches/decode.rs` next to the other
+  Criterion benches, so `cargo build` in the image can parse
+  `gigastt-core`'s `[[bench]]` table.
+- **OpenAPI / AsyncAPI duration wording.** G.722-in-WAV is windowed; only
+  raw telephony (plus diarization / `channels=split`) still holds the
+  whole-buffer ~30-minute ceiling. The specs still said "G.722 / raw
+  telephony".
+
+## [2.19.0] - 2026-08-31
+
+### Added
+
+- **Configurable streaming window** (`--stream-max-window-secs`, env
+  `GIGASTT_STREAM_MAX_WINDOW_SECS`, default 2.5 unchanged, clamped to
+  2.4–30). Longer windows (e.g. 7.5 s) improve WER on phrases longer than
+  the retained window, at a linear per-stride encoder-cost increase.
+- **Sequence-aware streaming quality guard.** New model-gated test
+  `streaming_wer_tracks_file_on_labelled_fixtures` computes ordered corpus
+  WER (not set overlap) over 10 labelled Golos fixtures: an absolute
+  regression bound at the default 2.5 s window and stream-vs-file parity
+  within +5 pp at a raised 7.5 s window.
+- **Streaming decode tracing**: per-pass `debug!` events report decoded /
+  suppressed / replaced / live word counts, and the window-cap commit logs
+  how many words entered the stable prefix.
+- **Stable-prefix commits** (`--stream-stable-prefix`, env
+  `GIGASTT_STREAM_STABLE_PREFIX`, default on — opt out with
+  `--stream-stable-prefix=false`): at the
+  window cap, only the prefix two consecutive window hypotheses agree on
+  enters the stable prefix (edge words inside a 1.0 s horizon wait; a
+  3-strike streak bounds pathological buffers); the slide anchors on the
+  committed coverage end and never starts the window mid-word. On 10 labelled
+  Golos fixtures (INT8 `rnnt`): corpus stream WER 10.6% → 2.1% at the
+  default 2.5 s window (batch 0.0, 7.5 s window 2.1).
+
+### Changed
+
+- **polyvoice 0.14.0 → 0.18.0** from crates.io (`features = ["onnx"]`).
+  Diarization still uses `FbankOnnxExtractor` / `LegacyPipeline` /
+  CPU `ExecutionProvider`. **MSRV 1.88 → 1.94** (`rten-simd`).
+
+### Added
+
+- **Streaming WER + TTFP corpus harness.** `benchmark.py --mode batch|stream|both`
+  runs the live `/v1/ws` path (16 kHz PCM16, 100 ms real-time chunks) next to
+  REST batch and writes paired **Δ = WER_stream − WER_batch** with a bootstrap
+  CI. `benchmark_latency.py --dataset` reports TTFP / TTFS p50–p95. Protocol
+  is pinned in [`docs/benchmarks.md`](docs/benchmarks.md#streaming-measurement-protocol).
+  First 100-clip measurement (M1 Pro, CPU INT8): crowd Δ **+14.5 pp**
+  (4.97 → 19.46), far-field **+10.6 pp** (4.82 → 15.42); TTFP p50
+  **820 ms** far-field / **1653 ms** crowd; per-partial lag p50 **41–51 ms**.
+- **Model-free mock engine for unit tests.** `gigastt_core::test_support`
+  (behind the private `__internals` feature) loads a scripted INT8 rnnt
+  engine whose encoder accepts any audio length. HTTP, WebSocket, jobs,
+  OpenAI transcriptions, and CLI helpers now run in `cargo test
+  --workspace --lib --bins` without the 225 MB model.
+- In-process live tests: `/health`, `/v1/audio/transcriptions`, and
+  `/v1/ws` (Ready → configure → audio → Stop → Final, plus invalid
+  sample-rate rejection) against the mock engine.
+- Unit coverage of packaging (`quantize` no-op / missing FP32,
+  `cache-gc`), job HTTP handlers, `RealJobExecutor`, engine file/bytes/
+  channels/cancel wrappers, and `transcribe` batch helpers.
+
+### Fixed
+
+- Candle/Metal CI: mock-engine getter test no longer asserts `is_int8()`
+  (the candle loader reports FP32 safetensors even when the on-disk
+  layout uses INT8 ONNX filenames). This is what kept `Build (Candle/Metal)`
+  red on `main` after the mock-engine coverage merge.
+
+### Changed
+
+- Docs: hub + workbook state the live-WS WER Δ and TTFP (not batch-equal
+  “real-time”); RAM figures use mmap **resident** vs `ps` RSS
+  (~46 / ~66 MB resident at pool 1 / 2); default INT8 source is GitHub
+  Releases; `gigastt-core` README matches `Engine::load` /
+  `create_state(bool)` / `process_chunk(&[f32], …)`. Comparison-table
+  cells quote resident+RSS and stream caveats; leftover copy-era
+  ~350 MB / +536 MiB / invented `ml_ctc_large` per-slot RAM removed;
+  privacy scoped to jobs/batch; no phantom `quantize` download phase.
+  Workbook intro lost the docs-inventory dump, gained a REST-vs-WS
+  chooser; RU section titles match the template. Chapters 01/02/06/07
+  now share one RAM line + a benchmarks link (no cloned pool table);
+  ch.06 install/upgrade pins resolve the latest GitHub release tag;
+  ch.06 observability/secure copy is cut to recipes + links; contributor
+  rules add a translation-review checklist (heading-count gate unchanged).
+- Codecov patch target raised from 80% to 90%. Previously `#[ignore]`d
+  HTTP handler tests now run on every PR.
+
+## [2.18.0] - 2026-08-14
+
+### Security
+
+- **Engine load re-checks pinned SHA-256** for resolved files in the legacy
+  checksum table. Correction: the standard RNN-T INT8 encoder names are outside
+  that table; their published digests are checked at download, not enforced
+  on every engine load. Locally quantized encoders remain supported.
+- **FFI handles are table ids, not raw `Box` pointers.** Free during an
+  in-flight call keeps the engine alive via `Arc`; a call after free is a
+  failed lookup, not a use-after-free.
+- **Jobs no longer expand undeclared-duration audio to PCM** before
+  taking a pool slot. Progress percent stays 0 until the job finishes.
+
+### Added
+
+- Windows `cargo test --workspace --lib --bins` CI job.
+- Nightly AddressSanitizer job over the session pool (alongside Miri + TSAN).
+- `Engine` impl split into
+  `engine/{config,load,stream,transcribe,infer,words,channels,api,file_stream}.rs`.
+  Public transcribe wrappers live in `engine/api.rs`; the request
+  pipeline stays in `transcribe.rs`; the windowed file path lives in
+  `file_stream.rs`. Public API is unchanged.
+- `model` download/identity split into `model/{progress,variant,download}.rs`;
+  the streaming SHA-256 fetch lives in `download/fetch.rs`, ANE
+  packages in `download/ane.rs`, and sidecar ensure (speaker / punct /
+  VAD) in `download/sidecars.rs`.
+  Public `gigastt_core::model::*` paths are unchanged. CLI parse tests live
+  next to `main.rs` split by command (`cli_tests/{serve,download,transcribe,
+  batch,parse}.rs`); bind-gate tests live next to `serve.rs`.
+- Unit tests live next to their modules (audio, engine, export, decode,
+  punctuation, VAD, FFI, model, HTTP, wordpiece, stream, quantize, batch,
+  boot, serve, bias, pool, rate-limit, protocol, cache, state, CTC,
+  features, metrics, and the rest). Jobs tests are split by store / queue
+  / events. WordPiece Unicode category tables live in `wordpiece/unicode.rs`.
+  `FileWindows` lives in `audio/stream/file.rs`; window geometry stays in
+  `stream.rs`. Dual-mono detection lives in `audio/decode/dual_mono.rs`;
+  `ChannelScan` lives in `audio/decode/scan.rs`. VAD is split into
+  `vad/{config,silero,regions,segmenter,endpoint}.rs`. Opus RFC 6716
+  packet framing lives in `audio/opus/framing.rs`. The server bind /
+  drain / SIGHUP reload loop lives in `server/listen.rs`. Audio
+  `BytesMediaSource`, header duration probe, and per-channel decode live
+  in `audio/decode/{bytes_source,probe,channels}.rs`. The INT8 quantizer
+  graph rewrite lives in `gigastt-quantize` `graph.rs`; per-channel
+  weight math lives in `weights.rs`. The ANE Core ML bridge's compile
+  cache lives in `runtime/coreml/bridge/cache.rs`; Float16 predict
+  lives in `bridge/predict.rs`. WordPiece `tokenizer.json` parsing
+  lives in `wordpiece/json.rs`. Punctuation window tiling lives in
+  `punctuation/windows.rs`. Serve bind gates live in `serve/bind.rs`.
+  `TranscribeRequest` / `TranscribeSource` live in
+  `inference/types/request.rs`; override / hotword types live in
+  `types/overrides.rs`. Candle RoPE and Conformer blocks live in
+  `runtime/candle/conformer/{rope,blocks}.rs`. Boot CLI modes and
+  sidecar loaders live in `boot/{modes,sidecars}.rs`. OpenAI SSE
+  events live in `server/openai/sse.rs`. Batch path helpers live in
+  `batch/paths.rs`.
+
+### Fixed
+
+- **Opaque `Origin: null` is denied.** Sandboxed iframes and `data:` documents
+  send that header; treating it as a non-browser client let a drive-by page
+  hold a pool slot on the default loopback server. Native clients still omit
+  `Origin` and are allowed.
+
+- **C-ABI exports no longer unwind across FFI.** `gigastt_engine_new*`,
+  `gigastt_stream_new`, `gigastt_stream_flush`, and `gigastt_quantize_model`
+  catch panics and return a sentinel. `gigastt_stream_new` also rejects a
+  disposed engine handle.
+
+- **CHANGELOG 2.17.0 no longer claims CTC glossaries are inert.** The same
+  release shipped the prefix-beam path; the leftover “ignored” bullet
+  contradicted the Added section and the code.
+
+- **OpenAPI documents `?hotwords=` / `?hotwords_boost=`** on `/v1/transcribe`
+  and `/v1/jobs`.
+
+- **SECURITY.md previous line tracks the prior minor** (2.16.x), and the
+  docs-drift gate now requires that row.
+
+- **IPv6 unique-local / link-local hops are trusted proxies** for
+  `X-Forwarded-For` when `--trust-proxy` is on, so clients behind a ULA
+  reverse proxy get their own rate-limit bucket.
+
+- **OpenAI multipart errors no longer echo parser internals** to the client.
+
+- **Model download refuses a body larger than 2 GiB**, advertised
+  `Content-Length` included, so a redirected host cannot fill the disk.
+
+- **Main-push `e2e-tests` runs the jobs / CLI / admin-reload / HTTP-coverage
+  targets** that the docs already listed. Local `make check` / pre-commit
+  clippy matches CI (`--all-targets`, no `dead_code` allow).
+
+- **`cache-gc` no longer prunes the optimized graph of a served head.** With
+  several heads installed in one model directory, the prune kept only the
+  auto-detected head's `.ort` and deleted the rest — including the graph a
+  running server had memory-mapped, forcing a multi-GiB rebuild on next boot.
+  The prune now keeps `{stem}_optimized.ort` for every head whose encoder
+  weights are present (including a custom encoder named by `manifest.toml`);
+  it still drops legacy `*_optimized.onnx` graphs and `.ort` graphs whose
+  encoder is not installed.
+
+- **Job sanitizer recognizes typed `InvalidAudio`.** The error displays as
+  lowercase `invalid audio: …`; the matcher only looked for title case, so a
+  corrupt upload became the generic "Transcription failed." Clients again get
+  "Failed to decode audio file. Check format."
+
+### Changed
+
+- **polyvoice 0.12 → 0.14** for speaker diarization. Crate-root `Pipeline` is
+  now the v2 ONNX stack and is gated behind download/segmentation features
+  this crate does not enable. The BYO path stays on `LegacyPipeline` (same
+  `Embedder` + `EnergyVad` contract).
+- **rubato 4 → 5** for the polyphase resampler. The public
+  `StreamingState.resampler` field type follows; create the state via
+  `Engine::create_state`.
+
+## [2.17.0] - 2026-08-10
+
+### Performance
+
+- **Dual-constraint RTF/RSS work on lean INT8 ORT (no CoreML stretch path).**
+  Sparse HTK mel, full-core auto encoder threads, and a shared long-form window
+  ceiling bring competitive long40 rnnt BEST under ≤0.030 and the stretch band
+  0.015–0.020 on the `ml_ctc` speed SKU (local quiet-host evidence). Quality
+  default remains `rnnt`. CI multi-metric quality gate covers WER / RTF / RSS /
+  cold-start on bundled fixtures.
+
+### Changed
+
+- **Runtime is INT8-only.** `download` / `serve` / engine load never use FP32;
+  lean prequantized INT8 (~225 MB) is the product path. `gigastt quantize`
+  remains packaging-only and needs a local FP32 ONNX as source.
+
+- **INT8 quantizer lives in `gigastt-quantize`.** Extracted from core so lean
+  embedders can depend without the quantizer graph stack; core re-exports stay
+  for compatibility.
+
+### Fixed
+
+- **`gigastt quantize` no-ops when INT8 already exists without FP32.** Lean CI
+  installs only ship `*_encoder_int8.onnx`; requiring FP32 before the existing-INT8
+  early return broke Coverage(E2E) `cli_quantize_existing_is_noop`. INT8 present
+  and no `--force` succeeds first; FP32 is required only to rebuild.
+
+### Fixed
+
+- **A hotword glossary now depends on its contents.** It did not: on the `rnnt`
+  head three different glossaries — one of them a word that never occurs in the
+  recording — produced byte-identical transcripts, all three differing from the
+  same audio decoded with no glossary at all. `encode_phrase` prepends a
+  word-boundary marker to every phrase, so the trie's root had exactly one child
+  — that marker — and the root is always active. Every glossary therefore did
+  the same single thing: add the boost to the space token at every step,
+  inserting word breaks (`Твихаила` → `ТВ Михаила`) with nothing to do with what
+  the user had asked to bias.
+
+  The marker is a precondition for entering a phrase, not part of what makes the
+  phrase distinctive, so it is matched and never scored. A glossary whose
+  phrases do not occur now leaves the transcript exactly where it was, and
+  biasing spends its budget on the characters that identify the hotword.
+
+  This also revises the second finding in #260: the per-frame cap shipped in
+  2.16 did stop the ten-token bursts, but what was bursting was the space token,
+  and the cap it consumed was starving the hotword's own characters.
+
+  The per-phrase normalization added for the CTC beam deliberately does **not**
+  extend to the greedy transducer. A beam compares totals, so spreading one
+  boost across a phrase is what keeps a long phrase from outranking a short one;
+  a greedy argmax decides each step alone, and the same split leaves a long
+  hotword unable to win any single step. Measured: with the boost divided across
+  characters, a glossary changed nothing at all until the per-step amount was
+  restored.
+
+### Performance
+
+- **CPU cold start no longer re-serializes the optimized encoder graph on every
+  boot.** Since 0.5.0 the CPU encoder session was built with ORT's
+  `with_optimized_model_path`, which rewrites
+  `optimized_cache/<stem>_optimized.onnx` (~224 MiB for the INT8 encoder) on
+  every process start — and nothing ever read that file back, so each boot paid
+  a full graph serialization plus disk write for zero benefit, on a Raspberry
+  Pi microSD most of all. The file is now a cache in both directions: when it
+  exists, is non-empty, and is no older than the source encoder, the session
+  loads from it directly and skips re-optimizing the source model; otherwise
+  the source model is loaded and the cache rewritten, exactly as before. A
+  cached graph that fails to load — for example one serialized by an older
+  ONNX Runtime — is deleted first, so the next boot rewrites it cleanly rather
+  than tripping over the same broken file again. Measured on an M1, `serve`
+  process start → `/ready` drops from ~1.1 s to ~0.7 s; transcription output is
+  byte-identical to the previous behavior.
+
+- **Per-session encoder memory collapses: the optimized cache is now an ORT
+  flatbuffer model, memory-mapped, with zero-copy initializers and no
+  prepacking.** Every CPU encoder session used to carry its own private copy
+  of the INT8 weights plus the parsed protobuf graph of the optimized ONNX
+  cache — roughly 250–300 MB of anonymous memory per pool slot, so the
+  default `--pool-size 2` idled near ~650 MB before serving a single request.
+  The cache is now written as `<stem>_optimized.ort` and read back with
+  ORT 1.28's `session.use_memory_mapped_ort_model` +
+  `session.use_ort_model_bytes_for_initializers`: all sessions reference the
+  weights in one shared read-only file mapping (page-cache backed, reclaimable
+  under pressure), and the flatbuffer graph skips the protobuf object graph
+  entirely. Prepacking is disabled on this path because for this model it only
+  duplicated the weights into ~145 MB of per-session buffers with no RTF
+  benefit. Measured on an M-series MacBook (`--pool-size 2`, INT8 rnnt,
+  at `/ready`): physical footprint ~650 MB → ~60 MB, per-session marginal
+  ~310 MB → ~20 MB; steady-state RTF on the Golos fixture set unchanged
+  (0.045–0.053 both before and after); cold start unchanged at ~1.0 s.
+  Transcription output is byte-identical. Legacy `*_optimized.onnx` caches
+  are treated as zombies by `cache-gc` and are regenerated in the new format
+  on the next boot that finds them stale or missing.
+
+### Added
+
+- **Hotword biasing now works on the multilingual CTC heads**, via a prefix beam
+  search that replaces the greedy decode whenever a glossary is present. Greedy
+  CTC picks a per-frame argmax and has no continuation to steer, which is why a
+  glossary was inert on `ml_ctc` / `ml_ctc_large` and the previous release could
+  only say so out loud. A beam gives the boost something to act on and, as
+  importantly, gives a wrong guess somewhere to lose.
+
+  Two properties keep it from inventing words. A hypothesis that walks into a
+  hotword and abandons it is refunded every bit of boost it was granted, so a
+  partial match wins nothing; and a phrase is worth one boost however long it
+  is, spread across its tokens. Without that second rule a nine-letter phrase
+  earned nine times the boost — enough that `любовницы` displaced `люк кейдж` on
+  real audio.
+
+  Measured on 62 s of Russian speech with a three-phrase glossary, `ml_ctc`
+  corrected every one of them (`ростоу`→`ростов`, `гетта`→`гетто`,
+  `любовница`→`любовницы`) and split a run-together `развалиныищи`, with the rest
+  of the transcript untouched. With no glossary the greedy path runs exactly as
+  before, so output for everyone else is unchanged.
+
+- **WebM/Opus uploads**, the container a browser's `MediaRecorder` produces and
+  the only one it offers a page (#263). A recording made in Chromium or Electron
+  now posts straight to `/v1/transcribe` instead of needing a client-side remux
+  to OGG. The container is Matroska, so an `.mkv` holding audio this build can
+  already decode works too, and `.webm` joins the extensions `batch` / `watch`
+  walk.
+
+  This is the symphonia `mkv` demuxer feeding the same in-tree Opus decode path
+  as OGG, plus one fix the demuxer needed: a live WebM leaves the Segment *and*
+  every Cluster without a declared size, and the element iterator could not
+  terminate an unknown-size Cluster — it checked the schema's minimum depth
+  against the ancestor's own depth where the child's was required, so the
+  Cluster that should have ended the previous one was rejected as
+  `UnexpectedElement`. `symphonia-format-mkv` is vendored under `vendor/` with
+  that one-line fix until it ships upstream; the fixture is a live WebM built by
+  rewriting each Cluster's size field, which no ffmpeg invocation produces on
+  its own, and it is checked against ffmpeg's own decode of the same bytes.
+
+### Changed
+
+- **`polyvoice` moved to 0.12.0** (from 0.9.0), picking up two API changes.
+  `FbankOnnxExtractor::new` gained an execution-provider argument in 0.11: it is
+  passed `ExecutionProvider::Cpu`, not `ExecutionProvider::auto()`. 0.9
+  registered no provider at all, so CPU is what the speaker embeddings were
+  computed on, while `auto()` would pick CoreML on Apple Silicon and XNNPACK on
+  aarch64 Linux — different numerics, different embeddings, different
+  clustering, and a different DER. Moving diarization onto an accelerator is a
+  quality change that belongs in its own measured task, not in a dependency
+  bump. Verified label-identical against 0.9 on the synthetic two-speaker corpus
+  and on 146 s of real speech that clusters into seven speakers: 366/366 words
+  carry the same speaker, and the transcript is byte-identical.
+
+  0.12 then moved `FbankOnnxExtractor` off the soft-deprecated
+  `EmbeddingExtractor` trait onto `polyvoice::Embedder` (`dim` / `embed` instead
+  of `embedding_dim` / `extract`), and both the offline `Pipeline` and the
+  streaming `StreamingPipeline` now take `E: Embedder`. The `SharedExtractor`
+  adapter follows, so `inference::SharedExtractor` implements `Embedder` rather
+  than `EmbeddingExtractor` — a breaking change for anyone who named the old
+  trait on it, though the type exists only to hand one pooled WeSpeaker session
+  to per-session streaming pipelines. This also retires the deprecation
+  containment boundary: `diarization.rs` no longer needs `#![allow(deprecated)]`.
+
+### Fixed
+
+- **Opus packets carrying more than one frame now decode** instead of failing
+  the upload with `invalid audio: Opus decode error: Code 3: frame length
+  exceeds packet`. Chromium's `MediaRecorder` emits 60 ms packets — three 20 ms
+  frames under a single TOC, code 3 with implicit CBR lengths — so every
+  browser- or Electron-produced OGG/Opus was rejected on its first packet
+  (#259). The `opus-rs` packet parser never reads the code 3 VBR flag, so it
+  looked for frame lengths a CBR packet does not carry, and it decoded explicit
+  lengths with a 15-bit continuation scheme rather than RFC 6716 §3.2.1,
+  mis-slicing every length of 128 bytes or more. Packets are now sliced in-tree
+  per RFC 6716 §3.2 and handed to the decoder one frame at a time, which also
+  repairs two failures nobody had reported yet: padded VBR packets used to
+  decode to silently wrong audio, and two-frame (code 2) packets broke as soon
+  as the first frame reached 128 bytes. Pinned by a fixture in the shape
+  Chromium produces, checked against ffmpeg's own decode of it.
+
+  (WebM/Opus container support landed in the same release — see Added below —
+  so browser `MediaRecorder` output no longer needs a remux to OGG.)
+
+- **Hotword biasing no longer stutters a phrase inside one encoder frame.** At
+  the shipped `--hotwords-boost 5.0`, a glossary made the `rnnt` head render the
+  very terms it was meant to help as a burst of their own prefix — `гигаэм`
+  became `ги Г. А. А. А. …` — and the damage grew with the boost (#260).
+  Emitting a non-blank token does not advance the encoder frame, so a boosted
+  continuation kept outrunning blank on the same 40 ms slot until the decoder
+  had spent its whole ten-token per-frame budget there. Biasing may now overturn
+  the model's own pick once per frame; the prefix state still spans frames, so a
+  hotword completes at the pace speech is spoken. Reported confidence is now the
+  model's own probability for the chosen token rather than the boosted score.
+
+- **Hotword phrases written with capitals are no longer dropped.** Every shipped
+  vocabulary is lowercase, and a phrase was discarded whole if any character
+  fell outside it — so the brands and product names users actually put in a
+  glossary were silently thrown away, 104 of 133 entries in one report (#260). A
+  phrase is now tried as written (the form a cased BPE vocab wants), then
+  lowercased, then with `ё` folded to the `е` a head without `ё` emits in its
+  place. The warning names the phrases it still drops instead of only counting
+  them: on the Cyrillic-only `rnnt` vocabulary a Latin brand cannot be
+  represented at any casing, and naming it is what tells the user to write it
+  phonetically.
+
+## [2.16.0] - 2026-07-30
+
+### Added
+
+- **Opt-in `--max-audio-secs` duration cap for file transcription.** New CLI
+  flag (env `GIGASTT_MAX_AUDIO_SECS`, default `0` = unlimited) rejects audio
+  whose decoded duration exceeds `N` seconds with `413 Payload Too Large` and
+  the new machine-readable error code `audio_too_long`, checked before any
+  inference runs.
+
+- **Cooperative cancellation reaches the running transcription.** A client
+  disconnect or shutdown on `POST /v1/transcribe`, and `DELETE /v1/jobs/{id}` on
+  an in-flight job, now flip an abort flag that the engine's per-window decode
+  loop — and the VAD scan — observe at the next window boundary, releasing the
+  pooled session within one window instead of transcribing the rest of the file
+  into a result that is thrown away. Adds a `GigasttError::Cancelled` variant
+  (additive; the enum is `#[non_exhaustive]`).
+
+- **`diarization` capability notice on transcription responses.** Asking for
+  diarization and getting none used to be indistinguishable from not asking:
+  HTTP 200, every speaker field empty, no explanation. An additive
+  `diarization` object now appears on the response **only** when
+  `?diarization=true` was requested and speakers could not be labeled, with a
+  `reason` separating the three cases that previously collapsed into the same
+  silence — `no_speaker_model`, `duration_ceiling` (carrying the actual input
+  and ceiling seconds), and `pipeline_error`. Clients that get diarization, or
+  never ask for it, see a byte-identical response. Served on both
+  `POST /v1/transcribe` and `GET /v1/jobs/{id}/result`.
+
+  Live WebSocket sessions deliberately do **not** carry this notice: `ready`
+  already advertises `diarization` as a server capability before any audio is
+  sent, and a `configure` for an unavailable capability is a documented
+  graceful no-op there (the same convention `punctuation` follows). The
+  request/response endpoints have no such handshake, which is why they need it.
+
+### Removed
+
+- **The 30-minute (1800 s) duration cap on the default file-transcription
+  path.** File decode streams through bounded windows regardless of length,
+  so peak memory stays roughly constant — files of any length now transcribe
+  fine. The paths that still need the whole decoded buffer in memory (speaker
+  diarization, `channels=split`, and the G.722 / raw telephony codecs) keep
+  the ~30-minute safety ceiling to avoid OOM, surfaced as the same
+  `audio_too_long` code introduced above.
+
+- **The same cap on the `--vad` file path.** Silence-skipping used to scan and
+  copy two whole-file buffers, which kept the ceiling in place exactly where
+  long files matter most — `--profile edge` turns VAD on by default, so the
+  smallest hosts were the ones still capped. The VAD now runs *inside* the
+  window loop: Silero is causal, so frames are scored as the container decodes
+  and kept audio is released as soon as the bounded look-ahead
+  (`min_speech_ms + min_silence_ms + speech_pad_ms`, ~850 ms at the defaults)
+  has passed. Peak audio memory is one decode window plus that look-ahead,
+  whatever the length. The speech spans, the windows fed to the encoder, and
+  therefore the transcript are byte-identical to the batch path — asserted
+  against it directly, including a proptest over random probability sequences
+  and configs. `--max-audio-secs` still applies verbatim when set.
+
+- **The same cap on OGG/Opus.** Symphonia demuxes Opus but ships no decoder, so
+  packets went through the `opus-rs` fallback, which accumulated every channel
+  of the whole file before anything could be mixed or resampled — leaving the
+  container behind voice messages, browser MediaRecorder captures and WebRTC
+  recordings as the last one that could not stream. A two-hour 24 kbps
+  `.ogg` is 25 MB and was refused outright. Opus now decodes packet-wise into
+  the same window loop as every other container: peak RSS across 5 min / 30 min
+  / 2 h is 780 / 910 / 822 MB — no slope, dominated by the ONNX arena. The
+  samples are identical to the whole-buffer decode, including the mono
+  downmix, which is asserted against it directly; the resampler is still fed in
+  the same fixed-size chunks so its flush boundaries do not move.
+
+- **The same cap on `POST /v1/transcribe/stream` (SSE).** The SSE endpoint drives
+  the streaming recognizer one second at a time, so it never needed the whole
+  buffer — but the eager decode in front of it materialized the upload, which
+  kept it on the whole-buffer ~30-minute ceiling while the single-shot endpoint
+  beside it had none. Uploading a 50-minute file for progressive results was
+  refused with `413 audio_too_long`. It now decodes on demand through the new
+  public `AudioChunks`, which yields the same fixed-size chunk sequence
+  `slice.chunks(n)` gives over a fully decoded buffer, so the recognizer state —
+  and the emitted segments — advance exactly as before. `--max-audio-secs` is
+  honoured verbatim and still answered as a clean `413` before the stream opens
+  for containers that declare a duration.
+
+- **The same cap on `?channels=split`.** Splitting stereo into two speakers
+  decoded every channel of the whole file up front, and decided *whether* to
+  split by correlating the two channels end to end — so a 35-minute call was
+  refused with `413 audio_too_long`. Both halves stream now: the decision comes
+  from `scan_channels`, which is header-only unless the file is exactly stereo
+  and otherwise a single pass over six accumulators, and each channel is then
+  pulled through the windowed decode in turn via the additive
+  `TranscribeSource::ChannelStreams`. A 35-minute stereo upload transcribes in
+  578 MiB peak with both speakers labeled. `channels=split` on a VAD-enabled
+  server keeps the whole-buffer path (and its ceiling) until the VAD itself
+  runs inside the window loop.
+
+### Changed
+
+- **`rubato` moved to 4.0.** Two API changes: `SincInterpolationParameters::f_cutoff`
+  became `Option<f32>`, and the chunk-resize hook moved out of `Resampler` into a
+  new `Resizable` trait. The cutoff is passed as `Some(0.95)` rather than left
+  `None` on purpose — `None` derives a cutoff from `sinc_len` and the window
+  instead, which is a *different filter*, so it would change the resampled
+  samples and with them every transcript from a source that is not already
+  16 kHz. Both 3.x and 4.0 scale the cutoff by the resample ratio when
+  downsampling, so `Some(0.95)` is the filter 3.x built. Verified transcript-neutral
+  on 13 clips: 8 / 11.025 / 22.05 / 32 / 44.1 / 96 kHz WAV (8 kHz being the
+  upsampling branch, where the cutoff is *not* scaled), four 48 kHz OGG/Opus
+  fixtures including a stereo one, and real 48 kHz speech — byte-identical output
+  in every case.
+
+- **CLI contract change: `gigastt transcribe-batch` no longer fails on long
+  files.** Running `transcribe-batch` over a corpus that includes files
+  longer than 30 minutes now exits `0` instead of `1`, because those files
+  are no longer rejected by the default file-transcription path.
+
+- **`--inference-timeout-secs` is now a no-progress watchdog, not a total
+  wall-clock cap.** The deadline resets every time a decode window completes, so
+  a long file that keeps making progress no longer trips it — previously the
+  600 s default was a hidden ceiling on audio duration (roughly `timeout ÷ RTF`,
+  about 100 minutes at RTF 0.1). The flag name, the default (600 s), and the
+  `inference_timeout` error code are unchanged, and a short file that genuinely
+  hangs still trips at the same moment; on a trip the run is aborted so its
+  pooled triplet is freed within one window rather than staying wedged for the
+  rest of the file.
+
+- **`/v1/jobs` progress reflects audio actually decoded.** The progress bar was
+  a wall-clock extrapolation that assumed a fixed RTF of 0.1; it now advances
+  from the engine's real per-window processed-sample count. The SSE `progress`
+  event shape is unchanged (additive-only).
+- **`ort` moved to exactly `2.0.0-rc.13`.** rc.13 relocated the `CoreML` / `CUDA` /
+  `NNAPI` execution providers behind `ort`'s own Cargo features, so the provider
+  match arms are now gated per feature — a default (CPU) build never names a
+  feature-gated type. The pin stays exact (`=`) so a future rc cannot arrive
+  unannounced. On macOS the CoreML EP behaviour is unchanged (MLProgram format,
+  static input shapes).
+  - **The CoreML compiled-model cache is recompiled once after this upgrade.**
+    The cache (`~/.gigastt/models/coreml_cache/`) is now scoped by ONNX Runtime
+    version (`coreml_cache/ort-<minor>/`), because a bundle compiled by one ONNX
+    Runtime is not loadable by another — loading a stale one made the CoreML EP
+    fail at prediction time and fall back to CPU silently on every run. After the
+    upgrade the first transcription recompiles the graph (a few seconds, a
+    one-time cost); subsequent runs are fast again. The pre-upgrade cache is left
+    on disk; `gigastt cache-gc` now reclaims stale CoreML caches (it previously
+    pruned only `optimized_cache/`).
+
+- **File decode resamples incrementally instead of in one whole-buffer pass.**
+  Decoded packets now drain through a stateful resampler in ~1 s staged chunks, so
+  peak RSS no longer carries three full-length copies of the source-rate audio.
+  Measured decode-only peak RSS for a 20-minute 48 kHz stereo WAV: **706 MiB → 82 MiB
+  (8.6×)**, with decode wall time slightly improved. Output is bit-identical for
+  48 kHz sources and numerically tighter at 44.1 kHz, where the staged resampler keeps
+  rubato's fractional phase bounded instead of letting it accumulate over millions of
+  samples. All public decode signatures are unchanged.
+
+- Long-form file decode pulls its overlapping windows from an internal window
+  source instead of indexing one whole-file buffer, and trims the merged word
+  list by binary search instead of rescanning it once per window. Window
+  geometry, seam policy and decoded output are unchanged (verified
+  bit-identical, including word timestamps, across both decode branches).
+
+### Fixed
+
+- **`ort` is pinned to an exact version instead of a caret.** The previous requirement was a caret, so
+  any dependency resolution without this repository's `Cargo.lock` picked up
+  `2.0.0-rc.13` (published 2026-07-28), where the `CoreML` / `CUDA` / `NNAPI` execution
+  providers moved behind `ort`'s own Cargo features. `gigastt-core` then failed to compile
+  with six `E0433` errors — affecting a fresh `cargo install gigastt`, any downstream
+  `cargo add`, and `cargo-semver-checks`' isolated rustdoc build. Workspace builds were
+  shielded by the lockfile; new consumers were not. Adopting rc.13 was left to a separate
+  change that gates the provider arms per feature — it landed in this same release, so
+  2.16.0 ships pinned to `2.0.0-rc.13` (see "`ort` moved to exactly `2.0.0-rc.13`" above).
+
+- **Punctuation restoration no longer silently gives up on long transcripts.**
+  Restoration ran a single tokenizer pass over the whole transcript against a
+  2048-position model and swallowed the resulting runtime error, so any recording
+  longer than roughly 9–12 minutes of Russian speech came back completely
+  unpunctuated and lowercase with HTTP 200. Restoration now runs over overlapping
+  ~250-word windows, keeping each window's middle labels; transcripts that already
+  fit in one window are byte-identical to before.
+
+- **Documentation no longer claims the VAD and OGG/Opus paths are capped at 30
+  minutes.** Once both were moved onto the windowed decode, the ~30-minute
+  whole-buffer ceiling stopped applying to them, but the CLI help, the
+  `RuntimeLimits` / `AudioTooLong` / `TranscribeRequest` rustdoc, `openapi.yaml`,
+  and the telephony workbook chapter still listed them alongside diarization,
+  `channels=split`, and the telephony codecs. Operators reading those surfaces
+  would have split long VAD or Opus uploads for no reason. `docs/api.md` and
+  `docs/cli.md` were already correct; everything else now matches them.
+
+## [2.15.0] - 2026-07-27
+
+### Added
+
+- **Lean INT8-only install path.** Serve/transcribe accept a complete prequantized
+  tree (`encoder_int8` + decoder + joint + vocab, ~220 MB for `rnnt`) without
+  requiring the FP32 encoder. Documented offline file set and operator sizing.
+- **`gigastt download` defaults to lean prequantized INT8** (~220 MB from the
+  pinned GitHub Release). Opt into the full HuggingFace FP32 set + on-device
+  quantize with **`--fp32`**. Empty model dirs follow the same lean ensure path
+  for RNN-T heads.
+- **`gigastt cache-gc`** prunes non-active `optimized_cache/*_optimized.onnx`
+  graphs; **`--dedupe`** hardlinks content-identical files under the model dir.
+- **`gigastt serve --profile edge`** / `GIGASTT_PROFILE=edge` applies
+  `--pool-size 1` and `--vad` when those flags are left at defaults (explicit
+  flags always win).
+- **Soft admin reload:** `POST /v1/admin/reload` swaps before warmup;
+  **`?soft=true`** waits up to ~5 s for the previous engine to drain first.
+  Response includes `soft` / `soft_drained`.
+- **Lazy-load speaker encoder** until diarization is requested (lower ready RSS
+  when the speaker model is present but unused); warn if diarization is
+  requested without a speaker model.
+- **Operator resource docs:** pool/RTF tradeoffs, VAD for pause-rich long files,
+  admin reload headroom, ml_ctc as speed SKU, checkout timeout, batch pool
+  split, punct ready tax; lean install and edge profile guidance.
+- **Held-out public Russian WER matrix** published in `docs/benchmarks.md`
+  (Common Voice, FLEURS, RuLS, SOVA, ToneWebinars, …).
+
+### Changed
+
+- **Pool RAM clamp** uses **min(host RAM, Linux cgroup `memory.max` /
+  v1 `memory.limit_in_bytes`)** so Docker/k8s limits no longer over-admit
+  pool size based on host RAM alone.
+- **CPU production factory** attaches a shared ORT `PrepackedWeights` container
+  across pooled sessions (kernel prepack share; remeasure pool Δ on your host).
+- **Long-form file path:** empty Silero speech-region lists fall back to
+  full/chunked decode instead of returning an empty transcript; docs describe
+  VAD regions vs fixed-window chunking.
+- **Documentation** refreshed for 2.15.x (SECURITY supported versions, crate
+  pins, OpenAPI/API examples, workbook EN+RU).
+
+### Fixed
+
+- INT8-only (prequantized) installs no longer trigger a spurious ~844 MB FP32
+  download on serve/transcribe bootstrap.
+- VAD “no speech regions” no longer yields a blank transcript on tone /
+  edge cases (falls back to full/chunked decode).
+
+## [2.14.4] - 2026-07-25
+
+### Fixed
+
+- **OGG/Opus without an EOS page no longer fails demux** (Telegram Android
+  voice notes, some MediaRecorder captures). Symphonia surfaces a missing
+  end-of-stream flag as `IoError(UnexpectedEof)` instead of `Ok(None)`; after
+  any PCM has already been decoded we treat that as a clean stream end.
+  Headers-only / empty uploads still error. Fixes OpenAI
+  `/v1/audio/transcriptions` and `gigastt transcribe` for those files (#217).
+
+## [2.14.3] - 2026-07-25
+
+### Added
+
+- **OpenAI-compatible `POST /v1/audio/transcriptions`.** Multipart form with
+  required `file` and optional `model` (accepted for client compatibility,
+  ignored — the loaded engine is always used). Supports OpenAI
+  `response_format` (`json` · `text` · `srt` · `vtt` · `verbose_json`),
+  `language` (echoed in verbose), `timestamp_granularities[]` (`word` /
+  `segment`), and `stream=true` (SSE: `transcript.text.delta` /
+  `transcript.text.done` / `[DONE]`, progressive chunked encoder path). Default
+  remains `{"text":"..."}`. Same pipeline as `/v1/transcribe` for llama-swap,
+  Hermes Agent, and OpenAI SDKs with a custom `base_url` (#214, #215).
+
+## [2.14.2] - 2026-07-24
+
+### Fixed
+
+- **Streaming window-cap no longer emits `final`.** Hitting the ~2.5 s encoder
+  window now commits a stable prefix and emits a non-final `partial` so the
+  utterance keeps growing. True `final` / `speech_final` is reserved for VAD
+  silence, decoder blank-run (when no VAD), or client `stop` — fixing premature
+  command execution in voice assistants (Irene) that treat every `final` as
+  "command complete". Additive wire fields on segments: `speech_final` (omitted
+  when false) and `endpoint_reason` (`vad` | `blank` | `stop`) (#212).
+
+### Added
+
+- **`--endpoint-mode auto|assistant|manual`** (`GIGASTT_ENDPOINT_MODE`) and
+  per-session WS `configure.endpoint_mode` / `configure.min_silence_ms`.
+  `assistant` ends utterances only on VAD silence (pair with `--vad`); `manual`
+  only on `stop`. Cap never finalizes under any mode (#212).
+
+## [2.14.1] - 2026-07-24
+
+### Fixed
+
+- **Streaming endpointing is now fully controlled by `--vad-min-silence-ms`
+  when the VAD is enabled.** Previously the decoder's hardcoded blank-run
+  heuristic (~600 ms of trailing silence) finalized the current segment even
+  with `--vad` active, so raising `--vad-min-silence-ms` could only cut
+  phrases *earlier*, never later — a natural pause between words split
+  utterances mid-phrase on WebSocket streams. With a VAD attached the
+  blank-run heuristic is now ignored and VAD-detected trailing silence owns
+  endpointing (the ~2.5 s window cap remains as a backstop); without a VAD
+  behavior is unchanged. File transcription, SSE, and the jobs API are
+  unaffected. Reported via the Irene Voice Assistant integration.
+
+### Added
+
+- **Top-level CLI help now points to the subcommand engine flags.**
+  `gigastt --help` shows a note that `--model-variant`, `--punctuation`,
+  `--itn`, `--vad`, and the other engine / post-processing options are
+  defined on the subcommands — see `gigastt serve --help` or
+  `gigastt transcribe --help` — instead of leaving users to conclude the
+  flags don't exist (#202).
 
 ## [2.14.0] - 2026-07-22
 
@@ -414,6 +1449,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.6.0] - 2026-07-09
 
+### Changed (dependencies)
+
+- **`polyvoice` moved from 0.7.0 to 0.9.0** (PR #127). This is the release that
+  introduced `FbankOnnxExtractor`, the rank-3 fbank speaker encoder the 2.11.2
+  diarization fix builds on.
+
 ### Added
 
 - Per-request RTF `info!` log on every completed file transcription (audio seconds, wall seconds, RTF, encoder label `int8/cpu` etc.); covers CLI `transcribe`, REST `/v1/transcribe`, and SSE — not the streaming WebSocket path.
@@ -552,6 +1593,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are additive (existing clients unaffected); OpenAPI updated to match.
 
 ## [2.3.0] - 2026-06-20
+
+> Accuracy claims below are historical release reports. The primary `rnnt`
+> results and complete provenance have not been recovered; current documentation
+> withholds those claims. See [benchmark evidence](docs/benchmarks.md#evidence-required-to-restore-the-primary-scores).
 
 This release makes the lower-WER `rnnt` head the default and lands the INT8
 integer-compute speed fix, voice activity detection, contextual hotword biasing,
@@ -794,6 +1839,18 @@ See [`docs/benchmarks.md`](docs/benchmarks.md).
   module-level class registry to avoid import-time side effects, and the
   `gigastt` runner cache config uses a documented schema-version constant.
 
+## [2.2.0] - 2026-06-17
+
+Version bump on `main` only — never tagged and never published to crates.io;
+the changes rolled into 2.2.1 and shipped in [2.3.0], the next published
+release (v2.3.0, 2026-06-20). Its feature set — dedicated batch pool
+(`--batch-pool-size`), per-request inference timeout
+(`--inference-timeout-secs`), degraded pool boot (`--pool-min-size`), SSE
+per-variant error codes + `inference_panic`, metrics on a separate loopback
+listener, WebSocket keepalive, Intel-Mac release-target removal, polyvoice
+0.6.8 → 0.7.0, and the INT8 per-output-channel quantize fix — is documented
+under [2.3.0].
+
 ## [2.1.0] - 2026-06-14
 
 A large correctness + honesty pass (a full project audit), an honest cross-ASR
@@ -978,7 +2035,7 @@ benchmark against current Russian-ASR engines, and a reworked README.
 - **cbindgen 0.28 → 0.29** — FFI header generation build-dependency update.
 - **codecov-action 5 → 6** — CI coverage action update.
 
-## [2.0.8] - 2026-05-07
+## [2.0.8] - 2026-05-08
 
 ### Changed
 
@@ -1171,6 +2228,16 @@ benchmark against current Russian-ASR engines, and a reworked README.
   - `gigastt` — CLI + axum server (binary crate)
   This enables embedding `gigastt-core` as a standalone library in other Rust
   projects.
+
+## [1.0.2] - 2026-05-07
+
+### Added
+
+- SIGHUP config reload for `RuntimeLimits` via `arc-swap`; the rate limiter is
+  rebuilt on reload and startup now reads the config file.
+- WER benchmark with a threshold gate on main push.
+- rustdoc coverage for all public API items; `transcribe_file` and
+  `websocket_client` examples.
 
 ## [1.0.1] - 2026-05-06
 
@@ -1429,13 +2496,9 @@ v0.9.2. Dockerfile was broken since v0.9.0 — this release fixes it.
   RFC 8594 `Deprecation: true` plus `Link: </v1/ws>; rel="successor-version"`
   so client libraries can surface the migration warning before v1.0
   drops the alias. Server-side warn log was already in place.
-- **Docs + specs housekeeping:**
-  - `specs/design-v1.0-{pool-and-rate-limit,rest-streaming,ws-lifecycle}.md`
-    → `specs/archive/design-v1.0/` (all three shipped in v0.9.0-rc.1).
+- **Documentation housekeeping:**
   - `docs/superpowers/` (v0.4 pre-ship plans) → `docs/archive/superpowers-v0.4/`.
   - `missions/gigastt-wer/` scratchpad deleted.
-  - `specs/prod-readiness-v1.0.md` now carries a v0.9.0 rollup banner
-    listing the closed IDs; detail rows left for historical trail.
   - `README_RU.md` synced to English README (`/v1/ws`, `/metrics` row,
     `125 unit tests`, INT8 section rewritten for the no-feature-flag
     behaviour shipped in v0.9.0).
@@ -1509,12 +2572,12 @@ full rollup; no functional regressions since rc.2._
 
 ## [0.9.0-rc.1] - 2026-04-20
 
-_Release candidate for v0.9.0 — bundles five P0 fixes plus two supporting items (`PoolGuard` Drop, strict 413 assertion) from `specs/prod-readiness-v1.0.md`. RuntimeLimits gained two fields (`max_session_secs`, `shutdown_drain_secs`) — external callers constructing the struct literally must update their call sites. SessionPool checkout API replaced (`checkout() -> PoolGuard`)._
+_Release candidate for v0.9.0 — bundles five P0 fixes plus two supporting items (`PoolGuard` Drop, strict 413 assertion). RuntimeLimits gained two fields (`max_session_secs`, `shutdown_drain_secs`) — external callers constructing the struct literally must update their call sites. SessionPool checkout API replaced (`checkout() -> PoolGuard`)._
 
 ### Added
 
-- **Graceful WebSocket / SSE drain on shutdown** (closes `specs/prod-readiness-v1.0.md` P0). `axum::serve.with_graceful_shutdown` only tracks the HTTP router — WebSocket upgrades and SSE `spawn_blocking` tasks used to outlive the signal, so clients lost their `Final` frame on deploy. New `CancellationToken` + `TaskTracker` cascade through every handler; on SIGTERM each live session flushes, emits an empty-if-needed `Final`, and closes with `Close(1001 Going Away)`. After `axum::serve` returns, `run_with_config` waits up to `shutdown_drain_secs` for the tracker to drain.
-- **Wall-clock max-session cap** (closes `specs/prod-readiness-v1.0.md` P0). `idle_timeout` is reset on every frame, so a client that streams silence every 100 ms held a `SessionTriplet` forever. New `max_session_secs` limit closes the session with `Close(1008 Policy Violation)` + `Error { code: "max_session_duration_exceeded" }`. `0` disables the cap (not recommended).
+- **Graceful WebSocket / SSE drain on shutdown**. `axum::serve.with_graceful_shutdown` only tracks the HTTP router — WebSocket upgrades and SSE `spawn_blocking` tasks used to outlive the signal, so clients lost their `Final` frame on deploy. New `CancellationToken` + `TaskTracker` cascade through every handler; on SIGTERM each live session flushes, emits an empty-if-needed `Final`, and closes with `Close(1001 Going Away)`. After `axum::serve` returns, `run_with_config` waits up to `shutdown_drain_secs` for the tracker to drain.
+- **Wall-clock max-session cap**. `idle_timeout` is reset on every frame, so a client that streams silence every 100 ms held a `SessionTriplet` forever. New `max_session_secs` limit closes the session with `Close(1008 Policy Violation)` + `Error { code: "max_session_duration_exceeded" }`. `0` disables the cap (not recommended).
 - **CLI flags.**
   - `--max-session-secs` / `GIGASTT_MAX_SESSION_SECS` (default `3600`).
   - `--shutdown-drain-secs` / `GIGASTT_SHUTDOWN_DRAIN_SECS` (default `10`, clamped to `>= 1`).
@@ -1554,12 +2617,12 @@ _Release candidate for v0.9.0 — bundles five P0 fixes plus two supporting item
 
 ### Added
 
-- **Prometheus `/metrics` endpoint** (closes `specs/todo.md` item 7). Enabled via `--metrics` (env `GIGASTT_METRICS=1`); off by default. Exposes
+- **Prometheus `/metrics` endpoint**. Enabled via `--metrics` (env `GIGASTT_METRICS=1`); off by default. Exposes
   - `gigastt_http_requests_total{method,path,status}` (counter)
   - `gigastt_http_request_duration_seconds{method,path}` (histogram).
   The endpoint sits behind the Origin allowlist and (when configured) the per-IP rate limiter. Recorder install is tolerant of double-install: emits a warning and keeps the server running instead of failing.
-- **Per-IP rate limiting** (closes `specs/todo.md` item 17). `--rate-limit-per-minute N` (env `GIGASTT_RATE_LIMIT_PER_MINUTE`) + `--rate-limit-burst N` (env `GIGASTT_RATE_LIMIT_BURST`). Off by default. Applies to `/v1/*` and `/v1/ws`; `/health` is exempt. Implemented with `tower_governor` using `SmartIpKeyExtractor`. Returns 429 on violations. A background task evicts expired token buckets every 60 s.
-- **`docs/deployment.md`** (closes `specs/todo.md` item 20). Reverse-proxy recipes for Caddy and nginx (certbot + `auth_basic`), Origin header behaviour, Docker binding strategy, health-check target, and a hardening checklist for remote deployments.
+- **Per-IP rate limiting**. `--rate-limit-per-minute N` (env `GIGASTT_RATE_LIMIT_PER_MINUTE`) + `--rate-limit-burst N` (env `GIGASTT_RATE_LIMIT_BURST`). Off by default. Applies to `/v1/*` and `/v1/ws`; `/health` is exempt. Implemented with `tower_governor` using `SmartIpKeyExtractor`. Returns 429 on violations. A background task evicts expired token buckets every 60 s.
+- **`docs/deployment.md`**. Reverse-proxy recipes for Caddy and nginx (certbot + `auth_basic`), Origin header behaviour, Docker binding strategy, health-check target, and a hardening checklist for remote deployments.
 
 ### Changed
 
@@ -1591,15 +2654,15 @@ _Release candidate for v0.9.0 — bundles five P0 fixes plus two supporting item
 
 ### Added
 
-- **Configurable runtime limits** (`gigastt::server::RuntimeLimits`, closes `specs/todo.md` item 6). Three knobs exposed via CLI + environment variables:
+- **Configurable runtime limits** (`gigastt::server::RuntimeLimits`). Three knobs exposed via CLI + environment variables:
   - `--idle-timeout-secs` / `GIGASTT_IDLE_TIMEOUT_SECS` — WebSocket idle timeout (default 300).
   - `--ws-frame-max-bytes` / `GIGASTT_WS_FRAME_MAX_BYTES` — max WS frame / message (default 512 KiB).
   - `--body-limit-bytes` / `GIGASTT_BODY_LIMIT_BYTES` — max REST body (default 50 MiB).
   Delivered via a new `RuntimeLimits` field on `ServerConfig` and `http::AppState`; TOML config file support stays for a follow-up.
-- **Canonical WebSocket path `/v1/ws`** (closes `specs/todo.md` item 11). Versioned path aligned with REST; legacy `/ws` remains as an alias with a warn-level deprecation log on every upgrade. Removal planned for v1.0.
-- **`diarization` capability in `GET /v1/models`** (closes `specs/todo.md` item 12). Mirrors the WebSocket `Ready` field so clients can probe capabilities without opening a WS.
-- **Docker `GIGASTT_BAKE_MODEL=1` build-arg** (closes `specs/todo.md` item 10). When set, a dedicated `model-fetcher` stage runs `gigastt download` during image build and the runtime stage copies the model into `/home/gigastt/.gigastt/models/`. Default (`0`) preserves the slim image.
-- **`cargo deny check` in CI + `deny.toml`** (closes first half of `specs/todo.md` item 14 — SBOM stays for later). Enforces license allowlist + advisory scan + crates.io-only source + wildcard ban on every PR via `EmbarkStudios/cargo-deny-action@v2`.
+- **Canonical WebSocket path `/v1/ws`**. Versioned path aligned with REST; legacy `/ws` remains as an alias with a warn-level deprecation log on every upgrade. Removal planned for v1.0.
+- **`diarization` capability in `GET /v1/models`**. Mirrors the WebSocket `Ready` field so clients can probe capabilities without opening a WS.
+- **Docker `GIGASTT_BAKE_MODEL=1` build-arg**. When set, a dedicated `model-fetcher` stage runs `gigastt download` during image build and the runtime stage copies the model into `/home/gigastt/.gigastt/models/`. Default (`0`) preserves the slim image.
+- **`cargo deny check` in CI + `deny.toml`**. Enforces license allowlist + advisory scan + crates.io-only source + wildcard ban on every PR via `EmbarkStudios/cargo-deny-action@v2`.
 
 ### Changed
 
@@ -1642,7 +2705,7 @@ _Release candidate for v0.9.0 — bundles five P0 fixes plus two supporting item
 
 ### Security
 
-- Closes `specs/todo.md` P1 items 4, 5, 8, 9. Reduces the risk that a malicious webpage can drive-by-connect to the local transcription server and exfiltrate microphone audio.
+- Reduces the risk that a malicious webpage can drive-by-connect to the local transcription server and exfiltrate microphone audio.
 
 ## [0.5.3] - 2026-04-17
 
@@ -1655,7 +2718,7 @@ _Release candidate for v0.9.0 — bundles five P0 fixes plus two supporting item
 ### Fixed
 
 - **CI clippy** (`src/model/mod.rs:29`) — replaced manual `if self.total > 0` division guard with `checked_div`, satisfying Rust 1.95's new `clippy::manual_checked_ops` lint that broke CI on v0.5.1.
-- **Release workflow** (`.github/workflows/release.yml`) — removed the `linux-x86_64-cuda` matrix entry: `Jimver/cuda-toolkit@v0.2.19` cannot resolve the `cuda-nvcc-12-4` / `cuda-cudart-12-4` packages on `ubuntu-latest`. Tracked for re-enabling in `specs/todo.md`. Until then CUDA users build from source.
+- **Release workflow** (`.github/workflows/release.yml`) — removed the `linux-x86_64-cuda` matrix entry: `Jimver/cuda-toolkit@v0.2.19` cannot resolve the `cuda-nvcc-12-4` / `cuda-cudart-12-4` packages on `ubuntu-latest`. Until then CUDA users build from source.
 
 ## [0.5.1] - 2026-04-17
 
@@ -1664,7 +2727,6 @@ _Release candidate for v0.9.0 — bundles five P0 fixes plus two supporting item
 - **Release automation** (`.github/workflows/release.yml`) — tag-triggered matrix workflow that produces `gigastt-<ver>-aarch64-apple-darwin.tar.gz` (coreml), `gigastt-<ver>-x86_64-unknown-linux-gnu.tar.gz` (cpu), `gigastt-<ver>-x86_64-unknown-linux-gnu-cuda.tar.gz`, per-asset `.sha256` files, and aggregated `SHA256SUMS.txt`. Replaces ad-hoc manual uploads that previously broke SHA-pinned downstream clients.
 - **`CONTRIBUTING.md`** — release checklist and contribution guidelines, including an explicit prohibition on manual `gh release upload` of binary assets.
 - **`examples/bun_client.ts`, `examples/go_client.go`, `examples/KotlinClient.kt`** — WebSocket client samples in Go, Kotlin (OkHttp), and Bun-native TypeScript.
-- **`specs/todo.md` + `specs/plan.md`** — 20-item follow-up list from the v0.5.0 critique, ranked P0/P1/P2 and sequenced into six phases through v1.0.0.
 
 ### Fixed
 
@@ -1706,6 +2768,19 @@ _Release candidate for v0.9.0 — bundles five P0 fixes plus two supporting item
 - **Benchmark overflow** — `number_to_words` handles numbers > 999,999.
 - **Dockerfiles** updated to Rust 1.85+ for edition 2024 support.
 - **Audio decode refactor** — extracted shared inner function, eliminated ~80 line duplication.
+
+## [0.4.4] - 2026-04-13
+
+### Added
+
+- Russian README (`README_RU.md`) with a language switcher.
+
+### Fixed
+
+- CI toolchain: stable Rust, `-A dead_code` restored, `--locked` audit;
+  shutdown-test timeout raised 5 s → 15 s for slow CI debug builds, and
+  `e2e_shutdown` excluded from CI (needs graceful connection termination).
+- README inaccuracies: WER header, test counts, a missing endpoint, CLI flags.
 
 ## [0.4.3] - 2026-04-13
 
@@ -1842,7 +2917,7 @@ _Release candidate for v0.9.0 — bundles five P0 fixes plus two supporting item
 - `Engine::load()`, `Engine::process_chunk()`, and `Engine::transcribe_file()` return `Result<T, GigasttError>` instead of `anyhow::Result<T>`.
 - All public structs/enums are `#[non_exhaustive]` — external struct literal construction requires constructor methods.
 
-## [0.2.0] - 2026-04-06
+## [0.2.0] - 2026-04-10
 
 ### Added
 
@@ -1861,7 +2936,7 @@ _Release candidate for v0.9.0 — bundles five P0 fixes plus two supporting item
 - Audio pipeline: accept 48kHz from WebSocket clients, resample to 16kHz internally.
 - Encoder output shape handling: channels-first `[1, 768, T]` format.
 
-## [0.1.2] - 2026-04-01
+## [0.1.2] - 2026-04-09
 
 ### Added
 
@@ -1875,13 +2950,26 @@ _Release candidate for v0.9.0 — bundles five P0 fixes plus two supporting item
 - Multi-format audio support: WAV, MP3, M4A/AAC, OGG/Vorbis, FLAC (via symphonia).
 - 39 unit tests (tokenizer, features, decode, inference, protocol).
 
-[Unreleased]: https://github.com/ekhodzitsky/gigastt/compare/v2.11.3...HEAD
+[Unreleased]: https://github.com/ekhodzitsky/gigastt/compare/v2.22.0...HEAD
+[2.22.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.21.0...v2.22.0
+[2.21.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.20.0...v2.21.0
+[2.20.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.19.0...v2.20.0
+[2.19.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.18.0...v2.19.0
+[2.18.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.17.0...v2.18.0
+[2.17.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.16.0...v2.17.0
+[2.16.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.15.0...v2.16.0
+[2.15.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.14.4...v2.15.0
+[2.14.4]: https://github.com/ekhodzitsky/gigastt/compare/v2.14.3...v2.14.4
+[2.14.3]: https://github.com/ekhodzitsky/gigastt/compare/v2.14.2...v2.14.3
+[2.14.2]: https://github.com/ekhodzitsky/gigastt/compare/v2.14.0...v2.14.2
+[2.14.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.13.0...v2.14.0
+[2.13.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.12.0...v2.13.0
+[2.12.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.11.3...v2.12.0
 [2.11.3]: https://github.com/ekhodzitsky/gigastt/compare/v2.11.2...v2.11.3
 [2.11.2]: https://github.com/ekhodzitsky/gigastt/compare/v2.11.1...v2.11.2
 [2.11.1]: https://github.com/ekhodzitsky/gigastt/compare/v2.11.0...v2.11.1
 [2.11.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.10.0...v2.11.0
-[2.10.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.9.0...v2.10.0
-[2.9.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.8.0...v2.9.0
+[2.10.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.8.0...v2.10.0
 [2.8.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/ekhodzitsky/gigastt/compare/v2.5.0...v2.6.0
@@ -1894,14 +2982,18 @@ _Release candidate for v0.9.0 — bundles five P0 fixes plus two supporting item
 [2.0.12]: https://github.com/ekhodzitsky/gigastt/compare/v2.0.11...v2.0.12
 [2.0.11]: https://github.com/ekhodzitsky/gigastt/compare/v2.0.10...v2.0.11
 [2.0.10]: https://github.com/ekhodzitsky/gigastt/compare/v2.0.9...v2.0.10
-[2.0.3]: https://github.com/ekhodzitsky/gigastt/compare/v2.0.2...v2.0.3
-[2.0.2]: https://github.com/ekhodzitsky/gigastt/compare/v2.0.1...v2.0.2
-[2.0.1]: https://github.com/ekhodzitsky/gigastt/compare/v2.0.0...v2.0.1
-[2.0.0]: https://github.com/ekhodzitsky/gigastt/compare/v1.0.1...v2.0.0
+[2.0.9]: https://github.com/ekhodzitsky/gigastt/compare/v2.0.8...v2.0.9
+[2.0.8]: https://github.com/ekhodzitsky/gigastt/compare/v2.0.7...v2.0.8
+[2.0.7]: https://github.com/ekhodzitsky/gigastt/compare/v2.0.6...v2.0.7
+[2.0.6]: https://github.com/ekhodzitsky/gigastt/compare/v2.0.5...v2.0.6
+[2.0.5]: https://github.com/ekhodzitsky/gigastt/compare/v2.0.4...v2.0.5
+[2.0.4]: https://github.com/ekhodzitsky/gigastt/compare/v2.0.3...v2.0.4
+[2.0.3]: https://github.com/ekhodzitsky/gigastt/compare/v1.0.2...v2.0.3
+[1.0.2]: https://github.com/ekhodzitsky/gigastt/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/ekhodzitsky/gigastt/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/ekhodzitsky/gigastt/compare/v0.10.0...v1.0.0
-[0.10.0]: https://github.com/ekhodzitsky/gigastt/compare/v0.9.6...v0.10.0
-[0.9.6]: https://github.com/ekhodzitsky/gigastt/compare/v0.9.5...v0.9.6
+[0.10.0]: https://github.com/ekhodzitsky/gigastt/compare/v0.9.5...v0.10.0
+[0.9.5]: https://github.com/ekhodzitsky/gigastt/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/ekhodzitsky/gigastt/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/ekhodzitsky/gigastt/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/ekhodzitsky/gigastt/compare/v0.9.1...v0.9.2
@@ -1920,10 +3012,7 @@ _Release candidate for v0.9.0 — bundles five P0 fixes plus two supporting item
 [0.5.2]: https://github.com/ekhodzitsky/gigastt/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/ekhodzitsky/gigastt/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ekhodzitsky/gigastt/compare/v0.4.3...v0.5.0
-[0.4.3]: https://github.com/ekhodzitsky/gigastt/compare/v0.4.2...v0.4.3
-[0.4.2]: https://github.com/ekhodzitsky/gigastt/compare/v0.4.1...v0.4.2
-[0.4.1]: https://github.com/ekhodzitsky/gigastt/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/ekhodzitsky/gigastt/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/ekhodzitsky/gigastt/compare/v0.2.0...v0.3.0
+[0.4.4]: https://github.com/ekhodzitsky/gigastt/compare/v0.4.3...v0.4.4
+[0.4.3]: https://github.com/ekhodzitsky/gigastt/compare/v0.2.0...v0.4.3
 [0.2.0]: https://github.com/ekhodzitsky/gigastt/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/ekhodzitsky/gigastt/releases/tag/v0.1.2

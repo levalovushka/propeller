@@ -52,15 +52,38 @@ Xiph.Org Foundation (https://datatracker.ietf.org/ipr/1524/), Microsoft
 Corporation (https://datatracker.ietf.org/ipr/1914/), Broadcom Corporation
 (https://datatracker.ietf.org/ipr/1526/).
 
+Speaker diarization model
+-------------------------
+
+When the `diarization` feature is enabled, gigastt downloads and runs
+`wespeaker_resnet34.onnx` from
+[onnx-community/wespeaker-voxceleb-resnet34-LM](https://huggingface.co/onnx-community/wespeaker-voxceleb-resnet34-LM)
+(WeSpeaker ResNet34 speaker embeddings, ONNX export). That model is licensed
+under **CC BY 4.0** and requires attribution when redistributed or used in
+products. The polyvoice clustering crate (Apache-2.0 / MIT) is a Rust
+dependency used only when the feature is compiled in. Diarization is opt-in at
+runtime (`?diarization=true` / WebSocket `Configure`); skip the download with
+`gigastt download --skip-diarization`.
+
 Benchmark data
 --------------
 
 Benchmark data under `benchmark/` — the manifest reference transcripts and the
 `reference` / `hypothesis` fields in `benchmark/results_full/` — is NOT
-MIT-licensed and retains its upstream non-commercial licenses (see
-`benchmark/DATA_LICENSE`):
+MIT-licensed and retains upstream licenses (see `benchmark/DATA_LICENSE`):
 
 - Open STT — by snakers4 — CC BY-NC 4.0
   https://github.com/snakers4/open_stt
 - Golos — by SberDevices — Sber Public License (non-commercial / share-alike)
   https://github.com/sberdevices/golos
+- Common Voice RU — Mozilla Common Voice contributors — CC0-1.0
+  (Corpus 21.0 via community mirror `artyomboyko/common_voice_21_0_ru`)
+- FLEURS — Conneau et al. / Google — CC BY 4.0
+  https://huggingface.co/datasets/google/fleurs
+- Russian LibriSpeech (RuLS) — OpenSLR SLR96 / LibriVox — Public Domain (USA)
+  https://www.openslr.org/96/
+- SOVA RuDevices / Podlodka Speech — see HF cards
+  `bond005/sova_rudevices`, `bond005/podlodka_speech`
+- ToneWebinars — Vikhrmodels (from ZeroAgency/shkolkovo-bobr.video-webinars-audio)
+  — Apache-2.0
+  https://huggingface.co/datasets/Vikhrmodels/ToneWebinars
