@@ -3,11 +3,11 @@ import Foundation
 
 /// What a process actually spent — including a *child* process we did not write.
 ///
-/// The live layer's work does not happen in our address space: frames go over a
-/// socket into `gigastt`, and that is where the encoder runs. Measuring our own
-/// RSS and CPU therefore says almost nothing about the cost of showing a live
-/// transcript. `proc_pid_rusage` reads another process of the same user, so the
-/// sidecar can be metered from here without instrumenting it.
+/// ASR does not happen in our address space: audio goes over HTTP into
+/// `gigastt`, and that is where the encoder runs. Measuring our own RSS and CPU
+/// therefore says almost nothing about the cost of a transcript.
+/// `proc_pid_rusage` reads another process of the same user, so the sidecar can
+/// be metered from here without instrumenting it.
 ///
 /// Cycles, not just seconds. On Apple Silicon a P-core and an E-core burn very
 /// different energy for the same wall-clock second, and DVFS moves the clock
@@ -118,43 +118,4 @@ private func withArrayOfCStrings<R>(
     pointers.append(nil)
     defer { pointers.forEach { if let p = $0 { free(p) } } }
     return pointers.withUnsafeMutableBufferPointer { body($0.baseAddress!) }
-}
-
-/// Samples a process while something else runs, keeping the high-water RSS.
-///
-/// Peak RSS matters more than the final number: the sidecar loads the encoder,
-/// serves a meeting, and the interesting figure is the top of that curve, not
-/// where it settled once we stopped feeding it.
-final class ProcessSampler: @unchecked Sendable {
-    private let pid: pid_t
-    private let lock = NSLock()
-    private var peakResident: UInt64 = 0
-    private var timer: DispatchSourceTimer?
-
-    init(pid: pid_t) {
-        self.pid = pid
-    }
-
-    var peakResidentMB: Double {
-        lock.lock(); defer { lock.unlock() }
-        return Double(peakResident) / 1_048_576
-    }
-
-    func start(interval: TimeInterval = 0.25) {
-        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
-        timer.schedule(deadline: .now(), repeating: interval)
-        timer.setEventHandler { [weak self] in
-            guard let self, let cost = ProcessCost.of(pid: self.pid) else { return }
-            self.lock.lock()
-            self.peakResident = max(self.peakResident, cost.residentBytes)
-            self.lock.unlock()
-        }
-        self.timer = timer
-        timer.resume()
-    }
-
-    func stop() {
-        timer?.cancel()
-        timer = nil
-    }
 }

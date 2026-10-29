@@ -75,9 +75,6 @@ let package = Package(
             path: "MCPServer"
         ),
         /// Batch pipeline harness — emits benchmarks/latest.json (plan-testing-metrics M2).
-        /// `--live` measures the live layer instead; it reuses the product's own
-        /// transcript assembly and stem-dominance rule from PropellerPure, so the
-        /// measured text is the shipped text.
         .executableTarget(
             name: "Bench",
             dependencies: [

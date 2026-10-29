@@ -8,10 +8,6 @@ import Darwin
 
 func run() async throws {
     let args = Array(CommandLine.arguments.dropFirst())
-    if args.contains("--live") {
-        try await runLive(args)
-        return
-    }
     if args.contains("--search") {
         try await runSearch(args)
         return
@@ -103,8 +99,8 @@ func run() async throws {
                      Double(peak) / 1_048_576, Double(released) / 1_048_576))
     }
 
-    // Only the batch keys are touched: a `--live` run's numbers stay where they
-    // are, so the two harnesses can be run separately and still diff together.
+    // Only the batch keys are touched: the other metrics in the file stay where
+    // they are, so harnesses can be run separately and still diff together.
     // The fixture's own name, not a constant: a batch run on another clip used to
     // overwrite ru-short-2spk's numbers with numbers taken on different audio.
     let latestURL = try writeMetrics(
@@ -346,25 +342,11 @@ enum BenchError: LocalizedError {
     case missingFixture(String)
     case binaryNotFound
     case sidecarTimeout
-    case portBusy(Int)
-    case sessionFailed(String)
-    case costUnavailable
     var errorDescription: String? {
         switch self {
         case .missingFixture(let p): return "Fixture not found: \(p)"
         case .binaryNotFound: return "gigastt binary not found (set GIGASTT_BIN)"
         case .sidecarTimeout: return "gigastt did not become healthy within 180s"
-        case .portBusy(let port):
-            return """
-                Port \(port) already serves a healthy gigastt. The live harness \
-                needs its own process to meter (pass --port N for another one), \
-                and a server shared with the running app would mix its work into \
-                the measurement.
-                """
-        case .sessionFailed(let why):
-            return "live session failed — \(why); the run is not a measurement"
-        case .costUnavailable:
-            return "proc_pid_rusage refused: cannot meter CPU for this process"
         }
     }
 }
