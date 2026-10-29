@@ -975,11 +975,8 @@ struct MainView: View {
                     .frame(maxWidth: .infinity)
             }
         } else if let entry = state.selectedRecording, isBeingRecorded(entry) {
-            RecordingPaneView(
-                live: state.live,
-                entry: entry,
+            RecordingPaneBody(
                 isPaused: state.isRecordingPaused,
-                ownerName: Preferences.shared.ownerName,
                 transcriptNotes: transcriptNotes(for: entry),
                 composer: .init(
                     placeholder: "Начните писать заметку",
@@ -1018,7 +1015,6 @@ struct MainView: View {
                     hasTranscript: !turns.isEmpty,
                     rest: state.rest(of: entry)
                 ),
-                transcriptSource: liveTurnsStandIn(for: entry) ? .live : .stored,
                 transcriptDisclosure: entry.depthDisclosure,
                 summaryController: summaryEditing,
                 // No file behind it, no caret: a summary that cannot be saved
@@ -1065,23 +1061,13 @@ struct MainView: View {
 
     /// Diarised segments when they exist, the plain transcript when they do not
     /// — same fallback the detail view has always used.
-    /// Стоит ли сейчас в колонке живой текст вместо готовой расшифровки.
     ///
-    /// Встреча только что кончилась, проход по файлу ещё идёт — а живой текст
-    /// уже есть, и это всё, что про неё известно. Стирать его в момент нажатия
-    /// «стоп» значило бы отнять у человека ровно то, что он читал секунду
-    /// назад; настоящая расшифровка займёт это место, когда будет, — и займёт
-    /// заменой, а не подменой (`MeetingPaneBody.TranscriptSource`).
-    private func liveTurnsStandIn(for entry: RecordingEntry) -> Bool {
-        entry.transcript == nil
-            && state.live.recordingID == entry.id
-            && !state.live.transcript.isEmpty
-    }
-
+    /// Черновика из живого слоя больше нет (снят 2026-10-29): до конца прохода
+    /// по файлу колонка пуста и говорит, на какой ступени встреча
+    /// (`SummaryColumnContent`). `liveSegmentsJSON` у встреч из 1.17 на диске
+    /// остаётся — его читают MCP и стирание, — но экран его не показывает:
+    /// конвейер всё равно расшифрует такую встречу.
     private func transcriptTurns(for entry: RecordingEntry) -> [MeetingTranscriptColumn.Turn] {
-        if liveTurnsStandIn(for: entry) {
-            return liveTurns(state.live.transcript)
-        }
         let turns: [TranscriptPresentation.Turn]
         if let json = entry.mergedSegmentsJSON,
            let data = json.data(using: .utf8),
@@ -1090,12 +1076,6 @@ struct MainView: View {
             turns = TranscriptPresentation.turns(from: segments)
         } else if let transcript = entry.transcript, !transcript.isEmpty {
             turns = TranscriptPresentation.turns(parsing: transcript, duration: entry.duration)
-        } else if let segments = storedLiveSegments(for: entry) {
-            // Черновик, снятый при остановке. Последний в очереди намеренно:
-            // это самое неточное, что есть у встречи, и уступает всему
-            // настоящему. Зато переживает перезапуск — а до него встреча,
-            // ждущая расшифровки, после перезапуска не могла показать ни слова.
-            turns = TranscriptPresentation.turns(from: segments)
         } else {
             turns = []
         }
@@ -1105,33 +1085,6 @@ struct MainView: View {
                 speaker: turn.speaker,
                 time: turn.timestamp,
                 text: turn.phrases.map(\.text).joined(separator: " "),
-                startSeconds: turn.startSeconds
-            )
-        }
-    }
-
-    /// Живые реплики, показанные как обычный транскрипт: те же имена дорожек,
-    /// что поставит финальный проход, — чтобы текст не переименовывал говорящих
-    /// в момент, когда его заменят.
-    /// Черновик живого текста с диска, если он ещё нужен.
-    private func storedLiveSegments(for entry: RecordingEntry) -> [PersistedSegment]? {
-        guard let json = entry.liveSegmentsJSON,
-              let data = json.data(using: .utf8),
-              let segments = try? JSONDecoder().decode([PersistedSegment].self, from: data),
-              !segments.isEmpty else { return nil }
-        return segments
-    }
-
-    private func liveTurns(_ live: LiveTranscript) -> [MeetingTranscriptColumn.Turn] {
-        live.turns.map { turn in
-            MeetingTranscriptColumn.Turn(
-                id: turn.id,
-                speaker: SourceAwareSpeaker.stemsOnly(
-                    source: turn.channel == .owner ? .microphone : .system,
-                    ownerName: Preferences.shared.ownerName
-                ),
-                time: turn.timestamp,
-                text: turn.text,
                 startSeconds: turn.startSeconds
             )
         }

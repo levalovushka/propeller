@@ -528,8 +528,8 @@ class TranscriptionService {
         // для чужих реплик: владельца атрибутирует микрофонный стем (факт
         // сильнее), а Zoom-имя владельца в ленту не попадает — иначе он
         // раздваивается. Молчание журнала закрывает диаризация, как и было.
-        // Та же машинка, что у живого пути: одно сглаживание, одно правило
-        // владельца, один ответ на вопрос «кто говорил в секунду t».
+        // Машинка `LiveSpeaker` — одно сглаживание, одно правило владельца,
+        // один ответ на вопрос «кто говорил в секунду t».
         var machine = CallWindowJournal.LiveSpeaker()
         for poll in callPolls.sorted(by: { $0.t < $1.t }) { machine.take(poll) }
         for line in owner { machine.noteOwnerTurn(start: line.start, end: line.end) }

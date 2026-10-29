@@ -20,7 +20,7 @@ class AudioRecorder: ObservableObject {
     /// устройство ввода, и его AGC достаётся всем, кто держит микрофон, —
     /// тестировщик стал почти не слышен собеседникам (удалено 2026-07-28,
     /// `9c0ae44`). Эхо динамика в микрофонной дорожке остаётся; с экрана его
-    /// убирает `EchoDedup` — по тексту, а не фильтром на звуке.
+    /// убирает офлайн-проход (`StemAssembly`) — по тексту, а не фильтром на звуке.
     private(set) var startTime: Date?
     private(set) var recordingID: String?
     private(set) var filePath: URL?
@@ -61,15 +61,6 @@ class AudioRecorder: ObservableObject {
     /// the essential source — this is surfaced immediately, not tagged post-hoc.
     @Published var micCaptureWarning: String?
 
-    /// Кадры обеих дорожек 16 кГц моно по мере захвата — то, из чего живой слой
-    /// делает транскрипт (`LiveTranscriptService`). Зовётся с очереди записи, а
-    /// не с главного актора: звук туда не ходит.
-    ///
-    /// Ставится до `start()`; переживает паузу, потому что пауза — это состояние
-    /// записи, а не её конец. На микрофонном пути не зовётся никогда: буферов
-    /// там нет, и это одна из причин, по которой живой слой на нём отсутствует.
-    var onLiveFrames: ((_ mic: [Float], _ system: [Float]) -> Void)?
-
     /// Запись идёт, но звук в неё сейчас не попадает.
     ///
     /// Не «стоп с продолжением»: файл остаётся тем же, дорожки — теми же, и
@@ -104,7 +95,7 @@ class AudioRecorder: ObservableObject {
     /// Их единственный потребитель — лопасть в чёлке, и она берёт последнее
     /// значение замыканием, когда сама решит рисовать
     /// (`NotchController.face(on:)` → `NotchFace.level`). Публикация же
-    /// объявлялась 17.3 раза в секунду (замерено, `--live-probe`) — и каждая
+    /// объявлялась 17.3 раза в секунду (замерено) — и каждая
     /// заставляла SwiftUI пересобирать всё, что подписано на recorder, ради
     /// значения, которого никто не ждал. Дефект P4 в его самой дорогой части.
     var micLevelHistory: [Float] = []
@@ -205,12 +196,6 @@ class AudioRecorder: ObservableObject {
         let capture = ProcessTapCapture(micURL: micURL, systemURL: sysURL, callPlatformID: platformID)
         capture.onIssue = { message in
             NSLog("[AudioRecorder] tap capture note: \(message)")
-        }
-        // Захваченный замыканием, а не прочитанный через `self`: кадры идут с
-        // очереди записи, и лезть за ним на главный актор двадцать раз в
-        // секунду незачем.
-        if let sink = onLiveFrames {
-            capture.onLiveFrames = { mic, system in sink(mic, system) }
         }
         do {
             try capture.start()

@@ -30,7 +30,7 @@ final class TranscriptAccuracyTests: XCTestCase {
     }
 
     func testОборванноеСловоОстаётсяОднимСловом() {
-        // Движок помечает обрыв дефисом («рабо-таем»): склейка в LiveTranscript
+        // Движок помечает обрыв дефисом («рабо-таем»): склейка реплик
         // даёт одно слово, и разбивать его на два метрика не имеет права.
         XCTAssertEqual(TranscriptAccuracy.words(in: "по-моему так"), ["по-моему", "так"])
         XCTAssertEqual(TranscriptAccuracy.words(in: "слово — тире"), ["слово", "тире"])
@@ -91,13 +91,14 @@ final class TranscriptAccuracyTests: XCTestCase {
 
     // MARK: - Кому приписаны слова
 
-    func testСловаПодПравильнойДорожкойСчитаютсяВерными() {
-        var live = LiveTranscript()
-        live.absorb(channel: .owner, start: 0, end: 2, text: "привет давайте")
-        live.absorb(channel: .remote, start: 3, end: 5, text: "хорошо я возьму")
+    /// Слова реплики, подписанные одной дорожкой.
+    private func said(_ text: String, on channel: TranscriptAccuracy.Channel) -> [TranscriptAccuracy.Word] {
+        TranscriptAccuracy.words(in: text).map { .init(text: $0, channel: channel) }
+    }
 
+    func testСловаПодПравильнойДорожкойСчитаютсяВерными() {
         let r = TranscriptAccuracy.compare(
-            hypothesis: TranscriptAccuracy.words(in: live),
+            hypothesis: said("привет давайте", on: .owner) + said("хорошо я возьму", on: .remote),
             reference: [
                 .init(text: "привет", channel: .owner),
                 .init(text: "давайте", channel: .owner),
@@ -113,11 +114,8 @@ final class TranscriptAccuracyTests: XCTestCase {
     func testЧужаяРечьПодИменемВладельцаВиднаОтдельноОтWER() {
         // Эхо из колонки: текст распознан дословно верно, но подписан не тем.
         // WER этого не заметит — attribution обязан.
-        var live = LiveTranscript()
-        live.absorb(channel: .owner, start: 0, end: 2, text: "хорошо я возьму")
-
         let r = TranscriptAccuracy.compare(
-            hypothesis: TranscriptAccuracy.words(in: live),
+            hypothesis: said("хорошо я возьму", on: .owner),
             reference: [
                 .init(text: "хорошо", channel: .remote),
                 .init(text: "я", channel: .remote),

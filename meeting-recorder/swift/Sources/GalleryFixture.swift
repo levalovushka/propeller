@@ -236,7 +236,6 @@ enum GalleryFixture {
         state.isRecording = false
         state.galleryPoseRecording(nil)
         state.galleryPosePaused(false)
-        state.live.end()
         state.galleryPose(activity: .idle)
         state.galleryEditingRecap = false
         state.galleryRewritingSummary = false
@@ -286,11 +285,7 @@ enum GalleryFixture {
         // (`design/no-dead-ends.md`).
     }
 
-    /// Экран записи: живой транскрипт и он же на паузе.
-    ///
-    /// Реплики набираются теми же методами, что и настоящие — движка тут нет, а
-    /// правило склейки должно остаться тем же, иначе кадр показывает не то, что
-    /// увидит человек.
+    /// Экран записи на паузе: колонка заметок и поле ввода.
     private static func poseRecording(_ id: String, state: AppState) {
         let entry = recordingEntry(for: id)
         state.recordingStore.recordings = [entry] + library
@@ -298,19 +293,6 @@ enum GalleryFixture {
         state.isRecording = true
         state.galleryPoseRecording(entry.id)
         state.elapsedSeconds = 758   // строка выводится: 12:38
-
-        var live = LiveTranscript()
-        live.absorb(channel: .owner, start: 731, end: 734,
-                         text: "Давай пройдёмся по вебхукам.")
-        live.absorb(channel: .remote, start: 736, end: 740,
-                         text: "Да, у нас там подпись не сходится на ретраях.")
-        live.absorb(channel: .owner, start: 742, end: 745,
-                         text: "Значит считаем её от исходного тела, а не от повторного.")
-        if id == "rec-live" {
-            live.absorb(channel: .remote, start: 754, end: 757,
-                        text: "Тогда я поправлю клиент и прогоню ретраи ещё раз.")
-        }
-        state.live.galleryPose(recordingID: entry.id, transcript: live)
         if id == "rec-paused" { state.galleryPosePaused(true) }
     }
 

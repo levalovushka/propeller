@@ -962,19 +962,6 @@ public enum Tokens {
         /// stops are 29.643 % / 43.876 % / 58.108 %.
         public static let shimmerHalfWidth: Double = 0.14232
         public static let shimmerCenter: Double = 0.43876
-
-        /// Soft typewriter on a status line. Не в рельсе с 2026-08-26 — там
-        /// строки статуса больше нет; числа остались для живого транскрипта
-        /// (`RecordingPane`), который читает их через `SoftTypewriter`.
-        public enum StatusReveal {
-            public static let softChars: Double = 16
-            public static let appearSecondsPerChar: Double = 0.028
-            public static let appearMin: Double = 0.35
-            public static let appearMax: Double = 0.9
-            public static let dismissSecondsPerChar: Double = 0.012
-            public static let dismissMin: Double = 0.12
-            public static let dismissMax: Double = 0.35
-        }
     }
 
     
@@ -1225,23 +1212,6 @@ public enum Tokens {
         /// Длинное намеренно: под коротким градиентом строка не исчезает, а
         /// обрезается, и это читается как сбой отрисовки. Замерено с макета.
         public static let transcriptBottomFade: CGFloat = 143
-
-        // MARK: Живая колонка — то же место, что у саммари
-
-        /// Как проявляется живой текст.
-        ///
-        /// Считано от подачи: движок отвечает раз в две секунды порциями по
-        /// три-четыре слова (`GigasttLiveSession`), то есть на проявление есть
-        /// почти вся эта пауза. Двадцать пять миллисекунд на знак — порция в
-        /// двадцать знаков печатается полсекунды и читается как письмо, а не
-        /// как вспышка; потолок в 1.4 с не даёт длинной порции догонять
-        /// следующую. Мягкий край в восемь знаков — на этой скорости он виден.
-        public enum LiveReveal {
-            public static let softChars: Double = 8
-            public static let secondsPerChar: Double = 0.025
-            public static let minimum: Double = 0.2
-            public static let maximum: Double = 1.4
-        }
 
         /// Доезд колонки до низа, когда в неё дописали. Не мгновенно: прыжок
         /// без движения читается как перерисовка экрана.

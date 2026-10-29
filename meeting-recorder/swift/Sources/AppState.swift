@@ -95,10 +95,6 @@ class AppState: ObservableObject {
 
     // Recording
     @Published var recorder = AudioRecorder()
-    /// Что слышно прямо сейчас — живой транскрипт идущей встречи. Отдельный
-    /// объект, а не поле: за него подписывается только экран записи, и текст,
-    /// приходящий несколько раз в секунду, не должен перерисовывать рельс.
-    let live = LiveTranscriptService()
     /// Какую запись сейчас пишем. Не то же, что «выбранная»: во время записи
     /// можно уйти читать другую встречу, и панель обязана понимать, на какую из
     /// двух она смотрит.
@@ -382,7 +378,7 @@ class AppState: ObservableObject {
         // and quit. Left unguarded, the meeting detector saw the very call being
         // probed and started recording it — the first probe left a 0-second stub
         // in the archive, which the pipeline then owed a summary.
-        if TapProbe.isRequested || LiveProbe.isRequested { return }
+        if TapProbe.isRequested { return }
         didBootstrap = true
 
         // (model migration lives in `Preferences.recapOllamaModel` so it also
@@ -534,9 +530,9 @@ class AppState: ObservableObject {
     /// иначе стирание имени возвращало бы блок в подошву.
     ///
     /// Прошлых встреч это не касается и касаться не должно: имя запекается в
-    /// текст в момент, когда текст ложится на диск — `persistLiveTranscript` на
-    /// остановке и `TranscriptionService` на расшифровке. Всё, что уже лежит —
-    /// markdown и сегменты, — переименование не читает.
+    /// текст в момент, когда текст ложится на диск — в `TranscriptionService`
+    /// на расшифровке. Всё, что уже лежит — markdown и сегменты, —
+    /// переименование не читает.
     func setOwnerNameFromSettings(_ name: String) {
         // Без подрезки: поле пишется на каждый набранный символ, и подрезанная
         // строка, вернувшаяся в него, съедала бы пробел посреди «Лёва Лобанов».
@@ -818,11 +814,6 @@ class AppState: ObservableObject {
         activeRecordingSource = recordingSource
 
         do {
-            // Ставится до старта: кадры пойдут с первой же сотой секунды, а
-            // подписчик у них один и на всю запись.
-            recorder.onLiveFrames = { [live] mic, system in
-                live.ingest(mic: mic, system: system)
-            }
             try recorder.start()
             isRecording = true
             // Call already in progress and the user started manually — still link it so
@@ -858,10 +849,6 @@ class AppState: ObservableObject {
                 calendarMeta: calendarMeta
             )
             recordingStore.add(entry)
-            // Кого пригласили — то и подсказываем распознавателю, с первой же
-            // секунды: живой слой открывает сессии сразу, а подсказки читаются
-            // при запуске сервера, не на запросе.
-            GigasttSidecar.shared.setMeetingTerms(MeetingHotwords.terms(for: calendarMeta))
             refreshStorageUsage()
             activeRecordingID = entry.id
             selectedRecordingID = entry.id
@@ -887,7 +874,6 @@ class AppState: ObservableObject {
             // открыты настройки. «Новая запись» нажата из того же рельса, и
             // ничего не произошедшее на экране читается как несработавшая кнопка.
             paneRoute = .meeting
-            startLiveTranscript(for: entry.id)
             Analytics.recordingStarted(source: recordingSource)
             if title != placeholder {
                 NSLog("[AppState] Recording titled from calendar: \(title)")
@@ -926,48 +912,13 @@ class AppState: ObservableObject {
         }
     }
 
-    /// Записать живой текст на встречу, чтобы он пережил перезапуск.
-    ///
-    /// Вызывается один раз, в момент остановки, — до того как сервис его
-    /// обнулит. Раньше здесь не сохранялось ничего: текст держался в памяти и
-    /// исчезал вместе с процессом, а встреча до конца расшифровки оставалась
-    /// без единого слова.
-    ///
-    /// Пусто на микрофонном пути (живого распознавания там не было) и у встречи,
-    /// где никто не сказал ни слова, — писать пустой массив незачем.
-    private func persistLiveTranscript() {
-        guard let id = live.recordingID, !live.transcript.isEmpty else { return }
-        let segments = live.transcript.persistedSegments(
-            ownerName: Preferences.shared.ownerName
-        )
-        guard let data = try? JSONEncoder().encode(segments),
-              let json = String(data: data, encoding: .utf8) else { return }
-        recordingStore.setLiveSegmentsJSON(json, for: id)
-    }
-
-    /// Живой транскрипт — только на общих часах: на микрофонном пути буферов
-    /// нет вовсе, и открывать сессию не из чего. Экран тогда честно говорит,
-    /// что текст будет после встречи, — это глубина, а не отказ.
-    private func startLiveTranscript(for id: String) {
-        guard recorder.capturePath == .processTap else {
-            live.end()
-            return
-        }
-        live.begin(
-            recordingID: id,
-            hasSystemAudio: recorder.capturesSystemAudio,
-            elapsed: 0
-        )
-    }
-
     // MARK: - Пауза
 
     /// Пауза — состояние записи, а не её конец: встреча остаётся той же, файл
-    /// тем же, живой текст на экране остаётся тем, что уже сказано.
+    /// тем же, заметки на экране — те же.
     func pauseRecording() {
         guard isRecording, !recorder.isPaused else { return }
         recorder.pause()
-        live.pause()
         // Часы наблюдателя обязаны стоять вместе с часами записи: настенное
         // время, идущее сквозь паузу, сдвинуло бы весь журнал на её длину.
         CallWindowObserver.shared.pause()
@@ -980,7 +931,6 @@ class AppState: ObservableObject {
     func resumeRecording() {
         guard isRecording, recorder.isPaused else { return }
         recorder.resume()
-        live.resume(at: recorder.elapsed)
         CallWindowObserver.shared.resume(elapsed: recorder.elapsed)
         NotchController.shared.refresh()
         objectWillChange.send()
@@ -1024,8 +974,6 @@ class AppState: ObservableObject {
         recorder.setMeteringDesired(false)
         isRecording = false
         activeRecordingID = nil
-        // Записи не будет вовсе — значит и её живого текста тоже.
-        live.end()
         recordingLinkedToCall = false
         let id = recorder.recordingID
         do {
@@ -1074,10 +1022,6 @@ class AppState: ObservableObject {
         recorder.setMeteringDesired(false)
         isRecording = false
         activeRecordingID = nil
-        // Сессии закрываются, а сказанное остаётся на экране: до конца прохода
-        // по файлу это всё, что про встречу известно.
-        live.stop()
-        persistLiveTranscript()
         let wasLinkedToCall = recordingLinkedToCall
         recordingLinkedToCall = false
         NotificationManager.shared.clearRecordingNotification()

@@ -82,10 +82,6 @@ final class ProcessTapCapture {
 
     /// Уровни для индикатора, с частотой буферов. Зовётся с очереди захвата.
     var levelCallback: ((_ mic: Float, _ system: Float) -> Void)?
-    /// Готовые 16 кГц моно кадры обеих дорожек, уже выровненные. То, из чего
-    /// живой слой (Э3) сделает две WebSocket-сессии; сегодня не подписан никто,
-    /// и это стоит ноль.
-    var onLiveFrames: ((_ mic: [Float], _ system: [Float]) -> Void)?
     /// Мягкая проблема по ходу записи — в лог, не в баннер.
     var onIssue: ((String) -> Void)?
 
@@ -826,9 +822,6 @@ final class ProcessTapCapture {
             let systemOut = hasSystem ? resample(systemChunk, with: systemConverter) : []
             write(micOut, to: micFile)
             if hasSystem { write(systemOut, to: systemFile) }
-            if let onLiveFrames, !micOut.isEmpty {
-                onLiveFrames(micOut, systemOut)
-            }
             if !flush { return }
         }
     }

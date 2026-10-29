@@ -70,8 +70,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full table. Coordinator
   **Строка встречи — одна строка 32 pt**: название с обрезкой и, если конвейер ей
   что-то должен, анимированная иконка слева (`PropellerStatusIcon`, решётка в
   `PropellerPure/StatusLattice.swift`). Шиммера (`SidebarSweep`) и бегущей подписи
-  фазы (`SoftTypewriter`) в рельсе больше нет — обе живут в саммари и в живом
-  транскрипте. Какая фигура какому состоянию — `SidebarRowActivity.statusIcon`, и
+  фазы (`SoftTypewriter`, удалён 2026-10-29) в рельсе больше нет. Какая фигура какому состоянию — `SidebarRowActivity.statusIcon`, и
   это единственное место, где решается, что в рельсе различимо.
   **Пятое состояние — `.stalled`**: ждём модель или сервис (`MeetingRest.waiting(.model)`
   / `.network`). Заведено не ради красоты: обе эти причины несла вторая строка, и
@@ -95,8 +94,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full table. Coordinator
   **История помнит места, а не встречи** (`PropellerPure/NavHistory` +
   `PaneDestination`): иначе «назад» из настроек нечем сделать, и рельсу
   приходится держать вторую кнопку. Имя открытого живёт **в теле** страницы;
-  единственное исключение — идущая запись, у которой тело живая лента, и её имя
-  стоит в левом слоте полосы.
+  единственное исключение — идущая запись, у которой в теле только заметки, и её
+  имя стоит в левом слоте полосы.
 - **Панель встречи — Figma `summary` (312:11129), переодета 2026-08-27.** Имя
   встречи живёт **в теле** (`MeetingPaneIdentity` с `Look.body`, 22/24, бокс
   назван макетом, а не выведен из шрифта), над ним строка атрибутов
@@ -134,12 +133,15 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full table. Coordinator
   `NSLayoutManager` для тела), снимок — `SUMMARY_SHOT=… swift test --filter
   SummaryPaneShot`.
 - Все токены цвета — пары «тёмная / светлая» (`Tokens.dual`), тема разрешается AppKit'ом в момент отрисовки. Светлые значения выведены, а не нарисованы: правятся в одном месте, в `Tokens.Paint` / `Tokens.Sidebar`.
-- Идущая запись — не режим окна, а одна из встреч: `MainView` показывает `RecordingPaneView`
+- Идущая запись — не режим окна, а одна из встреч: `MainView` показывает `RecordingPaneBody`
   только когда выбрана записываемая встреча (`AppState.activeRecordingID`). Имя и управление —
-  общая полоса (`MeetingPaneIdentity` + `RecordingControls`), слева живой транскрипт
-  (`LiveTranscriptColumn`), и в той же ленте — заметки на своих секундах
-  (`PropellerPure/NotePlacement`). Пишутся они в поле внизу колонки (`NoteBar`),
-  и оно есть только пока идёт запись: у готовой встречи заметка — раздел саммари.
+  общая полоса (`MeetingPaneIdentity` + `RecordingControls`), в колонке — заметки на своих
+  секундах (`RecordingNotesColumn`). Пишутся они в поле внизу колонки (`NoteBar`), и оно есть
+  только пока идёт запись: у готовой встречи заметка — раздел саммари и строка в ленте
+  расшифровки (`PropellerPure/NotePlacement`).
+  **Живого транскрипта нет** (снят 2026-10-29, решение 2026-08-21 в `../product-ideas.md`):
+  текст встречи появляется только из офлайн-прохода после стопа. Пустая колонка — это пусто,
+  а не «Слушаю…»: новый дизайн панели — отдельная задача.
 - `NotchController` — чёлка на время записи: чёрная плита у выреза, слева лопасть
   (`PropellerUI/NotchSurface.swift`), которую крутит уровень записываемого звука, справа заметка.
   ⌃⌥N и клик по правому уху опускают её в поле ввода на три строки с воздухом (вниз, не вширь —
@@ -357,7 +359,8 @@ ephemeral, and there is exactly one of it because there is one worker.
 Capture runs on **one clock**: a Core Audio process tap and the microphone inside one
 private aggregate device, read by a single IOProc (`ProcessTapCapture`). Sample N of the
 mic stem and sample N of the system stem are the same instant — that is the whole point,
-and it is what makes a live transcript and echo cancellation possible at all.
+and it is what lets the offline pass tell the owner's words from the far side's echo by
+time (`StemAssembly`).
 
 - **Never guess the channel layout.** Aggregate input channels run subdevices-in-composition-order,
   then taps; the counts come from the system, and the assembled aggregate is rejected if
@@ -387,11 +390,14 @@ and it is what makes a live transcript and echo cancellation possible at all.
   at a convenient level while a room adds a non-linear speaker and a reverb tail. Quoting the
   probe's figure as "we can cancel echo" is the mistake that measurement exists to prevent.
 
-## Live echo — invariants
+## Echo in the mic stem — invariants
 
 On speakers the microphone hears the far side and 95–97 % of her words are recognisable
-from the mic stem alone, so the live column will show every remark twice unless something
-stops it. Two things do, and **neither of them compares the two tracks' loudness**.
+from the mic stem alone, so the transcript would carry every remark twice — once under the
+owner's name — unless something stops it. The offline pass does (`StemAssembly` →
+`EchoDedup`), and **it never compares the two tracks' loudness**. These rules were written
+for the live transcript, removed 2026-10-29; they hold for the offline pass, which shares
+the code.
 
 - **Never decide who spoke by which track is louder.** Measured 2026-08-11 across the
   archive: the owner's own voice in his own microphone is **4–6 dB below** the far side's
@@ -399,26 +405,19 @@ stops it. Two things do, and **neither of them compares the two tracks' loudness
   one scale. A rule built on that premise (`StemDominance`) shipped, looked right in the
   harness for four days, and was inert on every real meeting. Numbers:
   `benchmarks/report-gate.md`, `docs/ECHO_AND_MIX_EXPERIMENTS.md` (2026-08-11 section).
-- **The audio may only be asked gain-free questions.** Two are legal: "did the system stem
-  carry anything at all" (digital silence, `FeedGate.silenceFloor`) and "is the microphone
-  predictable from the reference" (`EchoCoherence`). Anything of the form `mic > system` is
-  the refuted rule coming back.
-- **What reaches the screen is decided on the text** (`EchoDedup`): a mic line the far side
-  has already said cannot be the owner's, at any level. Matching is fuzzy per token, and
-  **only for tokens of four characters or more** — at two, one edit turns "ни" into "они",
-  which cost a whole owner turn in the harness (coverage 0.964 → 0.916).
-- **A duplicate is dropped at once; "this looks new" may wait.** Similarity only grows as
-  more of the far side arrives, and `LiveTranscript` promises that shown text is never
-  rewritten. Waiting is capped at `EchoDedup.holdSeconds` and only applies to lines that
-  overlap audible far-side speech — own speech into silence is never delayed.
+- **The audio may only be asked gain-free questions.** "Did the far side say anything here"
+  is legal, and offline it is asked of the recognised far-side text, not of the audio
+  (`StemAssembly.audible`). Anything of the form `mic > system` is the refuted rule coming
+  back.
+- **Who said it is decided on the text**: a mic word the far side said at the same moment
+  cannot be the owner's, at any level — per word when the sidecar gives word timings
+  (`StemAssembly.withoutEcho`), per line otherwise (`EchoDedup`). Matching is fuzzy per
+  token, and **only for tokens of four characters or more** — at two, one edit turns "ни"
+  into "они", which cost a whole owner turn in the harness (coverage 0.964 → 0.916).
 - **Suppression is not the answer, and this is measured.** A coherent post-filter gives
   8.8–10.3 dB and the engine does not care: 95.4 % of the far side's words still come
   through against 97.5 % raw. An ASR needs 20–30 dB; linearly that is not available here.
   Before proposing AEC, read the numbers — the cheap version is already refuted.
-- **The gate is about electricity, the dedup is about truth.** If a change makes the gate
-  stricter, it can only cost CPU; if it makes the dedup stricter, it can cost a word. Watch
-  `live.coverage`, never `live.wer` alone: a rule that hides a badly recognised real turn
-  *improves* WER.
 
 ## Meeting detection
 
@@ -526,17 +525,15 @@ line was read turned out to be wrong.
 
 ## Performance — measure first, and measure what it costs the person
 
-Three harnesses, all writing `swift/benchmarks/`, all diffed by `tools/bench-diff`
+Two harnesses, both writing `swift/benchmarks/`, both diffed by `tools/bench-diff`
 against a per-fixture baseline:
 
 ```bash
 tools/measure-batch.sh                        # offline pass: asr.rtf, asr.cpu_cores, diarize, RSS
-tools/measure-live.sh                         # the live layer, in real time
-FIXTURE=ru-pauses-2spk K=3 tools/measure-live.sh
 cd swift && swift run -c release Bench -- --search   # ui.search_ms on a synthetic archive
 ```
 
-A fourth number has no harness and does not need one: **what a person waits for**.
+A third number has no harness and does not need one: **what a person waits for**.
 Stream the app's own log during a real meeting and read the phase transitions —
 17 minutes of audio measured 42 s of transcript plus 39 s of summary, with
 fractions of a second in the seams. Signposts do not reach the persistent store
@@ -547,45 +544,35 @@ shadowed by a shell builtin:
 /usr/bin/log stream --level debug --style compact --predicate 'subsystem == "app.propeller"'
 ```
 
-- **The live harness defaults to the shipped configuration** (echo feed gate on).
-  `--no-gate`, `--gate=silence`, `--gate=both`, `--pool-size N` exist to re-answer
-  hypotheses, not for daily use. A harness whose default is not the product
-  measures a product that does not exist.
 - **A green harness is not a working feature.** Both fixtures carry the far side in
   the mic stem 12 dB *below* the owner; real meetings on speakers have it 4–6 dB
   *above*. The echo rule was green here for four days while being inert on every
   actual meeting. When a rule depends on a level relationship, ask what the fixture
   assumes about it before trusting the diff — and a fixture with the echo above the
   reference is owed (`Tests/Fixtures/ru-short-2spk/README.md`).
-- **Cost metrics never travel alone.** Every `live.*` cost sits beside `live.wer`,
-  `live.coverage` and `live.attribution_accuracy`, because the cheap way to save
-  CPU is to stop recognising speech. `coverage` is the one that catches it — a gate
-  that goes quiet mid-phrase *improves* WER while deleting the meeting. Metrics
-  carry a `direction`; `bench-diff` used to read every drop as an improvement.
+- **Cost metrics never travel alone.** The cheap way to save CPU is to stop
+  recognising speech, so a saving has to show the text kept its words:
+  `TranscriptAccuracy` gives WER *and* `coverage`, and `coverage` is the one that
+  catches it — a rule that goes quiet mid-phrase *improves* WER while deleting the
+  meeting. Metrics carry a `direction`; `bench-diff` used to read every drop as an
+  improvement.
 - **Cores, not just RTF.** `asr.cpu_cores` says whether the machine is usable while
   the pass runs (measured: 3.2 of 10), which is what a person actually feels;
   RTF only ever said how long it takes.
-- **Where the money is:** the live layer costs 0.35 cores for the *whole meeting*
-  (of which the coherence estimator is 0.0013), and the feed gate is worth
-  **−15 % of that on continuous speech, −18 % on a fixture with pauses**, measured
-  against a `--no-gate` run of the same commit in the same hour — never against a
-  number from another day. The offline pass is 3.2 cores for
-  ~110 s of an hour-long one, the summary under one core but 4.6 GB. Numbers and
-  every rejected idea (with its cost) live in `benchmarks/report-gate.md` and
-  `benchmarks/report-pipeline-cpu.md`. Read them before proposing a knob — five
-  plausible ones are already refuted there, echo suppression among them.
+- **Where the money is:** the offline pass is 3.2 cores for ~110 s of an hour-long
+  meeting, the summary under one core but 4.6 GB. The live layer used to cost
+  0.33–0.36 cores and 0.9–1.3 GB of sidecar for the *whole* meeting; it was removed
+  2026-10-29 (`../product-ideas.md`, decisions of 2026-08-21). Numbers and every
+  rejected idea (with its cost) live in `benchmarks/report-gate.md` (the live layer,
+  history) and `benchmarks/report-pipeline-cpu.md`. Read them before proposing a
+  knob — five plausible ones are already refuted there, echo suppression among them.
 - **A promoted baseline needs its argument in `benchmarks/`, not in a commit body
-  alone.** `live.wer` is currently 0.048 above the old tolerance on `ru-pauses-2spk`
-  by decision: the increase is seven insertions from one badly recognised owner turn
-  that the previous rule hid entirely, and `coverage` improved in the same run.
-  **Three of those seven are the turn, four are the gate** — a `--no-gate` run of the
-  same commit scores 0.181 with three insertions and identical coverage, so feeding
-  the mic session speech torn by skipped portions costs the other four. The lesson is
-  the method: attributing a delta to a rule means measuring the rule alone. If a
-  guardrail goes red, the choice is to fix it or to write down why the red is the
-  better product — never to widen the tolerance quietly. And a guardrail whose
-  tolerance is inside its own scatter is not a guardrail: `live.app_cpu_cores` reads
-  ±45 % between identical runs against a `+20 %` gate, so its red says nothing.
+  alone.** Attributing a delta to a rule means measuring the rule alone, against a
+  run of the same commit in the same hour — never against a number from another
+  day. If a guardrail goes red, the choice is to fix it or to write down why the red
+  is the better product — never to widen the tolerance quietly. And a guardrail
+  whose tolerance is inside its own scatter is not a guardrail: the live harness's
+  app CPU read ±45 % between identical runs against a `+20 %` gate.
 
 ## Scope Discipline
 

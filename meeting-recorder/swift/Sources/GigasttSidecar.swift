@@ -23,21 +23,17 @@ final class GigasttSidecar: @unchecked Sendable {
     private var consecutiveCrashRestarts = 0
     private static let maxCrashRestarts = 5
     /// Слова текущей встречи (`MeetingHotwords`) и слова, с которыми запущен
-    /// живой сервер. Подсказки — аргумент запуска, а не параметр запроса
+    /// работающий сервер. Подсказки — аргумент запуска, а не параметр запроса
     /// (проверено 2026-08-12: строка «Hotword biasing enabled» пишется один раз
     /// при загрузке сессии и не повторяется ни на одном запросе), поэтому
     /// сменить их можно только перезапуском.
     private var meetingTerms: [String] = []
     private var loadedTerms: [String]?
-    /// Сколько живых сессий сейчас висит на сервере. Пока хоть одна открыта,
-    /// сервер не трогают ни ради нового словаря, ни по простою: он не
-    /// простаивает — на нём идёт лента встречи (`SidecarLiveUse`).
-    private var liveUse = SidecarLiveUse()
 
     private init() {}
 
-    /// Словарь одной встречи. Ставится до того, как сервер понадобится —
-    /// на старте записи (живой слой) и перед расшифровкой (офлайн-проход).
+    /// Словарь одной встречи. Ставится перед расшифровкой, до того как сервер
+    /// понадобится.
     func setMeetingTerms(_ terms: [String]) {
         lock.lock()
         let changed = terms != meetingTerms
@@ -48,36 +44,13 @@ final class GigasttSidecar: @unchecked Sendable {
         }
     }
 
-    /// Живая сессия открылась/закрылась. Скобки нужны ровно затем, чтобы
-    /// перезапуск ради словаря не случился под ней.
-    func beginLiveUse() {
-        lock.lock(); liveUse.begin(); lock.unlock()
-        // Живая сессия открылась поверх запланированного гашения: снимаем его
-        // сразу, не дожидаясь, пока таймер дозвонит и сам себя переставит.
-        cancelIdleStop()
-    }
-
-    func endLiveUse() {
-        lock.lock(); liveUse.end(); lock.unlock()
-    }
-
-    /// Слушает ли кто-нибудь сервер прямо сейчас.
-    private var isLive: Bool {
-        lock.lock(); defer { lock.unlock() }
-        return liveUse.isBusy
-    }
-
-    /// Нужен ли перезапуск здорового сервера: слова разошлись и никто не слушает.
-    /// Если слушают — работаем со старым словарём и говорим об этом в лог:
-    /// потерянная подсказка дешевле оборванной встречи.
+    /// Нужен ли перезапуск здорового сервера: слова разошлись. Расшифровка
+    /// идёт по одной встрече за раз, и словарь ставится перед ней, так что под
+    /// перезапуском запросов нет.
     private func restartForNewTerms() -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard let loadedTerms, loadedTerms != meetingTerms else { return false }
-        if !liveUse.mayRestartForTerms {
-            NSLog("[GigasttSidecar] словарь встречи сменился, но идёт живая сессия — оставляем прежний")
-            return false
-        }
-        return true
+        guard let loadedTerms else { return false }
+        return loadedTerms != meetingTerms
     }
 
     var isReady: Bool {
@@ -172,24 +145,14 @@ final class GigasttSidecar: @unchecked Sendable {
     /// `ensureReady` / `stop`. Lets the ASR model leave RAM between meetings
     /// without thrashing on rapid back-to-back transcriptions (plan-optimization E1).
     ///
-    /// «Простой» здесь считался только по офлайн-проходу, и это было неверно:
-    /// `TranscriptionService.releaseHeavyResources` зовётся в конце `runASR`
-    /// безусловно, **включая ветку отмены**, а отменяет догон начало следующей
-    /// встречи (`beginRecording` → `pausePipeline`). Получалось: встреча Б
-    /// началась, догон по встрече А упал по отмене, поставил гашение — и на
-    /// 45-й секунде Б сервер получал SIGTERM вместе с лентой живого текста.
-    /// Поэтому таймер спрашивает у `SidecarLiveUse`, а не гасит вслепую.
+    /// Во время записи сервер никому не нужен: живого слоя нет, а догон
+    /// прошлых встреч на это время снят (`beginRecording` → `pausePipeline`).
+    /// Поэтому гашение, поставленное отменённым догоном, гасит сервер и под
+    /// идущей записью — так и должно быть.
     func stopAfterIdle(_ grace: TimeInterval = 45) {
         cancelIdleStop()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            guard !self.isLive else {
-                // Не отмена, а перенос: сервер погаснет, когда лента кончится,
-                // а не останется висеть в памяти до конца дня.
-                NSLog("[GigasttSidecar] idle-stop отложен — идёт живая сессия")
-                self.stopAfterIdle(grace)
-                return
-            }
             NSLog("[GigasttSidecar] idle-stop after \(Int(grace))s")
             self.stop()
         }
@@ -410,11 +373,9 @@ final class GigasttSidecar: @unchecked Sendable {
             "--model-dir", modelDir.path,
             "--model-variant", Self.variant,
             "--port", "\(Self.port)",
-            // Две: живой слой держит по сессии на дорожку всю встречу
-            // (`LiveTranscriptService`), и с одной триплетой вторая дорожка
-            // ждала бы первую до конца звонка. Замерено на живом потоке:
-            // 547 МБ RSS и ~1 ядро на две сессии — столько стоит видеть, что
-            // говорят, пока говорят.
+            // Две — наследство живого слоя (по WS-сессии на дорожку), снятого
+            // 2026-10-29. Офлайн-проход шлёт запросы по одному; сводить к
+            // одной — только по замеру.
             "--pool-size", "2",
             // Потолок сессии = потолок записи (`AppState.maxRecordingSeconds`).
             // Не 0: «без ограничения» складывает бесконечность с моментом

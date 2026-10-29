@@ -1199,10 +1199,6 @@ public struct MeetingPaneBody: View {
     private let transcriptNotes: [TranscriptNote]
     /// Что стоит в колонке саммари — решено `SummaryColumnContent`, не здесь.
     private let summaryContent: SummaryColumnContent
-    /// Откуда взяты реплики: живая строка или готовая расшифровка. Отличать их
-    /// надо ради замены — момент, когда проход по файлу вытесняет живой текст,
-    /// это смена содержания, а не перерисовка.
-    private let transcriptSource: TranscriptSource
     private let transcriptDisclosure: String?
     /// The summary's caret and what the action bar does to it. Owned above the
     /// pane, so the selection survives the pane being rebuilt.
@@ -1212,14 +1208,6 @@ public struct MeetingPaneBody: View {
     private let onSummaryChange: ((MeetingSummary) -> Void)?
     private let onSummaryRewrite: ((SummaryRewrite, String) -> Void)?
 
-    /// Чей текст сейчас в колонке транскрипта.
-    public enum TranscriptSource: String, Equatable, Sendable {
-        /// Встреча идёт или только что кончилась: то, что услышал живой слой.
-        case live
-        /// Проход по файлу закончен — это он.
-        case stored
-    }
-
     public init(
         identity: MeetingPane.Identity? = nil,
         meta: MeetingPane.Meta? = nil,
@@ -1228,7 +1216,6 @@ public struct MeetingPaneBody: View {
         turns: [MeetingTranscriptColumn.Turn] = [],
         transcriptNotes: [TranscriptNote] = [],
         summaryContent: SummaryColumnContent = .summary,
-        transcriptSource: TranscriptSource = .stored,
         transcriptDisclosure: String? = nil,
         summaryController: SummaryEditorController = SummaryEditorController(),
         onSummaryChange: ((MeetingSummary) -> Void)? = nil,
@@ -1241,7 +1228,6 @@ public struct MeetingPaneBody: View {
         self.turns = turns
         self.transcriptNotes = transcriptNotes
         self.summaryContent = summaryContent
-        self.transcriptSource = transcriptSource
         self.transcriptDisclosure = transcriptDisclosure
         self.summaryController = summaryController
         self.onSummaryChange = onSummaryChange
@@ -1322,11 +1308,11 @@ public struct MeetingPaneBody: View {
     /// Что сейчас в левой колонке. Меняется — играет замена.
     private var columnKey: String {
         switch mode {
-        case .transcript: return "transcript-\(transcriptSource.rawValue)"
+        case .transcript: return "transcript"
         case .summary:
             switch summaryContent {
             case .summary:            return "summary"
-            case .transcript:         return "summary-transcript-\(transcriptSource.rawValue)"
+            case .transcript:         return "summary-transcript"
             case .nothing(let text):  return "summary-nothing-\(text)"
             }
         }
