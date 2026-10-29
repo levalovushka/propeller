@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Darwin
 import PropellerPure
 
@@ -254,6 +255,15 @@ final class OllamaSidecar: @unchecked Sendable {
     /// `~/.ollama` are checked, because `adopt-if-present` means the model may
     /// legitimately live in the user's own install.
     func isModelInstalled(_ name: String) async -> Bool {
+        // The pinned default is asked by hash, not by name: a tag that moved
+        // under us is still «installed» by name and is not the model we measured.
+        // Absent from our store falls through — an adopted server may hold it.
+        if let pin = PinnedModel.pin(for: name) {
+            let state = pinnedState(pin)
+            if state != .absent {
+                return PinnedModel.satisfied(state, fallbackTaken: pinFallbackTaken(pin))
+            }
+        }
         if await probeAPI(), let tags = try? await fetchTags() {
             return tags.contains { $0 == name || $0.hasPrefix(name) }
         }
@@ -299,6 +309,42 @@ final class OllamaSidecar: @unchecked Sendable {
                 throw error
             }
             recordServe(.up)
+        }
+
+        // The default model comes by hash (`PinnedModel`): blobs from the
+        // registry, verified, and a manifest we write ourselves. The tag pull
+        // below stays for a model somebody chose by hand, for a server that
+        // does not read our store, and for the day the registry drops the pin.
+        if let pin = PinnedModel.pin(for: model) {
+            let state = pinnedState(pin)
+            if PinnedModel.satisfied(state, fallbackTaken: pinFallbackTaken(pin)) {
+                statusCallback?("Модель готова")
+                await reclaimSupersededModels(keeping: model)
+                return
+            }
+            // Nothing of ours on disk and the server already has it: an adopted
+            // Ollama with its own store. Not ours to replace.
+            let adopted = state == .absent ? await modelPresent(model) : false
+            if !adopted {
+                statusCallback?("Скачиваем модель саммари…")
+                do {
+                    try await fetchPinned(pin, statusCallback: statusCallback)
+                    if await probeAPI(), !(await modelPresent(model)) {
+                        // The server that answers does not read our store.
+                        recordProvisioning("pinned written, server does not see it — tag pull model=\(model)")
+                    } else {
+                        recordProvisioning("pinned ok model=\(model)")
+                        statusCallback?("Модель готова")
+                        await reclaimSupersededModels(keeping: model)
+                        return
+                    }
+                } catch let gone as PinGone {
+                    recordProvisioning("pin gone blob=\(gone.digest) status=\(gone.status) — tag pull model=\(model)")
+                    NSLog("[OllamaSidecar] pinned blob \(gone.digest) is gone from the registry (\(gone.status)) — falling back to the tag")
+                    Analytics.modelFetch(reason: "pin_gone")
+                    markPinFallback(pin)
+                }
+            }
         }
 
         if await modelPresent(model) {
@@ -883,6 +929,298 @@ final class OllamaSidecar: @unchecked Sendable {
         // reads our own store — exactly where this pull just wrote.
         guard await isModelInstalled(model) else {
             throw SidecarError.pullTransport("модель не появилась после pull", .other)
+        }
+    }
+
+    // MARK: - Pinned model
+
+    /// The registry answered «no such file» for a pinned blob (`PinnedModel.pinGone`).
+    /// Internal: `runEnsureReady` turns it into the fallback to the tag.
+    private struct PinGone: Error {
+        let digest: String
+        let status: Int
+    }
+
+    private var blobsDir: URL { modelsDir.appendingPathComponent("blobs", isDirectory: true) }
+
+    /// Downloads in flight. Inside `models/` so a move into `blobs/` is a rename
+    /// on one volume; Ollama does not look here (and prunes nothing at all on
+    /// 0.32.4 — checked 2026-10-29).
+    private var pinStagingDir: URL { modelsDir.appendingPathComponent("pinned-staging", isDirectory: true) }
+
+    /// Marker that the registry once dropped the pin and the model came by tag.
+    private func pinFallbackURL(_ pin: PinnedModel.Pin) -> URL {
+        installDir.appendingPathComponent("pin-fallback-\(pin.repository.replacingOccurrences(of: "/", with: "_"))-\(pin.tag)")
+    }
+
+    private func pinFallbackTaken(_ pin: PinnedModel.Pin) -> Bool {
+        FileManager.default.fileExists(atPath: pinFallbackURL(pin).path)
+    }
+
+    private func markPinFallback(_ pin: PinnedModel.Pin) {
+        FileManager.default.createFile(
+            atPath: pinFallbackURL(pin).path,
+            contents: Data(ISO8601DateFormatter().string(from: Date()).utf8)
+        )
+    }
+
+    /// Sizes of everything in `models/blobs`, by file name.
+    private func blobSizes() -> [String: Int64] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: blobsDir.path)) ?? []
+        var sizes: [String: Int64] = [:]
+        for name in names {
+            let attrs = try? FileManager.default.attributesOfItem(atPath: blobsDir.appendingPathComponent(name).path)
+            if let size = (attrs?[.size] as? NSNumber)?.int64Value { sizes[name] = size }
+        }
+        return sizes
+    }
+
+    private func pinnedState(_ pin: PinnedModel.Pin) -> PinnedModel.Installed {
+        let manifest = try? Data(contentsOf: modelsDir.appendingPathComponent(pin.manifestRelativePath))
+        return PinnedModel.installed(pin, manifest: manifest, blobSizes: blobSizes())
+    }
+
+    /// Fetch whatever of the pinned set is missing, verify each file by its hash,
+    /// then write the manifest — the last step, so Ollama never sees a model
+    /// whose weights are not on disk yet. Blobs of a manifest this replaces go
+    /// once nothing else names them (`PinnedModel.orphanedBlobs`).
+    private func fetchPinned(
+        _ pin: PinnedModel.Pin,
+        statusCallback: ((String) -> Void)?
+    ) async throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: blobsDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: pinStagingDir, withIntermediateDirectories: true)
+
+        let missing = PinnedModel.missingBlobs(pin, blobSizes: blobSizes())
+        let total = pin.blobs.reduce(Int64(0)) { $0 + $1.size }
+        var done = total - missing.reduce(Int64(0)) { $0 + $1.size }
+        recordProvisioning("pinned fetch model=\(pin.name) missing=\(missing.count) bytes=\(total - done)")
+
+        for blob in missing {
+            let base = done
+            try await downloadBlob(blob, of: pin) { received in
+                let frac = min(Double(base + received) / Double(total), 0.99)
+                statusCallback?("Скачиваем модель саммари… \(Int(frac * 100))%")
+            }
+            done += blob.size
+        }
+
+        let manifestURL = modelsDir.appendingPathComponent(pin.manifestRelativePath)
+        try fm.createDirectory(at: manifestURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let replaced = try? Data(contentsOf: manifestURL)
+        let staged = pinStagingDir.appendingPathComponent("manifest-\(pin.tag)")
+        try Data(pin.manifest.utf8).write(to: staged, options: .atomic)
+        if fm.fileExists(atPath: manifestURL.path) {
+            _ = try fm.replaceItemAt(manifestURL, withItemAt: staged)
+        } else {
+            try fm.moveItem(at: staged, to: manifestURL)
+        }
+
+        if let replaced, replaced != Data(pin.manifest.utf8) {
+            let others = otherManifests(excluding: manifestURL)
+            for name in PinnedModel.orphanedBlobs(pin, replaced: replaced, others: others) {
+                try? fm.removeItem(at: blobsDir.appendingPathComponent(name))
+                recordProvisioning("removed blob of replaced manifest \(name)")
+            }
+        }
+    }
+
+    /// Every manifest in our store except one, as bytes.
+    private func otherManifests(excluding skip: URL) -> [Data] {
+        let root = modelsDir.appendingPathComponent("manifests", isDirectory: true)
+        guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) else {
+            return []
+        }
+        var result: [Data] = []
+        for case let url as URL in walker where url.standardizedFileURL != skip.standardizedFileURL {
+            guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+            // An unreadable neighbour must make the cleanup delete nothing —
+            // `orphanedBlobs` reads non-JSON that way, so pass it on as such.
+            result.append((try? Data(contentsOf: url)) ?? Data())
+        }
+        return result
+    }
+
+    /// One blob, resumable: a partial from an earlier attempt is hashed and
+    /// continued with a `Range` request. Moved into `blobs/` only after the
+    /// SHA-256 and the size match the pin.
+    private func downloadBlob(
+        _ blob: PinnedModel.Blob,
+        of pin: PinnedModel.Pin,
+        progress: @escaping @Sendable (Int64) -> Void
+    ) async throws {
+        let fm = FileManager.default
+        let partial = pinStagingDir.appendingPathComponent("\(blob.hex).partial")
+        if !fm.fileExists(atPath: partial.path) {
+            fm.createFile(atPath: partial.path, contents: nil)
+        }
+        var have = ((try? fm.attributesOfItem(atPath: partial.path)[.size]) as? NSNumber)?.int64Value ?? 0
+        if have > blob.size {
+            try Data().write(to: partial)
+            have = 0
+        }
+
+        let sink = BlobSink(partial: partial, expected: blob, already: have, progress: progress)
+        let clock = PullProgressClock()
+        sink.clock = clock
+        if have < blob.size {
+            var req = URLRequest(url: pin.blobURL(blob))
+            req.timeoutInterval = 60 * 60
+            if have > 0 { req.setValue("bytes=\(have)-", forHTTPHeaderField: "Range") }
+            do {
+                try await withThrowingTaskGroup(of: Void.self) { group in
+                    group.addTask { try await sink.run(req) }
+                    // Same watchdog as the tag pull: no bytes for
+                    // `stallThreshold` is dead, whatever the socket says.
+                    group.addTask {
+                        while true {
+                            let quiet = clock.measurements().sinceLastProgress
+                            if ProvisioningRetry.shouldAbort(sinceLastProgress: quiet) {
+                                throw SidecarError.pullStalled
+                            }
+                            let remaining = ProvisioningRetry.stallThreshold - quiet
+                            try await Task.sleep(nanoseconds: UInt64((remaining + 0.1) * 1_000_000_000))
+                        }
+                    }
+                    try await group.next()
+                    group.cancelAll()
+                }
+            } catch let error as SidecarError {
+                throw error
+            } catch let gone as PinGone {
+                throw gone
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                let m = clock.measurements()
+                throw SidecarError.pullTransport(
+                    error.localizedDescription,
+                    ProvisioningRetry.transportClass(
+                        duration: m.duration,
+                        sinceLastProgress: m.sinceLastProgress,
+                        sawProgress: m.sawProgress
+                    )
+                )
+            }
+        }
+
+        guard sink.verified() else {
+            // Wrong bytes: start this file over on the next attempt.
+            try? fm.removeItem(at: partial)
+            throw SidecarError.pullTransport("хеш \(blob.digest.prefix(19))… не сошёлся", .other)
+        }
+        let target = blobsDir.appendingPathComponent(blob.fileName)
+        if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
+        try fm.moveItem(at: partial, to: target)
+    }
+
+    /// Streams one HTTP body into a partial file and a running SHA-256.
+    private final class BlobSink: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+        private let lock = NSLock()
+        private let partial: URL
+        private let expected: PinnedModel.Blob
+        private let progress: @Sendable (Int64) -> Void
+        private var handle: FileHandle?
+        private var hasher = SHA256()
+        private var written: Int64
+        private var continuation: CheckedContinuation<Void, Error>?
+        private var failure: Error?
+        var clock: PullProgressClock?
+
+        init(partial: URL, expected: PinnedModel.Blob, already: Int64, progress: @escaping @Sendable (Int64) -> Void) {
+            self.partial = partial
+            self.expected = expected
+            self.progress = progress
+            self.written = already
+            super.init()
+            // The resumed prefix has to be in the hash: the digest is of the whole file.
+            if already > 0, let reader = try? FileHandle(forReadingFrom: partial) {
+                while let chunk = try? reader.read(upToCount: 8 << 20), !chunk.isEmpty {
+                    hasher.update(data: chunk)
+                }
+                try? reader.close()
+            }
+        }
+
+        func run(_ request: URLRequest) async throws {
+            let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+            defer { session.finishTasksAndInvalidate() }
+            let task = session.dataTask(with: request)
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                    lock.lock(); continuation = cont; lock.unlock()
+                    task.resume()
+                }
+            } onCancel: {
+                task.cancel()
+            }
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            dataTask: URLSessionDataTask,
+            didReceive response: URLResponse,
+            completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+        ) {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            lock.lock(); defer { lock.unlock() }
+            if PinnedModel.pinGone(status: status) {
+                failure = PinGone(digest: expected.digest, status: status)
+                completionHandler(.cancel)
+                return
+            }
+            guard (200..<300).contains(status) else {
+                failure = StreamErrorLine(message: "HTTP \(status)")
+                completionHandler(.cancel)
+                return
+            }
+            // 200 to a Range request: the server sends the whole file, so the
+            // prefix we hashed is about to arrive again.
+            if status == 200, written > 0 {
+                try? Data().write(to: partial)
+                hasher = SHA256()
+                written = 0
+            }
+            handle = try? FileHandle(forWritingTo: partial)
+            _ = try? handle?.seekToEnd()
+            completionHandler(handle == nil ? .cancel : .allow)
+            if handle == nil { failure = StreamErrorLine(message: "не открыть \(partial.lastPathComponent)") }
+        }
+
+        func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+            lock.lock()
+            do {
+                try handle?.write(contentsOf: data)
+                hasher.update(data: data)
+                written += Int64(data.count)
+            } catch {
+                failure = error
+                dataTask.cancel()
+            }
+            let now = written
+            lock.unlock()
+            clock?.tick()
+            progress(now)
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            lock.lock()
+            try? handle?.close()
+            handle = nil
+            let cont = continuation
+            continuation = nil
+            let outcome = failure ?? error
+            lock.unlock()
+            if let outcome { cont?.resume(throwing: outcome) } else { cont?.resume() }
+        }
+
+        /// Whole file present and its hash is the pinned one.
+        func verified() -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard written == expected.size else { return false }
+            let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+            return digest == expected.hex
         }
     }
 
