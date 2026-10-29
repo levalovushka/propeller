@@ -41,7 +41,6 @@ MeetingDetector (Auto) / menu bar / ⌘R / UI
   → AudioRecorder → ProcessTapCapture (тап + микрофон в одном агрегате, одна IOProc)
       mic (.mic.wav) + system (.sys.wav), кадр в кадр
       → offline mix (стемы уже выровнены; StemTimeline — только для старых записей) → {id}.wav (+ stems)
-      ↳ те же кадры → LiveTranscriptService (две WS-сессии к gigastt) → живой транскрипт на экране
   → одна очередь, один воркер (AppState.kickPipeline → PipelineDrain)
       фазы: transcribing → diarizing → saving → summarizing
 ```
@@ -74,7 +73,6 @@ MeetingDetector (Auto) / menu bar / ⌘R / UI
 | `ProcessTapCapture` | Тап на процессы встречи (или на всё, кроме себя) внутри приватного агрегатного устройства вместе с микрофоном. Одна IOProc → кольцо → 16 кГц моно стемы. Кадры кладутся по `mSampleTime` (`CaptureCursor`), состав агрегата подбирается лестницей и проверяется фактами (число каналов, пришли ли буферы) |
 | `CoreAudioObjects` | Чтение свойств Core Audio без церемонии: устройства, процессы, тапы, состав агрегата |
 | `TapProbe` | Отладочный `--tap-probe`: шесть ступеней от сырого устройства до смены устройств на живой записи, с пиком по каждому каналу. Существует потому, что порядок каналов агрегата нигде не задокументирован, а промах по нему молчаливый |
-| `LiveProbe` | Отладочный `--live-probe`: живой слой на записанном звуке, чтобы порцию и задержку можно было мерить повторяемо (`tools/live-bench/`) |
 | `MeetingDetector` | Поллинг звонка в любой платформе из `MeetingPlatform.all` (Zoom, Контур.Толк): helper-процесс, заголовок окна, вкладка браузера, display-sleep assertion — последний только у платформ с `sleepAssertionMeansCall` (у Толка этот ассерт означает демонстрацию экрана, а не звонок) |
 | `PipelineBoundaries` | `Transcriber` / `RecapBackend` — две подменяемые границы наружу |
 | `CalendarService` | EventKit read-only: `suggestedRecordingTitle` и `CalendarMeta` при старте записи. Списка «Скоро» больше нет — календарь называет записи, а не рисует экран |
@@ -85,12 +83,11 @@ MeetingDetector (Auto) / menu bar / ⌘R / UI
 | `StateGallery` · `GalleryExport` · `GalleryFixture` | Только под `-DGALLERY` (`./build.sh --gallery`): окно со всеми состояниями из `UIStateCatalog`, экспорт в PNG, фикстурный архив под съёмку. Архив подменяется через `Preferences.galleryArchiveRoot` — ключа нет в обычной сборке, реальные записи не читаются. См. [design/state-gallery.md](../../design/state-gallery.md) |
 | `TranscriptionService` | ASR → diarize → `Speaker N` + владелец-по-микрофону |
 | `GigasttSidecar` / `GigasttClient` | Жизненный цикл сервера и HTTP (+ chunking) |
-| `PropellerPure` | Чистое ядро (стадии и очередь — `RecordingStage`, `PipelineActivity`, `PipelineDrain`; покой встречи — `MeetingRest`; живой транскрипт — `LiveTranscript`, `FeedGate`, `EchoCoherence`, `EchoDedup`; документ саммари — `SummaryDocument`; презентация транскрипта — `TranscriptPresentation`; разбор ответов границ — `BoundaryResponses`; платформы созвонов — `MeetingPlatform`; захват — `CaptureCursor`, `CapturePath`, `TapTarget`; chunking, парсеры, WAV helpers). Счёт файлов и тестов держится в `STATE.md`, а не здесь: он менялся каждую неделю и всегда врал |
+| `PropellerPure` | Чистое ядро (стадии и очередь — `RecordingStage`, `PipelineActivity`, `PipelineDrain`; покой встречи — `MeetingRest`; эхо в микрофонном стеме — `StemAssembly`, `EchoDedup`; документ саммари — `SummaryDocument`; презентация транскрипта — `TranscriptPresentation`; разбор ответов границ — `BoundaryResponses`; платформы созвонов — `MeetingPlatform`; захват — `CaptureCursor`, `CapturePath`, `TapTarget`; chunking, парсеры, WAV helpers). Счёт файлов и тестов держится в `STATE.md`, а не здесь: он менялся каждую неделю и всегда врал |
 | `RecordingStore` | Индекс записей + CRUD + size-nudge (без auto-delete) |
 | `MarkdownWriter` / `RecapService` | Экспорт и LLM-конспект + метадата (заголовок/темы/теги) |
 | `Preferences` | UserDefaults + Keychain для API-ключей |
-| `LiveTranscriptService` / `GigasttLiveSession` | Живой слой встречи: две WS-сессии к gigastt (микрофон и система) из кадров `ProcessTapCapture.onLiveFrames`; складываются чистым `LiveTranscript`. Эхо колонок отсекается дважды: `FeedGate` + `EchoCoherence` не дают порцию распознать, `EchoDedup` не даёт чужую реплику показать |
-| UI | `MainView` (рельс + панель), `RecordingPaneView` (идущая запись), `SettingsPane` (настройки как состояние панели), `SetupView` + `Onboarding{Container,PanelController}` (одна плашка первого запуска), `SearchPalette`, `MenuBarContentView`. Презентация — в `PropellerUI/`: `Sidebar`, `MeetingPane`, `SummaryEditor` + `SummaryActionBar`, `RecordingPane`, `Tokens` |
+| UI | `MainView` (рельс + панель), `RecordingPaneBody` (идущая запись: заметки и поле ввода; живого транскрипта нет с 2026-10-29), `SettingsPane` (настройки как состояние панели), `SetupView` + `Onboarding{Container,PanelController}` (одна плашка первого запуска), `SearchPalette`, `MenuBarContentView`. Презентация — в `PropellerUI/`: `Sidebar`, `MeetingPane`, `SummaryEditor` + `SummaryActionBar`, `RecordingPane`, `Tokens` |
 
 ## Хранилище
 
