@@ -226,6 +226,7 @@ class AppState: ObservableObject {
     private var knownPeopleCache: (key: String, names: [String])?
     /// Последние посчитанные предложения — см. `projectSuggestions`.
     private var suggestionCache: (key: String, found: [ProjectCandidate.Suggestion])?
+    private var previousDecisionsCache: (key: String, found: RecordingPrevious?)?
     /// Последние разобранные атомы — см. `atoms(of:section:)`.
     private var atomCache: (key: String, groups: [AtomGroup])?
     /// Счётчик правок файлов конспектов **мимо редактора саммари**.
@@ -952,6 +953,48 @@ class AppState: ObservableObject {
         recorder.setMicMuted(!recorder.isMicMuted)
         NotchController.shared.refresh()
         objectWillChange.send()
+    }
+
+    /// Последние уровни обеих сторон — для вейвформы в полосе записи. Читается
+    /// замыканием по её собственному таймеру, а не публикуется: история уровней
+    /// нарочно не `@Published` (`AudioRecorder.micLevelHistory`).
+    var recordingLevels: (mic: [Float], system: [Float]) {
+        (recorder.micLevelHistory, recorder.systemLevelHistory)
+    }
+
+    // MARK: - С чем подошли
+
+    /// Решения прошлой встречи серии для панели записи — или nil, и тогда
+    /// блока нет вовсе. Правило — `PreviousDecisions`; здесь только архив и
+    /// диск.
+    ///
+    /// Запоминается по паре «эта встреча — та встреча»: панель записи
+    /// пересчитывается на каждую секунду таймера, а конспект прошлого раза за
+    /// время встречи не меняется.
+    func previousDecisions(for entry: RecordingEntry) -> RecordingPrevious? {
+        let archive = recordingStore.recordings.map {
+            PreviousDecisions.Meeting(
+                id: $0.id, seriesID: $0.calendarMeta?.seriesID, date: $0.date,
+                hasSummary: $0.status >= .summarized
+            )
+        }
+        guard let me = archive.first(where: { $0.id == entry.id }),
+              let source = PreviousDecisions.source(for: me, in: archive)
+        else { return nil }
+        if let cached = previousDecisionsCache, cached.key == "\(entry.id)>\(source.id)" {
+            return cached.found
+        }
+        let found: RecordingPrevious? = recordingStore.recordings
+            .first { $0.id == source.id }
+            .flatMap(Self.loadRecapText(for:))
+            .map { PreviousDecisions.items(from: RecapDigest.parse($0)) }
+            .flatMap { items in
+                items.isEmpty ? nil : RecordingPrevious(
+                    heading: PreviousDecisions.heading(for: source), items: items
+                )
+            }
+        previousDecisionsCache = ("\(entry.id)>\(source.id)", found)
+        return found
     }
 
     /// Cancel the in-progress recording and discard it entirely (no transcript,

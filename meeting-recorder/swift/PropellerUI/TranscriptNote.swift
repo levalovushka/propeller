@@ -33,6 +33,9 @@ public struct TranscriptNote: Identifiable, Equatable, Sendable {
 /// Одна заметка в ленте: метка времени там же, где у реплик, и текст на плашке.
 struct TranscriptNoteRow: View {
     let note: TranscriptNote
+    /// Плашка отличает заметку от реплик. Там, где реплик нет — на листе
+    /// идущей записи, — отличать не от чего, и плашка была бы просто шумом.
+    var plated: Bool = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Pane.transcriptLineGap) {
@@ -52,7 +55,7 @@ struct TranscriptNoteRow: View {
         // перестала бы быть одним столбцом ради подсветки одного абзаца.
         .background(
             RoundedRectangle(cornerRadius: Tokens.Pane.noteRadius, style: .continuous)
-                .fill(Tokens.Pane.notePlateFill)
+                .fill(plated ? Tokens.Pane.notePlateFill : .clear)
                 .padding(.horizontal, -Tokens.Pane.transcriptNotePlateBleedH)
                 .padding(.vertical, -Tokens.Pane.transcriptNotePlateBleedV)
         )

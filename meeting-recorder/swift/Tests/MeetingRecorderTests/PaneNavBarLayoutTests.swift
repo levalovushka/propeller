@@ -112,15 +112,17 @@ final class PaneNavBarLayoutTests: XCTestCase {
                 reservesWindowChrome: false,
                 trailing: { MeetingActions(copy: {}, share: {}) { Button("Показать в Finder") {} } }
             )
-            // Идущая запись: имя в полосе, потому что тело — живая лента.
+            // Идущая запись: имя в теле, как у готовой встречи; справа прибор
+            // и управление, на месте «Поделиться» — красная «Остановить».
             PaneNavBar(
                 back: .init(enabled: true) {}, forward: .init(enabled: true) {},
                 reservesWindowChrome: false,
-                leading: {
-                    MeetingPaneIdentity(meetingID: "rec", title: "Дейлик ВК Камуфляж")
-                },
                 trailing: {
-                    RecordingControls(elapsed: "12:04", isPaused: false, onPause: {}, onStop: {})
+                    RecordingControls(
+                        elapsed: "12:04", isPaused: false,
+                        levels: { ([0.02, 0.2, 0.6, 0.1, 0.3], [0, 0, 0, 0, 0]) },
+                        onPause: {}, onStop: {}
+                    )
                 }
             )
             // Раздел со снятым рельсом: справа нет ничего, слева освобождено

@@ -975,10 +975,6 @@ public enum Tokens {
         // MARK: Header (31:4625) — the rail's 48 pt row, continued
 
         public static let headerHeight = Sidebar.headerHeight
-        /// Title block: `w-430 px-16 py-8`.
-        public static let headerTitleWidth: CGFloat = 430
-        public static let headerHPadding = Space.s16
-        public static let headerVPadding = Space.s8
         /// Soft alpha fade where a long title meets the action cluster — same
         /// idea as the rail's list edge, sideways.
         public static let titleEdgeFade = Space.s24
@@ -1104,6 +1100,29 @@ public enum Tokens {
         /// выход наружу конституционен (`VISION.md` §4), и это единственное
         /// действие панели, которое зовут, а не находят.
         public static let sharePillHPadding = Space.s10
+        /// «Остановить» — та же пилюля, залитая красным записи: в полосе идущей
+        /// записи пилюля одна, и она красная, потому что это и есть «идёт
+        /// запись» с одного взгляда (решение владельца 2026-11-05).
+        public static let stopPillFill = Paint.Status.record
+        /// Под курсором красный не светлеет, а гаснет: светлее системного
+        /// красного на чёрном уже розовый.
+        public static let stopPillHover = Paint.Status.record.opacity(0.82)
+        public static let stopPillInk = Primitive.surface(dark: 1, light: 1)
+
+        /// Вейвформа рядом с таймером — коробка иконочной кнопки, внутри
+        /// пять полосок (`WaveformBars`).
+        public enum Waveform {
+            public static let barWidth: CGFloat = 2
+            public static let barGap: CGFloat = 2
+            /// Полная высота полоски — по росту глифа `waveform.mid` в 13 pt.
+            public static let maxHeight: CGFloat = 14
+            /// Частота кадров. Уровни приходят 10 раз в секунду
+            /// (`ProcessTapCapture.levelReportEvery`), чаще смотреть незачем.
+            public static let frameInterval: TimeInterval = 0.1
+            public static let live = Paint.Text.secondary
+            /// Пауза: полоски лежат и сереют вместе с таймером.
+            public static let quiet = Paint.Text.tertiary
+        }
         /// Room under the last line so a scrolled summary is not hard against
         /// the window edge.
         public static let summaryBottomPadding = Space.s40
@@ -1120,13 +1139,13 @@ public enum Tokens {
         public static let summaryMaxWidth: CGFloat = 569
         /// Мера вместе с полями — ширина блока панели в макете, 649.
         public static let paneMeasure = summaryMaxWidth + summaryHPadding * 2
-        /// Мера колонки идущей записи и поля заметки — прежние 720.
+        /// Мера поля заметки — та же, что у листа саммари.
         ///
-        /// Своё число, не одолженное у саммари. До 2026-08-27 это была одна
-        /// мера на всё, и сужение саммари до макетных 569 утащило бы за собой
-        /// две поверхности, которые по этому макету не снимались. Та же
-        /// развязка, что сделана для страницы настроек.
-        public static let recordingMeasure: CGFloat = 640 + summaryHPadding * 2
+        /// До 2026-11-05 у записи была своя колонка в 720, и число держалось
+        /// отдельно, чтобы сужение саммари её не утащило. Колонки больше нет:
+        /// запись — тот же лист, что и готовая встреча, и поле под ним обязано
+        /// стоять ровно под его текстом.
+        public static let recordingMeasure: CGFloat = paneMeasure
         /// Между пунктами — а абзац и пункт списка в макете один и тот же
         /// предмет, поэтому число одно. Втяжки у пункта нет: маркера, под
         /// который она делалась, на экране больше нет.

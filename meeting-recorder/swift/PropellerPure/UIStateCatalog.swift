@@ -181,6 +181,8 @@ public enum UIStateCatalog {
     /// `rec-live` снят вместе с живым транскриптом 2026-10-29.
     public static let recording: [Screen] = [
         .init(id: "rec-paused", label: "Запись — пауза"),
+        .init(id: "rec-previous", label: "Запись — решения с прошлого раза"),
+        .init(id: "rec-empty", label: "Запись — пустой лист"),
     ]
 
     public static let detailTabs: [Screen] = [

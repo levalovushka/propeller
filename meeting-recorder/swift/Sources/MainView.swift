@@ -760,23 +760,20 @@ struct MainView: View {
     @ViewBuilder
     private var navBar: some View {
         if !state.paneRoute.isSection, let entry = state.selectedRecording, isBeingRecorded(entry) {
-            // Единственный маршрут с именем **в полосе**: тело идущей записи —
-            // живая лента, а не документ, и поставить имя туда некуда.
+            // Имя идущей записи живёт в теле, как у готовой встречи (решение
+            // владельца 2026-11-05). В полосе — только то, что делают с записью.
             PaneNavBar(
                 back: .init(enabled: canGoBack) { goBack() },
                 forward: .init(enabled: canGoForward) { goForward() },
                 reservesWindowChrome: !sidebarVisible,
-                leading: {
-                    MeetingPaneIdentity(
-                        meetingID: entry.id,
-                        title: entry.title,
-                        onRename: { id, newTitle in state.renameRecording(id: id, to: newTitle) }
-                    )
-                },
                 trailing: {
                     RecordingControls(
                         elapsed: state.elapsedString,
                         isPaused: state.isRecordingPaused,
+                        isMicMuted: state.isMicMuted,
+                        canMuteMic: state.canMuteMic,
+                        levels: { state.recordingLevels },
+                        onMute: { state.toggleMicMuted() },
                         onPause: {
                             if state.isRecordingPaused {
                                 state.resumeRecording()
@@ -992,6 +989,19 @@ struct MainView: View {
             }
         } else if let entry = state.selectedRecording, isBeingRecorded(entry) {
             RecordingPaneBody(
+                // Голова та же, что у готовой встречи: имя переименовывается
+                // так же, а состав пока — приглашённые из календаря.
+                identity: .init(
+                    meetingID: entry.id,
+                    title: entry.title,
+                    onRename: { id, newTitle in state.renameRecording(id: id, to: newTitle) }
+                ),
+                meta: .init(
+                    date: entry.date,
+                    people: peopleSlot(for: entry, speakers: []),
+                    projects: projectSlot(for: entry)
+                ),
+                previous: state.previousDecisions(for: entry),
                 isPaused: state.isRecordingPaused,
                 transcriptNotes: transcriptNotes(for: entry),
                 composer: .init(

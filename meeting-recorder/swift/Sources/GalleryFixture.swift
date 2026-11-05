@@ -285,10 +285,25 @@ enum GalleryFixture {
         // (`design/no-dead-ends.md`).
     }
 
-    /// Экран записи на паузе: колонка заметок и поле ввода.
+    /// Экран записи: лист встречи, полоса с прибором и поле заметки.
+    ///
+    /// `rec-previous` связывает запись и «Дизайн-ревью корпуса» трёхдневной
+    /// давности одной серией календаря — только в этом кадре, чтобы состав и
+    /// проекты остальных кадров не поехали.
     private static func poseRecording(_ id: String, state: AppState) {
-        let entry = recordingEntry(for: id)
-        state.recordingStore.recordings = [entry] + library
+        var entry = recordingEntry(for: id)
+        var rows = library
+        if id == "rec-previous" {
+            let series = CalendarMeta(
+                eventID: "gal-event-review", seriesID: "gal-series-review",
+                title: entry.title, isRecurring: true
+            )
+            entry.calendarMeta = series
+            if let index = rows.firstIndex(where: { $0.id == "gal-review" }) {
+                rows[index].calendarMeta = series
+            }
+        }
+        state.recordingStore.recordings = [entry] + rows
         state.selectedRecordingID = entry.id
         state.isRecording = true
         state.galleryPoseRecording(entry.id)
@@ -453,7 +468,8 @@ enum GalleryFixture {
         make(
             id: "gal-\(id)", title: "Созвон по интеграции",
             at: today(16, 5), duration: 758, stage: .recording,
-            notes: "Проверить подпись вебхука на ретраях"
+            // Пустой лист — нулевое состояние: ни серии, ни заметок.
+            notes: id == "rec-empty" ? nil : "Проверить подпись вебхука на ретраях"
         )
     }
 

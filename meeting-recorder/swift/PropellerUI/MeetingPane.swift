@@ -26,24 +26,25 @@ private enum HeaderTitle {
 
 /// The meeting's name, editable in place.
 ///
-/// Its own view because two headers carry it: the one over a finished meeting
-/// and the one over the meeting being recorded. A recording is a meeting from
-/// the first second — it has a name, and that name is renamed the same way,
-/// with the same pencil in the same place.
+/// Its own view because two panes carry it: a finished meeting and the meeting
+/// being recorded, both in the body (`MeetingPaneHead`). A recording is a
+/// meeting from the first second — it has a name, and that name is renamed the
+/// same way, with the same pencil in the same place.
 public struct MeetingPaneIdentity: View {
     let meetingID: String
     let title: String
     let onRename: ((_ meetingID: String, _ newTitle: String) -> Void)?
-    /// Во что одето имя. Машина коммита у обоих одна — а она и есть всё
-    /// сложное здесь, — расходится только вёрстка: полоса над идущей записью
-    /// и тело панели готовой встречи.
-    var look: Look = .paneHeader
+    /// Во что одето имя. Вид один — имя в теле, — но он остаётся параметром:
+    /// машина коммита ниже не знает про вёрстку, и второй вид, если он
+    /// появится, не должен её трогать. Полосный вид (14/18 в поле 430) снят
+    /// 2026-11-05, когда имя идущей записи переехало из полосы в тело.
+    var look: Look = .body
 
     public init(
         meetingID: String,
         title: String,
         onRename: ((_ meetingID: String, _ newTitle: String) -> Void)? = nil,
-        look: Look = .paneHeader
+        look: Look = .body
     ) {
         self.meetingID = meetingID
         self.title = title
@@ -63,15 +64,7 @@ public struct MeetingPaneIdentity: View {
         /// заголовка страницы настроек (`SettingsKit`).
         var boxHeight: CGFloat?
 
-        /// Полоса 48 над идущей записью — 14/18 в поле 430.
-        public static let paneHeader = Look(
-            typo: Tokens.Pane.Typo.headerTitle,
-            maxWidth: Tokens.Pane.headerTitleWidth,
-            hPadding: Tokens.Pane.headerHPadding,
-            vPadding: Tokens.Pane.headerVPadding,
-            boxHeight: nil
-        )
-        /// Имя в теле готовой встречи — 22/24 без полей: их уже дала колонка.
+        /// Имя в теле встречи — 22/24 без полей: их уже дала колонка.
         public static let body = Look(
             typo: Tokens.Pane.Typo.paneTitle,
             maxWidth: .infinity,
@@ -648,7 +641,39 @@ public struct MeetingActions<MoreMenu: View>: View {
 /// разговор кончился и его надо кому-то отдать.
 struct SharePill: View {
     let title: String
+    var fill: Fill = .primary
+    var help: String?
     let action: () -> Void
+
+    /// Чем залита пилюля. Пилюля в полосе всегда одна, и её заливка говорит,
+    /// что это за действие: «Поделиться» у готовой встречи, «Остановить» у
+    /// идущей записи — красным, решение владельца 2026-11-05. Форма, кегль и
+    /// поля у них общие: это одна кнопка, а не две.
+    enum Fill {
+        case primary
+        case record
+
+        var rest: Color {
+            switch self {
+            case .primary: return Tokens.Paint.Interactive.Primary.rest
+            case .record:  return Tokens.Pane.stopPillFill
+            }
+        }
+
+        var hover: Color {
+            switch self {
+            case .primary: return Tokens.Paint.Interactive.Primary.hover
+            case .record:  return Tokens.Pane.stopPillHover
+            }
+        }
+
+        var ink: Color {
+            switch self {
+            case .primary: return Tokens.Paint.Text.primaryInverse
+            case .record:  return Tokens.Pane.stopPillInk
+            }
+        }
+    }
 
     @State private var hovering = false
 
@@ -656,21 +681,16 @@ struct SharePill: View {
         Button(action: action) {
             Text(title)
                 .typo(Tokens.Pane.Typo.metaWide)
-                .foregroundStyle(Tokens.Paint.Text.primaryInverse)
+                .foregroundStyle(fill.ink)
                 .padding(.horizontal, Tokens.Pane.sharePillHPadding)
                 .frame(height: Tokens.Pane.headerButtonSide)
-                .background(
-                    hovering
-                        ? Tokens.Paint.Interactive.Primary.hover
-                        : Tokens.Paint.Interactive.Primary.rest,
-                    in: shape
-                )
+                .background(hovering ? fill.hover : fill.rest, in: shape)
                 .contentShape(shape)
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
-        .help(title)
+        .help(help ?? title)
     }
 
     /// Скругление 8, как у всех кнопок приложения, — решение владельца
@@ -685,18 +705,29 @@ struct SharePill: View {
 struct PaneIconButton: View {
     let symbol: String
     let help: String
+    /// Включённое состояние — глиф горит в полную силу и в покое. Так кнопка
+    /// говорит «микрофон выключен» или «на паузе», не заводя второй вид.
+    var isOn: Bool = false
+    /// Недоступна — глиф тише тихого и не отвечает на курсор. Подсказка при
+    /// этом остаётся: она объясняет, почему.
+    var isEnabled: Bool = true
     let action: () -> Void
 
     @State private var hovering = false
+
+    private var ink: Color {
+        if !isEnabled { return Tokens.Paint.Text.disabled }
+        return hovering || isOn ? Tokens.Paint.Text.primary : Tokens.Pane.buttonIcon
+    }
 
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: Tokens.Pane.headerIconSize, weight: .regular))
-                .foregroundStyle(hovering ? Tokens.Paint.Text.primary : Tokens.Pane.buttonIcon)
+                .foregroundStyle(ink)
                 .frame(width: Tokens.Pane.headerButtonSide, height: Tokens.Pane.headerButtonSide)
                 .background(
-                    hovering ? Tokens.Sidebar.rowHover : .clear,
+                    hovering && isEnabled ? Tokens.Sidebar.rowHover : .clear,
                     in: RoundedRectangle(cornerRadius: Tokens.Pane.headerButtonRadius, style: .continuous)
                 )
                 .contentShape(
@@ -704,8 +735,10 @@ struct PaneIconButton: View {
                 )
         }
         .buttonStyle(.press)
+        .disabled(!isEnabled)
         .onHover { hovering = $0 }
         .animation(.easeOut(duration: Tokens.Motion.hover), value: hovering)
+        .animation(.easeOut(duration: Tokens.Motion.hover), value: isOn)
         .help(help)
         .accessibilityLabel(help)
     }
@@ -1180,6 +1213,37 @@ public struct Meta {
 
 }
 
+/// Строка атрибутов и имя — голова панели встречи, 312:11129.
+///
+/// Одна на готовую встречу и на идущую запись: запись — это та же встреча с
+/// первой секунды, и после стопа её голова не должна сдвинуться ни на точку,
+/// иначе превращение панели записи в панель саммари (`plan-projects.md` §4.5)
+/// читалось бы как смена экрана.
+struct MeetingPaneHead: View {
+    let identity: MeetingPane.Identity?
+    let meta: MeetingPane.Meta?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Tokens.Pane.titleGap) {
+            if let meta {
+                MeetingMetaRow(meta: meta)
+                    .paneProbe(PaneProbe.meta)
+            }
+            if let identity {
+                MeetingPaneIdentity(
+                    meetingID: identity.meetingID,
+                    title: identity.title,
+                    onRename: identity.onRename,
+                    look: .body
+                )
+                .paneProbe(PaneProbe.title)
+            }
+        }
+        .padding(.horizontal, Tokens.Pane.summaryHPadding)
+        .padding(.top, Tokens.Pane.paneTopPadding)
+    }
+}
+
 /// Панель готовой встречи: одна колонка, и в ней всё, что о встрече известно.
 ///
 /// Колонки заметок здесь больше нет. Заметка во время встречи стоит в ленте
@@ -1257,23 +1321,7 @@ public struct MeetingPaneBody: View {
     @ViewBuilder
     private var head: some View {
         if identity != nil || meta != nil {
-            VStack(alignment: .leading, spacing: Tokens.Pane.titleGap) {
-                if let meta {
-                    MeetingMetaRow(meta: meta)
-                        .paneProbe(PaneProbe.meta)
-                }
-                if let identity {
-                    MeetingPaneIdentity(
-                        meetingID: identity.meetingID,
-                        title: identity.title,
-                        onRename: identity.onRename,
-                        look: .body
-                    )
-                    .paneProbe(PaneProbe.title)
-                }
-            }
-            .padding(.horizontal, Tokens.Pane.summaryHPadding)
-            .padding(.top, Tokens.Pane.paneTopPadding)
+            MeetingPaneHead(identity: identity, meta: meta)
         }
     }
 
