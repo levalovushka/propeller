@@ -442,7 +442,13 @@ xattr -cr "$APP"
 # and so is filtered out of "valid identities", yet codesign signs with it fine.
 SIGN_OPTS=()
 SIGN_HASH=$(security find-identity -v -p codesigning 2>/dev/null | grep "Developer ID Application" | head -1 | awk '{print $2}')
-if [ -n "$SIGN_HASH" ]; then
+if [ -n "$SIGN_HASH" ] && [ -n "${PROPELLER_NO_TIMESTAMP:-}" ]; then
+    # Same identity, so TCC survives — but no secure timestamp, so the build cannot be
+    # notarized. For a local install when timestamp.apple.com is unreachable (a VPN
+    # that blocks it fails every build with "The timestamp service is not available").
+    echo "  Signing with Developer ID Application (hardened runtime, NO timestamp — local only, not notarizable)"
+    SIGN_OPTS=(--options runtime --timestamp=none)
+elif [ -n "$SIGN_HASH" ]; then
     echo "  Signing with Developer ID Application (hardened runtime + secure timestamp)"
     SIGN_OPTS=(--options runtime --timestamp)
 else

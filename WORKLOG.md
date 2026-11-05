@@ -3,6 +3,18 @@
 Что сделано, зачем, как проверено, что осталось. Новейшее сверху.
 Формат — DOCS.md, слой «Рабочий лог».
 
+## 2026-11-05 · Сборка под VPN: подпись без метки времени по ключу
+
+- **Что.** `build.sh`: `PROPELLER_NO_TIMESTAMP=1` подписывает тем же Developer ID с
+  hardened runtime, но `--timestamp=none`. По умолчанию всё как было. Строка в
+  `meeting-recorder/CLAUDE.md`, там же про `PROPELLER_SHARE_SECRET` в worktree.
+- **Зачем.** VPN (utun4) режет timestamp.apple.com, и сборка падала на подписи,
+  оставляя `/Applications/Propeller.app` подписанным наполовину.
+- **Проверено.** `PROPELLER_NO_TIMESTAMP=1 PROPELLER_SHARE_SECRET=… ./build.sh` — exit 0,
+  «valid on disk», «satisfies its Designated Requirement», `codesign --verify --deep
+  --strict` ok, ключ «Поделиться» вшит, приложение запущено.
+- **Осталось.** Такую сборку нельзя нотаризовать — для релиза собирать без ключа.
+
 ## 2026-11-05 · Хвосты после wespeaker: dev-скачивание и «247 МБ»
 
 - **Что.** `GigasttSidecar.downloadModels` зовёт `gigastt download` с

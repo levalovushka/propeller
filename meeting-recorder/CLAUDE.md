@@ -16,6 +16,13 @@ cd swift
 open -a Propeller
 ```
 
+Behind a VPN that blocks `timestamp.apple.com`, every build dies at signing with
+«The timestamp service is not available» — and leaves `/Applications/Propeller.app`
+half-signed. `PROPELLER_NO_TIMESTAMP=1 ./build.sh` signs with the same Developer ID
+(TCC survives) but without a secure timestamp: fine to run locally, **not notarizable**.
+A worktree has no `swift/.share-secret`; pass `PROPELLER_SHARE_SECRET` or the build
+ships without «Поделиться».
+
 Swift Package Manager (`Package.swift`). GigaAM ASR weights (~247 MB, INT8 set) ship **inside the .app** and are copied to Application Support on first use — no download, transcription works offline.
 
 The bundled Ollama engine is **slimmed** (`tools/slim-ollama.sh`, 139 → 34 MB): the MLX
