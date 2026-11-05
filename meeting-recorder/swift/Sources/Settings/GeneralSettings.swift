@@ -312,6 +312,14 @@ private struct AboutSettingsGroup: View {
                     SparkleUpdater.shared.checkForUpdates()
                 }
             }
+            // The standard About panel, not a window of our own: it reads
+            // Credits.rtf, which build.sh makes from ThirdPartyNotices.txt, and
+            // the app menu's «О программе» opens the same panel.
+            SettingsCell("Лицензии", subtitle: "Сторонние программы и\u{00A0}модели") {
+                SettingsButton("Показать") {
+                    NSApp.orderFrontStandardAboutPanel(nil)
+                }
+            }
         }
     }
 }
