@@ -142,7 +142,18 @@ public struct MeetingPaneIdentity: View {
             }
             .onExitCommand { cancel() }
             .onChange(of: focused) { _, isFocused in
-                if isFocused { begin() } else { commit() }
+                guard isFocused else { commit(); return }
+                // Фокус, который раздало окно, а не человек, имя отпускает
+                // сразу — `TitleFocusPolicy`. Правка при этом не начинается, и
+                // отпускание ничего не сохраняет.
+                guard TitleFocusPolicy.keeps(
+                    pointerOverName: hovering,
+                    mouseDown: NSApp.currentEvent?.type == .leftMouseDown
+                ) else {
+                    focused = false
+                    return
+                }
+                begin()
             }
             // As wide as the name, no wider: the pencil belongs at the end of
             // the title, not at the far edge of a 430 pt block. minWidth 0 so a
