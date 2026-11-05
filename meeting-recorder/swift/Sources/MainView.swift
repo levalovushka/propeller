@@ -890,12 +890,28 @@ struct MainView: View {
     /// «Назад» из шапки рельса, потому что в разделе сворачивать нечего. Обе
     /// сняты 2026-08-28 — «назад» стало одним на всё приложение и переехало в
     /// полосу, а рельс убирается из раздела ровно так же, как из архива.
+    ///
+    /// **Кроме настроек при поднятом рельсе** (решение владельца 2026-11-05):
+    /// там слот держит «назад к встречам» — выход из настроек в один клик, на
+    /// том же месте, так что кнопка не прыгает. Знак — стрелка, а не шеврон:
+    /// шеврон в полосе — шаг истории, а это выход из раздела. Со снятым рельсом
+    /// слот остаётся переключателем: разделы настроек живут в рельсе, а другой
+    /// дороги вернуть его нет.
+    @ViewBuilder
     private var windowChrome: some View {
-        SidebarChromeButton(
-            symbol: "sidebar.left",
-            help: sidebarVisible ? "Скрыть список" : "Показать список"
-        ) {
-            sidebarVisible.toggle()
+        Group {
+            if state.paneRoute.isSettings && sidebarVisible {
+                SidebarChromeButton(symbol: "arrow.left", help: "Назад к встречам") {
+                    state.leaveSettings()
+                }
+            } else {
+                SidebarChromeButton(
+                    symbol: "sidebar.left",
+                    help: sidebarVisible ? "Скрыть список" : "Показать список"
+                ) {
+                    sidebarVisible.toggle()
+                }
+            }
         }
         .padding(.leading, Tokens.Window.chromeToggleLeading)
         .padding(.top, Tokens.Window.chromeToggleTop)
