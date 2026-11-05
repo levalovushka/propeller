@@ -45,6 +45,16 @@ case "$SIG_INFO" in
         ;;
 esac
 
+# A local build shows four settings that do nothing; they must never reach a user
+# (STATE.md, «Четыре настройки нарисованы и ничего не делают»). build.sh marks such a
+# bundle, and only `PROPELLER_RELEASE=1 ./build.sh` leaves the mark out.
+if [ -d "$TARGET" ] && /usr/libexec/PlistBuddy -c "Print :PropellerDraftSettings" \
+        "$TARGET/Contents/Info.plist" >/dev/null 2>&1; then
+    echo "ERROR: $TARGET is a local build — it shows the draft settings."
+    echo "  Rebuild for release: PROPELLER_RELEASE=1 ./build.sh"
+    exit 1
+fi
+
 case "$TARGET" in
     *.dmg)
         SUBMIT="$TARGET"

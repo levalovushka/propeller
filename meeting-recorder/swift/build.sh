@@ -23,6 +23,20 @@ for arg in "$@"; do
     esac
 done
 
+# Four settings rows are drawn and do nothing (theme, summary text size, window
+# translucency, language): the owner keeps them in local builds as a reminder
+# (2026-08-26), and none may ship until it has behaviour (STATE.md). 1.17.0 shipped
+# them anyway — nothing told a local build from a release one. Now a release build
+# is asked for by name and leaves them out, and the bundle says which it is:
+# notarize.sh refuses an app carrying PropellerDraftSettings.
+DRAFT_SETTINGS=1
+if [ "${PROPELLER_RELEASE:-}" = "1" ]; then
+    DRAFT_SETTINGS=0
+    APP_VARIANT="${APP_VARIANT} (release)"
+else
+    SWIFT_FLAGS+=(-Xswiftc -DDRAFT_SETTINGS)
+fi
+
 echo "=== Building Propeller (SPM)${APP_VARIANT} ==="
 
 # Inputs are resolved and checked BEFORE anything is destroyed. `rm -rf "$APP"`
@@ -402,6 +416,14 @@ if [ -n "$PROPELLER_SHARE_SECRET" ]; then
     echo "  Share key embedded (${PROPELLER_SHARE_SECRET:0:4}…)"
 else
     echo "  Share key absent — «Поделиться» в этой сборке публиковать не будет"
+fi
+
+# The mark notarize.sh reads: this bundle shows the four settings that do nothing.
+if [ "$DRAFT_SETTINGS" = "1" ]; then
+    /usr/libexec/PlistBuddy -c "Add :PropellerDraftSettings bool true" "$APP/Contents/Info.plist"
+    echo "  Draft settings shown — local build; PROPELLER_RELEASE=1 for a release"
+else
+    echo "  Draft settings left out — release build"
 fi
 
 printf 'APPL????' > "$APP/Contents/PkgInfo"

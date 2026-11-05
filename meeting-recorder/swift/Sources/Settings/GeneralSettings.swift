@@ -21,6 +21,18 @@ struct GeneralSettingsPage: View {
     @AppStorage("userName") private var userName = ""
     @AppStorage("appLanguage") private var appLanguage = "ru"
 
+    /// Четыре настройки без поведения — язык здесь и три в «Оформлении» —
+    /// видны только в локальной сборке (`STATE.md`). Флаг ставит `build.sh`
+    /// без `PROPELLER_RELEASE=1`; константа, а не `#if` вокруг вёрстки, чтобы
+    /// обе ветки компилировались в каждой сборке и не гнили.
+    private static let showsDrafts: Bool = {
+        #if DRAFT_SETTINGS
+        return true
+        #else
+        return false
+        #endif
+    }()
+
     var body: some View {
         SettingsPage(SettingsSection.general.title) {
             SettingsCard {
@@ -35,14 +47,16 @@ struct GeneralSettingsPage: View {
                     state.setOwnerNameFromSettings(val)
                 }
 
-                SettingsCell("Язык приложения", subtitle: "Меняется только интерфейс") {
-                    SettingsMenu(
-                        selection: $appLanguage,
-                        options: [.init("ru", "Русский"), .init("en", "Английский")]
-                    )
-                }
-                .onChange(of: appLanguage) { _, val in
-                    Preferences.shared.appLanguage = val
+                if Self.showsDrafts {
+                    SettingsCell("Язык приложения", subtitle: "Меняется только интерфейс") {
+                        SettingsMenu(
+                            selection: $appLanguage,
+                            options: [.init("ru", "Русский"), .init("en", "Английский")]
+                        )
+                    }
+                    .onChange(of: appLanguage) { _, val in
+                        Preferences.shared.appLanguage = val
+                    }
                 }
 
                 CalendarAccessRow(state: state)
@@ -50,7 +64,9 @@ struct GeneralSettingsPage: View {
             }
 
             LaunchSettingsGroup(state: state)
-            AppearanceSettingsGroup()
+            if Self.showsDrafts {
+                AppearanceSettingsGroup()
+            }
             AboutSettingsGroup()
         }
     }
