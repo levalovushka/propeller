@@ -1429,12 +1429,12 @@ public enum Tokens {
             /// 14 / 18 regular — the meeting's name in the *recording* pane's
             /// header. The finished meeting carries its name in the body now.
             public static let headerTitle = Sidebar.Typo.meetingTitle
-            /// 22 / 24 medium — the meeting's name, in the body — 312:11129.
-            /// Medium, not the comp's regular: owner's call 2026-11-05, page
-            /// titles a step heavier everywhere (`Settings.Typo.page` too).
+            /// 22 / 24 medium + `pageTitleLift` — the meeting's name, in the
+            /// body — 312:11129. Heavier than the comp's regular: owner's call
+            /// 2026-11-05, page titles heavier everywhere (`Settings.Typo.page` too).
             public static let paneTitle = Typography.Style(
                 size: 22, lineHeight: 24, weight: .medium,
-                weightTrim: Typography.railWeightTrim
+                weightTrim: Typography.railWeightTrim + Typography.pageTitleLift
             )
             /// 13 / 22 regular — everything that is read rather than scanned.
             public static let body = Typography.Style(
@@ -1717,12 +1717,12 @@ public enum Tokens {
         // MARK: Type
 
         public enum Typo {
-            /// 17 / 24 medium — заголовок раздела и экрана проектов.
-            /// Medium, а не regular макета: решение владельца 2026-11-05 —
-            /// заголовки страниц на ступень жирнее везде (`Pane.Typo.paneTitle` тоже).
+            /// 17 / 24 medium + `pageTitleLift` — заголовок раздела и экрана
+            /// проектов. Жирнее regular макета: решение владельца 2026-11-05 —
+            /// заголовки страниц жирнее везде (`Pane.Typo.paneTitle` тоже).
             public static let page = Typography.Style(
                 size: 17, lineHeight: 24, weight: .medium,
-                weightTrim: Typography.railWeightTrim
+                weightTrim: Typography.railWeightTrim + Typography.pageTitleLift
             )
             /// 11 / 14 — заголовок группы. Тот же, что у даты в рельсе.
             public static let header = Sidebar.Typo.sectionHeader
@@ -2265,6 +2265,12 @@ public enum Tokens {
         /// is not a correction but a different face. Set this to 0 to see the
         /// system untouched.
         public static let railWeightTrim: CGFloat = -0.08
+
+        /// Extra weight for page titles on top of medium — owner's call
+        /// 2026-11-05: medium plus «another 50–70». Medium → semibold is 0.07
+        /// on this axis, roughly 80–90 units of CSS weight, so 0.05 ≈ +60.
+        /// Shared by `Pane.Typo.paneTitle` and `Settings.Typo.page`.
+        public static let pageTitleLift: CGFloat = 0.05
 
         public struct Style: Equatable, Sendable {
             public let size: CGFloat
