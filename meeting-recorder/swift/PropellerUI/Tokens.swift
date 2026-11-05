@@ -1429,9 +1429,11 @@ public enum Tokens {
             /// 14 / 18 regular — the meeting's name in the *recording* pane's
             /// header. The finished meeting carries its name in the body now.
             public static let headerTitle = Sidebar.Typo.meetingTitle
-            /// 22 / 24 regular — the meeting's name, in the body — 312:11129.
+            /// 22 / 24 medium — the meeting's name, in the body — 312:11129.
+            /// Medium, not the comp's regular: owner's call 2026-11-05, page
+            /// titles a step heavier everywhere (`Settings.Typo.page` too).
             public static let paneTitle = Typography.Style(
-                size: 22, lineHeight: 24, weight: .regular,
+                size: 22, lineHeight: 24, weight: .medium,
                 weightTrim: Typography.railWeightTrim
             )
             /// 13 / 22 regular — everything that is read rather than scanned.
@@ -1715,9 +1717,11 @@ public enum Tokens {
         // MARK: Type
 
         public enum Typo {
-            /// 17 / 24 — заголовок раздела.
+            /// 17 / 24 medium — заголовок раздела и экрана проектов.
+            /// Medium, а не regular макета: решение владельца 2026-11-05 —
+            /// заголовки страниц на ступень жирнее везде (`Pane.Typo.paneTitle` тоже).
             public static let page = Typography.Style(
-                size: 17, lineHeight: 24, weight: .regular,
+                size: 17, lineHeight: 24, weight: .medium,
                 weightTrim: Typography.railWeightTrim
             )
             /// 11 / 14 — заголовок группы. Тот же, что у даты в рельсе.
