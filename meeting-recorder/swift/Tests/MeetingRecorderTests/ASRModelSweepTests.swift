@@ -96,7 +96,7 @@ final class ASRModelSweepTests: XCTestCase {
     }
 
     func testСовпадающийНаборНеПерекладываютЗаново() {
-        // Это условие каждого запуска: 247 МБ не должны копироваться просто потому,
+        // Это условие каждого запуска: 222 МБ не должны копироваться просто потому,
         // что приложение поднялось.
         XCTAssertEqual(
             ASRModelSweep.outdatedPaths(bundled: bundledWithSizes, installed: installedMatching),

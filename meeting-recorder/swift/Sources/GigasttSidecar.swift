@@ -508,11 +508,15 @@ final class GigasttSidecar: @unchecked Sendable {
         // No `--prequantized`: gigastt is INT8-only since 2.17, and 2.22 rejects
         // the flag outright (`error: unexpected argument '--prequantized'`), so
         // this fallback would fail on every machine that ever reached it.
+        // `--skip-diarization`: the speaker model (26 MB) serves gigastt's own
+        // diarization, which we never request — FluidAudio does ours — and the
+        // bundle stopped shipping it on 2026-10-29.
         proc.arguments = [
             "download",
             "--model-variant", Self.variant,
             "--model-dir", modelDir.path,
             "--progress", "json",
+            "--skip-diarization",
         ]
         let out = Pipe()
         let err = Pipe()
@@ -739,7 +743,7 @@ final class GigasttSidecar: @unchecked Sendable {
 
     /// Copy the ASR weights shipped inside the .app into the writable model dir.
     ///
-    /// The weights (~247 MB INT8 set) ride in the DMG, so a fresh install has no
+    /// The weights (~222 MB INT8 set) ride in the DMG, so a fresh install has no
     /// ASR download at all: no progress bar to strand on a dropped connection,
     /// no disk gate, and the first meeting transcribes offline. `downloadModels`
     /// stays as the fallback for dev builds run straight from `swift build`,

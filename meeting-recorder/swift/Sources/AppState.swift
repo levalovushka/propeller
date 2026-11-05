@@ -2896,7 +2896,7 @@ class AppState: ObservableObject {
 
         // The ASR check that used to be here demanded 2 GB free before a
         // transcription — from the days when GigaAM's weights were downloaded. They
-        // ship inside the .app now (247 MB, copied to Application Support once), so
+        // ship inside the .app now (222 MB, copied to Application Support once), so
         // the gate was refusing to transcribe over a download that does not happen.
         // If the disk really is full, the write fails and *that* failure belongs to
         // the recording, on the same endless ladder as everything else.

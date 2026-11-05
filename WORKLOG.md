@@ -3,6 +3,23 @@
 Что сделано, зачем, как проверено, что осталось. Новейшее сверху.
 Формат — DOCS.md, слой «Рабочий лог».
 
+## 2026-11-05 · Хвосты после wespeaker: dev-скачивание и «247 МБ»
+
+- **Что.** `GigasttSidecar.downloadModels` зовёт `gigastt download` с
+  `--skip-diarization`. «247 МБ» весов → 222 МБ в коде (`ASRModelSweep.swift`,
+  `AppState.swift`, `GigasttSidecar.swift`, `ASRModelSweepTests.swift`) и живых
+  доках (`COLLEAGUES.md`, `design/no-dead-ends.md`, `docs/ARCHITECTURE.md`,
+  `docs/SPEC.md`); разбивка `.app` в `ARCHITECTURE.md` — по замеру.
+- **Зачем.** Бандл перестал везти wespeaker (2026-10-29), а запасной путь dev-сборок
+  продолжал его качать; цифры в доках описывали набор, которого больше нет.
+- **Проверено.** gigastt 2.22 `download --offline` на каталоге без wespeaker: с
+  флагом `phase: done`, без — `refusing to download wespeaker_resnet34.onnx`.
+  `swift test` — 1502, 11 skipped, 0 failures. `./build.sh` — установлено,
+  `du`: `.app` 322M, веса 222M, Ollama 34M, gigastt 41M, бинарь 18M.
+- **Осталось.** «247 MB» в `meeting-recorder/CLAUDE.md:19` — файл в основном
+  чекауте правит другая сессия, не тронут. `make-appcast.sh:5,16` и записи в
+  `STATE.md`/`WORKLOG.md`/`archive/` — замеры и история, оставлены как есть.
+
 ## 2026-11-03 · Петля саммари: потолок ответа, детектор разноса, повтор на другой температуре
 
 - **Что.** `RecapGenerationPolicy`: потолок `num_predict` 3072 (JSON 512),
