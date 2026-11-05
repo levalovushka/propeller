@@ -1,6 +1,12 @@
 import Foundation
 
-/// # Как зовётся модель конспекта: t=0, и один повтор на 0,3, если ответ схлопнулся
+/// # Как зовётся модель конспекта: t=0, потолок ответа, и один повтор на 0,3, если ответ схлопнулся или ушёл в разнос
+///
+/// Разнос (петля, ответ до потолка, тайм-аут) добавлен 2026-11-03 и стенда до
+/// этого не проходил: его на корпусе не бывает, он случился в приложении
+/// (`ranAway`). Тайм-аут считается разносом, а не ошибкой: раньше он бросал
+/// исключение мимо повтора, и лестница конвейера слала тот же запрос на t=0
+/// ещё раз — каждые десять минут, без конца.
 ///
 /// Всё в этом файле — перенос замеров со стенда `tools/recap-lab`
 /// (OPTIMIZATION.md, A4 и «Методика», правило 1; эталон поведения —
@@ -34,6 +40,31 @@ public enum RecapGenerationPolicy {
     /// Порог для извлечения фактов из фрагмента: ответ короче по построению.
     public static let extractMinReplyTokens = 600
 
+    /// Потолок ответа (`num_predict`) для текстовых вызовов: конспект, фрагмент,
+    /// свод, редактура, «короче/подробнее».
+    ///
+    /// Это ровно тот запас, который окно и так держит под ответ
+    /// (`OllamaContext.replyTokens`): ответ длиннее него окно не планировало.
+    /// Замер по 997 ответам стенда (2026-11-03): медиана 949, p99 1632,
+    /// максимум 2154, выше 3072 — ни одного. Без потолка 2026-10-29 встреча
+    /// `20261022_171723` генерировала 12 тысяч токенов до тайм-аута в 10 минут и
+    /// повторяла это на каждой ступени лестницы.
+    public static let maxReplyTokens = OllamaContext.replyTokens
+    /// Потолок для JSON метаданных: заголовок, две-три темы и теги — это около
+    /// сотни токенов, и разнос там стоил бы те же десять минут.
+    public static let metadataMaxReplyTokens = 512
+
+    /// Строка, повторённая столько раз, — петля, а не документ.
+    ///
+    /// Замер 2026-11-03 по 1611 готовым документам (стенд и архив): ни одна
+    /// строка от 16 символов не встречается в документе трижды, максимум —
+    /// дважды. Штраф за повтор у модели (`repeat_last_n = 64`) смотрит на 64
+    /// последних токена, и петля длиннее этого окна его не замечает.
+    public static let loopLineRepeats = 3
+    /// Короче этого строка не считается: «## Решения» и «- нет» повторяются
+    /// законно.
+    public static let loopLineMinCharacters = 24
+
     /// Доля пунктов механической сборки, ниже которой свод считается съевшим
     /// содержание и документ уходит сборке (`RecapDigestGuard`).
     ///
@@ -63,11 +94,18 @@ public enum RecapGenerationPolicy {
     public struct ModelReply: Equatable, Sendable {
         public let content: String
         public let replyTokens: Int?
+        /// Ответ не кончился сам: упёрся в потолок (`done_reason == "length"`)
+        /// или в тайм-аут клиента. Такой текст обрезан посреди фразы.
+        public let unfinished: Bool
 
-        public init(content: String, replyTokens: Int?) {
+        public init(content: String, replyTokens: Int?, unfinished: Bool = false) {
             self.content = content
             self.replyTokens = replyTokens
+            self.unfinished = unfinished
         }
+
+        /// Вызов, который не вернул ничего, потому что клиент не дождался.
+        public static let timedOut = ModelReply(content: "", replyTokens: nil, unfinished: true)
     }
 
     /// Что произошло с одним вызовом — те же поля, что `stats` стенда, чтобы
@@ -80,6 +118,11 @@ public enum RecapGenerationPolicy {
         public let replyTokens: Int?
         /// Схлопнулся ли первый ответ.
         public let collapsedFirst: Bool
+        /// Ушёл ли первый ответ в разнос (`ranAway`).
+        public let ranAwayFirst: Bool
+        /// Ушёл ли в разнос **итоговый** — значит, в разнос ушли оба вызова,
+        /// и отдавать дальше нечего.
+        public let ranAway: Bool
         /// Схлопнулся ли **итоговый**: после удачного повтора флаг снят, иначе
         /// телеметрия говорила бы «схлопнулось», когда починка уже сработала.
         public let collapsed: Bool
@@ -88,13 +131,16 @@ public enum RecapGenerationPolicy {
 
         public init(
             firstReplyTokens: Int?, replyTokens: Int?,
-            collapsedFirst: Bool, collapsed: Bool, retried: Bool
+            collapsedFirst: Bool, collapsed: Bool, retried: Bool,
+            ranAwayFirst: Bool = false, ranAway: Bool = false
         ) {
             self.firstReplyTokens = firstReplyTokens
             self.replyTokens = replyTokens
             self.collapsedFirst = collapsedFirst
             self.collapsed = collapsed
             self.retried = retried
+            self.ranAwayFirst = ranAwayFirst
+            self.ranAway = ranAway
         }
     }
 
@@ -104,9 +150,39 @@ public enum RecapGenerationPolicy {
         return tokens < threshold
     }
 
+    /// Ушёл ли ответ в разнос: не кончился сам или ходит по кругу.
+    ///
+    /// Разнос — второй режим срыва рядом со схлопыванием, и он хуже: t=0 его не
+    /// лечит. 2026-10-29 первый вызов черновика `20261022_171723` ушёл в петлю
+    /// в приложении, а тот же запрос побайтово на том же движке в лаборатории
+    /// давал 392 токена в четырёх прогонах из четырёх. Детерминизм t=0 держится
+    /// только при одной раскладке слоёв по GPU (`num_gpu` 28 и 20 дали 982 и 309
+    /// токенов), так что «тот же запрос ещё раз» ничего не обещает.
+    public static func ranAway(_ reply: ModelReply) -> Bool {
+        reply.unfinished || looped(reply.content)
+    }
+
+    /// Ходит ли текст по кругу: одна и та же содержательная строка три раза.
+    /// Пробелы внутри строки сворачиваются, иначе петля с дрожащим отступом
+    /// проходила бы как новый текст.
+    public static func looped(_ text: String) -> Bool {
+        var seen: [String: Int] = [:]
+        for raw in text.split(whereSeparator: \.isNewline) {
+            let line = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            guard line.count >= loopLineMinCharacters else { continue }
+            let count = (seen[line] ?? 0) + 1
+            if count >= loopLineRepeats { return true }
+            seen[line] = count
+        }
+        return false
+    }
+
     /// Нужен ли повтор после первого ответа.
+    ///
+    /// Разнос просит повтора **без порога**: редактура и метаданные порога
+    /// схлопывания не имеют, а уйти в петлю могут так же.
     public static func wantsRetry(first: ModelReply, threshold: Int?) -> Bool {
-        collapsed(first, threshold: threshold)
+        collapsed(first, threshold: threshold) || ranAway(first)
     }
 
     /// Свести первый ответ и (если был) повтор к тому, что уходит дальше.
@@ -123,20 +199,32 @@ public enum RecapGenerationPolicy {
     /// пересэмплирует то же решение модели остановиться. Второй вызов на трёх
     /// четвертях встреч, ноль выигрыша. Отдельный вызов ровно за эту секцию был
     /// бы сборкой документа из кусков — закрыто решением владельца 2026-08-15.
+    ///
+    /// **Разнос не выигрывает никогда.** «Длинный из двух» отдал бы победу
+    /// именно ему: петля длиннее любого документа. Дописанный огрызок лучше
+    /// обрезанной петли — огрызок хотя бы про встречу.
     public static func resolved(
         first: ModelReply, retry: ModelReply?, threshold: Int?
     ) -> (reply: ModelReply, stats: CallStats) {
         let collapsedFirst = collapsed(first, threshold: threshold)
+        let ranAwayFirst = ranAway(first)
         var winner = first
-        if let retry, (retry.replyTokens ?? 0) > (first.replyTokens ?? 0) {
-            winner = retry
+        if let retry {
+            let ranAwayRetry = ranAway(retry)
+            if ranAwayFirst != ranAwayRetry {
+                if ranAwayFirst { winner = retry }
+            } else if (retry.replyTokens ?? 0) > (first.replyTokens ?? 0) {
+                winner = retry
+            }
         }
         let stats = CallStats(
             firstReplyTokens: first.replyTokens,
             replyTokens: winner.replyTokens,
             collapsedFirst: collapsedFirst,
             collapsed: collapsed(winner, threshold: threshold),
-            retried: retry != nil
+            retried: retry != nil,
+            ranAwayFirst: ranAwayFirst,
+            ranAway: ranAway(winner)
         )
         return (winner, stats)
     }

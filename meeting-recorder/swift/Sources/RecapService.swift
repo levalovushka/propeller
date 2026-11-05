@@ -916,7 +916,10 @@ actor RecapService {
         numCtx: Int? = nil
     ) async throws -> String {
         try await callOllamaTracked(
-            model: model, system: system, user: user, jsonMode: jsonMode, numCtx: numCtx
+            model: model, system: system, user: user, jsonMode: jsonMode, numCtx: numCtx,
+            maxReplyTokens: jsonMode
+                ? RecapGenerationPolicy.metadataMaxReplyTokens
+                : RecapGenerationPolicy.maxReplyTokens
         ).content
     }
 
@@ -925,15 +928,18 @@ actor RecapService {
     /// `minReplyTokens` включает страховку со стенда (`RecapGenerationPolicy`,
     /// эталон — `promptlib.call_ollama`): ответ короче порога перегенерируется
     /// **один раз** на t=0,3 — при t=0 повтор на той же температуре вернул бы
-    /// тот же огрызок, — и дальше уходит длинный из двух. Без порога — один
-    /// детерминированный вызов, как раньше.
+    /// тот же огрызок, — и дальше уходит длинный из двух. Без порога повтор
+    /// просит только разнос: ответ до потолка `maxReplyTokens`, петля или
+    /// тайм-аут (`RecapGenerationPolicy.ranAway`). Оба вызова в разносе —
+    /// `RecapError.runaway`.
     private func callOllamaTracked(
         model: String,
         system: String,
         user: String,
         jsonMode: Bool = false,
         numCtx: Int? = nil,
-        minReplyTokens: Int? = nil
+        minReplyTokens: Int? = nil,
+        maxReplyTokens: Int = RecapGenerationPolicy.maxReplyTokens
     ) async throws -> (content: String, stats: RecapGenerationPolicy.CallStats) {
         let url = URL(string: "http://127.0.0.1:11434/api/chat")!
         var req = URLRequest(url: url)
@@ -964,6 +970,10 @@ actor RecapService {
             "keep_alive": 90,
             "options": [
                 "num_ctx": numCtx,
+                // Потолок ответа: без него разнос шёл до тайм-аута в 10 минут
+                // (2026-10-29, 12 тысяч токенов). Ответ, упёршийся в потолок,
+                // приходит с `done_reason: "length"` и считается разносом.
+                "num_predict": maxReplyTokens,
                 // t=0 по замеру A4 (десять прогонов — один текст); повтор, если
                 // случился, идёт на 0,3. Облачные бэкенды остаются на 0,2 — их
                 // путь в этом релизе не тронут (RELEASE-1.16.5.md, Г3).
@@ -996,11 +1006,19 @@ actor RecapService {
         }
 
         func once(temperature: Double) async throws -> RecapGenerationPolicy.ModelReply {
-            let data = try await sendChat(req: req, payload: makePayload(temperature: temperature))
+            let data: Data
+            do {
+                data = try await sendChat(req: req, payload: makePayload(temperature: temperature))
+            } catch let error as URLError where error.code == .timedOut {
+                // Тайм-аут — это разнос, а не отказ: раньше он бросал мимо
+                // повтора, и лестница конвейера слала тот же t=0 ещё раз.
+                return .timedOut
+            }
             let tokens = BoundaryResponses.chatReplyTokens(data: data)
+            let unfinished = BoundaryResponses.chatHitLength(data: data)
             switch BoundaryResponses.readChatReply(data: data) {
             case .success(let content):
-                return .init(content: content, replyTokens: tokens)
+                return .init(content: content, replyTokens: tokens, unfinished: unfinished)
             case .failure(.reasonedItselfEmpty(let characters)):
                 // Distinct from a plain empty answer: retrying with the same
                 // settings burns the same minutes for the same nothing.
@@ -1009,44 +1027,45 @@ actor RecapService {
             case .failure(.empty):
                 // Пустой ответ длину всё же имеет (eval_count) — политика ретрая
                 // увидит его как схлопнувшийся и даст один повтор.
-                return .init(content: "", replyTokens: tokens)
+                return .init(content: "", replyTokens: tokens, unfinished: unfinished)
             case .failure(.malformed):
                 throw RecapError.badJSON
             }
         }
 
-        do {
-            let first = try await once(temperature: RecapGenerationPolicy.temperature)
-            var retry: RecapGenerationPolicy.ModelReply?
-            if RecapGenerationPolicy.wantsRetry(first: first, threshold: minReplyTokens) {
-                try Task.checkCancellation()
-                NSLog("""
-                [RecapService] ответ схлопнулся (\(first.replyTokens ?? -1) токенов при пороге \
-                \(minReplyTokens ?? 0)) — один повтор на t=\(RecapGenerationPolicy.retryTemperature)
-                """)
-                do {
-                    retry = try await once(temperature: RecapGenerationPolicy.retryTemperature)
-                } catch is CancellationError {
-                    throw CancellationError()
-                } catch {
-                    // Первый ответ есть; отдать его — лучше, чем уронить встречу
-                    // об неудавшийся повтор.
-                    NSLog("[RecapService] повтор не удался, остаёмся с первым ответом: \(error)")
-                }
+        let first = try await once(temperature: RecapGenerationPolicy.temperature)
+        var retry: RecapGenerationPolicy.ModelReply?
+        if RecapGenerationPolicy.wantsRetry(first: first, threshold: minReplyTokens) {
+            try Task.checkCancellation()
+            let why = RecapGenerationPolicy.ranAway(first)
+                ? "ушёл в разнос (\(first.replyTokens.map { "\($0) токенов" } ?? "тайм-аут"), потолок \(maxReplyTokens))"
+                : "схлопнулся (\(first.replyTokens ?? -1) токенов при пороге \(minReplyTokens ?? 0))"
+            NSLog("[RecapService] ответ \(why) — один повтор на t=\(RecapGenerationPolicy.retryTemperature)")
+            do {
+                retry = try await once(temperature: RecapGenerationPolicy.retryTemperature)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Первый ответ есть; отдать его — лучше, чем уронить встречу
+                // об неудавшийся повтор. Если первый сам в разносе, ниже это
+                // станет `.runaway`.
+                NSLog("[RecapService] повтор не удался, остаёмся с первым ответом: \(error)")
             }
-            let (winner, stats) = RecapGenerationPolicy.resolved(
-                first: first, retry: retry, threshold: minReplyTokens
-            )
-            if stats.retried {
-                NSLog("""
-                [RecapService] повтор: \(stats.firstReplyTokens ?? -1) → \(stats.replyTokens ?? -1) токенов, \
-                итог \(stats.collapsed ? "всё ещё схлопнут" : "здоров")
-                """)
-            }
-            return (winner.content, stats)
-        } catch let error as URLError where error.code == .timedOut {
-            throw RecapError.timedOut
         }
+        let (winner, stats) = RecapGenerationPolicy.resolved(
+            first: first, retry: retry, threshold: minReplyTokens
+        )
+        if stats.retried {
+            NSLog("""
+            [RecapService] повтор: \(stats.firstReplyTokens ?? -1) → \(stats.replyTokens ?? -1) токенов, \
+            итог \(stats.ranAway ? "в разносе" : stats.collapsed ? "всё ещё схлопнут" : "здоров")
+            """)
+        }
+        // Обрезанную петлю дальше не отдаём: конвейер получит отказ, а лестница
+        // попробует позже — каждая попытка теперь стоит два потолка, а не
+        // десять минут.
+        if stats.ranAway { throw RecapError.runaway }
+        return (winner.content, stats)
     }
 
     /// POST the chat payload, retrying once without `think` if this Ollama build

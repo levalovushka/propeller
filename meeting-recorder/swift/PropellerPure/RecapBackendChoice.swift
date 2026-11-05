@@ -68,7 +68,10 @@ public enum RecapError: LocalizedError {
     case emptyResponse
     case badJSON
     case providerUnavailable(String)
-    case timedOut
+    /// Оба вызова — первый и повтор на 0,3 — ушли в разнос
+    /// (`RecapGenerationPolicy.ranAway`). Отдавать нечего, а лестница конвейера
+    /// попробует позже: раскладка модели к тому времени может быть другой.
+    case runaway
 
     public var errorDescription: String? {
         switch self {
@@ -80,8 +83,8 @@ public enum RecapError: LocalizedError {
             return "Не удалось разобрать ответ LLM"
         case .providerUnavailable(let name):
             return "\(name) недоступен"
-        case .timedOut:
-            return "Саммари не успело за 10 минут — модель перегружена. Подожди минуту и нажми «Сгенерировать» снова."
+        case .runaway:
+            return "Модель не остановилась: оба ответа ушли в повтор"
         }
     }
 }

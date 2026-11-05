@@ -10,13 +10,22 @@ without anyone remembering to sync a file.
 from __future__ import annotations
 
 import json
+import os
 import re
+import socket
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 RECAP_SWIFT = REPO / "meeting-recorder" / "swift" / "Sources" / "RecapService.swift"
 MEETINGS = Path.home() / ".meeting-recorder" / "meetings"
+
+# Куда слать запросы. Лабораторный сервер поднимается на 11435+ и никогда на
+# 11434: приложение усыновляет любой сервер на своём порту и пишет конспекты
+# чужой моделью (2026-10-29, две встречи). Переменная, а не правка файла, —
+# чтобы адрес нельзя было забыть вернуть.
+OLLAMA_URL = os.environ.get("RECAP_LAB_OLLAMA", "http://127.0.0.1:11434")
 
 # PropellerPure/PropellerPure.swift — OllamaContext. Mirrored, and checked
 # against the Swift source by `check_context_constants()`.
@@ -141,11 +150,19 @@ def check_generation_constants() -> list[str]:
         ("retryTemperature", r"public static let retryTemperature = ([\d.]+)", RETRY_TEMPERATURE),
         ("recapMinReplyTokens", r"public static let recapMinReplyTokens = (\d+)",
          REPLY_TOKENS_FLOOR["recap"]),
+        ("loopLineRepeats", r"public static let loopLineRepeats = (\d+)", LOOP_LINE_REPEATS),
+        ("loopLineMinCharacters", r"public static let loopLineMinCharacters = (\d+)",
+         LOOP_LINE_MIN_CHARACTERS),
     ]
     for name, pattern, mine in checks:
         m = re.search(pattern, pol)
         if not m or float(m.group(1)) != float(mine):
             problems.append(f"RecapGenerationPolicy.{name} = {m.group(1) if m else '?'}, у лаборатории {mine}")
+    # Потолок в Swift выражен через окно, а не числом — и ровно это сверяется:
+    # если кто-то впишет туда своё число, лаборатория должна об этом узнать.
+    if "public static let maxReplyTokens = OllamaContext.replyTokens" not in pol \
+            or MAX_REPLY_TOKENS != REPLY_TOKENS:
+        problems.append(f"RecapGenerationPolicy.maxReplyTokens разошёлся с окном, у лаборатории {MAX_REPLY_TOKENS}")
     return problems
 
 
@@ -190,6 +207,31 @@ REPLY_TOKENS_FLOOR = {"recap": 800, "facts": 600}
 
 RETRY_TEMPERATURE = 0.3   # на ней перегенерируется схлопнувшийся ответ пути t=0
 
+# Потолок ответа (`num_predict`) — зеркало `RecapGenerationPolicy.maxReplyTokens`,
+# то есть запас окна под ответ. Без него 2026-10-29 приложение генерировало 12
+# тысяч токенов до тайм-аута; на 997 ответах стенда длиннее 2154 не было ни одного.
+MAX_REPLY_TOKENS = REPLY_TOKENS
+# Петля — одна содержательная строка три раза (`RecapGenerationPolicy.looped`).
+# На 1611 документах стенда и архива строка от 16 символов повторялась максимум дважды.
+LOOP_LINE_REPEATS = 3
+LOOP_LINE_MIN_CHARACTERS = 24
+
+
+class Runaway(RuntimeError):
+    """Оба вызова ушли в разнос — зеркало `RecapError.runaway`."""
+
+
+def looped(text: str) -> bool:
+    seen: dict[str, int] = {}
+    for raw in text.splitlines():
+        line = " ".join(raw.split())
+        if len(line) < LOOP_LINE_MIN_CHARACTERS:
+            continue
+        seen[line] = seen.get(line, 0) + 1
+        if seen[line] >= LOOP_LINE_REPEATS:
+            return True
+    return False
+
 # Последняя секция шаблона. Ответ без неё дописан не до конца, и длиной это не
 # ловится: замер 2026-08-28 — секция есть у каждого ответа от 941 токена и ни у
 # одного до 945, при пороге схлопывания 800.
@@ -211,7 +253,8 @@ def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
                 min_reply_tokens: int | None = None,
                 retry_temperature: float | None = None,
                 requires_discussion: bool = False,
-                fmt: dict | None = None) -> tuple[str, dict]:
+                fmt: dict | None = None,
+                max_reply_tokens: int | None = MAX_REPLY_TOKENS) -> tuple[str, dict]:
     """Same payload shape as `RecapService.callOllama` — think off, temp 0.2, sized window.
 
     `min_reply_tokens` перегенерирует ответ **один раз**, если он схлопнулся.
@@ -226,14 +269,24 @@ def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
     её сегодня не шлёт; путь v3 (`bench_extract.py`) стоит на ней целиком, поэтому
     схема идёт параметром, а не вторым клиентом: ретрай схлопнувшегося ответа и
     `stats` должны быть одни и те же на обоих путях.
+
+    `max_reply_tokens` — потолок ответа и правило разноса, зеркало
+    `RecapGenerationPolicy` (2026-11-03): ответ до потолка, петля или тайм-аут
+    просят повтора даже без порога, разнос никогда не выигрывает выбор, два
+    разноса подряд — `Runaway`. `None` — поведение до 2026-11-03: без потолка,
+    тайм-аут — исключение, разнос не распознаётся. Нужен только как база замера.
     """
+    guarded = max_reply_tokens is not None
     ctx = num_ctx(len(system) + len(user))
+    options = {"num_ctx": ctx, "temperature": temperature}
+    if guarded:
+        options["num_predict"] = max_reply_tokens
     payload = {
         "model": model,
         "stream": False,
         "keep_alive": 90,
         "think": False,
-        "options": {"num_ctx": ctx, "temperature": temperature},
+        "options": options,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -241,26 +294,43 @@ def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
     }
     if fmt is not None:
         payload["format"] = fmt
-    def once(at_temperature: float | None = None) -> tuple[str, int, float, int]:
+
+    def once(at_temperature: float | None = None) -> dict:
         body_payload = payload
         if at_temperature is not None and at_temperature != temperature:
             body_payload = {**payload,
                             "options": {**payload["options"], "temperature": at_temperature}}
         req = urllib.request.Request(
-            "http://127.0.0.1:11434/api/chat",
+            f"{OLLAMA_URL}/api/chat",
             data=json.dumps(body_payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            body = json.loads(response.read().decode("utf-8"))
-        return (
-            (body.get("message") or {}).get("content", ""),
-            body.get("eval_count") or 0,
-            round((body.get("total_duration") or 0) / 1e9, 1),
-            body.get("prompt_eval_count") or 0,
-        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except (TimeoutError, socket.timeout, urllib.error.URLError) as error:
+            # Тайм-аут — разнос, а не отказ (`ModelReply.timedOut`). Остальные
+            # сетевые ошибки остаются ошибками, как в приложении.
+            timed_out = isinstance(error, (TimeoutError, socket.timeout)) or \
+                isinstance(getattr(error, "reason", None), (TimeoutError, socket.timeout))
+            if not (guarded and timed_out):
+                raise
+            return {"content": "", "tokens": 0, "seconds": float(timeout), "prompt": 0,
+                    "unfinished": True}
+        return {
+            "content": (body.get("message") or {}).get("content", ""),
+            "tokens": body.get("eval_count") or 0,
+            "seconds": round((body.get("total_duration") or 0) / 1e9, 1),
+            "prompt": body.get("prompt_eval_count") or 0,
+            "unfinished": guarded and body.get("done_reason") == "length",
+        }
 
-    content, reply_tokens, seconds, prompt_tokens = once()
+    def ran_away(reply: dict) -> bool:
+        return guarded and (reply["unfinished"] or looped(reply["content"]))
+
+    first = once()
+    content, reply_tokens, seconds, prompt_tokens = (
+        first["content"], first["tokens"], first["seconds"], first["prompt"])
     first_reply_tokens, retried = reply_tokens, False
     # При t=0 повтор детерминированно возвращает тот же текст — вызов сгорает
     # впустую. Ансамбль платил его в каждом прогоне (ens-5: ветка t0 с
@@ -274,26 +344,36 @@ def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
     # ней. Воспроизводимость сохраняется, пока ответ здоров, и приносится в жертву
     # ровно в том случае, когда она вредна.
     collapsed = bool(min_reply_tokens and reply_tokens < min_reply_tokens)
+    ran_away_first = ran_away(first)
+    winner_ran_away = ran_away_first
     # Второй признак недописанности, и он структурный: нет «Хода обсуждения».
     # Длина была прокси, и прокси разошёлся с предметом — документ на 814–945
     # токенов проходит порог 800 и приезжает без самой большой своей секции.
     cut = requires_discussion and missing_discussion(content)
     retry_at = temperature if temperature > 0 else (retry_temperature or 0.0)
-    if (collapsed or cut) and retry_at > 0:
+    if (collapsed or cut or ran_away_first) and retry_at > 0:
         retried = True
-        second, second_tokens, second_seconds, _ = once(retry_at)
-        seconds += second_seconds
-        # Дописанность важнее длины: ответ с секцией побеждает более длинный без
-        # неё. Когда по секции ничья — правило прежнее, длинный из двух.
-        second_cut = requires_discussion and missing_discussion(second)
-        if requires_discussion and cut != second_cut:
-            if cut:
-                content, reply_tokens = second, second_tokens
-        elif second_tokens > reply_tokens:
-            content, reply_tokens = second, second_tokens
+        second = once(retry_at)
+        second_tokens = second["tokens"]
+        seconds += second["seconds"]
+        second_ran_away = ran_away(second)
+        # Разнос не выигрывает никогда: «длинный из двух» отдал бы победу петле.
+        if ran_away_first != second_ran_away:
+            if ran_away_first:
+                content, reply_tokens, winner_ran_away = second["content"], second_tokens, False
+        else:
+            # Дописанность важнее длины: ответ с секцией побеждает более длинный без
+            # неё. Когда по секции ничья — правило прежнее, длинный из двух.
+            second_cut = requires_discussion and missing_discussion(second["content"])
+            if requires_discussion and cut != second_cut:
+                if cut:
+                    content, reply_tokens = second["content"], second_tokens
+            elif second_tokens > reply_tokens:
+                content, reply_tokens = second["content"], second_tokens
 
     stats = {
         "num_ctx": ctx,
+        "num_predict": max_reply_tokens,
         "prompt_tokens": prompt_tokens,
         "reply_tokens": reply_tokens,
         "first_reply_tokens": first_reply_tokens,
@@ -303,12 +383,16 @@ def call_ollama(model: str, system: str, user: str, timeout: int = 1800,
         # иначе таблица говорила бы «схлопнулось», когда починка уже сработала.
         "collapsed": bool(min_reply_tokens and reply_tokens < min_reply_tokens),
         "collapsed_first": collapsed,
+        "ran_away_first": ran_away_first,
+        "ran_away": winner_ran_away,
         "cut_first": cut,
         "cut": requires_discussion and missing_discussion(content),
         "calls": 2 if retried else 1,
         "seconds": seconds,
         "truncated": exceeds_largest_window(len(system) + len(user)),
     }
+    if winner_ran_away:
+        raise Runaway(f"оба ответа в разносе: {stats}")
     return content, stats
 
 

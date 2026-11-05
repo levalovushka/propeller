@@ -278,6 +278,7 @@ final class PipelineRetryTests: XCTestCase {
             ("HTTP 413", "too_large"),
             ("файл слишком маленький (128 байт)", "audio_small"),
             ("Модель ушла в рассуждения", "thinking"),
+            (RecapError.runaway.localizedDescription, "runaway"),
             ("Запрос не успело завершиться: таймаут", "timeout"),
             ("HTTP 503", "server"),
             ("The Internet connection appears to be offline.", "network"),

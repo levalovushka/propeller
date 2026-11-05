@@ -90,6 +90,92 @@ final class RecapGenerationPolicyTests: XCTestCase {
         XCTAssertEqual(stats.calls, 1)
     }
 
+    // MARK: - Разнос: 2026-10-29, `20261022_171723` генерировал 12 тысяч токенов
+
+    private func runaway(_ tokens: Int?, _ content: String = "петля") -> RecapGenerationPolicy.ModelReply {
+        .init(content: content, replyTokens: tokens, unfinished: true)
+    }
+
+    /// Потолок — ровно запас, который окно держит под ответ: длиннее окно не
+    /// планировало, и на 997 ответах стенда длиннее 2154 не было ни одного.
+    func testReplyCapIsTheWindowsReplyHeadroom() {
+        XCTAssertEqual(RecapGenerationPolicy.maxReplyTokens, OllamaContext.replyTokens)
+        XCTAssertGreaterThan(RecapGenerationPolicy.maxReplyTokens, 2154)
+    }
+
+    func testAnswerThatHitTheCapRanAway() {
+        XCTAssertTrue(RecapGenerationPolicy.ranAway(runaway(3072)))
+        XCTAssertTrue(RecapGenerationPolicy.ranAway(.timedOut))
+        XCTAssertFalse(RecapGenerationPolicy.ranAway(reply(900)))
+    }
+
+    /// Тайм-аут раньше бросал исключение мимо повтора, и лестница слала тот же
+    /// t=0 ещё раз. Теперь он просит повтора, как схлопывание, — и без порога:
+    /// у редактуры и метаданных порога нет, а уйти в петлю они могут.
+    func testRunawayAsksForRetryEvenWithoutThreshold() {
+        XCTAssertTrue(RecapGenerationPolicy.wantsRetry(first: .timedOut, threshold: nil))
+        XCTAssertTrue(RecapGenerationPolicy.wantsRetry(first: runaway(3072), threshold: 800))
+        XCTAssertFalse(RecapGenerationPolicy.wantsRetry(first: reply(900), threshold: nil))
+    }
+
+    /// «Длинный из двух» отдал бы победу петле — она длиннее любого документа.
+    func testCollapsedRetryBeatsRunawayFirst() {
+        let (winner, stats) = RecapGenerationPolicy.resolved(
+            first: runaway(3072), retry: reply(392, "огрызок"), threshold: 800
+        )
+        XCTAssertEqual(winner.content, "огрызок")
+        XCTAssertTrue(stats.ranAwayFirst)
+        XCTAssertFalse(stats.ranAway)
+        XCTAssertTrue(stats.collapsed, "огрызок остаётся огрызком — флаг честный")
+    }
+
+    /// Тот же случай с другой стороны: первый ответ схлопнулся, повтор ушёл в
+    /// разнос — дальше идёт первый, хоть он и короче.
+    func testRunawayRetryNeverReplacesAFinishedFirst() {
+        let (winner, stats) = RecapGenerationPolicy.resolved(
+            first: reply(392, "огрызок"), retry: runaway(3072), threshold: 800
+        )
+        XCTAssertEqual(winner.content, "огрызок")
+        XCTAssertFalse(stats.ranAway)
+        XCTAssertFalse(stats.ranAwayFirst)
+    }
+
+    func testTwoRunawaysLeaveNothingToShip() {
+        let (_, stats) = RecapGenerationPolicy.resolved(
+            first: .timedOut, retry: runaway(3072), threshold: 800
+        )
+        XCTAssertTrue(stats.ranAway)
+        XCTAssertTrue(stats.ranAwayFirst)
+    }
+
+    /// Петля, которая кончилась до потолка, — тоже разнос. Штраф за повтор у
+    /// модели смотрит на 64 токена назад и длинную петлю не видит.
+    func testRepeatedLineIsALoopEvenWhenTheReplyEnded() {
+        let block = "- **Евгений Спиридонов** — согласен работать в формате парттайм\n"
+        XCTAssertTrue(RecapGenerationPolicy.ranAway(reply(900, String(repeating: block, count: 3))))
+        XCTAssertTrue(
+            RecapGenerationPolicy.looped("\(block)  - **Евгений  Спиридонов** — согласен работать в формате парттайм\n\(block)"),
+            "дрожащий отступ и двойной пробел петлю не прячут"
+        )
+    }
+
+    /// Порог взят из архива: на 1611 документах строка от 16 символов
+    /// повторялась не больше двух раз. Короткие строки повторяются законно.
+    func testTwiceRepeatedLineAndShortLinesAreNotALoop() {
+        let block = "- **Левон** — прислать смету по проекту\n"
+        XCTAssertFalse(RecapGenerationPolicy.looped(block + block))
+        XCTAssertFalse(RecapGenerationPolicy.looped(String(repeating: "- нет\n## Решения\n", count: 5)))
+    }
+
+    func testDoneReasonLengthReadsAsUnfinished() {
+        XCTAssertTrue(BoundaryResponses.chatHitLength(
+            data: Data(#"{"message":{"content":"ок"},"done_reason":"length"}"#.utf8)))
+        XCTAssertFalse(BoundaryResponses.chatHitLength(
+            data: Data(#"{"message":{"content":"ок"},"done_reason":"stop"}"#.utf8)))
+        XCTAssertFalse(BoundaryResponses.chatHitLength(
+            data: Data(#"{"message":{"content":"ок"}}"#.utf8)))
+    }
+
     // MARK: - Когорта памяти
 
     func testRamCohortsMatchTheProductTiers() {

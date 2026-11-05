@@ -224,6 +224,17 @@ extension BoundaryResponses {
         return json["eval_count"] as? Int
     }
 
+    /// Кончился ли ответ сам. Ollama пишет `done_reason: "length"`, когда
+    /// генерация упёрлась в `num_predict` (или в окно), и `"stop"`, когда модель
+    /// поставила конец. Поля нет — false: судить нечем, ответ считается
+    /// кончившимся (облако, старый Ollama).
+    public static func chatHitLength(data: Data) -> Bool {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
+        }
+        return (json["done_reason"] as? String) == "length"
+    }
+
     /// Pull the assistant's reply out of an Ollama/OpenAI-style chat response.
     public static func readChatReply(data: Data) -> Result<String, ChatFailure> {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

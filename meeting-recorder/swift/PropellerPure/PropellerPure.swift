@@ -538,8 +538,10 @@ public enum OllamaContext {
     public static let charactersPerToken = 2.2
 
     /// Headroom reserved for the reply — `num_ctx` covers prompt *and*
-    /// completion. Generation itself stays uncapped (no `num_predict`) so a long
-    /// recap ends on EOS instead of being cut mid-sentence.
+    /// completion. It is also the reply cap (`num_predict`,
+    /// `RecapGenerationPolicy.maxReplyTokens`): uncapped, one meeting generated
+    /// 12k tokens until the 10-minute timeout (2026-10-29). Healthy recaps end
+    /// on EOS well below it — max 2154 tokens across 997 lab replies.
     public static let replyTokens = 3072
 
     /// Coarse on purpose: every distinct `num_ctx` makes Ollama spin up a fresh

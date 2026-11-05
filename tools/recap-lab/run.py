@@ -40,6 +40,8 @@ def main() -> int:
     ap.add_argument("--only", default=None, help="подстрока id встречи")
     ap.add_argument("--model", default=MODEL)
     ap.add_argument("--force", action="store_true", help="перегенерировать уже готовые")
+    ap.add_argument("--legacy", action="store_true",
+                    help="без потолка ответа и правила разноса — поведение до 2026-11-03, база замера")
     args = ap.parse_args()
 
     drift = p.check_context_constants() + p.check_generation_constants()
@@ -75,6 +77,10 @@ def main() -> int:
                 temperature=POLICY_TEMPERATURE,
                 min_reply_tokens=p.REPLY_TOKENS_FLOOR["recap"],
                 retry_temperature=p.RETRY_TEMPERATURE,
+                # Тайм-аут приложения (`callOllamaTracked`, 600 с), а не
+                # лабораторные полчаса: разнос должен кончаться там же, где в проде.
+                timeout=600,
+                max_reply_tokens=None if args.legacy else p.MAX_REPLY_TOKENS,
             )
         except Exception as error:                      # noqa: BLE001 — a failed meeting must not stop the batch
             print(f"{meeting}  · ОШИБКА: {error}")
@@ -85,6 +91,8 @@ def main() -> int:
             json.dumps({"title": title, **stats}, ensure_ascii=False, indent=2), encoding="utf-8"
         )
         flag = " ОБРЕЗАН" if stats["truncated"] else ""
+        if stats.get("ran_away_first"):
+            flag += " РАЗНОС-1"
         print(
             f"{meeting}  · {len(body):6} симв · ctx {stats['num_ctx']}"
             f" · промпт {stats['prompt_tokens']} ток · {time.time() - started:.0f} с{flag}"

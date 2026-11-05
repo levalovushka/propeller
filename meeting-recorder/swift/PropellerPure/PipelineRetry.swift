@@ -179,6 +179,7 @@ public enum PipelineRetry {
     static let causeMarkers: [(String, [String])] = [
         ("too_large", ["413", "too large", "слишком велик", "слишком больш"]),
         ("thinking", ["ушла в рассуждения"]),
+        ("runaway", ["не остановилась"]),
         ("stalled", ["не продвинула стадию"]),
         ("no_speech", ["не вернул сегменты", "не нашлось речи"]),
         ("audio_small", ["слишком маленький"]),
