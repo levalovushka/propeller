@@ -13,9 +13,15 @@ public enum MeetingMeta {
     public static func when(
         _ date: Date, now: Date = Date(), calendar: Calendar = .current
     ) -> String {
+        day(date, now: now, calendar: calendar) + ", " + time.string(from: date)
+    }
+
+    /// «22 авг» — то же, что в `when`, без времени. Год — по тому же правилу.
+    public static func day(
+        _ date: Date, now: Date = Date(), calendar: Calendar = .current
+    ) -> String {
         let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
-        let day = (sameYear ? dayShortMonth : dayShortMonthYear).string(from: date)
-        return stripped(day) + ", " + time.string(from: date)
+        return stripped((sameYear ? dayShortMonth : dayShortMonthYear).string(from: date))
     }
 
     /// «6 человек», «1 человек», «2 человека». `nil` — чипа нет вовсе: «0
