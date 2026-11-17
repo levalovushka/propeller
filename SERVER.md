@@ -13,7 +13,7 @@ _Паспорт инфраструктуры. Поднят и настроен 2
 | IP | 201.24.53.31 (публичный IPv4; IPv6 см. панель — AAAA ещё не заведена) |
 | Тариф | Premium 2×3.3 ГГц / 2 ГБ RAM / 40 ГБ NVMe, ~800 ₽/мес + 200 ₽ IPv4 |
 | ОС | Ubuntu 26.04 LTS, hostname `msk-1-vm-vkbe` |
-| Доступ | `ssh -i ~/.ssh/propeller_report root@201.24.53.31` — только ключ (ed25519, пароль выключен в `/etc/ssh/sshd_config.d/90-hardening.conf`) |
+| Доступ | `ssh -i ~/.ssh/propeller_report root@201.24.53.31` — только ключ (ed25519, пароль выключен в `/etc/ssh/sshd_config.d/90-hardening.conf`). До 2026-11-17 это было неправдой: `50-cloud-init.conf` с `PasswordAuthentication yes` читался раньше, а sshd берёт первое значение. Файл убран (бэкап `/root/50-cloud-init.conf.bak-20261117`), cloud-init прижат `/etc/cloud/cloud.cfg.d/99-no-ssh-pwauth.cfg`. Проверка: `sshd -T \| grep passwordauth` → `no` |
 | Firewall | ufw: входящие только 22/tcp, 80/tcp, 443/tcp+udp |
 | Обновления | unattended-upgrades включён |
 | Бэкапы | нет, осознанно: сайт деплоится rsync-ом из репозитория, шеры эфемерны, сервер восстанавливается по этому файлу за полчаса |

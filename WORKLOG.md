@@ -3,6 +3,28 @@
 Что сделано, зачем, как проверено, что осталось. Новейшее сверху.
 Формат — DOCS.md, слой «Рабочий лог».
 
+## 2026-11-17 · Парольный вход в sshd на propeller.report действительно выключен
+
+- **Что.** На сервере `50-cloud-init.conf` перенесён в `/root/50-cloud-init.conf.bak-20261117`, добавлен
+  `/etc/cloud/cloud.cfg.d/99-no-ssh-pwauth.cfg` (`ssh_pwauth: false`), `systemctl reload ssh`. Строка «Доступ» в SERVER.md.
+- **Зачем.** Файл с `PasswordAuthentication yes` читался раньше `90-hardening.conf`, sshd берёт первое значение — пароли
+  были включены, вопреки паспорту. Практически закрывало только `prohibit-password` у root и `!` у остальных.
+- **Проверено.** `sshd -t` ок; `sshd -T` → `passwordauthentication no`, `kbdinteractiveauthentication no`. Новый вход по ключу
+  root — ок, `propeller-share`/`caddy` active. Вход без ключа → `Permission denied (publickey)`.
+- **Осталось.** Ребут не делал — что cloud-init не вернёт файл после перезагрузки, не проверено.
+
+## 2026-11-17 · Временный доступ другу на propeller.report
+
+- **Что.** На сервере у пользователя `friend` (uid 1001, создан 2026-11-09) появились `~/.ssh/authorized_keys`
+  (ed25519 `SHA256:gwYNB+l3…FGA`, `1@DESKTOP-5QVI4UQ`) и `/etc/systemd/system/user-1001.slice.d/50-limits.conf`:
+  700M памяти, 1 ядро, 200 задач. В репо ничего не менялось.
+- **Зачем.** Другу на пару дней нужно проверить свой парсер, к Propeller не относится. Лимиты — чтобы при OOM
+  не легли `propeller-share`/Caddy на 2 ГБ.
+- **Проверено.** `systemctl show user-1001.slice` → `MemoryMax=734003200`, `CPUQuotaPerSecUSec=1s`, `TasksMax=200`.
+  Через `su - friend`: `sudo` отказ, `/etc/propeller-share.env` и `/var/www/site` — Permission denied. Вход по его ключу не проверен (приватника нет).
+- **Осталось.** Убрать после теста (`deluser --remove-home friend`, удалить slice.d, `daemon-reload`).
+  Найдено попутно: `50-cloud-init.conf` перебивал `90-hardening.conf` — исправлено записью выше.
+
 ## 2026-11-05 · Релиз 1.18.0 собран; пустые настройки больше не уезжают в релиз
 
 - **Что.** `GeneralSettings.showsDrafts` (флаг `DRAFT_SETTINGS`), метка `PropellerDraftSettings`
