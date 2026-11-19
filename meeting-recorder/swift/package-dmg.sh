@@ -173,7 +173,7 @@ if [ "${SKIP_NOTARIZE:-0}" != "1" ]; then
         exit 1
     fi
     echo "=== Signing the image ==="
-    codesign --force --sign "$DMG_SIGN_HASH" --timestamp "$DMG_PATH"
+    codesign --force --sign "$DMG_SIGN_HASH" "--timestamp${PROPELLER_TIMESTAMP_URL:+=$PROPELLER_TIMESTAMP_URL}" "$DMG_PATH"
     ./notarize.sh "$DMG_PATH"
 else
     echo "=== SKIP_NOTARIZE=1: unsigned, unnotarized image — do not ship this ==="

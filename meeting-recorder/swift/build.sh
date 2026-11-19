@@ -496,8 +496,12 @@ if [ -n "$SIGN_HASH" ] && [ -n "${PROPELLER_NO_TIMESTAMP:-}" ]; then
     echo "  Signing with Developer ID Application (hardened runtime, NO timestamp — local only, not notarizable)"
     SIGN_OPTS=(--options runtime --timestamp=none)
 elif [ -n "$SIGN_HASH" ]; then
-    echo "  Signing with Developer ID Application (hardened runtime + secure timestamp)"
-    SIGN_OPTS=(--options runtime --timestamp)
+    # PROPELLER_TIMESTAMP_URL: the same Apple TSA reached another way — a VPN that eats
+    # timestamp.apple.com replies (TCP connects, the reply never comes) can be bypassed by
+    # a tunnel through a host outside it. Apple answers 403 unless Host is
+    # timestamp.apple.com, so the URL must point at something that sets it.
+    echo "  Signing with Developer ID Application (hardened runtime + secure timestamp${PROPELLER_TIMESTAMP_URL:+ via $PROPELLER_TIMESTAMP_URL})"
+    SIGN_OPTS=(--options runtime "--timestamp${PROPELLER_TIMESTAMP_URL:+=$PROPELLER_TIMESTAMP_URL}")
 else
     SIGN_HASH=$(security find-identity -p codesigning 2>/dev/null | grep "MeetingRecorder Dev" | head -1 | awk '{print $2}')
     if [ -n "$SIGN_HASH" ]; then
