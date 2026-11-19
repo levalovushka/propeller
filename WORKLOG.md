@@ -3,6 +3,19 @@
 Что сделано, зачем, как проверено, что осталось. Новейшее сверху.
 Формат — DOCS.md, слой «Рабочий лог».
 
+## 2026-11-19 · Релиз 1.18.1 собран (фикс temperature у OpenAI)
+
+- **Что.** Версия 1.18.1 в `build.sh`, `dist/RELEASE-1.18.1-NOTES.md`; `PROPELLER_TIMESTAMP_URL` в `build.sh` и
+  `package-dmg.sh` (f64de51). В `dist/` докачаны образы 1.18.0 и 1.17.0 из релизов GitHub — их там не было, дельт бы не вышло.
+- **Зачем.** Тестеру на luna нужен фикс 9f83d20. Под VPN `timestamp.apple.com` принимает TCP и не отвечает; приложение подписано
+  через ssh-туннель на propeller.report + локальный прокси с `Host: timestamp.apple.com` (без него Apple — 403), DMG — после
+  `sudo route -n add -host 17.32.213.161 192.168.0.1`, который владелец выполнил сам.
+- **Проверено.** `swift test` 1528, 0 failures. `notarize.sh` для `.app` и DMG — `Accepted`, Gatekeeper «Notarized Developer ID».
+  `make-appcast.sh`: 2 дельты (1.18.0 → 548K, 1.17.0 → 10M), «All deltas verified». Не критический релиз.
+- **Осталось.** Публикация (push, `gh release`), проверка фида `latest`, очистка «Не выпущено». Попутно: notarytool отвечал 403
+  «agreement expired» — владелец принял соглашение; `notarize.sh` выдаёт это за «no credentials». propeller.report с 12:35 не отдаёт
+  ни SSH-баннер, ни HTTPS — причина не выяснена. Маршрут к `17.32.213.161` живёт до перезагрузки.
+
 ## 2026-11-19 · Саммари через OpenAI на моделях без temperature
 
 - **Что.** `RecapBackendChoice.refusesTemperature` (400 + «temperature» в теле), в `RecapService.callOpenAI` после
