@@ -163,4 +163,32 @@ final class RecapBackendChoiceTests: XCTestCase {
         XCTAssertTrue(text.hasPrefix("LLM HTTP 502: "), text)
         XCTAssertEqual(text.count, "LLM HTTP 502: ".count + 200)
     }
+
+    // MARK: - Модель, которой нельзя задавать температуру
+
+    /// Тело — настоящая форма ответа OpenAI на `temperature: 0.2` у модели с
+    /// рассуждением. Тестер переключился на luna и получал это на каждый конспект.
+    func testAReasoningModelRefusingTemperatureIsRecognised() {
+        let openAI = #"{"error":{"message":"Unsupported value: 'temperature' does not support 0.2 with this model. Only the default (1) value is supported.","type":"invalid_request_error","param":"temperature","code":"unsupported_value"}}"#
+        XCTAssertTrue(RecapBackendChoice.refusesTemperature(RecapError.httpStatus(400, openAI)))
+
+        let parameter = #"{"error":{"message":"Unsupported parameter: 'temperature' is not supported with this model.","param":"temperature","code":"unsupported_parameter"}}"#
+        XCTAssertTrue(RecapBackendChoice.refusesTemperature(RecapError.httpStatus(400, parameter)))
+    }
+
+    /// OpenRouter заворачивает ответ вендора в своё сообщение, поля `param` там нет.
+    func testOpenRouterWrappingStillCounts() {
+        let wrapped = #"{"error":{"message":"Provider returned error","code":400,"metadata":{"raw":"{\"error\":{\"message\":\"Unsupported value: 'Temperature' does not support 0.2\"}}"}}}"#
+        XCTAssertTrue(RecapBackendChoice.refusesTemperature(RecapError.httpStatus(400, wrapped)))
+    }
+
+    /// Повтор без температуры — только для этого отказа. Длинная встреча на
+    /// модели с маленьким окном тоже даёт 400, и повтор её не вылечит.
+    func testOtherFailuresAreNotRetriedWithoutTemperature() {
+        let tooLong = #"{"error":{"message":"This model's maximum context length is 8192 tokens.","code":"context_length_exceeded"}}"#
+        XCTAssertFalse(RecapBackendChoice.refusesTemperature(RecapError.httpStatus(400, tooLong)))
+        XCTAssertFalse(RecapBackendChoice.refusesTemperature(RecapError.httpStatus(500, "temperature")))
+        XCTAssertFalse(RecapBackendChoice.refusesTemperature(RecapError.badJSON))
+        XCTAssertFalse(RecapBackendChoice.refusesTemperature(URLError(.timedOut)))
+    }
 }

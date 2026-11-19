@@ -233,6 +233,10 @@ actor RecapService {
         return URLSession(configuration: config)
     }()
 
+    /// «Адрес|модель», которым `temperature` задавать нельзя. Живёт до
+    /// перезапуска: сменил человек модель — новая спросится заново.
+    private var modelsRefusingTemperature: Set<String> = []
+
     // MARK: - Public
 
     func probeOllama(baseURL: URL = URL(string: "http://127.0.0.1:11434")!) async -> Bool {
@@ -1127,17 +1131,36 @@ actor RecapService {
             req.setValue("Propeller", forHTTPHeaderField: "X-Title")
             req.setValue("https://propeller.pragmatica.design", forHTTPHeaderField: "HTTP-Referer")
         }
-        let payload: [String: Any] = [
-            "model": model,
-            "temperature": 0.2,
-            "messages": [
-                ["role": "system", "content": system],
-                ["role": "user", "content": user],
-            ],
-        ]
-        req.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        let (data, response) = try await session.data(for: req)
-        try throwIfBadHTTP(response, data: data)
+        // Модель с рассуждением не принимает `temperature` (`refusesTemperature`).
+        // Узнав это раз, больше не спрашиваем до перезапуска: иначе каждый
+        // конспект платил бы лишним запросом и строкой в журнале ошибок провайдера.
+        let modelKey = "\(url.absoluteString)|\(model)"
+        func send(withTemperature: Bool) async throws -> Data {
+            var payload: [String: Any] = [
+                "model": model,
+                "messages": [
+                    ["role": "system", "content": system],
+                    ["role": "user", "content": user],
+                ],
+            ]
+            if withTemperature { payload["temperature"] = 0.2 }
+            req.httpBody = try JSONSerialization.data(withJSONObject: payload)
+            let (data, response) = try await session.data(for: req)
+            try throwIfBadHTTP(response, data: data)
+            return data
+        }
+        let data: Data
+        if modelsRefusingTemperature.contains(modelKey) {
+            data = try await send(withTemperature: false)
+        } else {
+            do {
+                data = try await send(withTemperature: true)
+            } catch where RecapBackendChoice.refusesTemperature(error) {
+                NSLog("[RecapService] \(model) не принимает temperature — повтор без неё")
+                modelsRefusingTemperature.insert(modelKey)
+                data = try await send(withTemperature: false)
+            }
+        }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
               let message = choices.first?["message"] as? [String: Any],

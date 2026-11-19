@@ -154,6 +154,22 @@ public enum RecapBackendChoice {
     ) -> RecapError? {
         (200..<300).contains(status) ? nil : .httpStatus(status, body())
     }
+
+    /// Отказ модели, которой нельзя задавать `temperature`.
+    ///
+    /// Модели с рассуждением (o-серия, GPT-5, luna) принимают только значение по
+    /// умолчанию и на наши 0,2 отвечают 400 — `unsupported_value` или
+    /// `unsupported_parameter` с `param: "temperature"`. Тестер 2026-11-19
+    /// переключился на luna и получил 400 на каждый конспект; на 4o-mini всё
+    /// работало. Выкидывать параметр у всех нельзя: у 4o-mini сменился бы вывод.
+    ///
+    /// Узнаём по тексту, а не по полю `param`: OpenRouter заворачивает ответ
+    /// вендора в своё сообщение, и поля там нет. Ложное срабатывание стоит одного
+    /// лишнего запроса без температуры — дешевле, чем пропустить настоящее.
+    public static func refusesTemperature(_ error: Error) -> Bool {
+        guard case RecapError.httpStatus(400, let body) = error else { return false }
+        return body.range(of: "temperature", options: .caseInsensitive) != nil
+    }
 }
 
 /// Каким путём пойдёт встреча. Раньше это были три ветки `if` внутри

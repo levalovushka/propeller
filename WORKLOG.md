@@ -3,6 +3,18 @@
 Что сделано, зачем, как проверено, что осталось. Новейшее сверху.
 Формат — DOCS.md, слой «Рабочий лог».
 
+## 2026-11-19 · Саммари через OpenAI на моделях без temperature
+
+- **Что.** `RecapBackendChoice.refusesTemperature` (400 + «temperature» в теле), в `RecapService.callOpenAI` после
+  такого отказа запрос повторяется без `temperature`, а модель запоминается до перезапуска. 3 теста в `RecapBackendChoiceTests`. Строка в CHANGELOG.
+- **Зачем.** Тестер переключился на luna и получал 400 на каждый конспект: модели с рассуждением принимают только
+  температуру по умолчанию. Убрать 0,2 у всех нельзя — у 4o-mini изменился бы вывод. Тот же путь и у OpenRouter.
+- **Проверено.** `swift test`: 1528, 0 failures. `PROPELLER_NO_TIMESTAMP=1 ./build.sh` → exit 0, `codesign -v` ок, приложение
+  запущено. Против живого OpenAI на luna **не проверено**: ни ключа, ни настоящего тела ошибки; форма тела взята из документации GPT-5/o-серии.
+- **Осталось.** Попросить тестера переключиться на luna и прислать лог. Попутно: в `tools/gigastt/models-e2e` не было
+  `v3_e2e_rnnt_encoder_int8.onnx`, `./build.sh` падал и оставлял `/Applications/Propeller.app` без подписи — файл скопирован из
+  Application Support (225250603 байт). Сборка без метки времени: обычный `./build.sh` упал на timestamp service.
+
 ## 2026-11-17 · Парольный вход в sshd на propeller.report действительно выключен
 
 - **Что.** На сервере `50-cloud-init.conf` перенесён в `/root/50-cloud-init.conf.bak-20261117`, добавлен
